@@ -1,6 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+docker_build_args() {
+  local image_tag="$1"
+  local -a docker_cache_args=()
+  if [[ "${JUPITER_DOCKER_NO_CACHE:-0}" == "1" ]]; then
+    docker_cache_args+=(--no-cache)
+  fi
+
+  printf '%s\0' \
+    --builder default \
+    "${docker_cache_args[@]}" \
+    --platform linux/amd64 \
+    --target artifact \
+    --tag "$image_tag" \
+    -f Dockerfile.repro \
+    .
+}
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
 command -v docker >/dev/null 2>&1 || {
   echo "docker is required but not installed or not on PATH" >&2
   exit 1
@@ -22,6 +43,7 @@ mkdir -p ".repro-out" "release-artifacts"
 tag_suffix="$(date +%s)-$$-${RANDOM}"
 artifact_image="jupiter-repro-artifact:${tag_suffix}"
 artifact_container=""
+mapfile -d '' -t docker_args < <(docker_build_args "$artifact_image")
 
 cleanup() {
   if [ -n "$artifact_container" ]; then
@@ -32,13 +54,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker build \
-  --builder default \
-  --platform linux/amd64 \
-  --target artifact \
-  --tag "$artifact_image" \
-  -f Dockerfile.repro \
-  .
+docker build "${docker_args[@]}"
 
 artifact_container="$(docker create "$artifact_image" /bin/true)"
 docker cp "$artifact_container:/release-artifacts/." "./.repro-out/"

@@ -443,11 +443,13 @@ fn apply_reward_epoch(root: Principal, now_secs: u64) -> Result<(), &'static str
     Ok(())
 }
 
+type ClassifiedSources = (BTreeMap<Principal, u64>, u64, Vec<Principal>);
+
 fn classify_sources(
     sources: BTreeMap<[u8; 32], u64>,
     initial_ineligible: u64,
     owners: Vec<Option<Principal>>,
-) -> Result<(BTreeMap<Principal, u64>, u64, Vec<Principal>), String> {
+) -> Result<ClassifiedSources, String> {
     if owners.len() != sources.len() {
         return Err("owner_lookup_length_mismatch".to_string());
     }
@@ -469,6 +471,7 @@ fn classify_sources(
     Ok((eligible, ineligible, mismatches))
 }
 
+#[allow(clippy::too_many_arguments)] // The reconstruction boundary pins each independent ledger invariant.
 fn reconstruct_batch_with_splitters(
     transactions: &[IndexTransactionWithId],
     prior_cursor: Option<u64>,
@@ -491,7 +494,7 @@ fn reconstruct_batch_with_splitters(
         if let Some(cursor) = prior_cursor {
             if entry.id == cursor
                 || (entry.id < cursor
-                    && !carried_credit_start_tx_id.is_some_and(|carried| entry.id >= carried))
+                    && carried_credit_start_tx_id.is_none_or(|carried| entry.id < carried))
             {
                 continue;
             }

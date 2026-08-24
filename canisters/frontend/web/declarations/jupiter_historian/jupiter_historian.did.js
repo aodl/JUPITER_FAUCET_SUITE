@@ -172,8 +172,14 @@ export const idlFactory = ({ IDL }) => {
     'last_index_run_ts' : IDL.Opt(IDL.Nat64),
   });
   const RelaySurplusRecipient = IDL.Variant({
-    'Principal' : IDL.Principal,
-    'Neuron' : IDL.Nat64,
+    'Principal' : IDL.Record({
+      'principal' : IDL.Principal,
+      'memo' : IDL.Vec(IDL.Nat8),
+    }),
+    'Neuron' : IDL.Record({
+      'neuron_id' : IDL.Nat64,
+      'memo' : IDL.Vec(IDL.Nat8),
+    }),
   });
   const RelaySetupArgs = IDL.Record({
     'surplus_recipients' : IDL.Vec(RelaySurplusRecipient),

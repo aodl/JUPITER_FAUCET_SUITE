@@ -22,15 +22,10 @@ impl From<Config> for StableConfig {
             max_canisters_per_cycles_tick: value.max_canisters_per_cycles_tick,
             relay_factory_enabled: Some(value.relay_factory_enabled),
             relay_setup_min_e8s: Some(value.relay_setup_min_e8s),
-            relay_setup_dust_e8s: None,
-            relay_setup_refund_cooldown_seconds: None,
             relay_initial_cycles: Some(value.relay_initial_cycles),
             relay_cycle_safety_margin_e8s: Some(value.relay_cycle_safety_margin_e8s),
             relay_min_subaccount_one_seed_e8s: Some(value.relay_min_subaccount_one_seed_e8s),
             self_service_relay_interval_seconds: Some(value.self_service_relay_interval_seconds),
-            self_service_relay_max_transfers_per_tick: None,
-            // Retired compatibility field: new snapshots must not persist a runtime value.
-            io_surplus_neuron_id: None,
             canonical_relay_canister_id: Some(value.canonical_relay_canister_id),
             canonical_relay_targets: Some(value.canonical_relay_targets),
         }

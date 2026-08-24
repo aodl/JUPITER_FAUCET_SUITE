@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use candid::{CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use jupiter_ic_clients::account::principal_to_subaccount;
+use jupiter_memo_policy::MAX_RELAY_SURPLUS_MEMO_BYTES;
 
 use crate::state::{
     CanisterBurnSample, Config, ConversionEstimate, CyclesSnapshot, SurplusRecipient,
@@ -386,7 +387,24 @@ pub(crate) fn validate_config(cfg: &Config, self_id: Principal) -> Result<(), St
             SurplusTarget::Canister(canister_id) => {
                 validate_canister_principal("surplus_recipients.target.Canister", canister_id)?;
             }
+            SurplusTarget::Neuron(0) => {
+                return Err("surplus recipient neuron ID must be greater than zero".to_string());
+            }
             SurplusTarget::Neuron(_) => {}
+        }
+        if let Some(memo) = &recipient.memo {
+            if memo.len() > MAX_RELAY_SURPLUS_MEMO_BYTES {
+                let destination = match recipient.target {
+                    SurplusTarget::Canister(canister_id) => {
+                        format!("principal {}", canister_id.to_text())
+                    }
+                    SurplusTarget::Neuron(neuron_id) => format!("neuron {neuron_id}"),
+                };
+                return Err(format!(
+                    "surplus recipient {destination} memo is {} bytes; maximum is {MAX_RELAY_SURPLUS_MEMO_BYTES}",
+                    memo.len()
+                ));
+            }
         }
         if !targets.insert(recipient.target.clone()) {
             return Err("duplicate surplus recipient target".to_string());
@@ -1144,6 +1162,84 @@ mod tests {
         assert!(validate_config(&cfg, self_id)
             .unwrap_err()
             .contains("anonymous"));
+    }
+
+    #[test]
+    fn config_validation_enforces_surplus_memos_zero_neurons_and_destination_duplicates() {
+        let self_id = canister_b();
+        let mut cfg = config();
+        assert!(validate_config(&cfg, self_id).is_ok());
+
+        for recipient in [
+            SurplusRecipient {
+                target: SurplusTarget::Canister(canister_c()),
+                memo: Some(vec![0x00, 0xff, 0x80]),
+            },
+            SurplusRecipient {
+                target: SurplusTarget::Canister(canister_c()),
+                memo: Some(vec![0xaa; MAX_RELAY_SURPLUS_MEMO_BYTES]),
+            },
+            SurplusRecipient {
+                target: SurplusTarget::Neuron(42),
+                memo: Some(vec![0xbb; MAX_RELAY_SURPLUS_MEMO_BYTES]),
+            },
+        ] {
+            cfg.surplus_recipients = vec![recipient.clone()];
+            assert!(validate_config(&cfg, self_id).is_ok());
+            assert_eq!(cfg.surplus_recipients[0].memo, recipient.memo);
+        }
+
+        for recipient in [
+            SurplusRecipient {
+                target: SurplusTarget::Canister(canister_c()),
+                memo: Some(vec![0; MAX_RELAY_SURPLUS_MEMO_BYTES + 1]),
+            },
+            SurplusRecipient {
+                target: SurplusTarget::Neuron(42),
+                memo: Some(vec![0; MAX_RELAY_SURPLUS_MEMO_BYTES + 1]),
+            },
+        ] {
+            cfg.surplus_recipients = vec![recipient];
+            assert!(validate_config(&cfg, self_id)
+                .unwrap_err()
+                .contains("33 bytes"));
+        }
+
+        cfg.surplus_recipients = vec![SurplusRecipient {
+            target: SurplusTarget::Neuron(0),
+            memo: None,
+        }];
+        assert!(validate_config(&cfg, self_id)
+            .unwrap_err()
+            .contains("greater than zero"));
+
+        cfg.surplus_recipients = vec![
+            SurplusRecipient {
+                target: SurplusTarget::Canister(canister_c()),
+                memo: Some(vec![1]),
+            },
+            SurplusRecipient {
+                target: SurplusTarget::Canister(canister_c()),
+                memo: Some(vec![2]),
+            },
+        ];
+        assert!(validate_config(&cfg, self_id)
+            .unwrap_err()
+            .contains("duplicate surplus recipient target"));
+
+        cfg.surplus_recipients = vec![
+            SurplusRecipient {
+                target: SurplusTarget::Neuron(42),
+                memo: Some(vec![1]),
+            },
+            SurplusRecipient {
+                target: SurplusTarget::Neuron(42),
+                memo: Some(vec![2]),
+            },
+        ];
+        assert!(validate_config(&cfg, self_id)
+            .unwrap_err()
+            .contains("duplicate surplus recipient target"));
     }
 
     #[test]

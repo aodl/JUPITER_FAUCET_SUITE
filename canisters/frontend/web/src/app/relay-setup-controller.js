@@ -9,6 +9,8 @@ import { DASH, formatIcpE8s, renderCanisterTrackerLink } from './view-formatters
 
 const MAX_TARGETS = 20;
 const MAX_RECIPIENTS = 5;
+// Protocol parity: jupiter_memo_policy::MAX_RELAY_SURPLUS_MEMO_BYTES.
+export const MAX_RELAY_SURPLUS_MEMO_BYTES = 32;
 const MAX_U64 = 18_446_744_073_709_551_615n;
 const DEFAULT_POLL_INTERVAL_MS = 12_000;
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
@@ -22,6 +24,31 @@ function principalText(value) {
   const resolved = readOptional(value);
   if (!resolved) return '';
   return typeof resolved.toText === 'function' ? resolved.toText() : String(resolved);
+}
+
+export function equalBytes(left, right) {
+  return left.length === right.length
+    && left.every((byte, index) => byte === right[index]);
+}
+
+function relayMemoDisplay(value) {
+  const bytes = Uint8Array.from(value || []);
+  if (bytes.length === 0) return 'Memo: none';
+  let text = '';
+  try {
+    text = new TextDecoder('utf-8', {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(bytes);
+  } catch {
+    // Exact hexadecimal remains available for arbitrary binary memos.
+  }
+  const roundTrips = text
+    && equalBytes(bytes, new TextEncoder().encode(text));
+  const safe = roundTrips
+    && /\S/u.test(text)
+    && !/[\p{C}\p{Zl}\p{Zp}]/u.test(text);
+  return `Memo hex: ${bytesToHex(bytes)}${safe ? `\nMemo text: ${text}` : ''}`;
 }
 
 function parsePrincipalList(text, {
@@ -68,6 +95,33 @@ export function parseRelayNeuronId(value) {
   return neuronId;
 }
 
+export function decodeRelayMemo(mode, value) {
+  const input = String(value ?? '');
+  let bytes;
+  if (mode === 'Hex') {
+    const withoutPrefix = input.replace(/^\s*0x/iu, '');
+    const compact = withoutPrefix.replace(/\s+/gu, '');
+    if (!/^[0-9a-f]*$/iu.test(compact)) {
+      throw new Error('Memo hexadecimal input contains a non-hexadecimal character.');
+    }
+    if (compact.length % 2 !== 0) {
+      throw new Error('Memo hexadecimal input must contain complete byte pairs.');
+    }
+    bytes = Uint8Array.from(compact.match(/.{2}/gu) || [], (pair) => Number.parseInt(pair, 16));
+  } else {
+    bytes = new TextEncoder().encode(input);
+  }
+  return bytes;
+}
+
+export function parseRelayMemo(mode, value) {
+  const bytes = decodeRelayMemo(mode, value);
+  if (bytes.length > MAX_RELAY_SURPLUS_MEMO_BYTES) {
+    throw new Error(`Memo is ${bytes.length} bytes; maximum is ${MAX_RELAY_SURPLUS_MEMO_BYTES} bytes.`);
+  }
+  return bytes;
+}
+
 function recipientDuplicateKey(recipient) {
   if (recipient.type === 'Neuron') return `Neuron:${parseRelayNeuronId(recipient.value)}`;
   return `Principal:${Principal.fromText(String(recipient.value || '').trim()).toText()}`;
@@ -93,19 +147,20 @@ export function duplicateRelayRecipientIndexes(recipients) {
 }
 
 export function parseRelayRecipientSet(recipients) {
-  if (!Array.isArray(recipients) || recipients.length === 0) {
-    throw new Error('Enter at least one surplus recipient.');
-  }
+  if (!Array.isArray(recipients)) throw new Error('Surplus recipients must be a list.');
   if (recipients.length > MAX_RECIPIENTS) {
     throw new Error(`Enter no more than ${MAX_RECIPIENTS} surplus recipients.`);
   }
   const duplicates = duplicateRelayRecipientIndexes(recipients);
   if (duplicates.size > 0) throw new Error('Duplicate surplus recipients are not allowed.');
-  return recipients.map(({ type, value }) => {
-    if (type === 'Neuron') return { Neuron: parseRelayNeuronId(value) };
+  return recipients.map(({ type, value, memoMode = 'Text', memoValue = '' }) => {
+    const memo = Array.from(parseRelayMemo(memoMode, memoValue));
+    if (type === 'Neuron') {
+      return { Neuron: { neuron_id: parseRelayNeuronId(value), memo } };
+    }
     const text = String(value || '').trim();
     try {
-      return { Principal: Principal.fromText(text) };
+      return { Principal: { principal: Principal.fromText(text), memo } };
     } catch {
       throw new Error(`Invalid recipient principal: ${text || '(empty)'}`);
     }
@@ -244,7 +299,8 @@ export function createRelaySetupController({
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
 } = {}) {
   const state = {
-    configurationFingerprint: '',
+    requestFingerprint: '',
+    checkedConfigurationFingerprint: '',
     targets: [],
     surplusRecipients: [],
     view: null,
@@ -289,6 +345,13 @@ export function createRelaySetupController({
       removeSelector: '[data-relay-recipient-remove]',
       errorSelector: '[data-relay-recipient-error]',
       typeSelector: '[data-relay-recipient-type]',
+      memoModeSelector: '[data-relay-recipient-memo-mode]',
+      memoModeLabelSelector: '[data-relay-recipient-memo-mode-label]',
+      memoInputSelector: '[data-relay-recipient-memo-input]',
+      memoLabelSelector: '[data-relay-recipient-memo-label]',
+      memoCountSelector: '[data-relay-recipient-memo-count]',
+      memoErrorSelector: '[data-relay-recipient-memo-error]',
+      memoNoticeSelector: '[data-relay-recipient-memo-notice]',
       dataPrefix: 'relayRecipient',
       idPrefix: 'relay-setup-recipient',
       hintId: 'relay-setup-recipient-hint',
@@ -336,13 +399,22 @@ export function createRelaySetupController({
           ? 'Neuron'
           : 'Principal',
         value: trim ? value.trim() : value,
+        memoMode: row.querySelector?.(listSpecs.recipient.memoModeSelector)?.value === 'Hex'
+          ? 'Hex'
+          : 'Text',
+        memoValue: String(row.querySelector?.(listSpecs.recipient.memoInputSelector)?.value || ''),
       };
     });
+  }
+
+  function recipientRoutingMode() {
+    return document.getElementById('relay-setup-mode-all-cycles')?.checked !== true;
   }
 
   function configurationFingerprint() {
     return JSON.stringify({
       targets: rawListValues('target'),
+      surplusMode: recipientRoutingMode() ? 'routing' : 'all-cycles',
       surplusRecipients: recipientRowsValues({ trim: false }),
     });
   }
@@ -360,6 +432,105 @@ export function createRelaySetupController({
     else input?.removeAttribute?.('aria-invalid');
   }
 
+  function setMemoError(row, message = '') {
+    const memoInput = row?.querySelector?.(listSpecs.recipient.memoInputSelector);
+    const error = row?.querySelector?.(listSpecs.recipient.memoErrorSelector);
+    if (error) {
+      error.textContent = message;
+      error.hidden = !message;
+    }
+    if (message) memoInput?.setAttribute?.('aria-invalid', 'true');
+    else memoInput?.removeAttribute?.('aria-invalid');
+  }
+
+  function setMemoConversionNotice(row, message = '') {
+    const notice = row?.querySelector?.(listSpecs.recipient.memoNoticeSelector);
+    if (notice) {
+      notice.textContent = message;
+      notice.hidden = !message;
+    }
+    if (row?.dataset) {
+      if (message) row.dataset.relayRecipientMemoConversionNotice = message;
+      else delete row.dataset.relayRecipientMemoConversionNotice;
+    }
+  }
+
+  function updateRecipientMemoState(row) {
+    const mode = row?.querySelector?.(listSpecs.recipient.memoModeSelector)?.value === 'Hex'
+      ? 'Hex'
+      : 'Text';
+    const input = row?.querySelector?.(listSpecs.recipient.memoInputSelector);
+    const counter = row?.querySelector?.(listSpecs.recipient.memoCountSelector);
+    let message = '';
+    let count = null;
+    try {
+      count = decodeRelayMemo(mode, input?.value || '').length;
+      if (count > MAX_RELAY_SURPLUS_MEMO_BYTES) {
+        message = `Memo is ${count} bytes; maximum is ${MAX_RELAY_SURPLUS_MEMO_BYTES} bytes.`;
+      }
+    } catch (error) {
+      message = error.message;
+    }
+    if (counter) {
+      counter.textContent = `${count === null ? '\u2014' : count}/${MAX_RELAY_SURPLUS_MEMO_BYTES} bytes`;
+    }
+    setMemoError(row, message);
+    return message;
+  }
+
+  function tryApplyRecipientMemoModeChange(row) {
+    const selector = row?.querySelector?.(listSpecs.recipient.memoModeSelector);
+    const input = row?.querySelector?.(listSpecs.recipient.memoInputSelector);
+    if (!selector || !input) return false;
+    const previous = row.dataset.relayRecipientMemoMode === 'Hex' ? 'Hex' : 'Text';
+    const requested = selector.value === 'Hex' ? 'Hex' : 'Text';
+    const previousValue = input.value;
+    setMemoConversionNotice(row);
+    if (previous === requested) return true;
+
+    let originalBytes;
+    try {
+      originalBytes = parseRelayMemo(previous, previousValue);
+    } catch {
+      selector.value = previous;
+      input.value = previousValue;
+      updateRecipientMemoState(row);
+      return false;
+    }
+
+    let candidateValue;
+    try {
+      if (previous === 'Text') {
+        candidateValue = Array.from(originalBytes)
+          .map((byte) => byte.toString(16).padStart(2, '0'))
+          .join('');
+      } else {
+        candidateValue = new TextDecoder('utf-8', {
+          fatal: true,
+          ignoreBOM: true,
+        }).decode(originalBytes);
+      }
+      input.value = candidateValue;
+      const roundTrippedBytes = parseRelayMemo(requested, input.value);
+      if (!equalBytes(originalBytes, roundTrippedBytes)) {
+        throw new Error('The browser field changed the memo bytes.');
+      }
+    } catch {
+      input.value = previousValue;
+      selector.value = previous;
+      setMemoConversionNotice(
+        row,
+        'These memo bytes cannot be represented as Text without changing them. Hexadecimal mode was retained.',
+      );
+      updateRecipientMemoState(row);
+      return false;
+    }
+    row.dataset.relayRecipientMemoMode = requested;
+    setMemoConversionNotice(row);
+    updateRecipientMemoState(row);
+    return true;
+  }
+
   function validateVisibleList(kind, { includeIncomplete = false } = {}) {
     const spec = listSpecs[kind];
     const inputs = listInputs(kind);
@@ -368,6 +539,11 @@ export function createRelaySetupController({
     const duplicates = kind === 'recipient'
       ? duplicateRelayRecipientIndexes(recipientValues)
       : duplicatePrincipalIndexes(values);
+    if (kind === 'recipient' && !recipientRoutingMode()) {
+      inputs.forEach((input) => setFieldError(kind, input));
+      listRows(kind).forEach((row) => setMemoError(row));
+      return { valid: true, firstInvalidInput: null, firstError: '' };
+    }
     const errors = values.map((value, index) => {
       if (duplicates.has(index)) return spec.duplicateError;
       if (!includeIncomplete) return '';
@@ -384,10 +560,15 @@ export function createRelaySetupController({
       }
     });
     inputs.forEach((input, index) => setFieldError(kind, input, errors[index]));
+    const memoErrors = kind === 'recipient'
+      ? listRows(kind).map(updateRecipientMemoState)
+      : [];
     return {
-      valid: errors.every((message) => !message),
-      firstInvalidInput: inputs[errors.findIndex(Boolean)] || null,
-      firstError: errors.find(Boolean) || '',
+      valid: errors.every((message) => !message) && memoErrors.every((message) => !message),
+      firstInvalidInput: inputs[errors.findIndex(Boolean)]
+        || listRows(kind)[memoErrors.findIndex(Boolean)]?.querySelector?.(listSpecs.recipient.memoInputSelector)
+        || null,
+      firstError: errors.find(Boolean) || memoErrors.find(Boolean) || '',
     };
   }
 
@@ -395,7 +576,8 @@ export function createRelaySetupController({
     const target = validateVisibleList('target', { includeIncomplete });
     const recipient = validateVisibleList('recipient', { includeIncomplete });
     const duplicateTarget = duplicatePrincipalIndexes(listValues('target')).size > 0;
-    const duplicateRecipient = duplicateRelayRecipientIndexes(recipientRowsValues()).size > 0;
+    const duplicateRecipient = recipientRoutingMode()
+      && duplicateRelayRecipientIndexes(recipientRowsValues()).size > 0;
     const warning = document.getElementById('relay-setup-warning');
     if (warning) {
       warning.textContent = duplicateTarget
@@ -405,15 +587,21 @@ export function createRelaySetupController({
           : '');
       warning.hidden = !warning.textContent;
     }
-    const hasEmptyFields = ['target', 'recipient'].some((kind) => (
-      listInputs(kind).length === 0 || listValues(kind).some((value) => !value)
-    ));
+    const hasEmptyFields = listInputs('target').length === 0
+      || listValues('target').some((value) => !value)
+      || (recipientRoutingMode() && (
+        listInputs('recipient').length === 0 || listValues('recipient').some((value) => !value)
+      ));
+    const emptyFieldError = recipientRoutingMode() && listInputs('recipient').length === 0
+      ? 'Add a surplus recipient or select all-cycles mode.'
+      : '';
     const submitButton = document.getElementById('relay-setup-submit');
     if (submitButton) submitButton.disabled = !target.valid || !recipient.valid || hasEmptyFields;
     return {
-      valid: target.valid && recipient.valid,
+      valid: target.valid && recipient.valid && !hasEmptyFields,
       firstInvalidInput: target.firstInvalidInput || recipient.firstInvalidInput,
-      firstError: target.firstError || recipient.firstError,
+      firstError: target.firstError || recipient.firstError || emptyFieldError
+        || 'Complete every visible configuration field.',
     };
   }
 
@@ -437,13 +625,50 @@ export function createRelaySetupController({
           : `${spec.label} ${number}`;
       }
       if (kind === 'recipient') {
+        const input = row.querySelector?.(spec.inputSelector);
+        const error = row.querySelector?.(spec.errorSelector);
+        const memoMode = row.querySelector?.(spec.memoModeSelector);
+        const memoModeLabel = row.querySelector?.(spec.memoModeLabelSelector);
+        const memoInput = row.querySelector?.(spec.memoInputSelector);
+        const memoLabel = row.querySelector?.(spec.memoLabelSelector);
+        const memoCount = row.querySelector?.(spec.memoCountSelector);
+        const memoError = row.querySelector?.(spec.memoErrorSelector);
+        const memoNotice = row.querySelector?.(spec.memoNoticeSelector);
         row.querySelector?.(spec.typeSelector)?.setAttribute?.(
           'aria-label',
           `Surplus recipient ${number} type`,
         );
+        if (input) input.id = `relay-setup-recipient-${number}`;
+        if (error) error.id = `relay-setup-recipient-error-${number}`;
+        label?.setAttribute?.('for', `relay-setup-recipient-${number}`);
+        input?.setAttribute?.(
+          'aria-describedby',
+          `relay-setup-recipient-hint relay-setup-recipient-error-${number}`,
+        );
+        memoMode?.setAttribute?.(
+          'aria-label',
+          `Surplus recipient ${number} memo format`,
+        );
+        if (memoMode) memoMode.id = `relay-setup-recipient-memo-mode-${number}`;
+        memoModeLabel?.setAttribute?.('for', `relay-setup-recipient-memo-mode-${number}`);
+        if (memoInput) memoInput.id = `relay-setup-recipient-memo-${number}`;
+        memoLabel?.setAttribute?.('for', `relay-setup-recipient-memo-${number}`);
+        if (memoCount) memoCount.id = `relay-setup-recipient-memo-count-${number}`;
+        if (memoError) memoError.id = `relay-setup-recipient-memo-error-${number}`;
+        if (memoNotice) memoNotice.id = `relay-setup-recipient-memo-notice-${number}`;
+        memoInput?.setAttribute?.('aria-label', `Surplus recipient ${number} memo`);
+        memoInput?.setAttribute?.(
+          'aria-describedby',
+          `relay-setup-recipient-memo-count-${number} relay-setup-recipient-memo-error-${number} relay-setup-recipient-memo-notice-${number}`,
+        );
+        if (!row.dataset.relayRecipientMemoMode) {
+          row.dataset.relayRecipientMemoMode =
+            row.querySelector?.(spec.memoModeSelector)?.value === 'Hex' ? 'Hex' : 'Text';
+        }
+        updateRecipientMemoState(row);
       }
       if (removeButton) {
-        removeButton.hidden = rows.length === 1;
+        removeButton.hidden = kind === 'target' && rows.length === 1;
         removeButton.setAttribute?.('aria-label', `Remove ${spec.noun} ${number}`);
       }
     });
@@ -464,6 +689,25 @@ export function createRelaySetupController({
       if (type === 'Neuron') input.setAttribute?.('inputmode', 'numeric');
       else input.removeAttribute?.('inputmode');
     }
+  }
+
+  function updateSurplusModePresentation() {
+    const routing = recipientRoutingMode();
+    setHidden('relay-setup-recipient-editor', !routing);
+    setText(
+      'relay-setup-surplus-mode-summary',
+      routing
+        ? 'Recipient routing selected. Configure one to five surplus recipients.'
+        : 'All-cycles mode selected. No raw ICP surplus recipient will be configured.',
+    );
+  }
+
+  function selectSurplusMode(routing) {
+    const routingRadio = document.getElementById('relay-setup-mode-routing');
+    const allCyclesRadio = document.getElementById('relay-setup-mode-all-cycles');
+    if (routingRadio) routingRadio.checked = routing;
+    if (allCyclesRadio) allCyclesRadio.checked = !routing;
+    updateSurplusModePresentation();
   }
 
   function createListRow(kind) {
@@ -523,7 +767,52 @@ export function createRelaySetupController({
 
     controls.append(input, removeButton);
     row.append(label, controls, error);
-    if (kind === 'recipient') applyRecipientType(row);
+    if (kind === 'recipient') {
+      const memoControls = document.createElement('div');
+      memoControls.className = 'relay-setup-memo-controls';
+      const memoModeLabel = document.createElement('label');
+      memoModeLabel.textContent = 'Memo format';
+      memoModeLabel.dataset.relayRecipientMemoModeLabel = 'true';
+      const memoMode = document.createElement('select');
+      memoMode.className = 'tracker-input relay-setup-memo-mode';
+      memoMode.dataset.relayRecipientMemoMode = 'true';
+      const textOption = document.createElement('option');
+      textOption.value = 'Text';
+      textOption.textContent = 'Text';
+      const hexOption = document.createElement('option');
+      hexOption.value = 'Hex';
+      hexOption.textContent = 'Hexadecimal';
+      memoMode.append(textOption, hexOption);
+      memoMode.value = 'Text';
+      const memoLabel = document.createElement('label');
+      memoLabel.textContent = 'Memo';
+      memoLabel.dataset.relayRecipientMemoLabel = 'true';
+      const memoInput = document.createElement('input');
+      memoInput.className = 'tracker-input mono relay-setup-memo-input';
+      memoInput.type = 'text';
+      memoInput.autocomplete = 'off';
+      memoInput.spellcheck = false;
+      memoInput.dataset.relayRecipientMemoInput = 'true';
+      const memoCount = document.createElement('span');
+      memoCount.className = 'relay-setup-memo-count';
+      memoCount.dataset.relayRecipientMemoCount = 'true';
+      memoCount.setAttribute('role', 'status');
+      memoCount.setAttribute('aria-live', 'polite');
+      const memoError = document.createElement('p');
+      memoError.className = 'relay-setup-principal-error';
+      memoError.dataset.relayRecipientMemoError = 'true';
+      memoError.hidden = true;
+      const memoNotice = document.createElement('p');
+      memoNotice.className = 'relay-setup-memo-notice';
+      memoNotice.dataset.relayRecipientMemoNotice = 'true';
+      memoNotice.setAttribute('role', 'status');
+      memoNotice.setAttribute('aria-live', 'polite');
+      memoNotice.hidden = true;
+      memoControls.append(memoModeLabel, memoMode, memoLabel, memoInput, memoCount);
+      row.append(memoControls, memoError, memoNotice);
+      applyRecipientType(row);
+      updateRecipientMemoState(row);
+    }
     return row;
   }
 
@@ -532,6 +821,8 @@ export function createRelaySetupController({
     stopPolling();
     state.targets = [];
     state.surplusRecipients = [];
+    state.requestFingerprint = '';
+    state.checkedConfigurationFingerprint = '';
     state.view = null;
     state.balanceE8s = null;
     state.notifyResult = null;
@@ -544,7 +835,8 @@ export function createRelaySetupController({
 
   function handleVisibleConfigurationChange({ includeIncomplete = false } = {}) {
     const fingerprint = configurationFingerprint();
-    if (fingerprint !== state.configurationFingerprint) invalidateCurrentConfiguration();
+    const authoritativeFingerprint = state.checkedConfigurationFingerprint || state.requestFingerprint;
+    if (fingerprint !== authoritativeFingerprint) invalidateCurrentConfiguration();
     validateVisibleConfiguration({ includeIncomplete });
   }
 
@@ -553,6 +845,7 @@ export function createRelaySetupController({
     const list = listNode(kind);
     const rows = listRows(kind);
     if (!list || rows.length >= spec.maximum) return;
+    if (kind === 'recipient') selectSurplusMode(true);
     const row = createListRow(kind);
     list.append(row);
     updateListRows(kind);
@@ -568,12 +861,13 @@ export function createRelaySetupController({
     if (!row) return;
     const rows = listRows(kind);
     const removedIndex = rows.indexOf(row);
-    if (rows.length === 1) {
+    if (rows.length === 1 && kind === 'target') {
       const input = row.querySelector?.(spec.inputSelector);
       if (input) input.value = '';
     } else {
       row.remove?.();
     }
+    if (kind === 'recipient' && listRows(kind).length === 0) selectSurplusMode(false);
     updateListRows(kind);
     invalidateCurrentConfiguration();
     validateVisibleConfiguration();
@@ -601,7 +895,43 @@ export function createRelaySetupController({
 
   function configurationStillCurrent(expected, requestGeneration) {
     return generation === requestGeneration
+      && (state.requestFingerprint === expected
+        || state.checkedConfigurationFingerprint === expected)
       && configurationFingerprint() === expected;
+  }
+
+  function ownsConfigurationOperation(expected, requestGeneration) {
+    return generation === requestGeneration
+      && (state.requestFingerprint === expected
+        || state.checkedConfigurationFingerprint === expected);
+  }
+
+  function ensureConfigurationContinuationIsCurrent(
+    expected,
+    requestGeneration,
+    message = 'The Relay configuration changed. Check it again.',
+  ) {
+    if (configurationStillCurrent(expected, requestGeneration)) return true;
+    if (ownsConfigurationOperation(expected, requestGeneration)
+      && configurationFingerprint() !== expected) {
+      rejectStaleCheckedConfiguration(message);
+    }
+    return false;
+  }
+
+  function checkedConfigurationStillMatchesVisibleForm(expected = state.checkedConfigurationFingerprint) {
+    return Boolean(
+      expected
+      && state.view
+      && state.checkedConfigurationFingerprint === expected
+      && configurationFingerprint() === expected,
+    );
+  }
+
+  function rejectStaleCheckedConfiguration(message) {
+    invalidateCurrentConfiguration();
+    state.error = message;
+    render();
   }
 
   async function historianBundle() {
@@ -706,10 +1036,23 @@ export function createRelaySetupController({
     setText('relay-setup-target-count', view ? String(view.target_count) : DASH);
     setText('relay-setup-canonical-targets', view ? view.canonical_target_canister_ids.map(principalText).join('\n') : DASH);
     setText('relay-setup-recipient-count', view ? String(view.surplus_recipient_count) : DASH);
-    setText('relay-setup-canonical-recipients', view ? view.canonical_surplus_recipients.map((recipient) => {
-      if ('Neuron' in recipient) return `Neuron: ${recipient.Neuron}`;
-      return `Principal: ${principalText(recipient.Principal)}`;
-    }).join('\n') : DASH);
+    setText(
+      'relay-setup-canonical-recipients',
+      view
+        ? (view.canonical_surplus_recipients.length === 0
+          ? 'None \u2014 all-cycles mode'
+          : view.canonical_surplus_recipients.map((recipient) => {
+            if ('Neuron' in recipient) {
+              return `Neuron: ${recipient.Neuron.neuron_id}\n${relayMemoDisplay(recipient.Neuron.memo)}`;
+            }
+            return `Principal: ${principalText(recipient.Principal.principal)}\n${relayMemoDisplay(recipient.Principal.memo)}`;
+          }).join('\n'))
+        : DASH,
+    );
+    setText(
+      'relay-setup-surplus-mode',
+      view ? (Number(view.surplus_recipient_count) === 0 ? 'All-cycles mode' : 'Recipient routing') : DASH,
+    );
     setText('relay-setup-configuration-hash', view?.setup_key_identifier || DASH);
     setText('relay-setup-base-minimum', view ? formatIcpE8s(view.singleton_nominal_minimum_e8s) : DASH);
     setText('relay-setup-extra-count', view ? String(view.extra_target_count) : DASH);
@@ -731,15 +1074,20 @@ export function createRelaySetupController({
 
   function setupArgs() {
     return {
-      target_canister_ids: state.targets,
-      surplus_recipients: state.surplusRecipients,
+      target_canister_ids: [...state.targets],
+      surplus_recipients: state.surplusRecipients.map((recipient) => {
+        if ('Neuron' in recipient) {
+          return { Neuron: { ...recipient.Neuron, memo: [...recipient.Neuron.memo] } };
+        }
+        return { Principal: { ...recipient.Principal, memo: [...recipient.Principal.memo] } };
+      }),
     };
   }
 
   async function preflightNeuronRecipients(agent) {
     const neuronIds = [...new Set(state.surplusRecipients
       .filter((recipient) => 'Neuron' in recipient)
-      .map((recipient) => recipient.Neuron))];
+      .map((recipient) => recipient.Neuron.neuron_id))];
     if (neuronIds.length === 0) return;
     const governance = governanceActorFactory(GOVERNANCE_CANISTER_ID, { agent });
     for (const neuronId of neuronIds) {
@@ -752,29 +1100,54 @@ export function createRelaySetupController({
   }
 
   async function refresh({
-    expectedConfiguration = state.configurationFingerprint,
+    expectedConfiguration = state.checkedConfigurationFingerprint,
     requestGeneration = generation,
     preflightNeurons = false,
+    staleMessage = 'The Relay configuration changed. Check it again.',
   } = {}) {
-    if (!state.targets.length || !state.surplusRecipients.length) return;
+    if (!state.targets.length) return;
     const { agent, historian } = await historianBundle();
+    if (!ensureConfigurationContinuationIsCurrent(
+      expectedConfiguration,
+      requestGeneration,
+      staleMessage,
+    )) return;
     const result = await historian.get_relay_configuration_view(setupArgs());
-    if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
+    if (!ensureConfigurationContinuationIsCurrent(
+      expectedConfiguration,
+      requestGeneration,
+      staleMessage,
+    )) return;
     const view = unwrapView(result);
     const kind = viewState(view);
     const account = readOptional(view.setup_account);
     const isNewConfiguration = kind === 'NotFunded' && Boolean(account);
     if (preflightNeurons && isNewConfiguration) {
       await preflightNeuronRecipients(agent);
-      if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
+      if (!ensureConfigurationContinuationIsCurrent(
+        expectedConfiguration,
+        requestGeneration,
+        staleMessage,
+      )) return;
     }
     let balance = null;
     if (isNewConfiguration) {
       const ledger = await loadLedger({ agent, historian });
+      if (!ensureConfigurationContinuationIsCurrent(
+        expectedConfiguration,
+        requestGeneration,
+        staleMessage,
+      )) return;
       balance = BigInt(await ledger.icrc1_balance_of(account));
-      if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
+      if (!ensureConfigurationContinuationIsCurrent(
+        expectedConfiguration,
+        requestGeneration,
+        staleMessage,
+      )) return;
     }
     state.view = view;
+    state.checkedConfigurationFingerprint = expectedConfiguration;
+    state.requestFingerprint = '';
     state.balanceE8s = balance;
     state.error = '';
     state.loading = false;
@@ -792,11 +1165,14 @@ export function createRelaySetupController({
   function startPolling() {
     stopPolling();
     if (!shouldPoll()) return;
-    const expectedConfiguration = state.configurationFingerprint;
+    const expectedConfiguration = state.checkedConfigurationFingerprint;
     const requestGeneration = generation;
     pollHandle = setIntervalFn(() => {
       void refresh({ expectedConfiguration, requestGeneration }).catch((error) => {
-        if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
+        if (!ensureConfigurationContinuationIsCurrent(
+          expectedConfiguration,
+          requestGeneration,
+        )) return;
         state.error = normalizeError(error);
         render();
       });
@@ -808,7 +1184,8 @@ export function createRelaySetupController({
     generation += 1;
     const requestGeneration = generation;
     stopPolling();
-    state.configurationFingerprint = fingerprint;
+    state.requestFingerprint = fingerprint;
+    state.checkedConfigurationFingerprint = '';
     state.view = null;
     state.balanceE8s = null;
     state.creating = false;
@@ -823,13 +1200,23 @@ export function createRelaySetupController({
         throw new Error(validation.firstError);
       }
       state.targets = parseRelayTargetSet(listValues('target').join('\n'));
-      state.surplusRecipients = parseRelayRecipientSet(recipientRowsValues());
+      if (recipientRoutingMode()) {
+        const recipientRows = recipientRowsValues();
+        if (recipientRows.length === 0) {
+          throw new Error('Add a surplus recipient or select all-cycles mode.');
+        }
+        state.surplusRecipients = parseRelayRecipientSet(recipientRows);
+      } else {
+        state.surplusRecipients = [];
+      }
       render();
       await refresh({ expectedConfiguration: fingerprint, requestGeneration, preflightNeurons: true });
     } catch (error) {
-      if (!configurationStillCurrent(fingerprint, requestGeneration)) return;
+      if (!ensureConfigurationContinuationIsCurrent(fingerprint, requestGeneration)) return;
       state.targets = [];
       state.surplusRecipients = [];
+      state.requestFingerprint = '';
+      state.checkedConfigurationFingerprint = '';
       state.error = normalizeError(error);
       state.loading = false;
       (listInputs('target')[0] || listInputs('recipient')[0])?.focus?.();
@@ -838,9 +1225,31 @@ export function createRelaySetupController({
   }
 
   async function createRelay() {
-    if (!state.targets.length || !state.surplusRecipients.length || state.creating) return;
-    const expectedConfiguration = state.configurationFingerprint;
+    if (state.creating) return;
+    const expectedConfiguration = state.checkedConfigurationFingerprint;
     const requestGeneration = generation;
+    if (!state.targets.length || !checkedConfigurationStillMatchesVisibleForm(expectedConfiguration)) {
+      rejectStaleCheckedConfiguration(
+        'The Relay configuration changed. Check it again before creating.',
+      );
+      return;
+    }
+    const routing = recipientRoutingMode();
+    const targetCountMatches = Number(state.view.target_count) === state.targets.length;
+    const recipientCount = Number(state.view.surplus_recipient_count);
+    const recipientCountMatches = recipientCount === state.surplusRecipients.length;
+    const modeMatches = routing
+      ? state.surplusRecipients.length >= 1
+        && state.surplusRecipients.length <= MAX_RECIPIENTS
+        && recipientCount >= 1
+      : state.surplusRecipients.length === 0 && recipientCount === 0;
+    if (!targetCountMatches || !recipientCountMatches || !modeMatches) {
+      rejectStaleCheckedConfiguration(
+        'The surplus mode changed. Check the Relay configuration again before creating.',
+      );
+      return;
+    }
+    const notifyArgs = setupArgs();
     if (state.requiredBalanceOverride !== null
       && state.balanceE8s !== null
       && state.balanceE8s >= state.requiredBalanceOverride) {
@@ -849,10 +1258,26 @@ export function createRelaySetupController({
     state.creating = true;
     state.notifyResult = null;
     render();
+    const preNotificationStaleMessage = 'The Relay configuration changed. Check it again before creating.';
+    const postNotificationStaleMessage = 'The form changed while the Relay request was being processed. Check the configuration again to see its current state.';
+    let notificationStarted = false;
+    let notificationResolved = false;
     try {
       const { historian } = await historianBundle();
-      const result = await historian.notify_relay_configuration(setupArgs());
-      if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
+      if (!ensureConfigurationContinuationIsCurrent(
+        expectedConfiguration,
+        requestGeneration,
+        preNotificationStaleMessage,
+      )) return;
+      const notifyPromise = historian.notify_relay_configuration(notifyArgs);
+      notificationStarted = true;
+      const result = await notifyPromise;
+      notificationResolved = true;
+      if (!ensureConfigurationContinuationIsCurrent(
+        expectedConfiguration,
+        requestGeneration,
+        postNotificationStaleMessage,
+      )) return;
       state.notifyResult = result;
       state.creating = false;
       const notifyKind = variantName(result);
@@ -861,11 +1286,38 @@ export function createRelaySetupController({
       } else if (notifyKind === 'Active' || notifyKind === 'ManualRecoveryRequired') {
         state.requiredBalanceOverride = null;
       }
-      await refresh({ expectedConfiguration, requestGeneration });
-      if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
+      await refresh({
+        expectedConfiguration,
+        requestGeneration,
+        staleMessage: postNotificationStaleMessage,
+      });
+      if (!ensureConfigurationContinuationIsCurrent(
+        expectedConfiguration,
+        requestGeneration,
+        postNotificationStaleMessage,
+      )) return;
       if (notifyKind === 'Active' || notifyKind === 'ManualRecoveryRequired') stopPolling();
     } catch (error) {
-      if (!configurationStillCurrent(expectedConfiguration, requestGeneration)) return;
+      const staleMessage = notificationStarted
+        ? postNotificationStaleMessage
+        : preNotificationStaleMessage;
+      if (!ensureConfigurationContinuationIsCurrent(
+        expectedConfiguration,
+        requestGeneration,
+        staleMessage,
+      )) return;
+      if (notificationResolved) {
+        rejectStaleCheckedConfiguration(
+          'The Relay request returned, but its current state could not be refreshed. Check the configuration again.',
+        );
+        return;
+      }
+      if (notificationStarted) {
+        rejectStaleCheckedConfiguration(
+          'The Relay request may have been processed, but its current state could not be confirmed. Check the configuration again.',
+        );
+        return;
+      }
       state.creating = false;
       state.error = normalizeError(error);
       render();
@@ -889,15 +1341,28 @@ export function createRelaySetupController({
       if (list && list.dataset.bound !== 'true') {
         list.dataset.bound = 'true';
         list.addEventListener('input', (event) => {
-          if (!event.target?.matches?.(spec.inputSelector)) return;
+          const destinationInput = event.target?.matches?.(spec.inputSelector);
+          const memoInput = kind === 'recipient'
+            && event.target?.matches?.(spec.memoInputSelector);
+          if (!destinationInput && !memoInput) return;
+          if (memoInput) {
+            const row = event.target.closest?.(spec.rowSelector);
+            setMemoConversionNotice(row);
+          }
           handleVisibleConfigurationChange();
         });
         if (kind === 'recipient') {
           list.addEventListener('change', (event) => {
-            if (!event.target?.matches?.(spec.typeSelector)) return;
             const row = event.target.closest?.(spec.rowSelector);
             if (!row) return;
-            applyRecipientType(row);
+            if (event.target?.matches?.(spec.typeSelector)) applyRecipientType(row);
+            else if (event.target?.matches?.(spec.memoModeSelector)) {
+              // Every representation interaction invalidates authoritative async state,
+              // including an exact conversion and a refused conversion.
+              invalidateCurrentConfiguration();
+              tryApplyRecipientMemoModeChange(row);
+            }
+            else return;
             updateListRows(kind);
             handleVisibleConfigurationChange({ includeIncomplete: true });
           });
@@ -916,6 +1381,19 @@ export function createRelaySetupController({
         addButton.addEventListener('click', () => addListField(kind));
       }
     }
+    for (const id of ['relay-setup-mode-routing', 'relay-setup-mode-all-cycles']) {
+      const radio = document.getElementById(id);
+      if (!radio || radio.dataset.bound === 'true') continue;
+      radio.dataset.bound = 'true';
+      radio.addEventListener('change', () => {
+        if (id === 'relay-setup-mode-routing' && radio.checked && listRows('recipient').length === 0) {
+          addListField('recipient');
+        }
+        updateSurplusModePresentation();
+        handleVisibleConfigurationChange({ includeIncomplete: true });
+      });
+    }
+    updateSurplusModePresentation();
     validateVisibleConfiguration();
     const form = document.getElementById('relay-setup-form');
     if (form && form.dataset.bound !== 'true') {

@@ -1,5 +1,6 @@
 use crate::api::RelaySurplusRecipient;
 use candid::Principal;
+use jupiter_memo_policy::MAX_RELAY_SURPLUS_MEMO_BYTES;
 use std::cmp::Ordering;
 
 pub(crate) const MAX_SURPLUS_RECIPIENTS: usize = 5;
@@ -8,11 +9,35 @@ const MAX_STRUCTURAL_SURPLUS_RECIPIENTS: usize = u8::MAX as usize;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CanonicalSurplusRecipientSet(Vec<RelaySurplusRecipient>);
 
+fn destination_cmp(left: &RelaySurplusRecipient, right: &RelaySurplusRecipient) -> Ordering {
+    match (left, right) {
+        (
+            RelaySurplusRecipient::Principal {
+                principal: left, ..
+            },
+            RelaySurplusRecipient::Principal {
+                principal: right, ..
+            },
+        ) => left.as_slice().cmp(right.as_slice()),
+        (RelaySurplusRecipient::Principal { .. }, RelaySurplusRecipient::Neuron { .. }) => {
+            Ordering::Less
+        }
+        (RelaySurplusRecipient::Neuron { .. }, RelaySurplusRecipient::Principal { .. }) => {
+            Ordering::Greater
+        }
+        (
+            RelaySurplusRecipient::Neuron {
+                neuron_id: left, ..
+            },
+            RelaySurplusRecipient::Neuron {
+                neuron_id: right, ..
+            },
+        ) => left.cmp(right),
+    }
+}
+
 impl CanonicalSurplusRecipientSet {
     pub(crate) fn canonicalize(mut recipients: Vec<RelaySurplusRecipient>) -> Result<Self, String> {
-        if recipients.is_empty() {
-            return Err("at least one surplus recipient is required".to_string());
-        }
         if recipients.len() > MAX_STRUCTURAL_SURPLUS_RECIPIENTS {
             return Err(format!(
                 "at most {MAX_STRUCTURAL_SURPLUS_RECIPIENTS} surplus recipients can be canonicalized"
@@ -20,7 +45,7 @@ impl CanonicalSurplusRecipientSet {
         }
         for recipient in &recipients {
             match recipient {
-                RelaySurplusRecipient::Principal(principal) => {
+                RelaySurplusRecipient::Principal { principal, memo } => {
                     if *principal == Principal::anonymous() {
                         return Err("surplus recipient principal must not be anonymous".to_string());
                     }
@@ -30,29 +55,33 @@ impl CanonicalSurplusRecipientSet {
                                 .to_string(),
                         );
                     }
+                    if memo.len() > MAX_RELAY_SURPLUS_MEMO_BYTES {
+                        return Err(format!(
+                            "surplus recipient principal {} memo is {} bytes; maximum is {MAX_RELAY_SURPLUS_MEMO_BYTES}",
+                            principal.to_text(),
+                            memo.len()
+                        ));
+                    }
                 }
-                RelaySurplusRecipient::Neuron(0) => {
+                RelaySurplusRecipient::Neuron { neuron_id: 0, .. } => {
                     return Err("surplus recipient neuron ID must be greater than zero".to_string());
                 }
-                RelaySurplusRecipient::Neuron(_) => {}
+                RelaySurplusRecipient::Neuron { neuron_id, memo } => {
+                    if memo.len() > MAX_RELAY_SURPLUS_MEMO_BYTES {
+                        return Err(format!(
+                            "surplus recipient neuron {neuron_id} memo is {} bytes; maximum is {MAX_RELAY_SURPLUS_MEMO_BYTES}",
+                            memo.len()
+                        ));
+                    }
+                }
             }
         }
-        recipients.sort_unstable_by(|left, right| match (left, right) {
-            (RelaySurplusRecipient::Principal(left), RelaySurplusRecipient::Principal(right)) => {
-                left.as_slice().cmp(right.as_slice())
-            }
-            (RelaySurplusRecipient::Principal(_), RelaySurplusRecipient::Neuron(_)) => {
-                Ordering::Less
-            }
-            (RelaySurplusRecipient::Neuron(_), RelaySurplusRecipient::Principal(_)) => {
-                Ordering::Greater
-            }
-            (RelaySurplusRecipient::Neuron(left), RelaySurplusRecipient::Neuron(right)) => {
-                left.cmp(right)
-            }
-        });
-        if recipients.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err("duplicate surplus recipients are not allowed".to_string());
+        recipients.sort_unstable_by(destination_cmp);
+        if recipients
+            .windows(2)
+            .any(|pair| destination_cmp(&pair[0], &pair[1]) == Ordering::Equal)
+        {
+            return Err("duplicate surplus recipient destinations are not allowed".to_string());
         }
         Ok(Self(recipients))
     }
@@ -83,88 +112,142 @@ mod tests {
         Principal::from_slice(&[0x7f, byte])
     }
 
+    fn principal_recipient(byte: u8, memo: Vec<u8>) -> RelaySurplusRecipient {
+        RelaySurplusRecipient::Principal {
+            principal: principal(byte),
+            memo,
+        }
+    }
+
+    fn neuron_recipient(neuron_id: u64, memo: Vec<u8>) -> RelaySurplusRecipient {
+        RelaySurplusRecipient::Neuron { neuron_id, memo }
+    }
+
     #[test]
-    fn validates_recipient_policy_and_canonical_order() {
-        assert!(CanonicalSurplusRecipientSet::canonicalize(Vec::new()).is_err());
+    fn validates_recipient_cardinality_and_destinations() {
+        let zero = CanonicalSurplusRecipientSet::canonicalize(Vec::new()).unwrap();
+        assert!(zero.validate_for_new_setup().is_ok());
         assert!(CanonicalSurplusRecipientSet::canonicalize(vec![
-            RelaySurplusRecipient::Principal(Principal::anonymous())
+            RelaySurplusRecipient::Principal {
+                principal: Principal::anonymous(),
+                memo: vec![],
+            }
         ])
         .is_err());
         assert!(CanonicalSurplusRecipientSet::canonicalize(vec![
-            RelaySurplusRecipient::Principal(Principal::management_canister())
-        ])
-        .is_err());
-        assert!(CanonicalSurplusRecipientSet::canonicalize(vec![
-            RelaySurplusRecipient::Principal(principal(1)),
-            RelaySurplusRecipient::Principal(principal(1))
+            RelaySurplusRecipient::Principal {
+                principal: Principal::management_canister(),
+                memo: vec![],
+            }
         ])
         .is_err());
         assert!(
-            CanonicalSurplusRecipientSet::canonicalize(vec![RelaySurplusRecipient::Neuron(0)])
-                .is_err()
+            CanonicalSurplusRecipientSet::canonicalize(vec![neuron_recipient(0, vec![])]).is_err()
         );
-        assert!(CanonicalSurplusRecipientSet::canonicalize(vec![
-            RelaySurplusRecipient::Neuron(42),
-            RelaySurplusRecipient::Neuron(42)
-        ])
-        .is_err());
-
-        let recipients = CanonicalSurplusRecipientSet::canonicalize(vec![
-            RelaySurplusRecipient::Neuron(u64::MAX),
-            RelaySurplusRecipient::Principal(principal(2)),
-            RelaySurplusRecipient::Neuron(1),
-            RelaySurplusRecipient::Principal(principal(1)),
-        ])
-        .unwrap();
-        assert_eq!(
-            recipients.recipients(),
-            &[
-                RelaySurplusRecipient::Principal(principal(1)),
-                RelaySurplusRecipient::Principal(principal(2)),
-                RelaySurplusRecipient::Neuron(1),
-                RelaySurplusRecipient::Neuron(u64::MAX),
-            ]
+        assert!(
+            CanonicalSurplusRecipientSet::canonicalize(vec![principal_recipient(1, vec![])])
+                .unwrap()
+                .validate_for_new_setup()
+                .is_ok()
         );
-        assert!(recipients.validate_for_new_setup().is_ok());
+        assert!(
+            CanonicalSurplusRecipientSet::canonicalize(vec![neuron_recipient(1, vec![])])
+                .unwrap()
+                .validate_for_new_setup()
+                .is_ok()
+        );
 
         let five = CanonicalSurplusRecipientSet::canonicalize(vec![
-            RelaySurplusRecipient::Principal(principal(1)),
-            RelaySurplusRecipient::Principal(principal(2)),
-            RelaySurplusRecipient::Principal(principal(3)),
-            RelaySurplusRecipient::Neuron(1),
-            RelaySurplusRecipient::Neuron(u64::MAX),
+            principal_recipient(1, vec![]),
+            principal_recipient(2, vec![]),
+            principal_recipient(3, vec![]),
+            neuron_recipient(1, vec![]),
+            neuron_recipient(u64::MAX, vec![]),
         ])
         .unwrap();
         assert!(five.validate_for_new_setup().is_ok());
         let six = CanonicalSurplusRecipientSet::canonicalize(
-            (1..=6).map(RelaySurplusRecipient::Neuron).collect(),
+            (1..=6).map(|id| neuron_recipient(id, vec![])).collect(),
         )
         .unwrap();
         assert!(six.validate_for_new_setup().is_err());
     }
 
     #[test]
-    fn accepts_each_recipient_type_at_structural_u64_bounds() {
-        let principal_only =
-            CanonicalSurplusRecipientSet::canonicalize(vec![RelaySurplusRecipient::Principal(
-                principal(1),
-            )])
-            .unwrap();
-        assert_eq!(
-            principal_only.recipients(),
-            &[RelaySurplusRecipient::Principal(principal(1))]
-        );
-
-        for neuron_id in [1, u64::MAX] {
-            let neuron_only =
-                CanonicalSurplusRecipientSet::canonicalize(vec![RelaySurplusRecipient::Neuron(
-                    neuron_id,
+    fn validates_exact_byte_memo_bounds_for_both_recipient_types() {
+        for memo in [
+            vec![],
+            vec![0],
+            vec![b'a'; MAX_RELAY_SURPLUS_MEMO_BYTES],
+            vec![0x00, 0xff, 0x80],
+        ] {
+            assert!(
+                CanonicalSurplusRecipientSet::canonicalize(vec![principal_recipient(
+                    1,
+                    memo.clone()
                 )])
-                .unwrap();
-            assert_eq!(
-                neuron_only.recipients(),
-                &[RelaySurplusRecipient::Neuron(neuron_id)]
+                .is_ok()
+            );
+            assert!(
+                CanonicalSurplusRecipientSet::canonicalize(vec![neuron_recipient(1, memo)]).is_ok()
             );
         }
+        for recipient in [
+            principal_recipient(1, vec![0; MAX_RELAY_SURPLUS_MEMO_BYTES + 1]),
+            neuron_recipient(1, vec![0; MAX_RELAY_SURPLUS_MEMO_BYTES + 1]),
+        ] {
+            let error = CanonicalSurplusRecipientSet::canonicalize(vec![recipient]).unwrap_err();
+            assert!(error.contains("33 bytes"));
+        }
+    }
+
+    #[test]
+    fn duplicate_identity_ignores_memo_and_types_are_separate_namespaces() {
+        for duplicates in [
+            vec![
+                principal_recipient(1, vec![]),
+                principal_recipient(1, vec![]),
+            ],
+            vec![
+                principal_recipient(1, vec![1]),
+                principal_recipient(1, vec![2]),
+            ],
+            vec![neuron_recipient(42, vec![]), neuron_recipient(42, vec![])],
+            vec![neuron_recipient(42, vec![1]), neuron_recipient(42, vec![2])],
+        ] {
+            assert!(CanonicalSurplusRecipientSet::canonicalize(duplicates).is_err());
+        }
+        assert!(CanonicalSurplusRecipientSet::canonicalize(vec![
+            principal_recipient(1, vec![]),
+            neuron_recipient(1, vec![]),
+        ])
+        .is_ok());
+    }
+
+    #[test]
+    fn canonical_order_uses_destination_only_and_keeps_memos_attached() {
+        let expected = vec![
+            principal_recipient(1, vec![0xff]),
+            principal_recipient(2, vec![0x00]),
+            neuron_recipient(1, vec![0xaa]),
+            neuron_recipient(u64::MAX, vec![0x55]),
+        ];
+        let mut reversed = expected.clone();
+        reversed.reverse();
+        let canonical = CanonicalSurplusRecipientSet::canonicalize(reversed).unwrap();
+        assert_eq!(canonical.recipients(), expected);
+
+        let memo_changed = CanonicalSurplusRecipientSet::canonicalize(vec![
+            principal_recipient(2, vec![0xff]),
+            principal_recipient(1, vec![0x00]),
+        ])
+        .unwrap();
+        assert_eq!(
+            memo_changed.recipients(),
+            &[
+                principal_recipient(1, vec![0x00]),
+                principal_recipient(2, vec![0xff])
+            ]
+        );
     }
 }

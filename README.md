@@ -4,7 +4,7 @@
 
 ![Jupiter Faucet](canisters/frontend/public/og/preview-20260520.jpg)
 
-<img src="/canisters/frontend/public/perpetual canister topups.svg">
+<img src="/canisters/frontend/public/perpetual-canister-topups.svg">
 
 The suite turns durable ICP and NNS maturity into durable cycles support. A controlled NNS neuron produces recurring maturity, the disburser stages that maturity as ICP, the faucet allocates the base ICP flow to memo-declared targets, and the relay helps keep the suite's own canisters funded before routing surplus ICP to configured neuron recipients. Historian and frontend canisters provide public observability, while small recovery/support canisters keep the value-moving path narrow and auditable.
 
@@ -21,7 +21,7 @@ The operational path is intentionally split across small canisters:
 - [`canisters/frontend`](canisters/frontend) serves the certified public site and browser dashboard.
 - [`canisters/lifeline`](canisters/lifeline) and [`canisters/sns-rewards`](canisters/sns-rewards) provide recovery/support and reward-recipient roles.
 
-<img src="/canisters/frontend/public/jupiter faucet overview.svg">
+<img src="/canisters/frontend/public/jupiter-faucet-overview.svg">
 
 At a high level, a participant declares a faucet target by transferring ICP to the configured staking account and placing a supported ASCII directive in `icrc1_memo`. Plain declared canister ID text is the primary cycles top-up form. The faucet also supports `canister_id.memo` for raw ICP routing and decimal NNS neuron IDs, optionally with `.memo`, for neuron staking-account top-ups. The exact eligibility, memo, fee, retry, and rescue rules live in the component READMEs:
 
@@ -31,7 +31,7 @@ At a high level, a participant declares a faucet target by transferring ICP to t
 
 The value-moving canisters expose little or no public production API. Public verification and dashboard data are concentrated in [`canisters/historian`](canisters/historian), [`canisters/frontend`](canisters/frontend), public logs, source code, Candid files, and reproducible build artifacts.
 
-Historian's self-service Relay factory accepts an immutable configuration of 1–20 managed target canisters and 1–5 typed surplus recipients. Each recipient is either a Principal, paid at `Account { owner: principal, subaccount: None }`, or a public NNS neuron ID, paid at `Account { owner: NNS Governance, subaccount: resolved staking subaccount }`; after a successful neuron transfer, Relay requests `claim_or_refresh`. Canonical target and recipient order jointly determine the deterministic setup address: input order does not matter, while changing a recipient type or value creates a different configuration. Creation pricing remains target-based. Equal surplus allocation runs only after top-up and safety gates, with at least `recipient_count × (1 ICP + ledger fee)` of distributable surplus required. Self-service supports no weights, custom memos, custom subaccounts, or automatic IO recipient. See [Relay setup and recovery](docs/relay-setup-recovery.md).
+Historian's self-service Relay factory accepts an immutable configuration of 1–20 managed target canisters and either zero or 1–5 typed surplus recipients. Each recipient is either a Principal, paid at `Account { owner: principal, subaccount: None }`, or a public NNS neuron ID, paid at `Account { owner: NNS Governance, subaccount: resolved staking subaccount }`; after a successful neuron transfer, Relay requests `claim_or_refresh`. Every recipient has an exact-byte memo of 0–32 bytes. Hexadecimal is authoritative for arbitrary bytes; Text entry is encoded exactly as UTF-8, and a mode switch is accepted only when the browser field round-trips to the same bytes. If Text cannot represent the bytes exactly, the frontend retains valid Hexadecimal mode without blocking submission. Canonical summaries always show exact lowercase hexadecimal and suppress optional text containing invisible, control, format, bidirectional, line-separator, or paragraph-separator characters. An empty memo means no outgoing Ledger memo. One explicitly framed canonical encoder determines the authoritative configuration hash and setup account for every configuration, including empty memos and zero recipients. Input order does not matter, while changing a recipient type, destination, or memo changes the immutable configuration. Zero recipients is represented by the empty recipient vector and selects Relay's all-cycles allocator, while routing mode still requires at least one recipient. All-cycles mode produces no raw-ICP surplus transfer. Creation pricing remains target-based, and no weights, custom subaccounts, or automatic IO recipient are supported. See [Relay setup and recovery](docs/relay-setup-recovery.md).
 
 Every Relay also has intrinsic fixed splitter subaccounts 10–90. Funding splitter `P` routes a pinned gross `P%` budget to Relay's default account and the complement to its existing subaccount-1 Faucet staging account, with one ledger fee per leg. The two-leg operation is durably journaled before transfer and adds no install argument or public method. See the [Relay README](canisters/relay/README.md#workflow-4-fixed-splitter-subaccounts-1090).
 

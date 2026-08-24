@@ -4,7 +4,7 @@ Production deployment is a governance-controlled operation. Once Jupiter Faucet 
 
 Use `icp deploy --environment ic` for ordinary production orchestration, and use canonical Docker artifacts when public reproducibility evidence matters.
 
-Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the canonical production historian deploy artifact is the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`. Self-service Relays use the canonical daily cadence with canonical 1–20 targets, automatic probe routing, and 1–5 submitted typed recipients. Principals are paid equally at default ICP accounts; public NNS neuron IDs are paid at resolved Governance staking accounts, and Relay requests `claim_or_refresh` after a successful neuron transfer. Pricing remains target-based; no IO recipient is added automatically.
+Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the canonical production historian deploy artifact is the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`. Self-service Relays use the canonical daily cadence with canonical 1–20 targets, automatic probe routing, and either zero or 1–5 submitted typed recipients carrying exact 0–32-byte memos. Zero recipients selects all-cycles mode; otherwise Principals are paid equally at default ICP accounts and public NNS neuron IDs at resolved Governance staking accounts. Pricing remains target-based; no IO recipient is added automatically.
 
 Existing production Historian must be upgraded in place. Reinstall destroys all Historian stable history and is prohibited for the existing production canister because it clears commitment histories, cycles histories, tracking metadata, active self-service hash mappings, setup progress, index cursors, aggregates, and other durable state. mainnet-install-args.did is for a brand-new Historian installation only; `canisters/historian/mainnet-install-args.did` must not be passed to an existing Historian upgrade.
 
@@ -78,13 +78,11 @@ Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
 
 ## Historian upgrade audit checklist
 
-Stopping `jupiter_historian` is the executable self-service factory pause and authoritative call drain. Record public evidence, stop it, and wait for `Stopped` before snapshot and in-place upgrade. Keep it stopped while deploying the matching frontend because `get_relay_configuration_view` and `notify_relay_configuration` intentionally replace the old method names and mixed versions fail closed. Start Historian only after both upgrades succeed. There is no runtime factory-disable update method.
+Stopping `jupiter_historian` is the executable self-service factory pause and authoritative call drain. Record public evidence, stop it, and wait for `Stopped` before snapshot and in-place upgrade. Keep it stopped while deploying the matching frontend because the current Historian and frontend Candid declarations must agree. Start Historian only after both upgrades succeed. There is no runtime factory-disable update method.
 
-The earlier pre-launch memory-24 cutover still runs for direct upgrades from versions predating memory 25. It validates the retired registry, clears memory 24 only after that validation, and initializes memory 25 empty.
+This release has a clean-slate precondition: public counts, every `RelayInstance` and `RelayTarget` page, known operational records, known frontend launch status, and an offline inspection of the downloaded Historian snapshot when tooling permits must show no self-service Relay, in-progress setup, manual-recovery entry, or known funded setup account. The configured canonical Relay and its configured targets are expected and must be distinguished from self-service tracking. If contrary evidence appears, stop the release and investigate; do not reinstall Historian or add an ad hoc compatibility path.
 
-Memory 25 is now retired target-set-hash state and memory 26 is the definitive full-configuration map. Initialization markers are checked before either map is opened. The memory-26 cutover requires memory 25 to have zero entries; any entry traps without clearing, decoding, or migrating it. The confirmed pre-launch absence of self-service creations permits this rejection policy. Old target-only hashes and setup addresses are intentionally not reused.
-
-No cutover call is made to the Ledger, Index, CMC, or management canister. ICP sent to obsolete target-only setup subaccounts is outside this migration and is not automatically discovered or refunded. All unrelated Historian stable state is preserved, so upgrade in place remains mandatory. If either gate fails, restore the snapshot.
+Memory 26 is the sole current self-service Relay setup map. All unrelated Historian stable state is preserved, so upgrade in place remains mandatory. If a precondition or audit fails, restore the maintenance-window snapshot.
 
 After canonical artifacts exist, run `./tools/scripts/preflight-historian-production-upgrade` for a read-only artifact and upgrade-path preflight before the maintenance window.
 
@@ -98,7 +96,7 @@ Record pre-upgrade query results before upgrading `jupiter_historian`:
 
 The production Historian does not expose `debug_api`, so debug setup-entry listing is not a production preflight mechanism. Before later upgrades, record active mappings through known exact full configurations with `get_relay_configuration_view`; production cannot enumerate every configuration hash.
 
-Before the maintenance window, confirm the live production Historian is on a supported direct-upgrade path. The current release retains the V1 stable decoder because the repository does not contain sufficient production evidence to raise the minimum supported upgrade version. Removing the decoder requires a separately reviewed change that records the production compatibility evidence, snapshot policy, and new minimum supported direct-upgrade version. Rollback procedures must use the snapshot created during the maintenance window; do not rely on restoring a pre-migration snapshot after upgrading to current code.
+Before the maintenance window, confirm the live production Historian is on the repository's supported direct-upgrade path. Rollback procedures must use the snapshot created during that same maintenance window.
 
 Maintenance sequence tested with `icp 0.2.6`:
 
@@ -130,24 +128,24 @@ After upgrade, verify:
 - Module hash matches the canonical `release-artifacts/jupiter_historian.wasm.gz` package hash.
 - Controllers are unchanged.
 - Counts, cursors, totals, recent feeds, and historical commitment/cycles samples are preserved.
-- Retired memory 25 contains zero entries and memory 26 preserves or initializes the definitive full-configuration map as appropriate.
+- Current entries in the memory-26 Relay setup map preserve their exact keys and states.
 - Known exact full configurations still return their original active Relay mappings.
 - Automatic cycles probing is active.
 - `RelayTarget` and `RelayInstance` tracking reasons and counts are preserved independently.
 - New cycles samples append to existing histories.
 - Any setup interrupted after an irreversible spend is `ManualRecoveryRequired`; interrupted `Reserved`/`ProbingTargets` entries are removed, while existing `Active` and `ManualRecoveryRequired` entries are preserved.
 
-Deploy the matching full-configuration frontend while Historian remains stopped after its successful upgrade. Start Historian only after both deployments succeed.
+Deploy the matching frontend while Historian remains stopped after its successful upgrade. Start Historian only after both deployments succeed.
 
-The pre-launch cutover sequence is:
+The maintenance sequence is:
 
 1. Record all pre-upgrade public query evidence while Historian is still running.
 2. Stop Historian and wait until its status is `Stopped`.
 3. Create and download a snapshot.
-4. Upgrade Historian in place; do not reinstall it. The one-time retired-memory gate must accept the state.
-5. While Historian remains stopped, deploy the matching full-configuration frontend.
+4. Upgrade Historian in place; do not reinstall it.
+5. While Historian remains stopped, deploy the matching frontend.
 6. Start Historian only after both deployments succeed.
-7. Verify preserved public state and the renamed setup API with both canonical vectors.
+7. Verify preserved public state and the current setup API with both canonical vectors.
 8. Verify order independence and that the same targets with a recipient change use a different account and Relay.
 9. Verify each child module hash, running status, Fiduciary-only controller set, and independent tracking counts.
 10. Retain the snapshot until acceptance is complete.

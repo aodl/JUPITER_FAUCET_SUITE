@@ -42,10 +42,10 @@ EXPECTED_HISTORIAN_RELAY_INITIAL_CYCLES = 2_000_000_000_000
 EXPECTED_HISTORIAN_RELAY_CYCLE_SAFETY_MARGIN_E8S = 5_000_000
 EXPECTED_HISTORIAN_RELAY_MIN_SUBACCOUNT_ONE_SEED_E8S = 100_020_000
 REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256 = (
-    "f6b60d9154d4fa4b576937a69609f7106e1d7a9e76d62cf28aa97c18795d70a0"
+    "9e51bc7ce1a56040a5f4df51a953a8c8ee9f37a3007ee20b77cb433c7a009c95"
 )
 REVIEWED_HISTORIAN_RELAY_INSTALL_PAYLOAD_SHA256 = (
-    "895c5a1322a777dac2c13efc6e42c3cae7f113458381231d24b56f5ab7e84e24"
+    "d2770e780bf5fc4f355b4e085e0f9014052f3e3fe69393365e6525da60ffaf02"
 )
 EXPECTED_RELAY_MANAGED = {
     PROD["jupiter_disburser"],
@@ -827,13 +827,6 @@ def validate_historian() -> int:
     interval = extract_nat64(text, "self_service_relay_interval_seconds", path)
     if setup_min != EXPECTED_HISTORIAN_RELAY_SETUP_MIN_E8S:
         fail(f"{path} relay_setup_min_e8s={setup_min}; expected {EXPECTED_HISTORIAN_RELAY_SETUP_MIN_E8S}")
-    for retired_field in (
-        "relay_setup_dust_e8s",
-        "relay_setup_refund_cooldown_seconds",
-        "self_service_relay_max_transfers_per_tick",
-    ):
-        if re.search(rf"\b{re.escape(retired_field)}\s*=", text):
-            fail(f"{path} retains retired Relay setup field {retired_field}")
     if initial_cycles != EXPECTED_HISTORIAN_RELAY_INITIAL_CYCLES:
         fail(f"{path} relay_initial_cycles={initial_cycles}; expected {EXPECTED_HISTORIAN_RELAY_INITIAL_CYCLES}")
     if safety != EXPECTED_HISTORIAN_RELAY_CYCLE_SAFETY_MARGIN_E8S:
@@ -1027,31 +1020,20 @@ def validate_relay_setup_recovery_runbook() -> None:
         fail(f"{path} must document the public notify cycle-spend monitoring risk")
 
 
-def validate_reproducible_builds_relay_cutover() -> None:
+def validate_reproducible_builds_relay_setup_state() -> None:
     path = REPO_ROOT / "docs" / "operations" / "reproducible-builds.md"
     text = path.read_text()
-    lower = text.lower()
-    obsolete_assertions = [
-        "memory 25 is new",
-        "memory id 25 contains the single definitive setup map",
-        "the one-time retired-memory gate must accept only empty retired state or the complete configured canonical relay projection",
-    ]
-    for assertion in obsolete_assertions:
-        if assertion in lower:
-            fail(f"{path} contains obsolete Relay cutover assertion {assertion!r}")
     required = [
-        "Memory 24 is the earlier retired pre-launch setup-job area",
-        "memory 25 is the retired target-set-hash setup map",
-        "memory 26 is the definitive full-configuration setup map",
-        "A direct upgrade from a version predating memory 25 first performs the earlier retired-registry/memory-24 validation",
-        "requires memory 25 to contain zero entries",
-        "Any memory-25 entry fails closed",
-        "without being cleared, decoded into the new identity, or migrated",
-        "old target-only setup hashes and addresses are not consulted or reused",
+        "Memory 26 contains the sole current self-service Relay setup map",
+        "32-byte canonical configuration hash",
+        "current `RelaySetupEntry`",
+        "Reserved`/`ProbingTargets` entries",
+        "ManualRecoveryRequired",
+        "Reconciliation makes no external call",
     ]
     for phrase in required:
         if phrase not in text:
-            fail(f"{path} must document the current Relay cutover rule {phrase!r}")
+            fail(f"{path} must document current Relay setup upgrade behavior {phrase!r}")
 
 
 def extract_vec_principals(text: str, field: str, path: Path, *, optional: bool = False) -> list[str]:
@@ -1571,7 +1553,7 @@ def main() -> None:
     validate_historian_production_upgrade_preflight()
     historian_min_tx_e8s = validate_historian()
     validate_relay_setup_recovery_runbook()
-    validate_reproducible_builds_relay_cutover()
+    validate_reproducible_builds_relay_setup_state()
     validate_sns_rewards()
     validate_relay()
     validate_release_build_script_uses_release_dids()

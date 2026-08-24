@@ -812,29 +812,16 @@ pub(crate) fn post_upgrade_with_timestamp(args: Option<UpgradeArgs>, now_secs: u
 }
 
 pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs>, _now_secs: u64) {
-    // Reading initialization flags must precede opening either stable map because StableBTreeMap
-    // initialization writes its header and would otherwise erase the distinction between an old
-    // deployment and an already-completed cutover.
-    let first_target_set_relay_setup_cutover =
-        !state::retired_target_set_relay_setup_entries_memory_initialized();
-    let first_full_configuration_relay_setup_cutover =
-        !state::relay_setup_entries_memory_initialized();
     state::init_stable_storage();
     let mut st: State = state::restore_state_from_stable()
         .expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
-    if first_target_set_relay_setup_cutover {
-        state::validate_retired_relay_factory_state(&st.config);
-    }
-    if first_full_configuration_relay_setup_cutover {
-        state::validate_full_configuration_relay_setup_cutover();
-    }
     let registry_principals = st.canister_tracking_reasons.keys().copied().collect();
     // Persist only small upgrade-normalized sections. Commitment/cycles histories
     // are restored lazily from stable entry/index maps, so rewriting all durable
     // sections here would clobber those bulk histories with an intentionally sparse
-    // heap view. Retired Relay memories are validated above and never rewritten.
+    // heap view.
     state::set_state_after_upgrade(st, &registry_principals);
     crate::relay_setup::reconcile_interrupted_creating_entries_after_upgrade();
 }

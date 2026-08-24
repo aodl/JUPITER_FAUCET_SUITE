@@ -23,9 +23,6 @@ mod tests {
         with_raw_icp_commitment_entry_map(|map| map.clear_new());
         with_neuron_commitment_history_index_map(|map| map.clear_new());
         with_neuron_commitment_entry_map(|map| map.clear_new());
-        with_retired_relay_registry_map(|map| map.clear_new());
-        with_retired_relay_setup_jobs_map(|map| map.clear_new());
-        with_retired_target_set_relay_setup_entries_map(|map| map.clear_new());
         with_relay_setup_entries_map(|map| map.clear_new());
         PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(0));
         clear_persistence_dirty();
@@ -37,13 +34,9 @@ mod tests {
     }
 
     #[test]
-    fn relay_setup_memory_headers_are_separate_cutover_markers() {
-        assert!(!retired_target_set_relay_setup_entries_memory_initialized());
-        assert!(!relay_setup_entries_memory_initialized());
-        with_retired_target_set_relay_setup_entries_map(|map| assert!(map.is_empty()));
-        assert!(retired_target_set_relay_setup_entries_memory_initialized());
+    fn fresh_relay_setup_map_is_empty() {
+        reset_test_storage();
         with_relay_setup_entries_map(|map| assert!(map.is_empty()));
-        assert!(relay_setup_entries_memory_initialized());
     }
 
     fn sample_config() -> Config {
@@ -89,6 +82,88 @@ mod tests {
         }
     }
 
+    #[derive(CandidType, Serialize)]
+    struct StableConfigWithUnknownField {
+        staking_account: Account,
+        output_source_account: Option<Account>,
+        output_account: Option<Account>,
+        rewards_account: Option<Account>,
+        ledger_canister_id: Principal,
+        index_canister_id: Principal,
+        cmc_canister_id: Option<Principal>,
+        faucet_canister_id: Option<Principal>,
+        sns_wasm_canister_id: Principal,
+        xrc_canister_id: Option<Principal>,
+        enable_sns_tracking: bool,
+        scan_interval_seconds: u64,
+        cycles_interval_seconds: u64,
+        min_tx_e8s: u64,
+        max_cycles_entries_per_canister: u32,
+        max_commitment_entries_per_canister: u32,
+        max_index_pages_per_tick: u32,
+        max_canisters_per_cycles_tick: u32,
+        relay_factory_enabled: Option<bool>,
+        relay_setup_min_e8s: Option<u64>,
+        relay_initial_cycles: Option<u128>,
+        relay_cycle_safety_margin_e8s: Option<u64>,
+        relay_min_subaccount_one_seed_e8s: Option<u64>,
+        self_service_relay_interval_seconds: Option<u64>,
+        canonical_relay_canister_id: Option<Option<Principal>>,
+        canonical_relay_targets: Option<Vec<Principal>>,
+        extra_unknown_field: Option<u64>,
+    }
+
+    impl From<StableConfig> for StableConfigWithUnknownField {
+        fn from(value: StableConfig) -> Self {
+            Self {
+                staking_account: value.staking_account,
+                output_source_account: value.output_source_account,
+                output_account: value.output_account,
+                rewards_account: value.rewards_account,
+                ledger_canister_id: value.ledger_canister_id,
+                index_canister_id: value.index_canister_id,
+                cmc_canister_id: value.cmc_canister_id,
+                faucet_canister_id: value.faucet_canister_id,
+                sns_wasm_canister_id: value.sns_wasm_canister_id,
+                xrc_canister_id: value.xrc_canister_id,
+                enable_sns_tracking: value.enable_sns_tracking,
+                scan_interval_seconds: value.scan_interval_seconds,
+                cycles_interval_seconds: value.cycles_interval_seconds,
+                min_tx_e8s: value.min_tx_e8s,
+                max_cycles_entries_per_canister: value.max_cycles_entries_per_canister,
+                max_commitment_entries_per_canister: value.max_commitment_entries_per_canister,
+                max_index_pages_per_tick: value.max_index_pages_per_tick,
+                max_canisters_per_cycles_tick: value.max_canisters_per_cycles_tick,
+                relay_factory_enabled: value.relay_factory_enabled,
+                relay_setup_min_e8s: value.relay_setup_min_e8s,
+                relay_initial_cycles: value.relay_initial_cycles,
+                relay_cycle_safety_margin_e8s: value.relay_cycle_safety_margin_e8s,
+                relay_min_subaccount_one_seed_e8s: value.relay_min_subaccount_one_seed_e8s,
+                self_service_relay_interval_seconds: value.self_service_relay_interval_seconds,
+                canonical_relay_canister_id: value.canonical_relay_canister_id,
+                canonical_relay_targets: value.canonical_relay_targets,
+                extra_unknown_field: Some(42),
+            }
+        }
+    }
+
+    #[test]
+    fn stable_config_round_trips_current_fields() {
+        let stable: StableConfig = sample_config().into();
+        let bytes = candid::encode_one(&stable).unwrap();
+        let decoded: StableConfig = candid::decode_one(&bytes).unwrap();
+        assert_eq!(decoded, stable);
+    }
+
+    #[test]
+    fn stable_config_ignores_unknown_record_fields() {
+        let expected: StableConfig = sample_config().into();
+        let wider = StableConfigWithUnknownField::from(expected.clone());
+        let bytes = candid::encode_one(wider).unwrap();
+        let decoded: StableConfig = candid::decode_one(&bytes).unwrap();
+        assert_eq!(decoded, expected);
+    }
+
     fn legacy_stable_config() -> LegacyStableConfigV1 {
         let cfg = sample_config();
         LegacyStableConfigV1 {
@@ -113,85 +188,12 @@ mod tests {
             max_canisters_per_cycles_tick: cfg.max_canisters_per_cycles_tick,
             relay_factory_enabled: Some(cfg.relay_factory_enabled),
             relay_setup_min_e8s: Some(cfg.relay_setup_min_e8s),
-            relay_setup_dust_e8s: None,
-            relay_setup_refund_cooldown_seconds: None,
             relay_initial_cycles: Some(cfg.relay_initial_cycles),
             relay_cycle_safety_margin_e8s: Some(cfg.relay_cycle_safety_margin_e8s),
             relay_min_subaccount_one_seed_e8s: Some(cfg.relay_min_subaccount_one_seed_e8s),
             self_service_relay_interval_seconds: Some(cfg.self_service_relay_interval_seconds),
-            self_service_relay_max_transfers_per_tick: None,
-            io_surplus_neuron_id: Some(10_292_412_127_977_304_661),
             canonical_relay_canister_id: Some(cfg.canonical_relay_canister_id),
             canonical_relay_targets: Some(cfg.canonical_relay_targets),
-        }
-    }
-
-    fn legacy_setup_transfer(
-        kind: LegacyRelaySetupTransferKindV1,
-    ) -> LegacyRelaySetupTransferRecordV1 {
-        LegacyRelaySetupTransferRecordV1 {
-            kind,
-            from_subaccount: Some([1; 32]),
-            from_account_identifier: "from-account".to_string(),
-            to: Account {
-                owner: principal(&[77]),
-                subaccount: None,
-            },
-            to_account_identifier: "to-account".to_string(),
-            amount_e8s: 10_000_000,
-            fee_e8s: 10_000,
-            memo: Some(vec![1, 2, 3]),
-            created_at_time_nanos: 123,
-            block_index: Some(456),
-            completed: true,
-        }
-    }
-
-    fn legacy_setup_job(status: LegacyRelaySetupStatusV1) -> LegacyRelaySetupJobV1 {
-        LegacyRelaySetupJobV1 {
-            target_canister_id: principal(&[50]),
-            setup_account: Account {
-                owner: principal(&[51]),
-                subaccount: Some([9; 32]),
-            },
-            setup_account_identifier: "setup-account".to_string(),
-            status,
-            relay_canister_id: None,
-            last_indexed_setup_tx_id: Some(8),
-            setup_tx_ids: vec![8, 9],
-            setup_amount_seen_e8s: 400_000_000,
-            setup_amount_processed_e8s: 0,
-            payments: vec![LegacyRelaySetupPaymentV1 {
-                target_canister_id: principal(&[50]),
-                tx_id: 8,
-                from_account_identifier: "payer".to_string(),
-                amount_e8s: 400_000_000,
-                timestamp_nanos: Some(88),
-                processed: false,
-                refunded: false,
-            }],
-            cycle_conversion_e8s: None,
-            cycle_transfer_block_index: None,
-            cycles_minted: None,
-            relay_initial_cycles: None,
-            relay_funding_e8s: None,
-            relay_funding_block_index: None,
-            phase: Some(LegacyRelaySetupPhaseV1::PreSpend),
-            cycle_transfer: None,
-            relay_funding_transfer: None,
-            existing_relay_sweep_transfer: None,
-            refund_transfers: Vec::new(),
-            relay_create_attempt: None,
-            code_installed: false,
-            relay_funding_accepted: false,
-            blackhole_update_attempted: false,
-            blackhole_confirmed: false,
-            refund_attempt_count: 0,
-            last_refund_attempt_ts: None,
-            refund_blocks: Vec::new(),
-            created_at_ts: 10,
-            updated_at_ts: 11,
-            last_error: None,
         }
     }
 
@@ -204,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_root_config_discards_blackhole_and_retired_io_while_preserving_retained_fields() {
+    fn legacy_root_restore_preserves_unrelated_historian_state() {
         let legacy = LegacyVersionedStableStateV1::Current(LegacyStableRootStateV1 {
             config: legacy_stable_config(),
             last_indexed_staking_tx_id: Some(1),
@@ -249,29 +251,15 @@ mod tests {
         let VersionedStableState::Current(root) = decoded else {
             panic!("expected current root");
         };
-        let cfg: Config = root.config.into();
+        let cfg: Config = root.config.clone().into();
         assert_eq!(cfg.staking_account.owner, principal(&[1]));
         assert_eq!(cfg.output_source_account.owner, principal(&[11]));
         assert_eq!(cfg.sns_wasm_canister_id, principal(&[7]));
         assert_eq!(cfg.xrc_canister_id, principal(&[8]));
-        let rewritten: StableConfig = cfg.into();
-        assert_eq!(rewritten.io_surplus_neuron_id, None);
         assert_eq!(root.last_indexed_staking_tx_id, Some(1));
         assert_eq!(root.last_icp_xdr_rate_error.as_deref(), Some("xrc down"));
-    }
-
-    #[test]
-    fn retired_io_recipient_stable_field_decodes_but_is_ignored_and_not_rewritten() {
-        let mut stable: StableConfig = sample_config().into();
-        assert_eq!(stable.io_surplus_neuron_id, None);
-        stable.io_surplus_neuron_id = Some(10_292_412_127_977_304_661);
-
-        let bytes = candid::encode_one(&stable).unwrap();
-        let decoded: StableConfig = candid::decode_one(&bytes).unwrap();
-        let runtime: Config = decoded.into();
-        let rewritten: StableConfig = runtime.into();
-
-        assert_eq!(rewritten.io_surplus_neuron_id, None);
+        let rewritten = VersionedStableState::Current(root).into_bytes();
+        assert!(candid::decode_one::<VersionedStableState>(&rewritten).is_ok());
     }
 
     #[test]
@@ -341,572 +329,6 @@ mod tests {
             Some(CyclesProbeResult::Ok(CyclesSampleSource::SnsRootSummary))
         );
         assert_eq!(decoded.burned_e8s, Some(6));
-    }
-
-    #[test]
-    fn legacy_relay_registry_entry_discards_removed_hash_field() {
-        let legacy = LegacyRelayRegistryEntryV1 {
-            relay_canister_id: principal(&[60]),
-            target_canister_id: principal(&[61]),
-            kind: LegacyRelayRegistryKindV1::SelfService,
-            status: LegacyRelayRegistryStatusV1::Active,
-            setup_account: Some(Account {
-                owner: principal(&[62]),
-                subaccount: None,
-            }),
-            setup_account_identifier: Some("setup".to_string()),
-            setup_amount_e8s: Some(300_000_000),
-            setup_tx_ids: vec![1, 2],
-            relay_wasm_hash_hex: Some("removed-info".to_string()),
-            final_controllers: Some(vec![principal(&[63])]),
-            log_visibility_public: Some(true),
-            created_at_ts: Some(10),
-            activated_at_ts: Some(11),
-        };
-        let bytes = candid::encode_one(legacy).unwrap();
-        let decoded = RetiredRelayRegistryEntry::from_bytes(Cow::Owned(bytes));
-        assert_eq!(decoded.relay_canister_id, principal(&[60]));
-        assert_eq!(decoded.target_canister_id, principal(&[61]));
-        assert_eq!(decoded.kind, RetiredRelayRegistryKind::SelfService);
-        assert_eq!(decoded.status, RetiredRelayRegistryStatus::Active);
-        assert_eq!(decoded.setup_tx_ids, vec![1, 2]);
-        assert_eq!(decoded.activated_at_ts, Some(11));
-    }
-
-    fn retired_canonical_projection_entry(
-        config: &Config,
-        target: Principal,
-    ) -> RetiredRelayRegistryEntry {
-        RetiredRelayRegistryEntry {
-            relay_canister_id: config.canonical_relay_canister_id.unwrap(),
-            target_canister_id: target,
-            kind: RetiredRelayRegistryKind::Canonical,
-            status: RetiredRelayRegistryStatus::Active,
-            setup_account: None,
-            setup_account_identifier: None,
-            setup_amount_e8s: None,
-            setup_tx_ids: Vec::new(),
-            final_controllers: None,
-            log_visibility_public: None,
-            created_at_ts: None,
-            activated_at_ts: None,
-        }
-    }
-
-    fn retired_transfer(
-        kind: RetiredRelaySetupTransferKind,
-        target: Principal,
-        discriminator: u8,
-    ) -> RetiredRelaySetupTransferRecord {
-        RetiredRelaySetupTransferRecord {
-            kind,
-            from_subaccount: Some([discriminator; 32]),
-            from_account_identifier: format!("source-{discriminator}"),
-            to: Account {
-                owner: target,
-                subaccount: Some([discriminator.wrapping_add(1); 32]),
-            },
-            to_account_identifier: format!("destination-{discriminator}"),
-            amount_e8s: u64::from(discriminator) + 1_000_000,
-            fee_e8s: 10_000,
-            memo: Some(vec![discriminator, discriminator.wrapping_add(1)]),
-            created_at_time_nanos: u64::from(discriminator) + 100,
-            block_index: Some(u64::from(discriminator) + 200),
-            completed: true,
-        }
-    }
-
-    fn arbitrary_retired_relay_job(
-        target: Principal,
-        status: RetiredRelaySetupStatus,
-        discriminator: u8,
-    ) -> RetiredRelaySetupJob {
-        RetiredRelaySetupJob {
-            target_canister_id: target,
-            setup_account: Account {
-                owner: principal(&[discriminator, 1]),
-                subaccount: Some([discriminator; 32]),
-            },
-            setup_account_identifier: format!("setup-account-{discriminator}"),
-            status,
-            relay_canister_id: Some(principal(&[discriminator, 2])),
-            last_indexed_setup_tx_id: Some(u64::from(discriminator) + 10),
-            setup_tx_ids: vec![u64::from(discriminator) + 10, u64::from(discriminator) + 11],
-            setup_amount_seen_e8s: 400_000_000 + u64::from(discriminator),
-            setup_amount_processed_e8s: 300_000_000 + u64::from(discriminator),
-            payments: vec![RetiredRelaySetupPayment {
-                target_canister_id: target,
-                tx_id: u64::from(discriminator) + 10,
-                from_account_identifier: format!("payer-{discriminator}"),
-                amount_e8s: 400_000_000,
-                timestamp_nanos: Some(u64::from(discriminator) + 20),
-                processed: true,
-                refunded: true,
-            }],
-            cycle_conversion_e8s: Some(100_000_000 + u64::from(discriminator)),
-            cycle_transfer_block_index: Some(u64::from(discriminator) + 200),
-            cycles_minted: Some(2_000_000_000_000 + u128::from(discriminator)),
-            relay_initial_cycles: Some(1_000_000_000_000 + u128::from(discriminator)),
-            relay_funding_e8s: Some(100_000_000 + u64::from(discriminator)),
-            relay_funding_block_index: Some(u64::from(discriminator) + 201),
-            phase: Some(RetiredRelaySetupPhase::Active),
-            cycle_transfer: Some(retired_transfer(
-                RetiredRelaySetupTransferKind::CmcConversion,
-                target,
-                discriminator,
-            )),
-            relay_funding_transfer: Some(retired_transfer(
-                RetiredRelaySetupTransferKind::RelayFunding,
-                target,
-                discriminator.wrapping_add(1),
-            )),
-            existing_relay_sweep_transfer: Some(retired_transfer(
-                RetiredRelaySetupTransferKind::ExistingRelaySweep,
-                target,
-                discriminator.wrapping_add(2),
-            )),
-            refund_transfers: vec![retired_transfer(
-                RetiredRelaySetupTransferKind::Refund,
-                target,
-                discriminator.wrapping_add(3),
-            )],
-            relay_create_attempt: Some(RetiredRelayCreateAttempt {
-                target_canister_id: target,
-                created_at_ts: u64::from(discriminator) + 300,
-                initial_cycles: 1_000_000_000_000 + u128::from(discriminator),
-            }),
-            code_installed: true,
-            relay_funding_accepted: true,
-            blackhole_update_attempted: true,
-            blackhole_confirmed: true,
-            refund_attempt_count: 2,
-            last_refund_attempt_ts: Some(u64::from(discriminator) + 400),
-            refund_blocks: vec![u64::from(discriminator) + 202],
-            created_at_ts: u64::from(discriminator) + 500,
-            updated_at_ts: u64::from(discriminator) + 600,
-            last_error: Some(format!("arbitrary retired error {discriminator}")),
-        }
-    }
-
-    fn insert_retired_relay_job(target: Principal, job: RetiredRelaySetupJob) {
-        with_retired_relay_setup_jobs_map(|map| {
-            map.insert(PrincipalKey::from(target), job);
-        });
-    }
-
-    fn insert_complete_canonical_projection(config: &Config) {
-        with_retired_relay_registry_map(|map| {
-            for target in &config.canonical_relay_targets {
-                map.insert(
-                    PrincipalKey::from(*target),
-                    retired_canonical_projection_entry(config, *target),
-                );
-            }
-        });
-    }
-
-    #[test]
-    fn prelaunch_relay_cutover_accepts_empty_retired_setup_memory() {
-        reset_test_storage();
-        let config = sample_config();
-
-        validate_retired_relay_factory_state(&config);
-        validate_full_configuration_relay_setup_cutover();
-
-        with_retired_relay_setup_jobs_map(|map| assert!(map.is_empty()));
-        with_retired_target_set_relay_setup_entries_map(|map| assert!(map.is_empty()));
-        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
-    }
-
-    #[test]
-    fn full_configuration_cutover_rejects_nonempty_memory_25_without_clearing_it() {
-        reset_test_storage();
-        let key = crate::relay_setup::RelaySetupKey::from_bytes(Cow::Owned(vec![7; 32]));
-        let entry = crate::relay_setup::RelaySetupEntry::Active {
-            relay_canister_id: principal(&[77]),
-        };
-        with_retired_target_set_relay_setup_entries_map(|map| {
-            map.insert(key, entry.clone());
-        });
-
-        let result = std::panic::catch_unwind(validate_full_configuration_relay_setup_cutover);
-
-        assert!(result.is_err());
-        with_retired_target_set_relay_setup_entries_map(|map| {
-            assert_eq!(map.get(&key), Some(entry));
-        });
-        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
-    }
-
-    #[test]
-    fn direct_older_version_cutover_runs_memory_24_to_25_then_25_to_26() {
-        reset_test_storage();
-        let config = sample_config();
-
-        validate_retired_relay_factory_state(&config);
-        validate_full_configuration_relay_setup_cutover();
-
-        with_retired_relay_setup_jobs_map(|map| assert!(map.is_empty()));
-        with_retired_target_set_relay_setup_entries_map(|map| assert!(map.is_empty()));
-        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
-    }
-
-    #[test]
-    fn prelaunch_relay_cutover_purges_arbitrary_job_without_migrating_or_tracking_it() {
-        reset_test_storage();
-        let config = sample_config();
-        let target = principal(&[70]);
-        insert_retired_relay_job(
-            target,
-            arbitrary_retired_relay_job(target, RetiredRelaySetupStatus::Active, 70),
-        );
-
-        validate_retired_relay_factory_state(&config);
-
-        with_retired_relay_setup_jobs_map(|map| assert!(map.is_empty()));
-        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
-        with_canister_tracking_reasons_map(|map| {
-            assert!(map.get(&PrincipalKey::from(target)).is_none());
-        });
-    }
-
-    #[test]
-    fn prelaunch_relay_cutover_purges_multiple_unrelated_jobs_with_every_legacy_status() {
-        reset_test_storage();
-        let config = sample_config();
-        let statuses = [
-            RetiredRelaySetupStatus::NotFunded,
-            RetiredRelaySetupStatus::BelowMinimum,
-            RetiredRelaySetupStatus::InsufficientForCurrentRate,
-            RetiredRelaySetupStatus::Pending,
-            RetiredRelaySetupStatus::ConvertingCycles,
-            RetiredRelaySetupStatus::CycleTransferAccepted,
-            RetiredRelaySetupStatus::CycleNotifySucceeded,
-            RetiredRelaySetupStatus::CreatingCanister,
-            RetiredRelaySetupStatus::CanisterCreated,
-            RetiredRelaySetupStatus::InstallingCode,
-            RetiredRelaySetupStatus::CodeInstalled,
-            RetiredRelaySetupStatus::SettingPublicLogs,
-            RetiredRelaySetupStatus::FundingRelaySubaccountOne,
-            RetiredRelaySetupStatus::Blackholing,
-            RetiredRelaySetupStatus::Active,
-            RetiredRelaySetupStatus::SweepingToExistingRelay,
-            RetiredRelaySetupStatus::SweptToExistingRelay,
-            RetiredRelaySetupStatus::SweepBelowDust,
-            RetiredRelaySetupStatus::RefundAvailable,
-            RetiredRelaySetupStatus::Refunding,
-            RetiredRelaySetupStatus::Refunded,
-            RetiredRelaySetupStatus::IndexNotReady,
-            RetiredRelaySetupStatus::FailedRetryable,
-            RetiredRelaySetupStatus::FailedTerminal,
-            RetiredRelaySetupStatus::Ambiguous,
-            RetiredRelaySetupStatus::ManualRecoveryRequired,
-        ];
-        let mut targets = Vec::new();
-        for (index, status) in statuses.into_iter().enumerate() {
-            let discriminator = index as u8 + 30;
-            let target = principal(&[discriminator]);
-            targets.push(target);
-            insert_retired_relay_job(
-                target,
-                arbitrary_retired_relay_job(target, status, discriminator),
-            );
-        }
-
-        validate_retired_relay_factory_state(&config);
-
-        with_retired_relay_setup_jobs_map(|map| assert!(map.is_empty()));
-        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
-        with_canister_tracking_reasons_map(|map| {
-            for target in targets {
-                assert!(map.get(&PrincipalKey::from(target)).is_none());
-            }
-        });
-    }
-
-    #[test]
-    fn prelaunch_relay_cutover_validates_registry_before_purging_any_job() {
-        reset_test_storage();
-        let config = sample_config();
-        let targets = [principal(&[80]), principal(&[81]), principal(&[82])];
-        for (index, target) in targets.into_iter().enumerate() {
-            insert_retired_relay_job(
-                target,
-                arbitrary_retired_relay_job(
-                    target,
-                    RetiredRelaySetupStatus::ManualRecoveryRequired,
-                    index as u8 + 80,
-                ),
-            );
-        }
-        with_retired_relay_registry_map(|map| {
-            map.insert(
-                PrincipalKey::from(targets[0]),
-                RetiredRelayRegistryEntry {
-                    relay_canister_id: principal(&[89]),
-                    target_canister_id: targets[0],
-                    kind: RetiredRelayRegistryKind::SelfService,
-                    status: RetiredRelayRegistryStatus::Active,
-                    setup_account: None,
-                    setup_account_identifier: None,
-                    setup_amount_e8s: None,
-                    setup_tx_ids: Vec::new(),
-                    final_controllers: None,
-                    log_visibility_public: None,
-                    created_at_ts: None,
-                    activated_at_ts: None,
-                },
-            );
-        });
-
-        let result = std::panic::catch_unwind(|| validate_retired_relay_factory_state(&config));
-
-        assert!(result.is_err());
-        with_retired_relay_setup_jobs_map(|map| {
-            assert_eq!(map.len(), targets.len() as u64);
-            for target in targets {
-                assert!(map.get(&PrincipalKey::from(target)).is_some());
-            }
-        });
-    }
-
-    #[test]
-    fn prelaunch_relay_cutover_preserves_valid_canonical_registry_while_purging_all_jobs() {
-        reset_test_storage();
-        let config = sample_config();
-        insert_complete_canonical_projection(&config);
-        let jobs = [
-            (principal(&[90]), RetiredRelaySetupStatus::Refunded),
-            (
-                principal(&[91]),
-                RetiredRelaySetupStatus::ManualRecoveryRequired,
-            ),
-            (principal(&[92]), RetiredRelaySetupStatus::Active),
-        ];
-        for (index, (target, status)) in jobs.into_iter().enumerate() {
-            insert_retired_relay_job(
-                target,
-                arbitrary_retired_relay_job(target, status, index as u8 + 90),
-            );
-        }
-
-        validate_retired_relay_factory_state(&config);
-
-        with_retired_relay_registry_map(|map| {
-            assert_eq!(map.len(), config.canonical_relay_targets.len() as u64);
-            for target in &config.canonical_relay_targets {
-                assert_eq!(
-                    map.get(&PrincipalKey::from(*target)),
-                    Some(retired_canonical_projection_entry(&config, *target))
-                );
-            }
-        });
-        with_retired_relay_setup_jobs_map(|map| assert!(map.is_empty()));
-        with_relay_setup_entries_map(|map| assert!(map.is_empty()));
-    }
-
-    #[test]
-    #[should_panic(expected = "retired Relay registry contains unexpected self-service state")]
-    fn prelaunch_relay_cutover_rejects_partial_canonical_projection() {
-        reset_test_storage();
-        let config = sample_config();
-        let target = config.canonical_relay_targets[0];
-        with_retired_relay_registry_map(|map| {
-            map.insert(
-                PrincipalKey::from(target),
-                RetiredRelayRegistryEntry {
-                    relay_canister_id: config.canonical_relay_canister_id.unwrap(),
-                    target_canister_id: target,
-                    kind: RetiredRelayRegistryKind::Canonical,
-                    status: RetiredRelayRegistryStatus::Active,
-                    setup_account: None,
-                    setup_account_identifier: None,
-                    setup_amount_e8s: None,
-                    setup_tx_ids: Vec::new(),
-                    final_controllers: None,
-                    log_visibility_public: None,
-                    created_at_ts: None,
-                    activated_at_ts: None,
-                },
-            );
-        });
-        validate_retired_relay_factory_state(&config);
-    }
-
-    #[test]
-    #[should_panic(expected = "retired Relay registry contains unexpected self-service state")]
-    fn prelaunch_relay_cutover_rejects_old_self_service_registry_state() {
-        reset_test_storage();
-        let config = sample_config();
-        let target = principal(&[88]);
-        with_retired_relay_registry_map(|map| {
-            map.insert(
-                PrincipalKey::from(target),
-                RetiredRelayRegistryEntry {
-                    relay_canister_id: principal(&[89]),
-                    target_canister_id: target,
-                    kind: RetiredRelayRegistryKind::SelfService,
-                    status: RetiredRelayRegistryStatus::Active,
-                    setup_account: None,
-                    setup_account_identifier: None,
-                    setup_amount_e8s: None,
-                    setup_tx_ids: Vec::new(),
-                    final_controllers: None,
-                    log_visibility_public: None,
-                    created_at_ts: None,
-                    activated_at_ts: None,
-                },
-            );
-        });
-        validate_retired_relay_factory_state(&config);
-    }
-
-    #[test]
-    #[should_panic(expected = "retired Relay registry contains unexpected self-service state")]
-    fn prelaunch_relay_cutover_rejects_wrong_canonical_relay_id() {
-        reset_test_storage();
-        let config = sample_config();
-        with_retired_relay_registry_map(|map| {
-            for target in &config.canonical_relay_targets {
-                let mut entry = retired_canonical_projection_entry(&config, *target);
-                if target == &config.canonical_relay_targets[0] {
-                    entry.relay_canister_id = principal(&[90]);
-                }
-                map.insert(PrincipalKey::from(*target), entry);
-            }
-        });
-        validate_retired_relay_factory_state(&config);
-    }
-
-    #[test]
-    #[should_panic(expected = "retired Relay registry contains unexpected self-service state")]
-    fn prelaunch_relay_cutover_rejects_wrong_canonical_target() {
-        reset_test_storage();
-        let config = sample_config();
-        with_retired_relay_registry_map(|map| {
-            for target in &config.canonical_relay_targets {
-                let mut entry = retired_canonical_projection_entry(&config, *target);
-                if target == &config.canonical_relay_targets[0] {
-                    entry.target_canister_id = principal(&[91]);
-                }
-                map.insert(PrincipalKey::from(*target), entry);
-            }
-        });
-        validate_retired_relay_factory_state(&config);
-    }
-
-    #[test]
-    #[should_panic(expected = "retired Relay registry contains unexpected self-service state")]
-    fn prelaunch_relay_cutover_rejects_non_active_canonical_status() {
-        reset_test_storage();
-        let config = sample_config();
-        with_retired_relay_registry_map(|map| {
-            for target in &config.canonical_relay_targets {
-                let mut entry = retired_canonical_projection_entry(&config, *target);
-                if target == &config.canonical_relay_targets[0] {
-                    entry.status = RetiredRelayRegistryStatus::Pending;
-                }
-                map.insert(PrincipalKey::from(*target), entry);
-            }
-        });
-        validate_retired_relay_factory_state(&config);
-    }
-
-    #[test]
-    fn legacy_relay_setup_statuses_decode() {
-        let statuses = [
-            (
-                LegacyRelaySetupStatusV1::NotFunded,
-                RetiredRelaySetupStatus::NotFunded,
-            ),
-            (
-                LegacyRelaySetupStatusV1::Pending,
-                RetiredRelaySetupStatus::Pending,
-            ),
-            (
-                LegacyRelaySetupStatusV1::CycleTransferAccepted,
-                RetiredRelaySetupStatus::CycleTransferAccepted,
-            ),
-            (
-                LegacyRelaySetupStatusV1::CanisterCreated,
-                RetiredRelaySetupStatus::CanisterCreated,
-            ),
-            (
-                LegacyRelaySetupStatusV1::CodeInstalled,
-                RetiredRelaySetupStatus::CodeInstalled,
-            ),
-            (
-                LegacyRelaySetupStatusV1::FundingRelaySubaccountOne,
-                RetiredRelaySetupStatus::FundingRelaySubaccountOne,
-            ),
-            (
-                LegacyRelaySetupStatusV1::Active,
-                RetiredRelaySetupStatus::Active,
-            ),
-            (
-                LegacyRelaySetupStatusV1::Refunded,
-                RetiredRelaySetupStatus::Refunded,
-            ),
-            (
-                LegacyRelaySetupStatusV1::FailedRetryable,
-                RetiredRelaySetupStatus::FailedRetryable,
-            ),
-            (
-                LegacyRelaySetupStatusV1::Ambiguous,
-                RetiredRelaySetupStatus::Ambiguous,
-            ),
-            (
-                LegacyRelaySetupStatusV1::ManualRecoveryRequired,
-                RetiredRelaySetupStatus::ManualRecoveryRequired,
-            ),
-            (
-                LegacyRelaySetupStatusV1::TargetNotObservable,
-                RetiredRelaySetupStatus::ManualRecoveryRequired,
-            ),
-        ];
-        for (legacy_status, expected_status) in statuses {
-            let legacy = legacy_setup_job(legacy_status);
-            let bytes = candid::encode_one(legacy).unwrap();
-            let decoded = RetiredRelaySetupJob::from_bytes(Cow::Owned(bytes));
-            assert_eq!(decoded.status, expected_status);
-            assert_eq!(decoded.target_canister_id, principal(&[50]));
-            assert_eq!(decoded.setup_tx_ids, vec![8, 9]);
-            assert_eq!(decoded.phase, Some(RetiredRelaySetupPhase::PreSpend));
-        }
-    }
-
-    #[test]
-    fn legacy_target_not_observable_with_irreversible_evidence_requires_manual_recovery() {
-        let mut legacy = legacy_setup_job(LegacyRelaySetupStatusV1::TargetNotObservable);
-        legacy.relay_create_attempt = Some(LegacyRelayCreateAttemptV1 {
-            target_canister_id: legacy.target_canister_id,
-            created_at_ts: 20,
-            initial_cycles: 2_000_000_000_000,
-            raw_relay_wasm_hash_hex: Some("discarded".to_string()),
-            install_payload_hash_hex: Some("discarded".to_string()),
-            relay_wasm_hash_hex: Some("discarded".to_string()),
-        });
-        let bytes = candid::encode_one(legacy).unwrap();
-        let decoded = RetiredRelaySetupJob::from_bytes(Cow::Owned(bytes));
-        assert_eq!(
-            decoded.status,
-            RetiredRelaySetupStatus::ManualRecoveryRequired
-        );
-        assert_eq!(decoded.relay_create_attempt.unwrap().created_at_ts, 20);
-    }
-
-    #[test]
-    fn legacy_target_not_observable_with_accepted_transfer_requires_manual_recovery() {
-        let mut legacy = legacy_setup_job(LegacyRelaySetupStatusV1::TargetNotObservable);
-        legacy.cycle_transfer = Some(legacy_setup_transfer(
-            LegacyRelaySetupTransferKindV1::CmcConversion,
-        ));
-        let bytes = candid::encode_one(legacy).unwrap();
-        let decoded = RetiredRelaySetupJob::from_bytes(Cow::Owned(bytes));
-        assert_eq!(
-            decoded.status,
-            RetiredRelaySetupStatus::ManualRecoveryRequired
-        );
     }
 
     #[test]

@@ -4,69 +4,6 @@ pub(crate) fn init_stable_storage() {
     let _ = restore_state_from_stable();
 }
 
-fn validate_retired_registry(config: &Config) {
-    with_retired_relay_registry_map(|map| {
-        if !map.is_empty() {
-            let Some(canonical_relay_canister_id) = config.canonical_relay_canister_id else {
-                panic!("retired Relay registry contains unexpected self-service state");
-            };
-            assert_eq!(
-                map.len(),
-                config.canonical_relay_targets.len() as u64,
-                "retired Relay registry contains unexpected self-service state"
-            );
-            for target in &config.canonical_relay_targets {
-                let entry = map
-                    .get(&PrincipalKey::from(*target))
-                    .expect("retired Relay registry contains unexpected self-service state");
-                assert!(
-                    entry.relay_canister_id == canonical_relay_canister_id
-                        && entry.target_canister_id == *target
-                        && entry.kind == RetiredRelayRegistryKind::Canonical
-                        && entry.status == RetiredRelayRegistryStatus::Active,
-                    "retired Relay registry contains unexpected self-service state"
-                );
-            }
-        }
-    });
-}
-
-pub(crate) fn validate_retired_relay_factory_state(config: &Config) {
-    validate_retired_registry(config);
-
-    with_retired_relay_setup_jobs_map(|map| {
-        map.clear_new();
-
-        assert!(
-            map.is_empty(),
-            "retired Relay setup-job memory was not emptied during cutover"
-        );
-    });
-
-    with_retired_target_set_relay_setup_entries_map(|map| {
-        assert!(
-            map.is_empty(),
-            "retired target-set Relay setup memory contains unexpected first-cutover state"
-        );
-    });
-}
-
-pub(crate) fn validate_full_configuration_relay_setup_cutover() {
-    with_retired_target_set_relay_setup_entries_map(|map| {
-        assert!(
-            map.is_empty(),
-            "retired target-set Relay setup memory 25 is non-empty; refusing full-configuration cutover"
-        );
-    });
-
-    with_relay_setup_entries_map(|map| {
-        assert!(
-            map.is_empty(),
-            "full-configuration Relay setup memory 26 contains unexpected first-cutover state"
-        );
-    });
-}
-
 pub(super) fn restore_state_current(root: StableRootState) -> State {
     let canister_tracking_reasons = with_canister_tracking_reasons_map(|map| {
         let mut out = BTreeMap::new();

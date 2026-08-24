@@ -2,6 +2,8 @@ use candid::Principal;
 
 pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = 32;
 pub const MAX_NEURON_ID_MEMO_BYTES: usize = 20;
+/// Maximum exact-byte memo carried by an immutable Relay surplus recipient.
+pub const MAX_RELAY_SURPLUS_MEMO_BYTES: usize = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemoDirective {

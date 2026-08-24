@@ -633,7 +633,7 @@
                 <li>
                   The easiest path to deploying a relay canister is to use the
                   <a href="/#relay-setup" data-panel="relay-setup" class="pane-external-link">Relay Setup</a>
-                  tool, choosing one to five immutable typed surplus recipients. Each recipient may be a Principal (paid at its default ICP account) or a public NNS neuron ID (paid at its Governance staking account); Relay requests claim/refresh after a successful neuron transfer. No IO recipient
+                  tool, choosing either no surplus recipients for all-cycles mode or one to five immutable typed recipients. Each recipient may be a Principal (paid at its default ICP account) or a public NNS neuron ID (paid at its Governance staking account), with an exact optional 0–32-byte memo. Relay requests claim/refresh after a successful neuron transfer. No IO recipient
                   is added automatically to a self-service Relay.
                 </li>
                 <li>
@@ -1007,7 +1007,7 @@
         <article class="nav-panel-section" data-panel="relay-setup" id="nav-panel-relay-setup">
           <h2 class="nav-panel-title">Relay Setup</h2>
           <div class="nav-panel-scroll-region">
-            <p class="nav-panel-subtitle">Create an immutable Jupiter Relay for one to twenty target canisters and one to five surplus recipients without login.</p>
+            <p class="nav-panel-subtitle">Create an immutable Jupiter Relay for one to twenty target canisters and either zero or one to five surplus recipients without login.</p>
             <p class="nav-panel-content">Setting up a dedicated relay canister can help to optimize cycles allocation and simplify integration with other protocols, as well as boost jUP staking rewards when cycles supply exceeds demand. Read more about <a href="/#how-it-works:3" data-panel="how-it-works" class="pane-external-link">what a relay canister is and how it works</a> and set up a new relay using the instructions below.</p>
             <form class="tracker-form relay-setup-form" id="relay-setup-form">
               <fieldset class="relay-setup-principal-fieldset">
@@ -1029,8 +1029,26 @@
                 </div>
                 <p class="relay-setup-principal-announcement" id="relay-setup-target-announcement" role="status" aria-live="polite"></p>
               </fieldset>
+              <fieldset class="relay-setup-principal-fieldset relay-setup-mode-fieldset">
+                <legend class="tracker-label">Surplus handling</legend>
+                <label class="relay-setup-mode-option">
+                  <input id="relay-setup-mode-routing" name="relay-setup-surplus-mode" type="radio" value="routing" checked />
+                  <span><strong>Route genuine surplus ICP to recipients</strong><br />Configure 1–5 recipients.</span>
+                </label>
+                <label class="relay-setup-mode-option">
+                  <input id="relay-setup-mode-all-cycles" name="relay-setup-surplus-mode" type="radio" value="all-cycles" />
+                  <span><strong>No surplus recipients — all-cycles mode</strong><br />Allocate fee-efficient funding among measured cycles needs. No raw ICP is routed out as surplus.</span>
+                </label>
+              </fieldset>
+              <p
+                class="relay-setup-principal-announcement"
+                id="relay-setup-surplus-mode-summary"
+                role="status"
+                aria-live="polite"
+              >Recipient routing selected. Configure one to five surplus recipients.</p>
               <fieldset class="relay-setup-principal-fieldset">
                 <legend class="tracker-label">Surplus recipients</legend>
+                <div id="relay-setup-recipient-editor">
                 <p class="relay-setup-principal-hint" id="relay-setup-recipient-hint">Choose Principal for a user's or canister's default ICP account, or Neuron ID for a public NNS neuron's staking account. Recipients are immutable.</p>
                 <div class="relay-setup-principal-list" id="relay-setup-recipient-list">
                   <div class="relay-setup-principal-row" data-relay-recipient-row="true">
@@ -1041,9 +1059,21 @@
                         <option value="Neuron">Neuron ID</option>
                       </select>
                       <input class="tracker-input mono relay-setup-principal-input" id="relay-setup-recipient-1" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Principal" aria-describedby="relay-setup-recipient-hint relay-setup-recipient-error-1" data-relay-recipient-input="true" />
-                      <button class="pane-page-button relay-setup-remove-principal" type="button" aria-label="Remove recipient principal 1" data-relay-recipient-remove="true" hidden>Remove</button>
+                      <button class="pane-page-button relay-setup-remove-principal" type="button" aria-label="Remove recipient principal 1" data-relay-recipient-remove="true">Remove</button>
                     </div>
                     <p class="relay-setup-principal-error" id="relay-setup-recipient-error-1" data-relay-recipient-error="true" hidden></p>
+                    <div class="relay-setup-memo-controls">
+                      <label for="relay-setup-recipient-memo-mode-1">Memo format</label>
+                      <select class="tracker-input relay-setup-memo-mode" id="relay-setup-recipient-memo-mode-1" aria-label="Surplus recipient 1 memo format" data-relay-recipient-memo-mode="true">
+                        <option value="Text" selected>Text</option>
+                        <option value="Hex">Hexadecimal</option>
+                      </select>
+                      <label for="relay-setup-recipient-memo-1">Memo</label>
+                      <input class="tracker-input mono relay-setup-memo-input" id="relay-setup-recipient-memo-1" type="text" autocomplete="off" spellcheck="false" aria-label="Surplus recipient 1 memo" aria-describedby="relay-setup-recipient-memo-count-1 relay-setup-recipient-memo-error-1 relay-setup-recipient-memo-notice-1" data-relay-recipient-memo-input="true" />
+                      <span class="relay-setup-memo-count" id="relay-setup-recipient-memo-count-1" role="status" aria-live="polite" data-relay-recipient-memo-count="true">0/32 bytes</span>
+                    </div>
+                    <p class="relay-setup-principal-error" id="relay-setup-recipient-memo-error-1" data-relay-recipient-memo-error="true" hidden></p>
+                    <p class="relay-setup-memo-notice" id="relay-setup-recipient-memo-notice-1" role="status" aria-live="polite" data-relay-recipient-memo-notice="true" hidden></p>
                   </div>
                 </div>
                 <div class="relay-setup-principal-actions">
@@ -1052,9 +1082,10 @@
                   <button class="pane-page-button relay-setup-submit" id="relay-setup-submit" type="submit" disabled>Check Relay configuration</button>
                 </div>
                 <p class="relay-setup-principal-announcement" id="relay-setup-recipient-announcement" role="status" aria-live="polite"></p>
+                </div>
               </fieldset>
             </form>
-            <p class="pane-status-note tracker-status-note"><strong>Immutable configuration:</strong> Targets and typed recipients together determine the setup address; changing a type or value creates a different address and independent Relay. A Principal receives surplus at its default ICP account. A Neuron ID must be publicly readable so Relay can resolve its NNS Governance staking account, and Relay requests claim/refresh after a successful neuron transfer. Surplus is divided equally, but Relay top-ups and safety requirements take priority; each recipient's net share must reach at least 1 ICP. No IO recipient is added automatically.</p>
+            <p class="pane-status-note tracker-status-note"><strong>Immutable configuration:</strong> Targets, recipient destinations, and exact memo bytes determine the setup address. Changing a memo usually changes the funding account. An empty memo sends no outgoing Ledger memo; Text and Hexadecimal modes are limited to 32 encoded bytes. All-cycles mode uses zero recipients and routes no raw ICP surplus. No IO recipient is added automatically.</p>
             <p class="pane-status-note tracker-status-note tracker-status-note--error"><strong>Check carefully before paying:</strong> deposits sent for an incorrectly selected Relay configuration are not automatically refundable.</p>
             <p class="pane-status-note tracker-status-note tracker-status-note--error" id="relay-setup-warning" role="status" aria-live="polite" hidden></p>
             <div class="tracker-result" id="relay-setup-result">
@@ -1069,6 +1100,7 @@
               <div><dt>Target count</dt><dd class="pane-detail-value" id="relay-setup-target-count">—</dd></div>
               <div><dt>Canonical target order</dt><dd class="pane-detail-value mono preserve-lines" id="relay-setup-canonical-targets">—</dd></div>
               <div><dt>Surplus recipient count</dt><dd class="pane-detail-value" id="relay-setup-recipient-count">—</dd></div>
+              <div><dt>Surplus handling</dt><dd class="pane-detail-value" id="relay-setup-surplus-mode">—</dd></div>
               <div><dt>Canonical surplus recipient order</dt><dd class="pane-detail-value mono preserve-lines" id="relay-setup-canonical-recipients">—</dd></div>
               <div><dt>Configuration hash</dt><dd class="pane-detail-value mono" id="relay-setup-configuration-hash">—</dd></div>
               <div><dt>Base minimum</dt><dd class="pane-detail-value" id="relay-setup-base-minimum">—</dd></div>

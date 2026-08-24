@@ -15,6 +15,8 @@ struct GovState {
     manage_calls: u64,
     refresh_calls: u64,
     claim_or_refresh_calls: u64,
+    claim_or_refresh_neuron_ids: Vec<u64>,
+    list_neurons_calls: u64,
     claim_or_refresh_fails: bool,
     hidden_neuron_ids: BTreeSet<u64>,
 }
@@ -56,6 +58,7 @@ fn get_full_neuron(neuron_id: u64) -> NeuronResult {
 
 #[ic_cdk::update]
 fn list_neurons(req: ListNeurons) -> ListNeuronsResponse {
+    ST.with(|state| state.borrow_mut().list_neurons_calls += 1);
     let hidden_neuron_ids = ST.with(|state| state.borrow().hidden_neuron_ids.clone());
     let full_neurons = if req.include_public_neurons_in_full_neurons == Some(true) {
         req.neuron_ids
@@ -95,6 +98,7 @@ fn manage_neuron(req: ManageNeuronRequest) -> ManageNeuronResponse {
         Some(manage_neuron::NeuronIdOrSubaccount::Subaccount(_)) => None,
         None => None,
     });
+    let refreshed_neuron_id_value = refreshed_neuron_id.as_ref().map(|value| value.id);
 
     let cmd = match command {
         Some(ManageNeuronCommandRequest::DisburseMaturity(_d)) => {
@@ -150,6 +154,9 @@ fn manage_neuron(req: ManageNeuronRequest) -> ManageNeuronResponse {
             Some(manage_neuron_response::Command::ClaimOrRefresh(_))
         ) {
             st.claim_or_refresh_calls += 1;
+            if let Some(neuron_id) = refreshed_neuron_id_value {
+                st.claim_or_refresh_neuron_ids.push(neuron_id);
+            }
         }
     });
 
@@ -201,6 +208,16 @@ fn debug_get_refresh_calls() -> u64 {
 #[ic_cdk::query]
 fn debug_get_claim_or_refresh_calls() -> u64 {
     ST.with(|s| s.borrow().claim_or_refresh_calls)
+}
+
+#[ic_cdk::query]
+fn debug_get_claim_or_refresh_neuron_ids() -> Vec<u64> {
+    ST.with(|s| s.borrow().claim_or_refresh_neuron_ids.clone())
+}
+
+#[ic_cdk::query]
+fn debug_get_list_neurons_calls() -> u64 {
+    ST.with(|s| s.borrow().list_neurons_calls)
 }
 
 ic_cdk::export_candid!();

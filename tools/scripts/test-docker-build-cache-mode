@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=tools/scripts/docker-build
+source "$SCRIPT_DIR/docker-build"
+
+image_tag="jupiter-repro-artifact:test"
+expected_default=(
+  --builder default
+  --platform linux/amd64
+  --target artifact
+  --tag "$image_tag"
+  -f Dockerfile.repro
+  .
+)
+expected_no_cache=(
+  --builder default
+  --no-cache
+  --platform linux/amd64
+  --target artifact
+  --tag "$image_tag"
+  -f Dockerfile.repro
+  .
+)
+
+mapfile -d '' -t default_args < <(
+  JUPITER_DOCKER_NO_CACHE=0 docker_build_args "$image_tag"
+)
+mapfile -d '' -t no_cache_args < <(
+  JUPITER_DOCKER_NO_CACHE=1 docker_build_args "$image_tag"
+)
+
+[[ "${default_args[*]}" == "${expected_default[*]}" ]]
+[[ "${no_cache_args[*]}" == "${expected_no_cache[*]}" ]]
+
+echo "docker-build cache-mode argument checks passed"

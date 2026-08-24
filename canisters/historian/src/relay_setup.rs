@@ -755,16 +755,16 @@ fn relay_init_arg(config: &Config, setup: &CanonicalRelaySetup) -> Vec<u8> {
     let mut neuron_recipients = Vec::new();
     for recipient in setup.surplus_recipients() {
         match recipient {
-            RelaySurplusRecipient::Principal(principal) => {
+            RelaySurplusRecipient::Principal { principal, memo } => {
                 principal_recipients.push(SurplusCanisterRecipient {
                     canister_id: *principal,
-                    memo: Vec::new(),
+                    memo: memo.clone(),
                 });
             }
-            RelaySurplusRecipient::Neuron(neuron_id) => {
+            RelaySurplusRecipient::Neuron { neuron_id, memo } => {
                 neuron_recipients.push(SurplusNeuronRecipient {
                     neuron_id: *neuron_id,
-                    memo: Vec::new(),
+                    memo: memo.clone(),
                 });
             }
         }
@@ -817,7 +817,7 @@ async fn validate_neuron_recipients(
     neuron_resolver: &dyn RelayNeuronResolver,
 ) -> Result<(), RelaySetupNotifyResult> {
     for recipient in setup.surplus_recipients() {
-        let RelaySurplusRecipient::Neuron(neuron_id) = recipient else {
+        let RelaySurplusRecipient::Neuron { neuron_id, .. } = recipient else {
             continue;
         };
         let resolution = neuron_resolver.neuron_staking_subaccount(*neuron_id).await;
@@ -1385,7 +1385,6 @@ pub(crate) fn debug_setup_entries() -> Vec<RelaySetupDebugEntry> {
 
 #[cfg(any(test, feature = "debug_api"))]
 pub(crate) fn clear_setup_entries_for_debug() {
-    state::with_retired_target_set_relay_setup_entries_map(|map| map.clear_new());
     state::with_relay_setup_entries_map(|map| map.clear_new());
 }
 
@@ -1408,24 +1407,32 @@ mod tests {
         Principal::from_slice(&[byte])
     }
 
+    fn principal_recipient(principal: Principal, memo: Vec<u8>) -> RelaySurplusRecipient {
+        RelaySurplusRecipient::Principal { principal, memo }
+    }
+
+    fn neuron_recipient(neuron_id: u64, memo: Vec<u8>) -> RelaySurplusRecipient {
+        RelaySurplusRecipient::Neuron { neuron_id, memo }
+    }
+
     fn setup_args(target_canister_ids: Vec<Principal>) -> RelaySetupArgs {
         RelaySetupArgs {
             target_canister_ids,
-            surplus_recipients: vec![RelaySurplusRecipient::Principal(principal(200))],
+            surplus_recipients: vec![principal_recipient(principal(200), vec![])],
         }
     }
 
     fn neuron_setup_args(target: Principal, neuron_id: u64) -> RelaySetupArgs {
         RelaySetupArgs {
             target_canister_ids: vec![target],
-            surplus_recipients: vec![RelaySurplusRecipient::Neuron(neuron_id)],
+            surplus_recipients: vec![neuron_recipient(neuron_id, vec![])],
         }
     }
 
     fn key_for_targets(target_canister_ids: &[Principal]) -> RelaySetupKey {
         CanonicalRelaySetup::canonicalize(
             target_canister_ids.to_vec(),
-            vec![RelaySurplusRecipient::Principal(principal(200))],
+            vec![principal_recipient(principal(200), vec![])],
         )
         .expect("test setup should be structurally valid")
         .key()
@@ -2322,30 +2329,6 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_reconciliation_ignores_retired_memory_25() {
-        reset();
-        let retired_key = key_for_targets(&[principal(1)]);
-        let current_key = key_for_targets(&[principal(2)]);
-        let retired_entry =
-            RelaySetupEntry::Creating(progress_for_phase(RelayCreationPhase::CmcTransferAccepted));
-        state::with_retired_target_set_relay_setup_entries_map(|map| {
-            map.insert(retired_key, retired_entry.clone());
-        });
-        insert_entry(
-            current_key,
-            RelaySetupEntry::Creating(progress_for_phase(RelayCreationPhase::Reserved)),
-        );
-
-        reconcile_interrupted_creating_entries_after_upgrade();
-
-        state::with_retired_target_set_relay_setup_entries_map(|map| {
-            assert_eq!(map.get(&retired_key), Some(retired_entry));
-            map.clear_new();
-        });
-        assert_eq!(get_entry(current_key), None);
-    }
-
-    #[test]
     fn setup_account_is_derived_from_the_hash() {
         let historian = principal(42);
         let key = key_for_targets(&[principal(1)]);
@@ -2356,17 +2339,99 @@ mod tests {
     }
 
     #[test]
+    fn setup_view_exposes_authoritative_accounts_for_supported_configurations() {
+        reset();
+        let historian = principal(42);
+        let target = principal(1);
+        let empty_memo_args = RelaySetupArgs {
+            target_canister_ids: vec![target],
+            surplus_recipients: vec![principal_recipient(principal(2), vec![])],
+        };
+        let memo_args = RelaySetupArgs {
+            target_canister_ids: vec![target],
+            surplus_recipients: vec![principal_recipient(principal(2), vec![0x00])],
+        };
+        let zero_args = RelaySetupArgs {
+            target_canister_ids: vec![target],
+            surplus_recipients: vec![],
+        };
+
+        let RelaySetupViewResult::Ok(empty_memo) =
+            setup_view_for_historian(empty_memo_args.clone(), historian)
+        else {
+            panic!("empty-memo setup view must be available")
+        };
+        let RelaySetupViewResult::Ok(memo) = setup_view_for_historian(memo_args, historian) else {
+            panic!("memo setup view must be available")
+        };
+        let RelaySetupViewResult::Ok(zero) = setup_view_for_historian(zero_args, historian) else {
+            panic!("zero-recipient setup view must be available")
+        };
+        assert_eq!(
+            empty_memo.setup_account.unwrap().subaccount,
+            Some([
+                0x3a, 0x0e, 0xd7, 0x35, 0xd0, 0x92, 0xe7, 0x5b, 0xcd, 0x92, 0x9d, 0x71, 0x23, 0x5e,
+                0x2b, 0x37, 0x57, 0xaf, 0x7e, 0x7c, 0x50, 0xd3, 0x42, 0x42, 0x75, 0x92, 0xcb, 0xf1,
+                0xa1, 0xbb, 0x0b, 0x1f
+            ])
+        );
+        assert_ne!(empty_memo.setup_key_identifier, memo.setup_key_identifier);
+        assert_ne!(empty_memo.setup_key_identifier, zero.setup_key_identifier);
+        assert_eq!(zero.surplus_recipient_count, 0);
+        assert_eq!(state::with_relay_setup_entries_map(|map| map.len()), 0);
+
+        let empty_memo_key = CanonicalRelaySetup::canonicalize(
+            empty_memo_args.target_canister_ids.clone(),
+            empty_memo_args.surplus_recipients.clone(),
+        )
+        .unwrap()
+        .key();
+        insert_entry(
+            empty_memo_key,
+            RelaySetupEntry::Active {
+                relay_canister_id: principal(73),
+            },
+        );
+        assert!(matches!(
+            setup_view_for_historian(empty_memo_args, historian),
+            RelaySetupViewResult::Ok(RelaySetupView {
+                setup_account: None,
+                state: RelaySetupState::Active { relay_canister_id },
+                ..
+            }) if relay_canister_id == principal(73)
+        ));
+
+        let before_entries = state::with_relay_setup_entries_map(|map| map.len());
+        let overlong = setup_view_for_historian(
+            RelaySetupArgs {
+                target_canister_ids: vec![target],
+                surplus_recipients: vec![principal_recipient(principal(3), vec![0xff; 33])],
+            },
+            historian,
+        );
+        assert!(matches!(
+            overlong,
+            RelaySetupViewResult::Err(message)
+                if message.contains(&principal(3).to_text()) && message.contains("33 bytes")
+        ));
+        assert_eq!(
+            state::with_relay_setup_entries_map(|map| map.len()),
+            before_entries
+        );
+    }
+
+    #[test]
     fn recipient_changes_produce_independent_keys_accounts_and_reservations() {
         reset();
         let historian = principal(42);
         let setup_a = CanonicalRelaySetup::canonicalize(
             vec![principal(1)],
-            vec![RelaySurplusRecipient::Principal(principal(2))],
+            vec![principal_recipient(principal(2), vec![])],
         )
         .unwrap();
         let setup_b = CanonicalRelaySetup::canonicalize(
             vec![principal(1)],
-            vec![RelaySurplusRecipient::Principal(principal(3))],
+            vec![principal_recipient(principal(3), vec![])],
         )
         .unwrap();
         assert_ne!(setup_a.key(), setup_b.key());
@@ -3860,11 +3925,11 @@ mod tests {
         reset();
         let targets = (100..120).rev().map(principal).collect::<Vec<_>>();
         let recipients = vec![
-            RelaySurplusRecipient::Neuron(42),
-            RelaySurplusRecipient::Principal(principal(202)),
-            RelaySurplusRecipient::Principal(principal(200)),
-            RelaySurplusRecipient::Neuron(7),
-            RelaySurplusRecipient::Principal(principal(201)),
+            neuron_recipient(42, vec![0x42]),
+            principal_recipient(principal(202), vec![0x20, 0xff]),
+            principal_recipient(principal(200), vec![]),
+            neuron_recipient(7, vec![0x07, 0x00]),
+            principal_recipient(principal(201), vec![0x21]),
         ];
         let setup = CanonicalRelaySetup::canonicalize(targets.clone(), recipients.clone()).unwrap();
         let key = setup.key();
@@ -3946,9 +4011,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             (200..203).map(principal).collect::<Vec<_>>()
         );
-        assert!(installed_recipients
-            .iter()
-            .all(|recipient| recipient.memo.is_empty()));
+        assert_eq!(
+            installed_recipients
+                .iter()
+                .map(|recipient| recipient.memo.clone())
+                .collect::<Vec<_>>(),
+            vec![vec![], vec![0x21], vec![0x20, 0xff]]
+        );
         assert_eq!(
             init.surplus_neuron_recipients
                 .iter()
@@ -3956,10 +4025,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![7, 42]
         );
-        assert!(init
-            .surplus_neuron_recipients
-            .iter()
-            .all(|recipient| recipient.memo.is_empty()));
+        assert_eq!(
+            init.surplus_neuron_recipients
+                .iter()
+                .map(|recipient| recipient.memo.clone())
+                .collect::<Vec<_>>(),
+            vec![vec![0x07, 0x00], vec![0x42]]
+        );
         assert_eq!(*neuron_resolver.calls.lock().unwrap(), vec![7, 42]);
         drop(installs);
 
@@ -3999,33 +4071,105 @@ mod tests {
         }
         #[derive(CandidType, Deserialize)]
         struct InitArgs {
+            max_transfers_per_tick: Option<u32>,
             surplus_canister_recipients: Option<Vec<CanisterRecipient>>,
             surplus_neuron_recipients: Vec<NeuronRecipient>,
         }
 
         let principal_setup = CanonicalRelaySetup::canonicalize(
             vec![principal(1)],
-            vec![RelaySurplusRecipient::Principal(principal(2))],
+            vec![principal_recipient(principal(2), vec![0x00, 0xff])],
         )
         .unwrap();
         let principal_init: InitArgs =
             candid::decode_one(&relay_init_arg(&config(), &principal_setup)).unwrap();
-        assert_eq!(
-            principal_init.surplus_canister_recipients.unwrap()[0].canister_id,
-            principal(2)
-        );
+        let principal_recipient = &principal_init.surplus_canister_recipients.unwrap()[0];
+        assert_eq!(principal_recipient.canister_id, principal(2));
+        assert_eq!(principal_recipient.memo, vec![0x00, 0xff]);
         assert!(principal_init.surplus_neuron_recipients.is_empty());
 
         let neuron_setup = CanonicalRelaySetup::canonicalize(
             vec![principal(1)],
-            vec![RelaySurplusRecipient::Neuron(u64::MAX)],
+            vec![neuron_recipient(u64::MAX, vec![0x80, 0x00])],
         )
         .unwrap();
         let neuron_init: InitArgs =
             candid::decode_one(&relay_init_arg(&config(), &neuron_setup)).unwrap();
         assert!(neuron_init.surplus_canister_recipients.is_none());
         assert_eq!(neuron_init.surplus_neuron_recipients[0].neuron_id, u64::MAX);
-        assert!(neuron_init.surplus_neuron_recipients[0].memo.is_empty());
+        assert_eq!(
+            neuron_init.surplus_neuron_recipients[0].memo,
+            vec![0x80, 0x00]
+        );
+
+        let zero_setup = CanonicalRelaySetup::canonicalize(vec![principal(1)], vec![]).unwrap();
+        let zero_init: InitArgs =
+            candid::decode_one(&relay_init_arg(&config(), &zero_setup)).unwrap();
+        assert!(zero_init.surplus_canister_recipients.is_none());
+        assert!(zero_init.surplus_neuron_recipients.is_empty());
+        assert_eq!(zero_init.max_transfers_per_tick, Some(2));
+    }
+
+    #[test]
+    fn funded_zero_recipient_setup_skips_governance_and_installs_all_cycles_config() {
+        clear_setup_entries_for_debug();
+        let mut cfg = config();
+        cfg.relay_setup_min_e8s = 1;
+        state::set_state(State::new(cfg, 0));
+        let args = RelaySetupArgs {
+            target_canister_ids: vec![principal(1)],
+            surplus_recipients: vec![],
+        };
+        let (ledger, probe, cmc, management, fiduciary) = mocks(
+            MockLedger::new(
+                [107_040_000, 105_030_000],
+                [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+            )
+            .with_fees([10_000, 10_000]),
+            true,
+            None,
+        );
+        let resolver = MockNeuronResolver::readable();
+
+        let result = block_on(notify_with_clients_and_neuron_resolver(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+            &fiduciary,
+            &resolver,
+        ));
+
+        assert_eq!(
+            result,
+            RelaySetupNotifyResult::Active {
+                relay_canister_id: principal(80),
+            }
+        );
+        assert!(resolver.calls.lock().unwrap().is_empty());
+        #[derive(CandidType, Deserialize)]
+        struct InitArgs {
+            max_transfers_per_tick: Option<u32>,
+            surplus_canister_recipients: Option<Vec<PrincipalRecipient>>,
+            surplus_neuron_recipients: Vec<NeuronRecipient>,
+        }
+        #[derive(CandidType, Deserialize)]
+        struct PrincipalRecipient {
+            canister_id: Principal,
+            memo: Vec<u8>,
+        }
+        #[derive(CandidType, Deserialize)]
+        struct NeuronRecipient {
+            neuron_id: u64,
+            memo: Vec<u8>,
+        }
+        let installs = management.installs.lock().unwrap();
+        let init: InitArgs = candid::decode_one(&installs[0].arg).unwrap();
+        assert!(init.surplus_canister_recipients.is_none());
+        assert!(init.surplus_neuron_recipients.is_empty());
+        assert_eq!(init.max_transfers_per_tick, Some(2));
     }
 
     #[test]
@@ -4034,8 +4178,8 @@ mod tests {
         let args = RelaySetupArgs {
             target_canister_ids: vec![principal(1)],
             surplus_recipients: vec![
-                RelaySurplusRecipient::Neuron(7),
-                RelaySurplusRecipient::Neuron(42),
+                neuron_recipient(7, vec![0x07]),
+                neuron_recipient(42, vec![0x2a]),
             ],
         };
         let key = CanonicalRelaySetup::canonicalize(

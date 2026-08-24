@@ -1026,6 +1026,23 @@
   padding: 0;
 }
 
+.relay-setup-mode-fieldset {
+  gap: 8px;
+}
+
+.relay-setup-mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+#relay-setup-recipient-editor {
+  display: grid;
+  gap: 10px;
+}
+
 .relay-setup-principal-hint,
 .relay-setup-principal-count {
   margin: 0;
@@ -1078,6 +1095,34 @@
   flex: 0 0 auto;
   width: auto;
   min-width: 7.5rem;
+}
+
+.relay-setup-memo-controls {
+  display: grid;
+  grid-template-columns: auto minmax(7rem, auto) auto minmax(10rem, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.relay-setup-memo-mode {
+  width: auto;
+}
+
+.relay-setup-memo-input[aria-invalid="true"] {
+  border-color: rgba(255, 160, 160, 0.78);
+}
+
+.relay-setup-memo-count {
+  white-space: nowrap;
+  opacity: 0.74;
+}
+
+.relay-setup-memo-notice {
+  margin: 6px 0 0;
+  color: rgba(214, 225, 255, 0.88);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .relay-setup-remove-principal {
@@ -1557,6 +1602,10 @@
   .relay-setup-principal-controls {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .relay-setup-memo-controls {
+    grid-template-columns: 1fr;
   }
 
   .tracker-submit {

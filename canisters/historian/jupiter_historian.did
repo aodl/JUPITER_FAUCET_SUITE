@@ -216,8 +216,8 @@ type RelaySetupState = variant {
   };
 };
 type RelaySurplusRecipient = variant {
-  Principal : principal;
-  Neuron : nat64;
+  Principal : record { "principal" : principal; memo : blob };
+  Neuron : record { neuron_id : nat64; memo : blob };
 };
 type RelaySetupArgs = record {
   target_canister_ids : vec principal;

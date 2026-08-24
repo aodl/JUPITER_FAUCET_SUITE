@@ -31,12 +31,11 @@ The frontend route [`#relay-setup`](https://jupiter-faucet.com/#relay-setup) use
 The current self-service configuration is:
 
 - **1–20 managed target canisters**;
-- **1–5 surplus recipient principals**;
-- equal surplus shares to each recipient's default ICP account;
-- no custom recipient weights, memos, subaccounts, or neuron IDs; and
+- either **zero surplus recipients** for all-cycles mode or **1–5 typed recipients**;
+- a Principal/default-account or public NNS-neuron destination per recipient;
+- an exact 0–32-byte Ledger memo per recipient, entered as text or hexadecimal; and
+- no custom recipient weights, subaccounts, or automatic IO recipient; and
 - a daily Relay cadence with automatic cycles-probe routing.
-
-The Relay runtime itself is more general: a manually installed Relay can also use public NNS neuron surplus recipients and is not subject to the factory's five-recipient limit.
 
 ### Creation flow
 
@@ -49,11 +48,11 @@ The Relay runtime itself is more general: a manually installed Relay can also us
 
 After activation, fund the **Relay itself**, not the setup account. Historian does not control, upgrade, reconstruct, or mutate a successfully blackholed child.
 
-Targets and recipients jointly define the immutable configuration. Order does not matter, but changing any target or recipient produces a different setup account and Relay configuration. Repeating the exact same configuration returns its existing active Relay rather than creating a duplicate.
+Targets, recipient destinations, and exact memo bytes jointly define the immutable configuration. One explicitly framed canonical encoder covers every configuration, including empty memos and zero recipients. Order does not matter, but changing any target, destination, type, or memo produces a different setup account and Relay configuration. Repeating the exact same configuration returns its existing active Relay rather than creating a duplicate.
 
 Setup deposits are aggregate protocol deposits: Historian does not attribute them to individual payers and does not automatically refund an incorrectly funded configuration. The frontend's live funding requirement should be treated as authoritative because Historian rechecks the ICP ledger fee and CMC conversion rate before irreversible work.
 
-The detailed factory state machine, funding formula, fail-closed reconciliation, `ManualRecoveryRequired` behavior, and deployment cutover are intentionally documented once in [`../../docs/relay-setup-recovery.md`](../../docs/relay-setup-recovery.md).
+The detailed factory state machine, funding formula, fail-closed reconciliation, `ManualRecoveryRequired` behavior, and deployment sequence are intentionally documented once in [`../../docs/relay-setup-recovery.md`](../../docs/relay-setup-recovery.md).
 
 ### Target observability
 
@@ -84,7 +83,7 @@ Tracking cycles minted by Relay prevents a successful top-up from disguising the
 
 ### With surplus recipients
 
-This is the mode used by current self-service Relays. For each observable managed canister:
+With one to five self-service recipients, for each observable managed canister:
 
 ```text
 new_burn_target_cycles = ceil(recent_burn_cycles × 101 / 100)
@@ -110,7 +109,7 @@ of safely distributable ICP after managed-canister requirements and retained-bal
 
 ### Without surplus recipients
 
-A manually installed Relay can configure no raw-ICP recipients. This selects **all-cycles mode**: available top-up funding is divided among positive cycles needs instead of preserving a raw-ICP surplus path.
+A self-service or manually installed Relay can configure no raw-ICP recipients. This selects **all-cycles mode**: available top-up funding is divided among positive cycles needs instead of preserving a raw-ICP surplus path. No recipient is inserted automatically and no raw-surplus Ledger transfer is produced.
 
 All-cycles mode uses recent burn plus carried deficit without the 1% headroom and waits until the proportional shares are fee-efficient enough to spend. Dust and fee-unspendable balance remain in the default account for a later tick.
 
@@ -206,7 +205,7 @@ A `SurplusCanisterRecipient` is paid to `Account { owner = principal; subaccount
 
 A public NNS neuron recipient is resolved through NNS Governance and paid to its staking subaccount. Relay then best-effort calls `claim_or_refresh_neuron`. A refresh failure does not repeat an already accepted ICP transfer. These are **NNS**, not arbitrary SNS, neuron IDs.
 
-Current self-service creation uses only the first form, with empty memos and 1–5 recipients. No IO recipient or other protocol recipient is added automatically.
+Self-service creation supports both forms and passes each exact 0–32-byte memo unchanged. An empty memo preserves the established no-memo transfer semantics. No IO recipient or other protocol recipient is added automatically.
 
 ### SNS reward attribution
 
@@ -318,7 +317,9 @@ Omitted dependency IDs use the canonical mainnet defaults compiled into the Wasm
 
 ### Lifecycle
 
-Relay is deliberately replacement-style. Install, reinstall and upgrade all initialize ordinary heap state from full `InitArgs`. An upgrade therefore resets ordinary cycle samples, deficits, cached fee/conversion state, default-account allocation work and subaccount-1 forwarding state.
+Relay upgrades are replacement-style and non-resumable. Relay does not support no-arg upgrades, does not support Relay UpgradeArgs, and requires full InitArgs for every replacement. Avoid upgrading during active Relay work where practical.
+
+Install, reinstall and upgrade all initialize ordinary heap state from full `InitArgs`. An upgrade therefore resets ordinary cycle samples, deficits, cached fee/conversion state, default-account allocation work and subaccount-1 forwarding state.
 
 Two versioned stable journals survive ordinary same-canister upgrades:
 
@@ -381,7 +382,7 @@ The canonical Relay uses Fixed probe mode through the Fiduciary blackhole, a dai
 
 The second recipient compounds part of genuine surplus back into the stake that produces future Jupiter Faucet maturity; the other half grows the IO neuron stake. This is a protocol-specific example, not a requirement for self-service Relays.
 
-Historian reserves this canonical target set so it cannot be recreated through the principal-only self-service API with a different recipient configuration.
+Historian reserves this canonical target set so it cannot be recreated through the self-service API with a different recipient configuration.
 
 ## Build, test and reproducible verification
 

@@ -162,10 +162,10 @@ pub struct PublicStatus {
     pub relay_setup_min_e8s: Option<u64>,
 }
 
-#[derive(CandidType, Deserialize, Clone, Copy, Serialize, Debug, PartialEq, Eq)]
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
 pub enum RelaySurplusRecipient {
-    Principal(Principal),
-    Neuron(u64),
+    Principal { principal: Principal, memo: Vec<u8> },
+    Neuron { neuron_id: u64, memo: Vec<u8> },
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]

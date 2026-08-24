@@ -226,7 +226,7 @@ pub(crate) struct ActiveRouteSweep {
     pub next_index: u64,
 }
 
-#[derive(CandidType, Deserialize, Serialize, Clone)]
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StableConfig {
     pub staking_account: Account,
     #[serde(default)]
@@ -257,10 +257,6 @@ pub(crate) struct StableConfig {
     #[serde(default)]
     pub relay_setup_min_e8s: Option<u64>,
     #[serde(default)]
-    pub relay_setup_dust_e8s: Option<u64>,
-    #[serde(default)]
-    pub relay_setup_refund_cooldown_seconds: Option<u64>,
-    #[serde(default)]
     pub relay_initial_cycles: Option<u128>,
     #[serde(default)]
     pub relay_cycle_safety_margin_e8s: Option<u64>,
@@ -269,172 +265,9 @@ pub(crate) struct StableConfig {
     #[serde(default)]
     pub self_service_relay_interval_seconds: Option<u64>,
     #[serde(default)]
-    pub self_service_relay_max_transfers_per_tick: Option<Option<u32>>,
-    #[serde(default)]
-    pub io_surplus_neuron_id: Option<u64>,
-    #[serde(default)]
     pub canonical_relay_canister_id: Option<Option<Principal>>,
     #[serde(default)]
     pub canonical_relay_targets: Option<Vec<Principal>>,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RetiredRelayRegistryKind {
-    Canonical,
-    SelfService,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RetiredRelayRegistryStatus {
-    Pending,
-    Active,
-    Failed,
-    Superseded,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RetiredRelayRegistryEntry {
-    pub relay_canister_id: Principal,
-    pub target_canister_id: Principal,
-    pub kind: RetiredRelayRegistryKind,
-    pub status: RetiredRelayRegistryStatus,
-    pub setup_account: Option<Account>,
-    pub setup_account_identifier: Option<String>,
-    pub setup_amount_e8s: Option<u64>,
-    pub setup_tx_ids: Vec<u64>,
-    pub final_controllers: Option<Vec<Principal>>,
-    pub log_visibility_public: Option<bool>,
-    pub created_at_ts: Option<u64>,
-    pub activated_at_ts: Option<u64>,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RetiredRelaySetupStatus {
-    NotFunded,
-    BelowMinimum,
-    InsufficientForCurrentRate,
-    Pending,
-    ConvertingCycles,
-    CycleTransferAccepted,
-    CycleNotifySucceeded,
-    CreatingCanister,
-    CanisterCreated,
-    InstallingCode,
-    CodeInstalled,
-    SettingPublicLogs,
-    FundingRelaySubaccountOne,
-    Blackholing,
-    Active,
-    SweepingToExistingRelay,
-    SweptToExistingRelay,
-    SweepBelowDust,
-    RefundAvailable,
-    Refunding,
-    Refunded,
-    IndexNotReady,
-    FailedRetryable,
-    FailedTerminal,
-    Ambiguous,
-    ManualRecoveryRequired,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RetiredRelaySetupPayment {
-    pub target_canister_id: Principal,
-    pub tx_id: u64,
-    pub from_account_identifier: String,
-    pub amount_e8s: u64,
-    pub timestamp_nanos: Option<u64>,
-    pub processed: bool,
-    pub refunded: bool,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RetiredRelaySetupTransferKind {
-    CmcConversion,
-    RelayFunding,
-    ExistingRelaySweep,
-    Refund,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RetiredRelaySetupPhase {
-    PreSpend,
-    CycleTransferAccepted,
-    CycleNotifySucceeded,
-    RelayCanisterCreated,
-    RelayCodeInstalled,
-    RelayFundingAccepted,
-    BlackholeUpdateAttempted,
-    Active,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RetiredRelaySetupTransferRecord {
-    pub kind: RetiredRelaySetupTransferKind,
-    pub from_subaccount: Option<[u8; 32]>,
-    pub from_account_identifier: String,
-    pub to: Account,
-    pub to_account_identifier: String,
-    pub amount_e8s: u64,
-    pub fee_e8s: u64,
-    pub memo: Option<Vec<u8>>,
-    pub created_at_time_nanos: u64,
-    pub block_index: Option<u64>,
-    pub completed: bool,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RetiredRelayCreateAttempt {
-    pub target_canister_id: Principal,
-    pub created_at_ts: u64,
-    pub initial_cycles: u128,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RetiredRelaySetupJob {
-    pub target_canister_id: Principal,
-    pub setup_account: Account,
-    pub setup_account_identifier: String,
-    pub status: RetiredRelaySetupStatus,
-    pub relay_canister_id: Option<Principal>,
-    pub last_indexed_setup_tx_id: Option<u64>,
-    pub setup_tx_ids: Vec<u64>,
-    pub setup_amount_seen_e8s: u64,
-    pub setup_amount_processed_e8s: u64,
-    pub payments: Vec<RetiredRelaySetupPayment>,
-    pub cycle_conversion_e8s: Option<u64>,
-    pub cycle_transfer_block_index: Option<u64>,
-    pub cycles_minted: Option<u128>,
-    pub relay_initial_cycles: Option<u128>,
-    pub relay_funding_e8s: Option<u64>,
-    pub relay_funding_block_index: Option<u64>,
-    #[serde(default)]
-    pub phase: Option<RetiredRelaySetupPhase>,
-    #[serde(default)]
-    pub cycle_transfer: Option<RetiredRelaySetupTransferRecord>,
-    #[serde(default)]
-    pub relay_funding_transfer: Option<RetiredRelaySetupTransferRecord>,
-    #[serde(default)]
-    pub existing_relay_sweep_transfer: Option<RetiredRelaySetupTransferRecord>,
-    #[serde(default)]
-    pub refund_transfers: Vec<RetiredRelaySetupTransferRecord>,
-    #[serde(default)]
-    pub relay_create_attempt: Option<RetiredRelayCreateAttempt>,
-    #[serde(default)]
-    pub code_installed: bool,
-    #[serde(default)]
-    pub relay_funding_accepted: bool,
-    #[serde(default)]
-    pub blackhole_update_attempted: bool,
-    #[serde(default)]
-    pub blackhole_confirmed: bool,
-    pub refund_attempt_count: u32,
-    pub last_refund_attempt_ts: Option<u64>,
-    pub refund_blocks: Vec<u64>,
-    pub created_at_ts: u64,
-    pub updated_at_ts: u64,
-    pub last_error: Option<String>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -806,50 +639,6 @@ impl Storable for StableCanisterMeta {
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         candid::decode_one(bytes.as_ref()).expect("failed to decode historian stable canister meta")
-    }
-
-    const BOUND: Bound = Bound::Unbounded;
-}
-
-impl Storable for RetiredRelayRegistryEntry {
-    fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(
-            candid::encode_one(self).expect("failed to encode historian relay registry entry"),
-        )
-    }
-
-    fn into_bytes(self) -> Vec<u8> {
-        candid::encode_one(self).expect("failed to encode historian relay registry entry")
-    }
-
-    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref()).expect("failed to decode historian relay registry entry")
-    }
-
-    const BOUND: Bound = Bound::Unbounded;
-}
-
-impl Storable for RetiredRelaySetupJob {
-    fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(candid::encode_one(self).expect("failed to encode historian relay setup job"))
-    }
-
-    fn into_bytes(self) -> Vec<u8> {
-        candid::encode_one(self).expect("failed to encode historian relay setup job")
-    }
-
-    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        let raw = bytes.as_ref();
-        candid::decode_one(raw).unwrap_or_else(|current_err| {
-            crate::state::legacy_v1::decode_legacy_relay_setup_job(raw).unwrap_or_else(
-                |legacy_err| {
-                    panic!(
-                        "failed to decode historian relay setup job as current schema ({current_err}) or legacy V1 schema from {} ({legacy_err})",
-                        crate::state::legacy_v1::LEGACY_HISTORIAN_V1_REVISION
-                    )
-                },
-            )
-        })
     }
 
     const BOUND: Bound = Bound::Unbounded;

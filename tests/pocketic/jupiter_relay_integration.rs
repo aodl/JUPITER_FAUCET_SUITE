@@ -320,6 +320,7 @@ struct RewardStateFixture {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+#[allow(clippy::large_enum_variant)] // Mirrors the stable Candid bytes without boxing.
 enum VersionedRewardStateFixture {
     Uninitialized,
     V1(RewardStateFixture),
@@ -396,6 +397,7 @@ struct SplitterStateFixture {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)] // Mirrors the stable Candid bytes without boxing.
 enum VersionedSplitterStateFixture {
     Uninitialized,
     V1(SplitterStateFixture),
@@ -2922,7 +2924,7 @@ impl RealSplitterRewardEnv {
             },
         )?;
         let owners = (0..owner_count)
-            .map(|index| Principal::self_authenticating(&[(index + 41) as u8; 32]))
+            .map(|index| Principal::self_authenticating([(index + 41) as u8; 32]))
             .collect::<Vec<_>>();
         let neurons = owners
             .iter()
@@ -3228,11 +3230,11 @@ fn splitter_reward_real_ledger_bad_fee_records_unequal_fees_and_attributes_owner
     let journal = env.journal()?;
     if journal.pending_transfer.is_some()
         || journal.processed_through_commitment_tx_id.is_none()
-        || !journal
+        || journal
             .splitter_boundaries
             .as_ref()
             .and_then(|boundaries| boundaries.get(&SPLITTER))
-            .is_some_and(|boundary| boundary.processed_through_tx_id == Some(subaccount_one_leg.0))
+            .is_none_or(|boundary| boundary.processed_through_tx_id != Some(subaccount_one_leg.0))
     {
         bail!("unequal-fee reward did not advance both boundaries cleanly: {journal:?}");
     }
@@ -3379,7 +3381,7 @@ fn splitter_reward_allocates_multiple_real_sources_and_no_winner_closes_provenan
         bail!("multi-source splitter-50 reward did not advance provenance");
     }
 
-    let unknown = Principal::self_authenticating(&[99; 32]);
+    let unknown = Principal::self_authenticating([99; 32]);
     env.fund_owner(unknown, 300_000_000)?;
     env.send_to_relay(unknown, relay_numbered_subaccount(10), 200_000_000)?;
     env.main_tick()?;
@@ -3664,8 +3666,8 @@ fn pre_splitter_upgrade_preserves_reward_journal_and_concurrent_real_icp_credit(
             extensions: None,
         },
     )?;
-    let owner_a = Principal::self_authenticating(&[11; 32]);
-    let owner_b = Principal::self_authenticating(&[12; 32]);
+    let owner_a = Principal::self_authenticating([11; 32]);
+    let owner_b = Principal::self_authenticating([12; 32]);
     let neurons = [owner_a, owner_b]
         .into_iter()
         .enumerate()
@@ -4169,9 +4171,9 @@ fn relay_attributes_real_icp_indexed_commitment_to_sns_owner() -> Result<()> {
         "debug_set_canisters",
         root_context,
     )?;
-    let owner_a = Principal::self_authenticating(&[1; 32]);
-    let owner_b = Principal::self_authenticating(&[2; 32]);
-    let unknown = Principal::self_authenticating(&[3; 32]);
+    let owner_a = Principal::self_authenticating([1; 32]);
+    let owner_b = Principal::self_authenticating([2; 32]);
+    let unknown = Principal::self_authenticating([3; 32]);
     let neurons = [owner_a, owner_b]
         .into_iter()
         .enumerate()

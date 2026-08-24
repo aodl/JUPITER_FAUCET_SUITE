@@ -1542,6 +1542,7 @@ dependencies = [
  "jupiter-build-support",
  "jupiter-canister-logging",
  "jupiter-ic-clients",
+ "jupiter-memo-policy",
  "jupiter-nns-types",
  "pocket-ic",
  "serde",

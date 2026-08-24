@@ -79,6 +79,7 @@ pub(crate) struct SplitterState {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)] // Boxing would change the stable Candid representation.
 enum VersionedSplitterState {
     Uninitialized,
     V1(SplitterState),
