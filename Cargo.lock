@@ -1083,15 +1083,6 @@ dependencies = [
 
 [[package]]
 name = "ic-stable-structures"
-version = "0.6.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d30d4cf17aff1024e13133897048bcba580e063c9000571ab766ca37e2996f4"
-dependencies = [
- "ic_principal",
-]
-
-[[package]]
-name = "ic-stable-structures"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ee3372ddc0cf2a747fc26ce2d075a240ed6bfab151e63bc70109e8967f7ce6f"
@@ -1140,8 +1131,7 @@ dependencies = [
 [[package]]
 name = "icrc-cbor"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90569d2894d9536c5416943556ac6339df249f06611b3c41029196b39e0dd119"
+source = "git+https://github.com/dfinity/ic?rev=80b1d5e27bfdb96d6e50fb2ecee5ff80a77900e9#80b1d5e27bfdb96d6e50fb2ecee5ff80a77900e9"
 dependencies = [
  "candid",
  "minicbor",
@@ -1151,17 +1141,14 @@ dependencies = [
 
 [[package]]
 name = "icrc-ledger-types"
-version = "0.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aafb78e620b2cc2b000cd745c0504dfb23a828acc3dd6f1baef208cd6c471e32"
+version = "0.2.0"
+source = "git+https://github.com/dfinity/ic?rev=80b1d5e27bfdb96d6e50fb2ecee5ff80a77900e9#80b1d5e27bfdb96d6e50fb2ecee5ff80a77900e9"
 dependencies = [
  "base32",
  "candid",
  "crc32fast",
  "hex",
- "ic-stable-structures 0.6.9",
  "icrc-cbor",
- "itertools 0.12.1",
  "minicbor",
  "num-bigint",
  "num-traits",
@@ -1354,15 +1341,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1399,7 +1377,7 @@ dependencies = [
  "hex",
  "ic-cdk",
  "ic-cdk-timers",
- "ic-stable-structures 0.7.2",
+ "ic-stable-structures",
  "icrc-ledger-types",
  "jupiter-build-support",
  "jupiter-canister-logging",
@@ -1424,7 +1402,7 @@ dependencies = [
  "hex",
  "ic-cdk",
  "ic-cdk-timers",
- "ic-stable-structures 0.7.2",
+ "ic-stable-structures",
  "icrc-ledger-types",
  "jupiter-build-support",
  "jupiter-canister-logging",
@@ -1462,7 +1440,7 @@ dependencies = [
  "hex",
  "ic-cdk",
  "ic-cdk-timers",
- "ic-stable-structures 0.7.2",
+ "ic-stable-structures",
  "icrc-ledger-types",
  "jupiter-build-support",
  "jupiter-canister-logging",
@@ -1537,7 +1515,7 @@ dependencies = [
  "hex",
  "ic-cdk",
  "ic-cdk-timers",
- "ic-stable-structures 0.7.2",
+ "ic-stable-structures",
  "icrc-ledger-types",
  "jupiter-build-support",
  "jupiter-canister-logging",
@@ -1561,7 +1539,7 @@ dependencies = [
  "hex",
  "ic-cdk",
  "ic-cdk-timers",
- "ic-stable-structures 0.7.2",
+ "ic-stable-structures",
  "icrc-ledger-types",
  "jupiter-build-support",
  "jupiter-canister-logging",
@@ -1581,7 +1559,7 @@ dependencies = [
  "ascii-canvas",
  "bit-set",
  "ena",
- "itertools 0.11.0",
+ "itertools",
  "lalrpop-util",
  "petgraph",
  "pico-args",
@@ -2849,6 +2827,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
+ "windows-sys 0.52.0",
  "windows-sys 0.59.0",
 ]
 

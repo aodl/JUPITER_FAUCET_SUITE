@@ -20,6 +20,19 @@ pub struct TimeStamp {
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct GetBlocksArgs {
+    pub start: u64,
+    pub length: u64,
+}
+
+/// The `query_blocks` response is a Candid record. Relay only needs the chain length, so Candid
+/// record subtyping deliberately omits the block/archive payloads from this narrow client DTO.
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct QueryBlocksChainLength {
+    pub chain_length: u64,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct LegacyTransferArg {
     pub memo: u64,
     pub amount: Tokens,
@@ -47,6 +60,21 @@ impl IcrcLedgerCanister {
 
     pub async fn fee_e8s(&self) -> Result<u64, ClientError> {
         nat_to_u64(&self.fee().await?)
+    }
+
+    pub async fn chain_length(&self) -> Result<u64, ClientError> {
+        let resp = Call::bounded_wait(self.ledger_id, "query_blocks")
+            .with_arg(GetBlocksArgs {
+                start: 0,
+                length: 0,
+            })
+            .change_timeout(20)
+            .await
+            .map_err(|e| ClientError::Call(format!("{e:?}")))?;
+        let response: QueryBlocksChainLength = resp.candid().map_err(|e| {
+            ClientError::Call(format!("decode query_blocks chain length failed: {e:?}"))
+        })?;
+        Ok(response.chain_length)
     }
 
     pub async fn fee(&self) -> Result<Nat, ClientError> {

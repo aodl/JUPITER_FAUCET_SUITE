@@ -41,7 +41,7 @@ hex = "0.4"
 ic-cdk = "0.20.1"
 ic-cdk-timers = "1.0.0"
 ic-stable-structures = "0.7"
-icrc-ledger-types = "0.1.12"
+icrc-ledger-types = { git = "https://github.com/dfinity/ic", rev = "80b1d5e27bfdb96d6e50fb2ecee5ff80a77900e9" }
 num-traits = "0.2"
 pocket-ic = "13"
 serde = { version = "1", features = ["derive"] }

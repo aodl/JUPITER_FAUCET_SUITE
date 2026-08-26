@@ -314,20 +314,20 @@ mod tests {
     fn reward_and_splitter_cells_preserve_each_other() {
         reset_for_test();
         crate::reward_state::reset_for_test();
-        crate::reward_state::mutate(|state| state.processed_through_commitment_tx_id = Some(41));
+        crate::reward_state::mutate(|state| state.last_sweep_attempt_timestamp_seconds = 41);
         set_active_job(sample_job());
         assert_eq!(
-            crate::reward_state::get().processed_through_commitment_tx_id,
-            Some(41)
+            crate::reward_state::get().last_sweep_attempt_timestamp_seconds,
+            41
         );
 
         crate::reward_state::mutate(|state| {
-            state.carried_credit_start_tx_id = Some(40);
+            state.last_sweep_attempt_timestamp_seconds = 42;
         });
         assert_eq!(active_job().unwrap().plan.splitter_number, 30);
         assert_eq!(
-            crate::reward_state::get().carried_credit_start_tx_id,
-            Some(40)
+            crate::reward_state::get().last_sweep_attempt_timestamp_seconds,
+            42
         );
     }
 

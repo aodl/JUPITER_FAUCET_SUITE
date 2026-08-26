@@ -12,25 +12,16 @@ pub(crate) const REWARD_STATE_MEMORY_ID: u8 = 0;
 pub enum PendingRewardTransferStatus {
     AwaitingTransfer,
     Ambiguous,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RewardHistoryBoundary {
-    pub processed_through_tx_id: Option<u64>,
-    pub carried_credit_start_tx_id: Option<u64>,
+    NeedsFreshIdentity,
+    WaitingForBalance,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct PendingRewardTransfer {
-    pub sns_root_canister_id: Principal,
-    pub sns_ledger_canister_id: Principal,
-    pub snapshot_id: u64,
-    pub through_commitment_tx_id: u64,
-    pub next_carried_credit_start_tx_id: Option<u64>,
-    pub proposed_splitter_boundaries: BTreeMap<u8, RewardHistoryBoundary>,
+pub struct PendingRewardRecipient {
     pub recipient: Account,
-    pub observed_balance: Nat,
-    pub fee: Nat,
+    /// Balance read immediately before this identity's first transfer attempt. Absent until the
+    /// attempt is durably pinned; ambiguity reconciliation requires it to remain exact.
+    pub observed_balance: Option<Nat>,
     pub amount: Nat,
     pub memo: Vec<u8>,
     pub created_at_time_nanos: u64,
@@ -39,18 +30,32 @@ pub struct PendingRewardTransfer {
     pub status: PendingRewardTransferStatus,
 }
 
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
-pub struct RewardState {
-    pub epoch_sns_root_canister_id: Option<Principal>,
-    pub processed_through_commitment_tx_id: Option<u64>,
-    pub carried_credit_start_tx_id: Option<u64>,
-    pub splitter_boundaries: BTreeMap<u8, RewardHistoryBoundary>,
-    pub last_sweep_attempt_timestamp_seconds: u64,
-    pub pending_transfer: Option<PendingRewardTransfer>,
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct PendingRewardPayout {
+    pub sns_root_canister_id: Principal,
+    pub sns_ledger_canister_id: Principal,
+    pub snapshot_id: u64,
+    pub attribution_commitment_tx_id: u64,
+    pub fee: Nat,
+    pub recipients: Vec<PendingRewardRecipient>,
+    pub next_recipient_index: u32,
 }
 
-// Frozen decoder for the reward state committed before splitter provenance was added.
-// These field types and their order-independent Candid labels must remain unchanged.
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct RewardState {
+    /// Stable compatibility name; records the latest adjudication that consumed the weekly cadence.
+    pub last_sweep_attempt_timestamp_seconds: u64,
+    pub pending_payout: Option<PendingRewardPayout>,
+}
+
+// Frozen decoders for the two deployed reward-state schemas. They are migration inputs only;
+// attribution cursors and splitter boundaries deliberately do not enter the live V3 state.
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+enum FrozenPendingRewardTransferStatus {
+    AwaitingTransfer,
+    Ambiguous,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 struct FrozenPendingRewardTransferV1 {
     sns_root_canister_id: Principal,
@@ -66,7 +71,7 @@ struct FrozenPendingRewardTransferV1 {
     created_at_time_nanos: u64,
     attempt_started: bool,
     uncertain_attempt_seen: bool,
-    status: PendingRewardTransferStatus,
+    status: FrozenPendingRewardTransferStatus,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -78,44 +83,143 @@ struct FrozenRewardStateV1 {
     pending_transfer: Option<FrozenPendingRewardTransferV1>,
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct FrozenRewardHistoryBoundaryV2 {
+    processed_through_tx_id: Option<u64>,
+    carried_credit_start_tx_id: Option<u64>,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+struct FrozenPendingRewardTransferV2 {
+    sns_root_canister_id: Principal,
+    sns_ledger_canister_id: Principal,
+    snapshot_id: u64,
+    through_commitment_tx_id: u64,
+    next_carried_credit_start_tx_id: Option<u64>,
+    proposed_splitter_boundaries: BTreeMap<u8, FrozenRewardHistoryBoundaryV2>,
+    recipient: Account,
+    observed_balance: Nat,
+    fee: Nat,
+    amount: Nat,
+    memo: Vec<u8>,
+    created_at_time_nanos: u64,
+    attempt_started: bool,
+    uncertain_attempt_seen: bool,
+    status: FrozenPendingRewardTransferStatus,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
+struct FrozenRewardStateV2 {
+    epoch_sns_root_canister_id: Option<Principal>,
+    processed_through_commitment_tx_id: Option<u64>,
+    carried_credit_start_tx_id: Option<u64>,
+    splitter_boundaries: BTreeMap<u8, FrozenRewardHistoryBoundaryV2>,
+    last_sweep_attempt_timestamp_seconds: u64,
+    pending_transfer: Option<FrozenPendingRewardTransferV2>,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 enum VersionedRewardState {
     Uninitialized,
     V1(FrozenRewardStateV1),
-    V2(RewardState),
+    V2(FrozenRewardStateV2),
+    V3(RewardState),
 }
 
-impl From<FrozenPendingRewardTransferV1> for PendingRewardTransfer {
-    fn from(old: FrozenPendingRewardTransferV1) -> Self {
-        Self {
-            sns_root_canister_id: old.sns_root_canister_id,
-            sns_ledger_canister_id: old.sns_ledger_canister_id,
-            snapshot_id: old.snapshot_id,
-            through_commitment_tx_id: old.through_commitment_tx_id,
-            next_carried_credit_start_tx_id: old.next_carried_credit_start_tx_id,
-            proposed_splitter_boundaries: BTreeMap::new(),
-            recipient: old.recipient,
-            observed_balance: old.observed_balance,
-            fee: old.fee,
-            amount: old.amount,
-            memo: old.memo,
-            created_at_time_nanos: old.created_at_time_nanos,
-            attempt_started: old.attempt_started,
-            uncertain_attempt_seen: old.uncertain_attempt_seen,
-            status: old.status,
-        }
+#[allow(clippy::too_many_arguments)]
+fn legacy_payout(
+    sns_root_canister_id: Principal,
+    sns_ledger_canister_id: Principal,
+    snapshot_id: u64,
+    through_commitment_tx_id: u64,
+    recipient: Account,
+    observed_balance: Nat,
+    fee: Nat,
+    amount: Nat,
+    memo: Vec<u8>,
+    created_at_time_nanos: u64,
+    attempt_started: bool,
+    uncertain_attempt_seen: bool,
+    status: PendingRewardTransferStatus,
+) -> PendingRewardPayout {
+    PendingRewardPayout {
+        sns_root_canister_id,
+        sns_ledger_canister_id,
+        snapshot_id,
+        attribution_commitment_tx_id: through_commitment_tx_id,
+        fee,
+        recipients: vec![PendingRewardRecipient {
+            recipient,
+            observed_balance: Some(observed_balance),
+            amount,
+            memo,
+            created_at_time_nanos,
+            attempt_started,
+            uncertain_attempt_seen,
+            status,
+        }],
+        next_recipient_index: 0,
     }
 }
 
 impl From<FrozenRewardStateV1> for RewardState {
     fn from(old: FrozenRewardStateV1) -> Self {
         Self {
-            epoch_sns_root_canister_id: old.epoch_sns_root_canister_id,
-            processed_through_commitment_tx_id: old.processed_through_commitment_tx_id,
-            carried_credit_start_tx_id: old.carried_credit_start_tx_id,
-            splitter_boundaries: BTreeMap::new(),
-            last_sweep_attempt_timestamp_seconds: old.last_sweep_attempt_timestamp_seconds,
-            pending_transfer: old.pending_transfer.map(Into::into),
+            // V1 recorded any attempted sweep, including transient failures. V3 records only a
+            // completed adjudication, so inheriting this timestamp could suppress the first valid
+            // stateless adjudication for a week.
+            last_sweep_attempt_timestamp_seconds: 0,
+            pending_payout: old.pending_transfer.map(|pending| {
+                legacy_payout(
+                    pending.sns_root_canister_id,
+                    pending.sns_ledger_canister_id,
+                    pending.snapshot_id,
+                    pending.through_commitment_tx_id,
+                    pending.recipient,
+                    pending.observed_balance,
+                    pending.fee,
+                    pending.amount,
+                    pending.memo,
+                    pending.created_at_time_nanos,
+                    pending.attempt_started,
+                    pending.uncertain_attempt_seen,
+                    pending.status.into(),
+                )
+            }),
+        }
+    }
+}
+
+impl From<FrozenRewardStateV2> for RewardState {
+    fn from(old: FrozenRewardStateV2) -> Self {
+        Self {
+            last_sweep_attempt_timestamp_seconds: 0,
+            pending_payout: old.pending_transfer.map(|pending| {
+                legacy_payout(
+                    pending.sns_root_canister_id,
+                    pending.sns_ledger_canister_id,
+                    pending.snapshot_id,
+                    pending.through_commitment_tx_id,
+                    pending.recipient,
+                    pending.observed_balance,
+                    pending.fee,
+                    pending.amount,
+                    pending.memo,
+                    pending.created_at_time_nanos,
+                    pending.attempt_started,
+                    pending.uncertain_attempt_seen,
+                    pending.status.into(),
+                )
+            }),
+        }
+    }
+}
+
+impl From<FrozenPendingRewardTransferStatus> for PendingRewardTransferStatus {
+    fn from(old: FrozenPendingRewardTransferStatus) -> Self {
+        match old {
+            FrozenPendingRewardTransferStatus::AwaitingTransfer => Self::AwaitingTransfer,
+            FrozenPendingRewardTransferStatus::Ambiguous => Self::Ambiguous,
         }
     }
 }
@@ -159,39 +263,38 @@ fn with_cell<R>(
 pub(crate) fn initialize_if_uninitialized() {
     with_cell(|cell| match cell.get().clone() {
         VersionedRewardState::Uninitialized => {
-            cell.set(VersionedRewardState::V2(RewardState::default()));
+            cell.set(VersionedRewardState::V3(RewardState::default()));
         }
         VersionedRewardState::V1(old) => {
-            cell.set(VersionedRewardState::V2(old.into()));
+            cell.set(VersionedRewardState::V3(old.into()));
         }
-        VersionedRewardState::V2(_) => {}
+        VersionedRewardState::V2(old) => {
+            cell.set(VersionedRewardState::V3(old.into()));
+        }
+        VersionedRewardState::V3(_) => {}
     });
 }
 
 pub(crate) fn get() -> RewardState {
     initialize_if_uninitialized();
     with_cell(|cell| match cell.get().clone() {
-        VersionedRewardState::Uninitialized => unreachable!(),
-        VersionedRewardState::V1(_) => unreachable!(),
-        VersionedRewardState::V2(state) => state,
+        VersionedRewardState::Uninitialized
+        | VersionedRewardState::V1(_)
+        | VersionedRewardState::V2(_) => unreachable!(),
+        VersionedRewardState::V3(state) => state,
     })
 }
 
 pub(crate) fn set(state: RewardState) {
-    assert!(
-        state
-            .splitter_boundaries
-            .keys()
-            .chain(
-                state
-                    .pending_transfer
-                    .iter()
-                    .flat_map(|pending| pending.proposed_splitter_boundaries.keys())
-            )
-            .all(|number| matches!(number, 10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90)),
-        "Relay reward state contains a non-protocol splitter boundary"
-    );
-    with_cell(|cell| cell.set(VersionedRewardState::V2(state)));
+    if let Some(payout) = &state.pending_payout {
+        assert!(!payout.recipients.is_empty(), "pending payout is empty");
+        assert!(
+            usize::try_from(payout.next_recipient_index)
+                .is_ok_and(|index| index < payout.recipients.len()),
+            "pending payout progress is out of bounds"
+        );
+    }
+    with_cell(|cell| cell.set(VersionedRewardState::V3(state)));
 }
 
 pub(crate) fn mutate<R>(f: impl FnOnce(&mut RewardState) -> R) -> R {
@@ -210,72 +313,105 @@ pub(crate) fn reset_for_test() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn versioned_reward_state_v2_roundtrips() {
-        let state = RewardState {
-            epoch_sns_root_canister_id: Some(Principal::from_slice(&[1])),
-            processed_through_commitment_tx_id: Some(9),
-            carried_credit_start_tx_id: Some(8),
-            splitter_boundaries: BTreeMap::from([
-                (
-                    10,
-                    RewardHistoryBoundary {
-                        processed_through_tx_id: Some(6),
-                        carried_credit_start_tx_id: Some(5),
-                    },
-                ),
-                (
-                    90,
-                    RewardHistoryBoundary {
-                        processed_through_tx_id: Some(7),
-                        carried_credit_start_tx_id: None,
-                    },
-                ),
-            ]),
-            last_sweep_attempt_timestamp_seconds: 10,
-            pending_transfer: Some(PendingRewardTransfer {
-                sns_root_canister_id: Principal::from_slice(&[1]),
-                sns_ledger_canister_id: Principal::from_slice(&[2]),
-                snapshot_id: 3,
-                through_commitment_tx_id: 12,
-                next_carried_credit_start_tx_id: Some(11),
-                proposed_splitter_boundaries: BTreeMap::from([(
-                    50,
-                    RewardHistoryBoundary {
-                        processed_through_tx_id: Some(14),
-                        carried_credit_start_tx_id: Some(13),
-                    },
-                )]),
-                recipient: Account {
-                    owner: Principal::from_slice(&[4]),
-                    subaccount: None,
+    fn old_pending() -> FrozenPendingRewardTransferV2 {
+        FrozenPendingRewardTransferV2 {
+            sns_root_canister_id: Principal::from_slice(&[1]),
+            sns_ledger_canister_id: Principal::from_slice(&[2]),
+            snapshot_id: 3,
+            through_commitment_tx_id: 12,
+            next_carried_credit_start_tx_id: Some(11),
+            proposed_splitter_boundaries: BTreeMap::from([(
+                50,
+                FrozenRewardHistoryBoundaryV2 {
+                    processed_through_tx_id: Some(14),
+                    carried_credit_start_tx_id: Some(13),
                 },
-                observed_balance: Nat::from(1_000_u64),
-                fee: Nat::from(10_u64),
-                amount: Nat::from(990_u64),
-                memo: b"JRS1".to_vec(),
-                created_at_time_nanos: 5,
-                attempt_started: true,
-                uncertain_attempt_seen: true,
-                status: PendingRewardTransferStatus::Ambiguous,
-            }),
-        };
-        let encoded = candid::encode_one(VersionedRewardState::V2(state.clone())).unwrap();
-        let decoded: VersionedRewardState = candid::decode_one(&encoded).unwrap();
-        match decoded {
-            VersionedRewardState::V2(decoded) => assert_eq!(decoded, state),
-            VersionedRewardState::Uninitialized => panic!("unexpected uninitialized state"),
-            VersionedRewardState::V1(_) => panic!("unexpected V1 state"),
+            )]),
+            recipient: Account {
+                owner: Principal::from_slice(&[4]),
+                subaccount: None,
+            },
+            observed_balance: Nat::from(1_000_u64),
+            fee: Nat::from(10_u64),
+            amount: Nat::from(990_u64),
+            memo: b"JRS1".to_vec(),
+            created_at_time_nanos: 5,
+            attempt_started: true,
+            uncertain_attempt_seen: true,
+            status: FrozenPendingRewardTransferStatus::Ambiguous,
         }
     }
 
     #[test]
-    fn v1_migrates_once_without_changing_pending_transfer_identity() {
+    fn versioned_reward_state_v3_roundtrips() {
+        let state = RewardState {
+            last_sweep_attempt_timestamp_seconds: 10,
+            pending_payout: Some(PendingRewardPayout {
+                sns_root_canister_id: Principal::from_slice(&[1]),
+                sns_ledger_canister_id: Principal::from_slice(&[2]),
+                snapshot_id: 3,
+                attribution_commitment_tx_id: 12,
+                fee: Nat::from(10_u64),
+                recipients: vec![PendingRewardRecipient {
+                    recipient: Account {
+                        owner: Principal::from_slice(&[4]),
+                        subaccount: None,
+                    },
+                    observed_balance: Some(Nat::from(1_000_u64)),
+                    amount: Nat::from(990_u64),
+                    memo: b"JRS1".to_vec(),
+                    created_at_time_nanos: 5,
+                    attempt_started: true,
+                    uncertain_attempt_seen: true,
+                    status: PendingRewardTransferStatus::Ambiguous,
+                }],
+                next_recipient_index: 0,
+            }),
+        };
+        let encoded = candid::encode_one(VersionedRewardState::V3(state.clone())).unwrap();
+        let decoded: VersionedRewardState = candid::decode_one(&encoded).unwrap();
+        assert!(matches!(decoded, VersionedRewardState::V3(decoded) if decoded == state));
+    }
+
+    #[test]
+    fn v2_migration_discards_attribution_cursors_and_preserves_pending_identity() {
+        let old = FrozenRewardStateV2 {
+            epoch_sns_root_canister_id: Some(Principal::from_slice(&[1])),
+            processed_through_commitment_tx_id: Some(9),
+            carried_credit_start_tx_id: Some(8),
+            splitter_boundaries: BTreeMap::from([(
+                50,
+                FrozenRewardHistoryBoundaryV2 {
+                    processed_through_tx_id: Some(7),
+                    carried_credit_start_tx_id: Some(6),
+                },
+            )]),
+            last_sweep_attempt_timestamp_seconds: 10,
+            pending_transfer: Some(old_pending()),
+        };
+        with_cell(|cell| cell.set(VersionedRewardState::V2(old)));
+
+        let migrated = get();
+        assert_eq!(migrated.last_sweep_attempt_timestamp_seconds, 0);
+        let payout = migrated.pending_payout.unwrap();
+        assert_eq!(payout.attribution_commitment_tx_id, 12);
+        assert_eq!(payout.fee, Nat::from(10_u64));
+        assert_eq!(payout.recipients.len(), 1);
+        let recipient = &payout.recipients[0];
+        assert_eq!(recipient.amount, Nat::from(990_u64));
+        assert_eq!(recipient.memo, b"JRS1");
+        assert_eq!(recipient.created_at_time_nanos, 5);
+        assert_eq!(recipient.status, PendingRewardTransferStatus::Ambiguous);
+        with_cell(|cell| assert!(matches!(cell.get(), VersionedRewardState::V3(_))));
+    }
+
+    #[test]
+    fn v1_migration_freezes_status_discards_cursor_and_resets_cadence() {
         let old = FrozenRewardStateV1 {
             epoch_sns_root_canister_id: Some(Principal::from_slice(&[1])),
             processed_through_commitment_tx_id: Some(9),
             carried_credit_start_tx_id: Some(8),
-            last_sweep_attempt_timestamp_seconds: 10,
+            last_sweep_attempt_timestamp_seconds: 777,
             pending_transfer: Some(FrozenPendingRewardTransferV1 {
                 sns_root_canister_id: Principal::from_slice(&[1]),
                 sns_ledger_canister_id: Principal::from_slice(&[2]),
@@ -289,57 +425,36 @@ mod tests {
                 observed_balance: Nat::from(1_000_u64),
                 fee: Nat::from(10_u64),
                 amount: Nat::from(990_u64),
-                memo: b"JRS1".to_vec(),
+                memo: b"legacy-v1".to_vec(),
                 created_at_time_nanos: 5,
                 attempt_started: true,
                 uncertain_attempt_seen: true,
-                status: PendingRewardTransferStatus::Ambiguous,
+                status: FrozenPendingRewardTransferStatus::Ambiguous,
             }),
         };
-        let expected: RewardState = old.clone().into();
-        with_cell(|cell| cell.set(VersionedRewardState::V1(old.clone())));
+        with_cell(|cell| cell.set(VersionedRewardState::V1(old)));
 
         let migrated = get();
-        assert_eq!(migrated, expected);
-        assert_eq!(
-            migrated.epoch_sns_root_canister_id,
-            old.epoch_sns_root_canister_id
-        );
-        assert_eq!(migrated.processed_through_commitment_tx_id, Some(9));
-        assert_eq!(migrated.carried_credit_start_tx_id, Some(8));
-        assert!(migrated.splitter_boundaries.is_empty());
-        let pending = migrated.pending_transfer.unwrap();
-        let old_pending = old.pending_transfer.unwrap();
-        assert_eq!(
-            pending.sns_ledger_canister_id,
-            old_pending.sns_ledger_canister_id
-        );
-        assert_eq!(pending.recipient, old_pending.recipient);
-        assert_eq!(pending.amount, old_pending.amount);
-        assert_eq!(pending.fee, old_pending.fee);
-        assert_eq!(pending.memo, old_pending.memo);
-        assert_eq!(
-            pending.created_at_time_nanos,
-            old_pending.created_at_time_nanos
-        );
-        assert!(pending.proposed_splitter_boundaries.is_empty());
-        with_cell(|cell| assert!(matches!(cell.get(), VersionedRewardState::V2(_))));
-        initialize_if_uninitialized();
-        with_cell(|cell| assert!(matches!(cell.get(), VersionedRewardState::V2(_))));
+        assert_eq!(migrated.last_sweep_attempt_timestamp_seconds, 0);
+        let recipient = &migrated.pending_payout.unwrap().recipients[0];
+        assert_eq!(recipient.memo, b"legacy-v1");
+        assert_eq!(recipient.observed_balance, Some(Nat::from(1_000_u64)));
+        assert_eq!(recipient.status, PendingRewardTransferStatus::Ambiguous);
     }
 
     #[test]
-    fn initialization_does_not_overwrite_existing_state() {
+    fn initialization_does_not_overwrite_existing_v3_state() {
         reset_for_test();
-        mutate(|state| state.processed_through_commitment_tx_id = Some(42));
+        mutate(|state| state.last_sweep_attempt_timestamp_seconds = 42);
         initialize_if_uninitialized();
-        assert_eq!(get().processed_through_commitment_tx_id, Some(42));
+        assert_eq!(get().last_sweep_attempt_timestamp_seconds, 42);
     }
 
     #[test]
-    fn uninitialized_reward_state_initializes_to_final_schema() {
+    fn uninitialized_reward_state_initializes_to_v3() {
         with_cell(|cell| cell.set(VersionedRewardState::Uninitialized));
         initialize_if_uninitialized();
         assert_eq!(get(), RewardState::default());
+        with_cell(|cell| assert!(matches!(cell.get(), VersionedRewardState::V3(_))));
     }
 }

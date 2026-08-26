@@ -6,7 +6,6 @@ use jupiter_ic_clients::index::{IndexOperation, IndexTransactionWithId};
 
 use super::reward_history;
 use crate::logic;
-use crate::reward_state::RewardHistoryBoundary;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct SplitterFundingCredit {
@@ -19,7 +18,6 @@ pub(super) struct SplitterFundingCredit {
 pub(super) struct ExpandedSplitterProvenance {
     pub sources: BTreeMap<[u8; 32], u64>,
     pub ineligible_e8s: u64,
-    pub boundary_updates: BTreeMap<u8, RewardHistoryBoundary>,
     pub scanned_transactions: usize,
     pub splitters_scanned: usize,
 }
@@ -36,6 +34,7 @@ struct OutgoingLeg {
     tx_id: u64,
     amount_e8s: u64,
     fee_e8s: u64,
+    funding_credits_at_pin: usize,
 }
 
 pub(super) fn intrinsic_splitter_accounts(relay: Principal) -> BTreeMap<[u8; 32], u8> {
@@ -138,30 +137,22 @@ fn push_incoming_credit(
 }
 
 fn consume_job_funding(
-    splitter_number: u8,
-    anchor_tx_id: u64,
     balance_e8s: u64,
     subaccount_one_amount_e8s: u64,
+    funding_credits_at_pin: usize,
     funding: &mut VecDeque<UpstreamCredit>,
     sources: &mut BTreeMap<[u8; 32], u64>,
     ineligible_e8s: &mut u64,
-) -> Result<(), String> {
+) -> Result<(), &'static str> {
     let mut remaining = balance_e8s;
     let mut consumed = Vec::new();
     while remaining > 0 {
-        let credit = funding.pop_front().ok_or_else(|| {
-            provenance_error(
-                splitter_number,
-                Some(anchor_tx_id),
-                "missing_funding_credit",
-            )
-        })?;
+        if consumed.len() == funding_credits_at_pin {
+            return Err("missing_funding_credit");
+        }
+        let credit = funding.pop_front().ok_or("missing_funding_credit")?;
         if credit.amount_e8s > remaining {
-            return Err(provenance_error(
-                splitter_number,
-                Some(credit.tx_id),
-                "funding_credit_exceeds_pinned_remainder",
-            ));
+            return Err("funding_credit_exceeds_pinned_remainder");
         }
         remaining -= credit.amount_e8s;
         consumed.push(credit);
@@ -173,12 +164,13 @@ fn consume_job_funding(
             .collect::<Vec<_>>(),
         subaccount_one_amount_e8s,
     )
-    .map_err(|class| provenance_error(splitter_number, Some(anchor_tx_id), &class))?;
+    .map_err(|_| "splitter_allocation_failed")?;
     for (credit, allocated) in consumed.into_iter().zip(allocations) {
         if let Some(source) = credit.source {
-            add_checked(sources.entry(source).or_default(), allocated)?;
+            add_checked(sources.entry(source).or_default(), allocated)
+                .map_err(|_| "contribution_overflow")?;
         } else {
-            add_checked(ineligible_e8s, allocated)?;
+            add_checked(ineligible_e8s, allocated).map_err(|_| "contribution_overflow")?;
         }
     }
     Ok(())
@@ -188,15 +180,18 @@ pub(super) fn reconstruct_splitter_history(
     relay: Principal,
     splitter_number: u8,
     transactions: &[IndexTransactionWithId],
-    prior_boundary: RewardHistoryBoundary,
     required_credits: &[SplitterFundingCredit],
-) -> Result<ExpandedSplitterProvenance, String> {
+    history_authoritative: bool,
+) -> reward_history::HistoricalReconstruction<ExpandedSplitterProvenance> {
+    if !history_authoritative {
+        return reward_history::HistoricalReconstruction::NeedOlderHistory;
+    }
     if logic::splitter_percentage(splitter_number).is_none()
         || required_credits
             .iter()
             .any(|credit| credit.splitter_number != splitter_number)
     {
-        return Err(provenance_error(
+        return reward_history::HistoricalReconstruction::Malformed(provenance_error(
             splitter_number,
             None,
             "invalid_splitter_number",
@@ -205,7 +200,7 @@ pub(super) fn reconstruct_splitter_history(
     let mut required = BTreeMap::<u64, u64>::new();
     for credit in required_credits {
         if required.insert(credit.tx_id, credit.amount_e8s).is_some() {
-            return Err(provenance_error(
+            return reward_history::HistoricalReconstruction::Malformed(provenance_error(
                 splitter_number,
                 Some(credit.tx_id),
                 "duplicate_subaccount_one_anchor",
@@ -213,19 +208,10 @@ pub(super) fn reconstruct_splitter_history(
         }
     }
     let Some(last_anchor) = required.keys().next_back().copied() else {
-        return Ok(ExpandedSplitterProvenance::default());
+        return reward_history::HistoricalReconstruction::Complete(
+            ExpandedSplitterProvenance::default(),
+        );
     };
-    if prior_boundary
-        .processed_through_tx_id
-        .is_some_and(|cursor| last_anchor <= cursor)
-    {
-        return Err(provenance_error(
-            splitter_number,
-            Some(last_anchor),
-            "anchor_not_after_cursor",
-        ));
-    }
-
     let splitter_account = account_identifier_text(
         relay,
         Some(logic::relay_numbered_subaccount(splitter_number)),
@@ -242,23 +228,6 @@ pub(super) fn reconstruct_splitter_history(
         if entry.id > last_anchor {
             continue;
         }
-        if let Some(cursor) = prior_boundary.processed_through_tx_id {
-            if entry.id == cursor {
-                continue;
-            }
-            if entry.id < cursor {
-                if prior_boundary
-                    .carried_credit_start_tx_id
-                    .is_some_and(|carried| entry.id >= carried)
-                {
-                    // Historical overlap restores funding only. Its outgoing legs were
-                    // already adjudicated with the prior second-leg cursor.
-                    push_incoming_credit(&mut funding, &splitter_account, &entry);
-                }
-                continue;
-            }
-        }
-
         match &entry.transaction.operation {
             IndexOperation::Transfer {
                 to,
@@ -268,7 +237,7 @@ pub(super) fn reconstruct_splitter_history(
                 ..
             } if from == &splitter_account => {
                 if entry.transaction.memo != 0 || entry.transaction.icrc1_memo.is_some() {
-                    return Err(provenance_error(
+                    return reward_history::HistoricalReconstruction::Malformed(provenance_error(
                         splitter_number,
                         Some(entry.id),
                         "unsupported_outgoing_memo",
@@ -278,112 +247,114 @@ pub(super) fn reconstruct_splitter_history(
                     tx_id: entry.id,
                     amount_e8s: amount.e8s(),
                     fee_e8s: fee.e8s(),
+                    funding_credits_at_pin: funding.len(),
                 };
                 if to == &default_account {
                     if pending_default.replace(leg).is_some() {
-                        return Err(provenance_error(
-                            splitter_number,
-                            Some(entry.id),
-                            "default_leg_while_pair_incomplete",
-                        ));
+                        return reward_history::HistoricalReconstruction::Malformed(
+                            provenance_error(
+                                splitter_number,
+                                Some(entry.id),
+                                "default_leg_while_pair_incomplete",
+                            ),
+                        );
                     }
                 } else if to == &subaccount_one {
-                    let default = pending_default.take().ok_or_else(|| {
-                        provenance_error(
-                            splitter_number,
-                            Some(entry.id),
-                            "subaccount_one_leg_without_default",
-                        )
-                    })?;
-                    let expected_amount = required.remove(&entry.id);
-                    let bootstrapping_past_pre_fix_job = expected_amount.is_none()
-                        && prior_boundary.processed_through_tx_id.is_none();
-                    if expected_amount.is_none() && !bootstrapping_past_pre_fix_job {
-                        return Err(provenance_error(
-                            splitter_number,
-                            Some(entry.id),
-                            "unconsumed_subaccount_one_leg",
-                        ));
-                    }
+                    let Some(default) = pending_default.take() else {
+                        return reward_history::HistoricalReconstruction::Malformed(
+                            provenance_error(
+                                splitter_number,
+                                Some(entry.id),
+                                "subaccount_one_leg_without_default",
+                            ),
+                        );
+                    };
+                    let expected_amount = required.get(&entry.id).copied();
+                    let historical_unselected_job = expected_amount.is_none();
                     if expected_amount.is_some_and(|expected| expected != leg.amount_e8s) {
-                        return Err(provenance_error(
-                            splitter_number,
-                            Some(entry.id),
-                            "subaccount_one_anchor_amount_mismatch",
-                        ));
+                        return reward_history::HistoricalReconstruction::Malformed(
+                            provenance_error(
+                                splitter_number,
+                                Some(entry.id),
+                                "subaccount_one_anchor_amount_mismatch",
+                            ),
+                        );
                     }
                     if default.tx_id >= leg.tx_id || default.amount_e8s == 0 || leg.amount_e8s == 0
                     {
-                        return Err(provenance_error(
-                            splitter_number,
-                            Some(entry.id),
-                            "invalid_splitter_leg_pair",
-                        ));
+                        return reward_history::HistoricalReconstruction::Malformed(
+                            provenance_error(
+                                splitter_number,
+                                Some(entry.id),
+                                "invalid_splitter_leg_pair",
+                            ),
+                        );
                     }
-                    let default_gross = default
-                        .amount_e8s
-                        .checked_add(default.fee_e8s)
-                        .ok_or_else(|| {
+                    let Some(default_gross) = default.amount_e8s.checked_add(default.fee_e8s)
+                    else {
+                        return reward_history::HistoricalReconstruction::Malformed(
                             provenance_error(
                                 splitter_number,
                                 Some(default.tx_id),
                                 "default_gross_overflow",
-                            )
-                        })?;
-                    let subaccount_one_gross =
-                        leg.amount_e8s.checked_add(leg.fee_e8s).ok_or_else(|| {
+                            ),
+                        );
+                    };
+                    let Some(subaccount_one_gross) = leg.amount_e8s.checked_add(leg.fee_e8s) else {
+                        return reward_history::HistoricalReconstruction::Malformed(
                             provenance_error(
                                 splitter_number,
                                 Some(entry.id),
                                 "subaccount_one_gross_overflow",
-                            )
-                        })?;
-                    let balance =
-                        default_gross
-                            .checked_add(subaccount_one_gross)
-                            .ok_or_else(|| {
-                                provenance_error(
-                                    splitter_number,
-                                    Some(entry.id),
-                                    "pinned_balance_overflow",
-                                )
-                            })?;
+                            ),
+                        );
+                    };
+                    let Some(balance) = default_gross.checked_add(subaccount_one_gross) else {
+                        return reward_history::HistoricalReconstruction::Malformed(
+                            provenance_error(
+                                splitter_number,
+                                Some(entry.id),
+                                "pinned_balance_overflow",
+                            ),
+                        );
+                    };
                     let expected_default =
                         (u128::from(balance) * u128::from(splitter_number) / 100) as u64;
                     if default_gross != expected_default
                         || subaccount_one_gross != balance - expected_default
                     {
-                        return Err(provenance_error(
-                            splitter_number,
-                            Some(entry.id),
-                            "split_percentage_mismatch",
-                        ));
+                        return reward_history::HistoricalReconstruction::Malformed(
+                            provenance_error(
+                                splitter_number,
+                                Some(entry.id),
+                                "split_percentage_mismatch",
+                            ),
+                        );
                     }
-                    if bootstrapping_past_pre_fix_job {
-                        let mut discarded_sources = BTreeMap::new();
-                        let mut discarded_ineligible = 0;
-                        consume_job_funding(
-                            splitter_number,
-                            entry.id,
-                            balance,
-                            leg.amount_e8s,
-                            &mut funding,
-                            &mut discarded_sources,
-                            &mut discarded_ineligible,
-                        )?;
+                    let mut discarded_sources = BTreeMap::new();
+                    let mut discarded_ineligible = 0;
+                    let (target_sources, target_ineligible) = if historical_unselected_job {
+                        (&mut discarded_sources, &mut discarded_ineligible)
                     } else {
-                        consume_job_funding(
-                            splitter_number,
-                            entry.id,
-                            balance,
-                            leg.amount_e8s,
-                            &mut funding,
-                            &mut result.sources,
-                            &mut result.ineligible_e8s,
-                        )?;
+                        (&mut result.sources, &mut result.ineligible_e8s)
+                    };
+                    if let Err(class) = consume_job_funding(
+                        balance,
+                        leg.amount_e8s,
+                        default.funding_credits_at_pin,
+                        &mut funding,
+                        target_sources,
+                        target_ineligible,
+                    ) {
+                        return reward_history::HistoricalReconstruction::Malformed(
+                            provenance_error(splitter_number, Some(entry.id), class),
+                        );
+                    }
+                    if !historical_unselected_job {
+                        required.remove(&entry.id);
                     }
                 } else {
-                    return Err(provenance_error(
+                    return reward_history::HistoricalReconstruction::Malformed(provenance_error(
                         splitter_number,
                         Some(entry.id),
                         "unexpected_transfer_destination",
@@ -391,14 +362,14 @@ pub(super) fn reconstruct_splitter_history(
                 }
             }
             IndexOperation::TransferFrom { from, .. } if from == &splitter_account => {
-                return Err(provenance_error(
+                return reward_history::HistoricalReconstruction::Malformed(provenance_error(
                     splitter_number,
                     Some(entry.id),
                     "unsupported_transfer_from_debit",
                 ));
             }
             IndexOperation::Burn { from, .. } if from == &splitter_account => {
-                return Err(provenance_error(
+                return reward_history::HistoricalReconstruction::Malformed(provenance_error(
                     splitter_number,
                     Some(entry.id),
                     "unsupported_burn_debit",
@@ -407,7 +378,7 @@ pub(super) fn reconstruct_splitter_history(
             IndexOperation::Approve { from, fee, .. }
                 if from == &splitter_account && fee.e8s() > 0 =>
             {
-                return Err(provenance_error(
+                return reward_history::HistoricalReconstruction::Malformed(provenance_error(
                     splitter_number,
                     Some(entry.id),
                     "unsupported_approve_fee_debit",
@@ -417,118 +388,135 @@ pub(super) fn reconstruct_splitter_history(
         }
     }
     if let Some(default) = pending_default {
-        return Err(provenance_error(
+        return reward_history::HistoricalReconstruction::Malformed(provenance_error(
             splitter_number,
             Some(default.tx_id),
             "incomplete_splitter_pair",
         ));
     }
     if let Some((&missing, _)) = required.first_key_value() {
-        return Err(provenance_error(
+        if transactions
+            .iter()
+            .map(|entry| entry.id)
+            .min()
+            .is_some_and(|oldest| missing < oldest)
+        {
+            return reward_history::HistoricalReconstruction::NeedOlderHistory;
+        }
+        return reward_history::HistoricalReconstruction::Malformed(provenance_error(
             splitter_number,
             Some(missing),
             "subaccount_one_anchor_not_found",
         ));
     }
-    result.boundary_updates.insert(
-        splitter_number,
-        RewardHistoryBoundary {
-            processed_through_tx_id: Some(last_anchor),
-            carried_credit_start_tx_id: funding
-                .front()
-                .and_then(|credit| (credit.tx_id < last_anchor).then_some(credit.tx_id)),
-        },
-    );
-    Ok(result)
+    reward_history::HistoricalReconstruction::Complete(result)
 }
 
-pub(super) async fn expand_splitter_provenance(
-    index_id: Principal,
-    relay: Principal,
-    credits: &[SplitterFundingCredit],
-    boundaries: &BTreeMap<u8, RewardHistoryBoundary>,
-) -> Result<ExpandedSplitterProvenance, String> {
-    let referenced = credits
-        .iter()
-        .map(|credit| credit.splitter_number)
-        .collect::<BTreeSet<_>>();
-    if referenced
-        .iter()
-        .any(|number| logic::splitter_percentage(*number).is_none())
-    {
-        return Err("splitter_provenance_invalid_splitter".to_string());
+pub(super) struct SplitterHistoryCache {
+    histories: BTreeMap<u8, reward_history::BackwardHistory>,
+    counted_splitters: BTreeSet<u8>,
+}
+
+impl SplitterHistoryCache {
+    pub(super) fn new() -> Self {
+        Self {
+            histories: BTreeMap::new(),
+            counted_splitters: BTreeSet::new(),
+        }
     }
-    let mut expanded = ExpandedSplitterProvenance::default();
-    for splitter_number in referenced {
-        let prior = boundaries
-            .get(&splitter_number)
-            .copied()
-            .unwrap_or_default();
-        let account_identifier = account_identifier_text(
-            relay,
-            Some(logic::relay_numbered_subaccount(splitter_number)),
-        );
-        let history = reward_history::scan_history(
-            index_id,
-            account_identifier,
-            prior.processed_through_tx_id,
-            prior.carried_credit_start_tx_id,
-        )
-        .await
-        .map_err(|class| provenance_error(splitter_number, None, &class))?;
-        let one = reconstruct_splitter_history(
-            relay,
-            splitter_number,
-            &history,
-            prior,
-            &credits
+
+    pub(super) async fn expand<I: reward_history::RewardHistoryClient>(
+        &mut self,
+        index: &I,
+        relay: Principal,
+        credits: &[SplitterFundingCredit],
+    ) -> Result<ExpandedSplitterProvenance, String> {
+        let referenced = credits
+            .iter()
+            .map(|credit| credit.splitter_number)
+            .collect::<BTreeSet<_>>();
+        if referenced
+            .iter()
+            .any(|number| logic::splitter_percentage(*number).is_none())
+        {
+            return Err("splitter_provenance_invalid_splitter".to_string());
+        }
+        let mut expanded = ExpandedSplitterProvenance::default();
+        for splitter_number in referenced {
+            let first_use = self.counted_splitters.insert(splitter_number);
+            let history = self.histories.entry(splitter_number).or_insert_with(|| {
+                reward_history::BackwardHistory::new(account_identifier_text(
+                    relay,
+                    Some(logic::relay_numbered_subaccount(splitter_number)),
+                ))
+            });
+            let starting_len = history.transactions().len();
+            let required = credits
                 .iter()
                 .filter(|credit| credit.splitter_number == splitter_number)
                 .cloned()
-                .collect::<Vec<_>>(),
-        )?;
-        expanded.scanned_transactions = expanded
-            .scanned_transactions
-            .checked_add(history.len())
-            .ok_or_else(|| "splitter_history_count_overflow".to_string())?;
-        expanded.splitters_scanned += 1;
-        for (source, amount) in one.sources {
-            add_checked(expanded.sources.entry(source).or_default(), amount)?;
+                .collect::<Vec<_>>();
+            let one = loop {
+                if history.transactions().is_empty() && !history.exhausted() {
+                    history
+                        .extend(index)
+                        .await
+                        .map_err(|class| provenance_error(splitter_number, None, &class))?;
+                }
+                match reconstruct_splitter_history(
+                    relay,
+                    splitter_number,
+                    history.authoritative_transactions(),
+                    &required,
+                    history.authoritative(),
+                ) {
+                    reward_history::HistoricalReconstruction::Complete(provenance) => {
+                        break provenance
+                    }
+                    reward_history::HistoricalReconstruction::NeedOlderHistory => {
+                        if history.exhausted() {
+                            return Err(provenance_error(
+                                splitter_number,
+                                required.first().map(|credit| credit.tx_id),
+                                "history_exhausted_before_provenance",
+                            ));
+                        }
+                        history
+                            .extend(index)
+                            .await
+                            .map_err(|class| provenance_error(splitter_number, None, &class))?;
+                    }
+                    reward_history::HistoricalReconstruction::Malformed(error) => {
+                        return Err(error)
+                    }
+                }
+            };
+            expanded.scanned_transactions = expanded
+                .scanned_transactions
+                .checked_add(history.transactions().len() - starting_len)
+                .ok_or_else(|| "splitter_history_count_overflow".to_string())?;
+            expanded.splitters_scanned += usize::from(first_use);
+            for (source, amount) in one.sources {
+                add_checked(expanded.sources.entry(source).or_default(), amount)?;
+            }
+            add_checked(&mut expanded.ineligible_e8s, one.ineligible_e8s)?;
         }
-        add_checked(&mut expanded.ineligible_e8s, one.ineligible_e8s)?;
-        expanded.boundary_updates.extend(one.boundary_updates);
+        Ok(expanded)
     }
-    Ok(expanded)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jupiter_ic_clients::index::{IndexTimeStamp, IndexTransaction, Tokens};
+    use async_trait::async_trait;
+    use jupiter_ic_clients::index::{
+        GetAccountIdentifierTransactionsResponse, IndexTimeStamp, IndexTransaction, Tokens,
+    };
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
 
     fn relay() -> Principal {
         Principal::from_slice(&[42])
-    }
-
-    fn source(byte: u8) -> String {
-        hex::encode([byte; 32])
-    }
-
-    fn tx(id: u64, operation: IndexOperation, memo: Option<Vec<u8>>) -> IndexTransactionWithId {
-        IndexTransactionWithId {
-            id,
-            transaction: IndexTransaction {
-                memo: 0,
-                icrc1_memo: memo,
-                operation,
-                created_at_time: Some(IndexTimeStamp {
-                    timestamp_nanos: id,
-                }),
-                timestamp: Some(IndexTimeStamp {
-                    timestamp_nanos: id,
-                }),
-            },
-        }
     }
 
     fn transfer(
@@ -538,31 +526,63 @@ mod tests {
         amount: u64,
         fee: u64,
     ) -> IndexTransactionWithId {
-        tx(
+        IndexTransactionWithId {
             id,
-            IndexOperation::Transfer {
-                from,
-                to,
-                amount: Tokens::new(amount),
-                fee: Tokens::new(fee),
-                spender: None,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: None,
+                operation: IndexOperation::Transfer {
+                    from,
+                    to,
+                    amount: Tokens::new(amount),
+                    fee: Tokens::new(fee),
+                    spender: None,
+                },
+                created_at_time: None,
+                timestamp: Some(IndexTimeStamp {
+                    timestamp_nanos: id,
+                }),
             },
-            None,
-        )
+        }
     }
 
     fn transfer_from(id: u64, from: String, to: String, amount: u64) -> IndexTransactionWithId {
-        tx(
+        IndexTransactionWithId {
             id,
-            IndexOperation::TransferFrom {
-                from,
-                to,
-                amount: Tokens::new(amount),
-                fee: Tokens::new(10),
-                spender: source(99),
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: None,
+                operation: IndexOperation::TransferFrom {
+                    from,
+                    to,
+                    spender: "spender".to_string(),
+                    amount: Tokens::new(amount),
+                    fee: Tokens::new(10),
+                },
+                created_at_time: None,
+                timestamp: Some(IndexTimeStamp {
+                    timestamp_nanos: id,
+                }),
             },
-            None,
-        )
+        }
+    }
+
+    fn mint(id: u64, to: String, amount: u64) -> IndexTransactionWithId {
+        IndexTransactionWithId {
+            id,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: None,
+                operation: IndexOperation::Mint {
+                    to,
+                    amount: Tokens::new(amount),
+                },
+                created_at_time: None,
+                timestamp: Some(IndexTimeStamp {
+                    timestamp_nanos: id,
+                }),
+            },
+        }
     }
 
     fn split_accounts(number: u8) -> (String, String, String) {
@@ -573,528 +593,544 @@ mod tests {
         )
     }
 
-    fn valid_history(
+    fn one_source_job(
         number: u8,
-        credits: &[(u64, String, u64)],
+        source: [u8; 32],
         balance: u64,
-        fee: u64,
-        default_tx: u64,
-        second_tx: u64,
+        default_fee: u64,
+        subaccount_one_fee: u64,
+        first_id: u64,
     ) -> (Vec<IndexTransactionWithId>, SplitterFundingCredit) {
         let (splitter, default, subaccount_one) = split_accounts(number);
-        let default_gross = (u128::from(balance) * u128::from(number) / 100) as u64;
+        let default_gross = u64::try_from(u128::from(balance) * u128::from(number) / 100).unwrap();
         let second_gross = balance - default_gross;
-        let mut history = credits
-            .iter()
-            .map(|(id, from, amount)| transfer(*id, from.clone(), splitter.clone(), *amount, 10))
-            .collect::<Vec<_>>();
-        history.push(transfer(
-            default_tx,
-            splitter.clone(),
-            default,
-            default_gross - fee,
-            fee,
-        ));
-        history.push(transfer(
-            second_tx,
-            splitter,
-            subaccount_one,
-            second_gross - fee,
-            fee,
-        ));
+        let history = vec![
+            transfer(first_id, hex::encode(source), splitter.clone(), balance, 10),
+            transfer(
+                first_id + 1,
+                splitter.clone(),
+                default,
+                default_gross - default_fee,
+                default_fee,
+            ),
+            transfer(
+                first_id + 2,
+                splitter,
+                subaccount_one,
+                second_gross - subaccount_one_fee,
+                subaccount_one_fee,
+            ),
+        ];
         (
             history,
             SplitterFundingCredit {
                 splitter_number: number,
-                tx_id: second_tx,
-                amount_e8s: second_gross - fee,
+                tx_id: first_id + 2,
+                amount_e8s: second_gross - subaccount_one_fee,
+            },
+        )
+    }
+
+    fn valid_history() -> (Vec<IndexTransactionWithId>, SplitterFundingCredit) {
+        let splitter = account_identifier_text(relay(), Some(logic::relay_numbered_subaccount(50)));
+        let default = account_identifier_text(relay(), None);
+        let subaccount_one = account_identifier_text(relay(), Some(logic::relay_subaccount_one()));
+        (
+            vec![
+                transfer(1, hex::encode([1; 32]), splitter.clone(), 400, 10),
+                transfer(2, hex::encode([2; 32]), splitter.clone(), 600, 10),
+                transfer(3, splitter.clone(), default, 490, 10),
+                transfer(4, splitter, subaccount_one, 490, 10),
+            ],
+            SplitterFundingCredit {
+                splitter_number: 50,
+                tx_id: 4,
+                amount_e8s: 490,
             },
         )
     }
 
     #[test]
-    fn cumulative_floor_allocation_is_exact_deterministic_and_wide() {
-        assert_eq!(proportional_allocations(&[100], 50).unwrap(), vec![50]);
-        assert_eq!(
-            proportional_allocations(&[50, 50], 49).unwrap(),
-            vec![24, 25]
-        );
-        assert_eq!(proportional_allocations(&[3, 2], 3).unwrap(), vec![1, 2]);
+    fn cumulative_floor_allocation_conserves_exactly() {
+        assert_eq!(proportional_allocations(&[4, 6], 5).unwrap(), vec![2, 3]);
         assert_eq!(
             proportional_allocations(&[1, 1, 1], 2).unwrap(),
             vec![0, 1, 1]
         );
-        assert_eq!(
-            proportional_allocations(&[u64::MAX - 1, 1], u64::MAX - 1).unwrap(),
-            vec![u64::MAX - 2, 1]
-        );
-        for credits in [
-            vec![1],
-            vec![1, 2],
-            vec![3, 5, 8],
-            vec![10, 10, 10, 10],
-            vec![u32::MAX as u64, u32::MAX as u64],
-        ] {
-            let balance = credits.iter().sum::<u64>();
-            for total in [0, 1, balance / 3, balance] {
-                let allocations = proportional_allocations(&credits, total).unwrap();
-                assert_eq!(allocations.iter().sum::<u64>(), total);
-                assert!(allocations
-                    .iter()
-                    .zip(&credits)
-                    .all(|(allocated, credit)| allocated <= credit));
-                assert_eq!(
-                    proportional_allocations(&credits, total).unwrap(),
-                    allocations
-                );
-            }
-        }
     }
 
     #[test]
-    fn all_nine_intrinsic_accounts_reconstruct_exact_net_second_leg() {
-        let accounts = intrinsic_splitter_accounts(relay());
-        assert_eq!(accounts.len(), 9);
+    fn stateless_exact_anchor_reconstructs_original_funders_repeatedly() {
+        let (history, anchor) = valid_history();
+        let first = reconstruct_splitter_history(
+            relay(),
+            50,
+            &history,
+            std::slice::from_ref(&anchor),
+            true,
+        )
+        .unwrap_complete();
+        let second = reconstruct_splitter_history(
+            relay(),
+            50,
+            &history,
+            std::slice::from_ref(&anchor),
+            true,
+        )
+        .unwrap_complete();
+        assert_eq!(first, second);
+        assert_eq!(
+            first.sources,
+            BTreeMap::from([([1; 32], 196), ([2; 32], 294)])
+        );
+        assert_eq!(first.ineligible_e8s, 0);
+    }
+
+    #[test]
+    fn malformed_anchor_and_splitter_shape_fail_closed() {
+        let (mut history, anchor) = valid_history();
+        let IndexOperation::Transfer { amount, .. } = &mut history[3].transaction.operation else {
+            unreachable!()
+        };
+        *amount = Tokens::new(489);
+        assert!(
+            reconstruct_splitter_history(relay(), 50, &history, &[anchor], true)
+                .unwrap_malformed()
+                .contains("subaccount_one_anchor_amount_mismatch")
+        );
+    }
+
+    #[test]
+    fn every_intrinsic_splitter_percentage_reconstructs_exact_anchor() {
         for number in logic::SPLITTER_PERCENTAGES {
-            let (history, anchor) = valid_history(
-                number,
-                &[(1, source(number), 1_000_000)],
-                1_000_000,
-                10_000,
-                2,
-                3,
-            );
+            let (history, anchor) = one_source_job(number, [number; 32], 10_000, 10, 20, 1);
             let result = reconstruct_splitter_history(
                 relay(),
                 number,
                 &history,
-                RewardHistoryBoundary::default(),
                 std::slice::from_ref(&anchor),
+                true,
             )
-            .unwrap();
-            assert_eq!(result.sources[&[number; 32]], anchor.amount_e8s);
-            assert_eq!(result.ineligible_e8s, 0);
+            .unwrap_complete();
             assert_eq!(
-                result.boundary_updates[&number].processed_through_tx_id,
-                Some(3)
-            );
-            assert_eq!(
-                accounts[&account_identifier_bytes(
-                    relay(),
-                    Some(logic::relay_numbered_subaccount(number))
-                )],
-                number
+                result.sources,
+                BTreeMap::from([([number; 32], anchor.amount_e8s)])
             );
         }
     }
 
     #[test]
-    fn multiple_repeated_transfer_from_and_mint_sources_allocate_and_aggregate() {
-        let number = 50;
-        let (splitter, default, subaccount_one) = split_accounts(number);
-        let mut history = vec![
-            transfer(1, source(1), splitter.clone(), 300, 10),
-            transfer_from(2, source(2), splitter.clone(), 200),
-            transfer(3, source(1), splitter.clone(), 100, 10),
-            tx(
-                4,
-                IndexOperation::Mint {
-                    to: splitter.clone(),
-                    amount: Tokens::new(400),
-                },
-                None,
-            ),
+    fn repeated_transfer_from_and_mint_sources_aggregate_without_eligible_dilution() {
+        let (splitter, default, subaccount_one) = split_accounts(50);
+        let history = vec![
+            transfer(1, hex::encode([1; 32]), splitter.clone(), 400, 10),
+            transfer_from(2, hex::encode([1; 32]), splitter.clone(), 300),
+            mint(3, splitter.clone(), 300),
+            transfer(4, splitter.clone(), default, 490, 10),
+            transfer(5, splitter, subaccount_one, 490, 10),
         ];
-        history.push(transfer(5, splitter.clone(), default, 490, 10));
-        history.push(transfer(6, splitter, subaccount_one, 490, 10));
         let result = reconstruct_splitter_history(
             relay(),
-            number,
+            50,
             &history,
-            RewardHistoryBoundary::default(),
             &[SplitterFundingCredit {
-                splitter_number: number,
-                tx_id: 6,
+                splitter_number: 50,
+                tx_id: 5,
                 amount_e8s: 490,
             }],
+            true,
         )
-        .unwrap();
-        assert_eq!(result.sources[&[1; 32]], 196);
-        assert_eq!(result.sources[&[2; 32]], 98);
-        assert_eq!(result.ineligible_e8s, 196);
+        .unwrap_complete();
+        assert_eq!(result.sources, BTreeMap::from([([1; 32], 343)]));
+        assert_eq!(result.ineligible_e8s, 147);
+    }
+
+    #[test]
+    fn post_pin_credit_is_excluded_and_carried_into_the_next_splitter_job() {
+        let (splitter, default, subaccount_one) = split_accounts(50);
+        let history = vec![
+            transfer(1, hex::encode([1; 32]), splitter.clone(), 1_000, 10),
+            transfer(2, splitter.clone(), default.clone(), 490, 10),
+            transfer(3, hex::encode([2; 32]), splitter.clone(), 300, 10),
+            transfer(4, splitter.clone(), subaccount_one.clone(), 490, 10),
+            transfer(5, hex::encode([2; 32]), splitter.clone(), 700, 10),
+            transfer(6, splitter.clone(), default, 490, 10),
+            transfer(7, splitter, subaccount_one, 490, 10),
+        ];
+        let first = reconstruct_splitter_history(
+            relay(),
+            50,
+            &history,
+            &[SplitterFundingCredit {
+                splitter_number: 50,
+                tx_id: 4,
+                amount_e8s: 490,
+            }],
+            true,
+        )
+        .unwrap_complete();
+        assert_eq!(first.sources, BTreeMap::from([([1; 32], 490)]));
+        let second = reconstruct_splitter_history(
+            relay(),
+            50,
+            &history,
+            &[SplitterFundingCredit {
+                splitter_number: 50,
+                tx_id: 7,
+                amount_e8s: 490,
+            }],
+            true,
+        )
+        .unwrap_complete();
+        assert_eq!(second.sources, BTreeMap::from([([2; 32], 490)]));
+    }
+
+    #[test]
+    fn independent_historical_leg_fees_and_cumulative_floor_are_exact() {
+        let (history, anchor) = one_source_job(50, [1; 32], 10_000, 100, 200, 1);
+        let result = reconstruct_splitter_history(
+            relay(),
+            50,
+            &history,
+            std::slice::from_ref(&anchor),
+            true,
+        )
+        .unwrap_complete();
+        assert_eq!(result.sources, BTreeMap::from([([1; 32], 4_800)]));
+        assert_eq!(proportional_allocations(&[3, 2], 3).unwrap(), vec![1, 2]);
         assert_eq!(
-            result.sources.values().sum::<u64>() + result.ineligible_e8s,
-            490
+            proportional_allocations(&[u64::MAX - 1, 1], u64::MAX - 1).unwrap(),
+            vec![u64::MAX - 2, 1]
         );
     }
 
     #[test]
-    fn deposits_after_pin_are_carried_across_historical_outgoing_overlap() {
-        for deposit_between_legs in [false, true] {
-            let number = 50;
-            let (splitter, default, subaccount_one) = split_accounts(number);
-            let (default_id, carry_id) = if deposit_between_legs { (2, 3) } else { (3, 2) };
+    fn whole_credit_under_and_overshoot_need_older_then_fail_at_genesis() {
+        let (splitter, default, subaccount_one) = split_accounts(50);
+        for credited in [999, 1_001] {
             let history = vec![
-                transfer(1, source(1), splitter.clone(), 1_000, 10),
-                transfer(carry_id, source(2), splitter.clone(), 30, 10),
-                transfer(default_id, splitter.clone(), default.clone(), 490, 10),
-                transfer(4, splitter.clone(), subaccount_one.clone(), 490, 10),
+                transfer(1, hex::encode([1; 32]), splitter.clone(), credited, 10),
+                transfer(2, splitter.clone(), default.clone(), 490, 10),
+                transfer(3, splitter.clone(), subaccount_one.clone(), 490, 10),
             ];
-            let first = reconstruct_splitter_history(
-                relay(),
-                number,
-                &history,
-                RewardHistoryBoundary::default(),
-                &[SplitterFundingCredit {
-                    splitter_number: number,
-                    tx_id: 4,
-                    amount_e8s: 490,
-                }],
-            )
-            .unwrap();
-            assert_eq!(first.sources, BTreeMap::from([([1; 32], 490)]));
+            let required = [SplitterFundingCredit {
+                splitter_number: 50,
+                tx_id: 3,
+                amount_e8s: 490,
+            }];
             assert_eq!(
-                first.boundary_updates[&number].carried_credit_start_tx_id,
-                Some(carry_id)
+                reconstruct_splitter_history(relay(), 50, &history, &required, false),
+                reward_history::HistoricalReconstruction::NeedOlderHistory
             );
-
-            let next_history = vec![
-                history
-                    .iter()
-                    .find(|entry| entry.id == carry_id)
-                    .unwrap()
-                    .clone(),
-                history
-                    .iter()
-                    .find(|entry| entry.id == default_id)
-                    .unwrap()
-                    .clone(),
-                transfer(5, splitter.clone(), default.clone(), 14, 1),
-                transfer(6, splitter.clone(), subaccount_one.clone(), 14, 1),
-            ];
-            let second = reconstruct_splitter_history(
-                relay(),
-                number,
-                &next_history,
-                first.boundary_updates[&number],
-                &[SplitterFundingCredit {
-                    splitter_number: number,
-                    tx_id: 6,
-                    amount_e8s: 14,
-                }],
-            )
-            .unwrap();
-            assert_eq!(second.sources, BTreeMap::from([([2; 32], 14)]));
-            assert_eq!(
-                second.boundary_updates[&number],
-                RewardHistoryBoundary {
-                    processed_through_tx_id: Some(6),
-                    carried_credit_start_tx_id: None,
-                }
+            assert!(
+                reconstruct_splitter_history(relay(), 50, &history, &required, true)
+                    .unwrap_malformed()
+                    .contains(if credited > 1_000 {
+                        "funding_credit_exceeds_pinned_remainder"
+                    } else {
+                        "missing_funding_credit"
+                    })
             );
         }
     }
 
     #[test]
-    fn empty_v1_migration_boundary_skips_valid_pre_fix_jobs_without_re_attribution() {
-        let number = 50;
-        let (splitter, default, subaccount_one) = split_accounts(number);
-        let history = vec![
-            transfer(1, source(1), splitter.clone(), 1_000, 10),
-            transfer(2, splitter.clone(), default.clone(), 490, 10),
-            transfer(3, splitter.clone(), subaccount_one.clone(), 480, 20),
-            transfer(4, source(2), splitter.clone(), 30, 10),
-            transfer(5, splitter.clone(), default, 14, 1),
-            transfer(6, splitter, subaccount_one, 14, 1),
-        ];
-        let result = reconstruct_splitter_history(
-            relay(),
-            number,
-            &history,
-            RewardHistoryBoundary::default(),
-            &[SplitterFundingCredit {
-                splitter_number: number,
-                tx_id: 6,
-                amount_e8s: 14,
-            }],
-        )
-        .unwrap();
-        assert_eq!(result.sources, BTreeMap::from([([2; 32], 14)]));
-        assert!(!result.sources.contains_key(&[1; 32]));
-        assert_eq!(
-            result.boundary_updates[&number],
-            RewardHistoryBoundary {
-                processed_through_tx_id: Some(6),
-                carried_credit_start_tx_id: None,
-            }
-        );
-    }
-
-    #[test]
-    fn unequal_historical_leg_fees_reconstruct_each_gross_and_preserve_second_leg_net() {
-        let number = 30;
-        let balance = 500_000_007;
-        let default_fee = 10_000;
-        let subaccount_one_fee = 20_000;
-        let default_gross = (u128::from(balance) * u128::from(number) / 100) as u64;
-        let subaccount_one_gross = balance - default_gross;
-        let default_amount = default_gross - default_fee;
-        let subaccount_one_amount = subaccount_one_gross - subaccount_one_fee;
-        let (splitter, default, subaccount_one) = split_accounts(number);
-        let history = vec![
-            transfer(1, source(1), splitter.clone(), balance, default_fee),
-            transfer(2, splitter.clone(), default, default_amount, default_fee),
-            transfer(
-                3,
-                splitter,
-                subaccount_one,
-                subaccount_one_amount,
-                subaccount_one_fee,
-            ),
-        ];
-        let result = reconstruct_splitter_history(
-            relay(),
-            number,
-            &history,
-            RewardHistoryBoundary::default(),
-            &[SplitterFundingCredit {
-                splitter_number: number,
-                tx_id: 3,
-                amount_e8s: subaccount_one_amount,
-            }],
-        )
-        .unwrap();
-
-        assert_eq!(
-            result.sources,
-            BTreeMap::from([([1; 32], subaccount_one_amount)])
-        );
-        assert_eq!(result.ineligible_e8s, 0);
-        assert_eq!(
-            result.sources.values().sum::<u64>() + result.ineligible_e8s,
-            subaccount_one_amount
-        );
-        assert_eq!(
-            result.boundary_updates[&number],
-            RewardHistoryBoundary {
-                processed_through_tx_id: Some(3),
-                carried_credit_start_tx_id: None,
-            }
-        );
-    }
-
-    #[test]
-    fn exact_whole_credit_fifo_rejects_missing_and_overshooting_funding() {
-        let (history, anchor) = valid_history(50, &[(1, source(1), 1_001)], 1_000, 10, 2, 3);
-        assert!(reconstruct_splitter_history(
-            relay(),
-            50,
-            &history,
-            RewardHistoryBoundary::default(),
-            &[anchor]
-        )
-        .unwrap_err()
-        .contains("funding_credit_exceeds_pinned_remainder"));
-
-        let (history, anchor) = valid_history(50, &[], 1_000, 10, 2, 3);
-        assert!(reconstruct_splitter_history(
-            relay(),
-            50,
-            &history,
-            RewardHistoryBoundary::default(),
-            &[anchor]
-        )
-        .unwrap_err()
-        .contains("missing_funding_credit"));
-    }
-
-    #[test]
-    fn malformed_and_unsupported_splitter_debits_fail_closed() {
-        let number = 50;
-        let (splitter, default, subaccount_one) = split_accounts(number);
-        let anchor = SplitterFundingCredit {
-            splitter_number: number,
-            tx_id: 3,
-            amount_e8s: 490,
-        };
-        let base_credit = transfer(1, source(1), splitter.clone(), 1_000, 10);
-        let cases = [
-            (
-                transfer(2, splitter.clone(), source(9), 490, 10),
-                "unexpected_transfer_destination",
-            ),
-            (
-                transfer_from(2, splitter.clone(), default.clone(), 490),
-                "unsupported_transfer_from_debit",
-            ),
-            (
-                tx(
-                    2,
-                    IndexOperation::Burn {
+    fn malformed_splitter_debits_pairs_memos_destinations_and_anchors_fail_closed() {
+        let (history, anchor) = one_source_job(50, [1; 32], 1_000, 10, 10, 1);
+        let (splitter, default, subaccount_one) = split_accounts(50);
+        let mut cases = Vec::new();
+        cases.push((
+            vec![transfer_from(1, splitter.clone(), default.clone(), 1)],
+            "unsupported_transfer_from_debit",
+        ));
+        cases.push((
+            vec![IndexTransactionWithId {
+                id: 1,
+                transaction: IndexTransaction {
+                    memo: 0,
+                    icrc1_memo: None,
+                    operation: IndexOperation::Burn {
                         from: splitter.clone(),
-                        amount: Tokens::new(10),
+                        amount: Tokens::new(1),
                         spender: None,
                     },
-                    None,
-                ),
-                "unsupported_burn_debit",
-            ),
-            (
-                tx(
-                    2,
-                    IndexOperation::Approve {
+                    created_at_time: None,
+                    timestamp: Some(IndexTimeStamp { timestamp_nanos: 1 }),
+                },
+            }],
+            "unsupported_burn_debit",
+        ));
+        cases.push((
+            vec![IndexTransactionWithId {
+                id: 1,
+                transaction: IndexTransaction {
+                    memo: 0,
+                    icrc1_memo: None,
+                    operation: IndexOperation::Approve {
                         from: splitter.clone(),
-                        fee: Tokens::new(10),
+                        spender: default.clone(),
                         allowance: Tokens::new(1),
+                        fee: Tokens::new(1),
                         expires_at: None,
-                        spender: source(9),
                         expected_allowance: None,
                     },
-                    None,
-                ),
-                "unsupported_approve_fee_debit",
-            ),
-        ];
-        for (bad, reason) in cases {
-            let error = reconstruct_splitter_history(
-                relay(),
-                number,
-                &[base_credit.clone(), bad],
-                RewardHistoryBoundary::default(),
-                std::slice::from_ref(&anchor),
-            )
-            .unwrap_err();
-            assert!(error.contains(reason), "{error}");
+                    created_at_time: None,
+                    timestamp: Some(IndexTimeStamp { timestamp_nanos: 1 }),
+                },
+            }],
+            "unsupported_approve_fee_debit",
+        ));
+        for (case, class) in cases {
+            assert!(
+                reconstruct_splitter_history(relay(), 50, &case, &[anchor.clone()], true)
+                    .unwrap_malformed()
+                    .contains(class)
+            );
         }
 
-        let second_first = vec![
-            base_credit.clone(),
-            transfer(3, splitter.clone(), subaccount_one.clone(), 490, 10),
-        ];
-        assert!(reconstruct_splitter_history(
-            relay(),
-            number,
-            &second_first,
-            RewardHistoryBoundary::default(),
-            std::slice::from_ref(&anchor)
-        )
-        .unwrap_err()
-        .contains("subaccount_one_leg_without_default"));
-
-        let two_defaults = vec![
-            base_credit,
-            transfer(2, splitter.clone(), default.clone(), 490, 10),
-            transfer(3, splitter.clone(), default, 490, 10),
-        ];
-        assert!(reconstruct_splitter_history(
-            relay(),
-            number,
-            &two_defaults,
-            RewardHistoryBoundary::default(),
-            std::slice::from_ref(&anchor)
-        )
-        .unwrap_err()
-        .contains("default_leg_while_pair_incomplete"));
-    }
-
-    #[test]
-    fn percentage_anchor_id_anchor_amount_and_memo_are_strict() {
-        let (history, anchor) = valid_history(50, &[(1, source(1), 1_000)], 1_000, 10, 2, 3);
-        let mut wrong_percentage = history.clone();
-        if let IndexOperation::Transfer { amount, .. } =
-            &mut wrong_percentage[1].transaction.operation
-        {
-            *amount = Tokens::new(480);
-        }
-        assert!(reconstruct_splitter_history(
-            relay(),
-            50,
-            &wrong_percentage,
-            RewardHistoryBoundary::default(),
-            std::slice::from_ref(&anchor)
-        )
-        .unwrap_err()
-        .contains("split_percentage_mismatch"));
-
-        let mut memo = history.clone();
-        memo[1].transaction.icrc1_memo = Some(vec![1]);
-        assert!(reconstruct_splitter_history(
-            relay(),
-            50,
-            &memo,
-            RewardHistoryBoundary::default(),
-            std::slice::from_ref(&anchor)
-        )
-        .unwrap_err()
-        .contains("unsupported_outgoing_memo"));
-
-        let wrong_amount = SplitterFundingCredit {
-            amount_e8s: anchor.amount_e8s - 1,
-            ..anchor.clone()
-        };
-        assert!(reconstruct_splitter_history(
-            relay(),
-            50,
-            &history,
-            RewardHistoryBoundary::default(),
-            &[wrong_amount]
-        )
-        .unwrap_err()
-        .contains("subaccount_one_anchor_amount_mismatch"));
-
-        let wrong_id = SplitterFundingCredit { tx_id: 9, ..anchor };
-        assert!(reconstruct_splitter_history(
-            relay(),
-            50,
-            &history,
-            RewardHistoryBoundary::default(),
-            &[wrong_id]
-        )
-        .unwrap_err()
-        .contains("subaccount_one_anchor_not_found"));
-    }
-
-    #[test]
-    fn valid_second_leg_fee_repin_succeeds_but_fee_only_gross_mutation_fails() {
-        let (history, anchor) = valid_history(50, &[(1, source(1), 1_000)], 1_000, 10, 2, 3);
-
-        let mut repinned = history.clone();
-        if let IndexOperation::Transfer { amount, fee, .. } = &mut repinned[2].transaction.operation
-        {
-            *amount = Tokens::new(480);
-            *fee = Tokens::new(20);
-        }
-        let repinned_anchor = SplitterFundingCredit {
-            amount_e8s: 480,
-            ..anchor.clone()
-        };
-        let result = reconstruct_splitter_history(
-            relay(),
-            50,
-            &repinned,
-            RewardHistoryBoundary::default(),
-            &[repinned_anchor],
-        )
-        .unwrap();
-        assert_eq!(result.sources, BTreeMap::from([([1; 32], 480)]));
-        assert_eq!(result.ineligible_e8s, 0);
-        assert_eq!(
-            result.boundary_updates[&50].processed_through_tx_id,
-            Some(3)
+        let mut wrong_memo = history.clone();
+        wrong_memo[1].transaction.memo = 1;
+        assert!(
+            reconstruct_splitter_history(relay(), 50, &wrong_memo, &[anchor.clone()], true)
+                .unwrap_malformed()
+                .contains("unsupported_outgoing_memo")
         );
 
-        let mut invalid_gross = history;
-        if let IndexOperation::Transfer { fee, .. } = &mut invalid_gross[2].transaction.operation {
-            *fee = Tokens::new(20);
+        let mut wrong_destination = history.clone();
+        if let IndexOperation::Transfer { to, .. } = &mut wrong_destination[1].transaction.operation
+        {
+            *to = hex::encode([9; 32]);
         }
         assert!(reconstruct_splitter_history(
             relay(),
             50,
-            &invalid_gross,
-            RewardHistoryBoundary::default(),
-            std::slice::from_ref(&anchor),
+            &wrong_destination,
+            &[anchor.clone()],
+            true,
         )
-        .unwrap_err()
-        .contains("split_percentage_mismatch"));
+        .unwrap_malformed()
+        .contains("unexpected_transfer_destination"));
+
+        let reversed = vec![
+            history[0].clone(),
+            transfer(2, splitter.clone(), subaccount_one.clone(), 490, 10),
+            transfer(3, splitter.clone(), default.clone(), 490, 10),
+        ];
+        assert!(
+            reconstruct_splitter_history(relay(), 50, &reversed, &[anchor.clone()], true)
+                .unwrap_malformed()
+                .contains("subaccount_one_leg_without_default")
+        );
+
+        let incomplete = vec![history[0].clone(), history[1].clone()];
+        assert!(
+            reconstruct_splitter_history(relay(), 50, &incomplete, &[anchor.clone()], true)
+                .unwrap_malformed()
+                .contains("incomplete_splitter_pair")
+        );
+
+        let mut mismatch = history.clone();
+        if let IndexOperation::Transfer { amount, .. } = &mut mismatch[1].transaction.operation {
+            *amount = Tokens::new(491);
+        }
+        assert!(
+            reconstruct_splitter_history(relay(), 50, &mismatch, &[anchor.clone()], true)
+                .unwrap_malformed()
+                .contains("split_percentage_mismatch")
+        );
+
+        let wrong_id = SplitterFundingCredit {
+            tx_id: 99,
+            ..anchor.clone()
+        };
+        assert!(
+            reconstruct_splitter_history(relay(), 50, &history, &[wrong_id], true)
+                .unwrap_malformed()
+                .contains("subaccount_one_anchor_not_found")
+        );
+        let wrong_amount = SplitterFundingCredit {
+            amount_e8s: anchor.amount_e8s - 1,
+            ..anchor
+        };
+        assert!(
+            reconstruct_splitter_history(relay(), 50, &history, &[wrong_amount], true)
+                .unwrap_malformed()
+                .contains("subaccount_one_anchor_amount_mismatch")
+        );
+    }
+
+    struct MockHistory {
+        pages: Mutex<VecDeque<Result<GetAccountIdentifierTransactionsResponse, String>>>,
+        requests: Mutex<Vec<Option<u64>>>,
+    }
+
+    #[async_trait]
+    impl reward_history::RewardHistoryClient for MockHistory {
+        async fn get_transactions(
+            &self,
+            _account_identifier: String,
+            start: Option<u64>,
+            _max_results: u64,
+        ) -> Result<GetAccountIdentifierTransactionsResponse, String> {
+            self.requests.lock().unwrap().push(start);
+            self.pages
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Err("unexpected_history_call".to_string()))
+        }
+    }
+
+    fn irrelevant(id: u64) -> IndexTransactionWithId {
+        mint(id, "unrelated".to_string(), 1)
+    }
+
+    fn pages(
+        mut chronological: Vec<IndexTransactionWithId>,
+    ) -> VecDeque<Result<GetAccountIdentifierTransactionsResponse, String>> {
+        chronological.sort_by_key(|entry| entry.id);
+        let oldest = chronological.first().unwrap().id;
+        chronological.reverse();
+        chronological
+            .chunks(reward_history::ICP_HISTORY_PAGE_SIZE as usize)
+            .map(|chunk| {
+                Ok(GetAccountIdentifierTransactionsResponse {
+                    balance: 0,
+                    transactions: chunk.to_vec(),
+                    oldest_tx_id: Some(oldest),
+                })
+            })
+            .collect()
+    }
+
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    #[test]
+    fn splitter_balance_proof_rejects_locally_complete_but_misbound_suffix() {
+        const PINNED: u64 = 1_000;
+        let (splitter, default, subaccount_one) = split_accounts(50);
+        let recent = vec![
+            transfer(7, splitter.clone(), subaccount_one.clone(), 490, 10),
+            transfer(6, splitter.clone(), default.clone(), 490, 10),
+            transfer(5, hex::encode([3; 32]), splitter.clone(), PINNED, 0),
+            transfer(4, splitter.clone(), subaccount_one, 490, 10),
+            transfer(3, splitter.clone(), default, 490, 10),
+            transfer(2, hex::encode([2; 32]), splitter.clone(), PINNED, 0),
+        ];
+        let index = MockHistory {
+            pages: Mutex::new(VecDeque::from([
+                Ok(GetAccountIdentifierTransactionsResponse {
+                    balance: PINNED,
+                    transactions: recent,
+                    oldest_tx_id: Some(1),
+                }),
+                Ok(GetAccountIdentifierTransactionsResponse {
+                    balance: PINNED,
+                    transactions: vec![transfer(1, hex::encode([1; 32]), splitter, PINNED, 0)],
+                    oldest_tx_id: Some(1),
+                }),
+            ])),
+            requests: Mutex::new(Vec::new()),
+        };
+        let anchor = SplitterFundingCredit {
+            splitter_number: 50,
+            tx_id: 7,
+            amount_e8s: 490,
+        };
+        let mut history = reward_history::BackwardHistory::new(split_accounts(50).0);
+        block_on(history.extend(&index)).unwrap();
+        assert!(!history.authoritative());
+        assert_eq!(
+            reconstruct_splitter_history(
+                relay(),
+                50,
+                history.authoritative_transactions(),
+                std::slice::from_ref(&anchor),
+                history.authoritative(),
+            ),
+            reward_history::HistoricalReconstruction::NeedOlderHistory
+        );
+
+        block_on(history.extend(&index)).unwrap();
+        let provenance = reconstruct_splitter_history(
+            relay(),
+            50,
+            history.authoritative_transactions(),
+            &[anchor],
+            history.authoritative(),
+        )
+        .unwrap_complete();
+        assert_eq!(provenance.sources, BTreeMap::from([([2; 32], 490)]));
+    }
+
+    #[test]
+    fn recent_splitter_anchor_does_not_read_more_than_ten_thousand_older_transactions() {
+        let mut history = (1..=12_000).map(irrelevant).collect::<Vec<_>>();
+        let (sentinel, _) = one_source_job(50, [8; 32], 1_000, 10, 10, 11_500);
+        let (target, anchor) = one_source_job(50, [9; 32], 1_000, 10, 10, 11_800);
+        for entry in sentinel.into_iter().chain(target) {
+            let index = usize::try_from(entry.id - 1).unwrap();
+            history[index] = entry;
+        }
+        let index = MockHistory {
+            pages: Mutex::new(pages(history)),
+            requests: Mutex::new(Vec::new()),
+        };
+        let mut cache = SplitterHistoryCache::new();
+        let result =
+            block_on(cache.expand(&index, relay(), std::slice::from_ref(&anchor))).unwrap();
+        assert_eq!(result.sources, BTreeMap::from([([9; 32], 490)]));
+        assert_eq!(result.scanned_transactions, 1_000);
+        assert_eq!(index.requests.lock().unwrap().len(), 1);
+        let repeated = block_on(cache.expand(&index, relay(), &[anchor])).unwrap();
+        assert_eq!(repeated.sources, result.sources);
+        assert_eq!(repeated.scanned_transactions, 0);
+        assert_eq!(index.requests.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn splitter_scanner_extends_across_several_carried_jobs_and_pages() {
+        let mut history = (1..=5_000).map(irrelevant).collect::<Vec<_>>();
+        let (splitter, default, subaccount_one) = split_accounts(50);
+        let replacements = vec![
+            transfer(100, hex::encode([1; 32]), splitter.clone(), 1_000, 10),
+            transfer(900, splitter.clone(), default.clone(), 490, 10),
+            transfer(901, hex::encode([2; 32]), splitter.clone(), 1_000, 10),
+            transfer(902, splitter.clone(), subaccount_one.clone(), 490, 10),
+            transfer(1_900, splitter.clone(), default.clone(), 490, 10),
+            transfer(1_901, hex::encode([3; 32]), splitter.clone(), 1_000, 10),
+            transfer(1_902, splitter.clone(), subaccount_one.clone(), 490, 10),
+            transfer(2_900, splitter.clone(), default.clone(), 490, 10),
+            transfer(2_901, hex::encode([4; 32]), splitter.clone(), 1_000, 10),
+            transfer(2_902, splitter.clone(), subaccount_one.clone(), 490, 10),
+            transfer(3_900, splitter.clone(), default.clone(), 490, 10),
+            transfer(3_901, hex::encode([5; 32]), splitter.clone(), 1_000, 10),
+            transfer(3_902, splitter.clone(), subaccount_one.clone(), 490, 10),
+            transfer(4_600, splitter.clone(), default, 490, 10),
+            transfer(4_602, splitter, subaccount_one, 490, 10),
+        ];
+        for entry in replacements {
+            let index = usize::try_from(entry.id - 1).unwrap();
+            history[index] = entry;
+        }
+        let anchor = SplitterFundingCredit {
+            splitter_number: 50,
+            tx_id: 4_602,
+            amount_e8s: 490,
+        };
+        let index = MockHistory {
+            pages: Mutex::new(pages(history)),
+            requests: Mutex::new(Vec::new()),
+        };
+        let mut cache = SplitterHistoryCache::new();
+        let result = block_on(cache.expand(&index, relay(), &[anchor])).unwrap();
+        assert_eq!(result.sources, BTreeMap::from([([5; 32], 490)]));
+        assert_eq!(index.requests.lock().unwrap().len(), 5);
     }
 }

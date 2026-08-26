@@ -92,6 +92,11 @@ pub struct GetAccountIdentifierTransactionsResponse {
     pub oldest_tx_id: Option<u64>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+pub struct IndexStatus {
+    pub num_blocks_synced: u64,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub enum GetAccountIdentifierTransactionsResult {
     Ok(GetAccountIdentifierTransactionsResponse),
@@ -131,6 +136,15 @@ impl IcpIndexCanister {
             GetAccountIdentifierTransactionsResult::Ok(r) => Ok(r),
             GetAccountIdentifierTransactionsResult::Err(e) => Err(ClientError::Call(e.message)),
         }
+    }
+
+    pub async fn status(&self) -> Result<IndexStatus, ClientError> {
+        let resp = Call::bounded_wait(self.index_id, "status")
+            .change_timeout(20)
+            .await
+            .map_err(|e| ClientError::Call(format!("{e:?}")))?;
+        resp.candid()
+            .map_err(|e| ClientError::Call(format!("decode status failed: {e:?}")))
     }
 }
 

@@ -5,6 +5,7 @@ mod logging;
 mod reward_history;
 mod reward_splitter;
 mod reward_sweep;
+mod reward_token_history;
 mod splitter;
 mod tick;
 mod transfer;

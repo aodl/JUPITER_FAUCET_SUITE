@@ -209,22 +209,28 @@ For config-changing upgrades, Disburser, Faucet, and Historian use the canister'
 | `jupiter_lifeline` | No install args | No args | No args | Minimal support canister state |
 | `jupiter_sns_rewards` | `InitArgs` with optional SNS Root | No args | Temporary nested `Option<UpgradeArgs>` | Stable configuration, active owner snapshot, staging scan, and cursor preserved when Root is unchanged |
 
-Relay ordinary default-account allocation and subaccount-1 work remain replacement-style and non-resumable. Avoid upgrading during active Relay work where practical. If ordinary ICP work is interrupted, Relay starts fresh from supplied `InitArgs`. Stable memory 0 preserves the SNS reward main cursor/carry, per-splitter attribution boundaries, and pending transfer with proposed boundary updates; stable memory 1 preserves any pinned fixed-splitter execution transaction and quarantine evidence. An active splitter requires the replacement `InitArgs` to name the same ICP Ledger. After upgrade, confirm the fresh `CONFIG` log, stable journal state, first successful `BaselineOnly` ordinary allocation tick, managed-canister cycle balances, and any required reconciliation.
+Relay ordinary default-account allocation and subaccount-1 work remain replacement-style and non-resumable. Avoid upgrading during active Relay work where practical. If ordinary ICP work is interrupted, Relay starts fresh from supplied `InitArgs`. Stable memory 0 preserves the latest completed reward cadence timestamp and any pinned multi-recipient payout with its exact transfer identities and progress; reward attribution itself has no historical cursor. Stable memory 1 preserves any pinned fixed-splitter execution transaction and quarantine evidence. An active splitter requires the replacement `InitArgs` to name the same ICP Ledger. After upgrade, confirm the fresh `CONFIG` log, stable journal state, first successful `BaselineOnly` ordinary allocation tick, managed-canister cycle balances, and any required reconciliation.
+
+The Relay V3 reward migration resets every V1/V2 cadence timestamp to zero because the historical field recorded attempts, including failed attempts. Any migrated pending identity is settled first. Ambiguous identities retain their exact amount, fee, memo, and creation time until conclusively reconciled; definitively rejected unpaid recipients in a partially completed V3 payout instead enter recoverable repricing/balance-waiting state. Completed-recipient progress and fixed unpaid entitlements remain durable while live fee and later token accrual provide fee headroom. Pending settlement does not recompute historical attribution. Once complete, the next fresh sweep reconstructs the residual reward balance and its oldest remaining FIFO credit directly from reward Ledger/Index history.
 
 ## SNS rewards lifecycle and Root switch
 
 `jupiter_sns_rewards` discovers Governance and Ledger from its one configured SNS Root. The checked-in fresh-install argument configures OpenChat Root `3e3x2-xyaaa-aaaaq-aaalq-cai` only as a development placeholder. No Governance, CHAT Ledger, or future jUP Ledger ID is separately configured.
 
-Before enabling the canonical Relay reward path for its first historical sweep, verify that the canonical Relay subaccount-1 history fits within 10,000 transactions, contains no unsupported historical debit, reconciles into completed Faucet commitments, and contains no more than 128 distinct source accounts in one adjudicated batch. Do not bypass or raise these runtime bounds during deployment.
+Before enabling the canonical Relay reward path, verify that recent canonical Relay subaccount-1 history contains supported debit shapes and reconciles into completed Faucet commitments. Attribution paginates backwards on demand without a lifetime page, transaction, or source-count cutoff; source ownership is resolved in deterministic API-sized chunks against one snapshot. Relay inverts each account's indexed transactions from the response's current balance and trusts a suffix only when it proves a zero opening balance. Genuine account genesis means that no older transactions exist, while the reconstructed opening balance must still reconcile exactly to zero. This proof includes post-cutoff account activity and applies independently to subaccount 1 and every referenced splitter. Older history is fetched only when FIFO carry or newer ineligible commitments require it, while pagination and reconstruction inconsistencies fail closed.
+
+Relay also reads the ICP Ledger `query_blocks(start=0, length=0).chain_length` before the ICP Index `status().num_blocks_synced` and requires the Index to cover the observed Ledger prefix. Index lag therefore cannot hide a net-zero newer deposit-plus-commitment pair and redirect the payout to an older commitment; an unavailable or behind Index retries daily without consuming weekly cadence.
+
+Also verify that the context's pinned SNS Root returns the same Root and reward Ledger from `list_sns_canisters`, returns an Index, and that the Index `ledger_id` names that reward Ledger. Relay reconstructs its live reward balance from that Index back to the latest zero-balance boundary or account genesis, where genesis proves that no older transactions exist and the reconstructed opening balance must still be zero, then FIFO-replays incoming credits against outgoing payouts and fees. The oldest remaining non-zero reward-credit Ledger block time and owner-snapshot scan-start time form the effective exclusive ICP cutoff. There is no reward-history cursor or depth cutoff. Detectable Index lag, including any live/index balance mismatch, retries on the next accepted daily tick without consuming weekly cadence. An undetectable unindexed net-zero outgoing-plus-incoming suffix can conservatively make the reconstructed cutoff older, but cannot make it newer than the fully synchronized cutoff.
 
 Use this deployment order for the first usable reward epoch:
 
 1. Upgrade or configure `jupiter_sns_rewards`.
 2. Wait for a complete fresh owner snapshot.
-3. Verify `get_relay_reward_context` exposes the expected Root-derived Ledger.
+3. Verify `get_relay_reward_context` exposes the expected Root-derived Ledger, and Root exposes its matching Index whose `ledger_id` names that Ledger.
 4. Only then upgrade Relay.
 
-This avoids consuming Relay's weekly attempt before usable owner context exists.
+This lets Relay begin adjudication immediately with usable owner context. If context is nevertheless unavailable, the failed attempt does not consume the weekly cadence and Relay retries on its next daily main tick.
 
 Routine upgrades pass no argument and preserve configuration, active/staging maps, published snapshot, and an incomplete scan cursor. Configuration-changing upgrades pass an optional `UpgradeArgs` record. The nested field semantics are:
 
@@ -247,14 +253,14 @@ Then use the ordinary canonical deployment workflow with that temporary file as 
 
 Before switching from OpenChat to jUP:
 
-1. Confirm every Relay has no pending or ambiguous SNS reward transfer.
+1. Confirm every Relay has no pending, ambiguous, repricing, or balance-waiting SNS reward payout.
 2. Reconcile any remaining development CHAT balance.
 3. Upgrade `jupiter-sns-rewards` with a temporary nested argument naming the reviewed jUP SNS Root.
 4. Wait for the first complete jUP owner snapshot.
 5. Verify the context exposes the expected Root-derived jUP Ledger.
-6. Allow Relay to begin the new Root epoch with an empty processed commitment cursor.
+6. Allow Relay's next fresh adjudication to use the new completed context.
 
-A Root switch clears both owner maps and prevents OpenChat ownership from remaining public. Relay does not carry its main cursor/carry or any splitter attribution boundary between Roots and never caches the reward Ledger ID. A normal SNS Ledger fee change requires no Relay configuration upgrade because every new sweep resolves context and reads the live token fee. The release review must cover the SNS rewards Wasm, both production Candid interfaces, install arguments, stable-memory compatibility, and Relay's stable-journal upgrade behavior before any production change.
+A Root switch clears both owner maps and prevents OpenChat ownership from remaining public. Relay has no main, splitter, or reward-token attribution cursor and never caches the reward Ledger or Index ID. An already-pinned payout remains bound to its original Root, Ledger and snapshot until settlement completes; a fresh adjudication naturally resolves the new Index through the new Root. A normal SNS Ledger fee change requires no Relay configuration upgrade because every new sweep resolves context and reads the live token fee. The release review must cover the SNS rewards Wasm, both production Candid interfaces, install arguments, stable-memory compatibility, and Relay's stable-journal upgrade behavior before any production change.
 
 ## Local development builds
 

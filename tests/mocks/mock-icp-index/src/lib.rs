@@ -100,12 +100,18 @@ pub enum GetResp {
     Err(GetAccountIdentifierTransactionsError),
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct Status {
+    pub num_blocks_synced: u64,
+}
+
 #[derive(Default)]
 struct State {
     next_id: u64,
     txs: Vec<IndexTransactionWithId>,
     get_calls: Vec<DebugGetCall>,
     scripted_get_behaviors: Vec<DebugGetBehavior>,
+    num_blocks_synced: Option<u64>,
 }
 
 thread_local! {
@@ -166,6 +172,13 @@ fn account_balance_e8s(txs: &[IndexTransactionWithId], account_identifier: &str)
 
 #[ic_cdk::init]
 fn init() {}
+
+#[ic_cdk::query]
+fn status() -> Status {
+    Status {
+        num_blocks_synced: ST.with(|s| s.borrow().num_blocks_synced.unwrap_or(u64::MAX)),
+    }
+}
 
 #[ic_cdk::update]
 fn get_account_identifier_transactions(args: GetArgs) -> GetResp {
@@ -231,6 +244,11 @@ fn get_account_identifier_transactions(args: GetArgs) -> GetResp {
 #[ic_cdk::update]
 fn debug_reset() {
     ST.with(|s| *s.borrow_mut() = State::default());
+}
+
+#[ic_cdk::update]
+fn debug_set_num_blocks_synced(num_blocks_synced: Option<u64>) {
+    ST.with(|s| s.borrow_mut().num_blocks_synced = num_blocks_synced);
 }
 
 #[ic_cdk::update]

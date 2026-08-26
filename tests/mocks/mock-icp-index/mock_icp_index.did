@@ -34,9 +34,12 @@ type DebugGetCall = record {
   returned_count : nat64;
 };
 type DebugGetBehavior = variant { Ok; Err : text };
+type Status = record { num_blocks_synced : nat64 };
 service : {
+  status : () -> (Status) query;
   get_account_identifier_transactions : (GetArgs) -> (GetResp);
   debug_reset : () -> ();
+  debug_set_num_blocks_synced : (opt nat64) -> ();
   debug_append_transfer : (text, nat64, opt vec nat8) -> (nat64);
   debug_append_transfer_from : (text, text, nat64, opt vec nat8) -> (nat64);
   debug_append_transfer_from_with_timestamp : (text, text, nat64, opt vec nat8, nat64) -> (nat64);

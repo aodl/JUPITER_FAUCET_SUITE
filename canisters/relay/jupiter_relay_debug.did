@@ -147,21 +147,15 @@ type DebugConfig = record {
   surplus_canister_recipients : opt vec SurplusCanisterRecipient;
   surplus_neuron_recipients : vec SurplusNeuronRecipient;
 };
-type PendingRewardTransferStatus = variant { AwaitingTransfer; Ambiguous };
-type RewardHistoryBoundary = record {
-  processed_through_tx_id : opt nat64;
-  carried_credit_start_tx_id : opt nat64;
+type PendingRewardTransferStatus = variant {
+  AwaitingTransfer;
+  Ambiguous;
+  NeedsFreshIdentity;
+  WaitingForBalance;
 };
-type PendingRewardTransfer = record {
-  sns_root_canister_id : principal;
-  sns_ledger_canister_id : principal;
-  snapshot_id : nat64;
-  through_commitment_tx_id : nat64;
-  next_carried_credit_start_tx_id : opt nat64;
-  proposed_splitter_boundaries : vec record { nat8; RewardHistoryBoundary };
+type PendingRewardRecipient = record {
   recipient : Account;
-  observed_balance : nat;
-  fee : nat;
+  observed_balance : opt nat;
   amount : nat;
   memo : blob;
   created_at_time_nanos : nat64;
@@ -169,13 +163,18 @@ type PendingRewardTransfer = record {
   uncertain_attempt_seen : bool;
   status : PendingRewardTransferStatus;
 };
+type PendingRewardPayout = record {
+  sns_root_canister_id : principal;
+  sns_ledger_canister_id : principal;
+  snapshot_id : nat64;
+  attribution_commitment_tx_id : nat64;
+  fee : nat;
+  recipients : vec PendingRewardRecipient;
+  next_recipient_index : nat32;
+};
 type RewardState = record {
-  epoch_sns_root_canister_id : opt principal;
-  processed_through_commitment_tx_id : opt nat64;
-  carried_credit_start_tx_id : opt nat64;
-  splitter_boundaries : vec record { nat8; RewardHistoryBoundary };
   last_sweep_attempt_timestamp_seconds : nat64;
-  pending_transfer : opt PendingRewardTransfer;
+  pending_payout : opt PendingRewardPayout;
 };
 service : (InitArgs) -> {
   debug_main_tick : () -> ();

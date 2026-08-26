@@ -5,6 +5,7 @@ pub mod constants;
 pub mod cycles_probe;
 pub mod generated;
 pub mod governance;
+pub mod icrc_index;
 pub mod index;
 pub mod ledger;
 pub mod lifecycle;

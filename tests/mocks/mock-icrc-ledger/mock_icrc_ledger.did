@@ -54,11 +54,113 @@ type DebugNextTransferError = variant {
   Duplicate : record { duplicate_of : nat64 };
 };
 
+type IndexMint = record {
+  amount : nat;
+  to : Account;
+  memo : opt blob;
+  created_at_time : opt nat64;
+  fee : opt nat;
+};
+
+type IndexBurn = record {
+  amount : nat;
+  from : Account;
+  spender : opt Account;
+  memo : opt blob;
+  created_at_time : opt nat64;
+  fee : opt nat;
+};
+
+type IndexTransfer = record {
+  amount : nat;
+  from : Account;
+  to : Account;
+  spender : opt Account;
+  memo : opt blob;
+  fee : opt nat;
+  created_at_time : opt nat64;
+};
+
+type IndexApprove = record {
+  from : Account;
+  spender : Account;
+  amount : nat;
+  expected_allowance : opt nat;
+  expires_at : opt nat64;
+  memo : opt blob;
+  fee : opt nat;
+  created_at_time : opt nat64;
+};
+
+type IndexAuthorizedMint = record {
+  to : Account;
+  amount : nat;
+  created_at_time : opt nat64;
+  caller : opt principal;
+  mthd : opt text;
+  reason : opt text;
+};
+
+type IndexAuthorizedBurn = record {
+  from : Account;
+  amount : nat;
+  created_at_time : opt nat64;
+  caller : opt principal;
+  mthd : opt text;
+  reason : opt text;
+};
+
+type IndexFeeCollector = record {
+  caller : opt principal;
+  fee_collector : opt Account;
+  ts : opt nat64;
+  mthd : opt text;
+};
+
+type IndexTransaction = record {
+  kind : text;
+  mint : opt IndexMint;
+  burn : opt IndexBurn;
+  transfer : opt IndexTransfer;
+  approve : opt IndexApprove;
+  fee_collector : opt IndexFeeCollector;
+  authorized_mint : opt IndexAuthorizedMint;
+  authorized_burn : opt IndexAuthorizedBurn;
+  timestamp : nat64;
+};
+
+type IndexTransactionWithId = record { id : nat; transaction : IndexTransaction };
+type GetAccountTransactionsArgs = record {
+  account : Account;
+  start : opt nat;
+  max_results : nat;
+};
+type GetAccountTransactionsResponse = record {
+  balance : nat;
+  transactions : vec IndexTransactionWithId;
+  oldest_tx_id : opt nat;
+};
+type GetAccountTransactionsError = record { message : text };
+type GetBlocksArgs = record { start : nat64; length : nat64 };
+type QueryBlocksResponse = record {
+  chain_length : nat64;
+  certificate : opt blob;
+  blocks : vec blob;
+  first_block_index : nat64;
+  archived_blocks : vec blob;
+};
+
 service : {
   account_balance : (BinaryAccountBalanceArgs) -> (Tokens) query;
   icrc1_fee : () -> (nat) query;
   icrc1_balance_of : (Account) -> (nat) query;
   icrc1_transfer : (TransferArg) -> (variant { Ok : nat; Err : TransferError });
+  ledger_id : () -> (principal) query;
+  get_account_transactions : (GetAccountTransactionsArgs) -> (variant {
+    Ok : GetAccountTransactionsResponse;
+    Err : GetAccountTransactionsError;
+  });
+  query_blocks : (GetBlocksArgs) -> (QueryBlocksResponse) query;
 
   debug_reset : () -> ();
   debug_noop : () -> ();
@@ -67,6 +169,9 @@ service : {
   debug_set_next_error : (opt DebugNextTransferError) -> ();
   debug_set_error_script : (vec DebugNextTransferError) -> ();
   debug_credit : (Account, nat64) -> ();
+  debug_set_index_source : (principal) -> ();
+  debug_set_index_hidden_newest_transactions : (nat64) -> ();
+  debug_index_transactions : () -> (vec IndexTransactionWithId) query;
   debug_transfers : () -> (vec TransferRecord) query;
   debug_legacy_transfers : () -> (vec LegacyTransferRecord) query;
 }

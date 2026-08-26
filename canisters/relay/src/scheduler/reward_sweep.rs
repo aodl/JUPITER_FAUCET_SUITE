@@ -1,6 +1,6 @@
 #![cfg_attr(test, allow(dead_code))]
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use async_trait::async_trait;
 use candid::{CandidType, Deserialize, Nat, Principal};
@@ -8,20 +8,25 @@ use ic_cdk::call::Call;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg, TransferError};
 use jupiter_ic_clients::account_identifier::{account_identifier_bytes, account_identifier_text};
-use jupiter_ic_clients::index::{IndexOperation, IndexTransactionWithId};
+use jupiter_ic_clients::icrc_index::IcrcIndexCanister;
+use jupiter_ic_clients::index::{IcpIndexCanister, IndexOperation, IndexTransactionWithId};
 use jupiter_ic_clients::ledger::IcrcLedgerCanister;
+use jupiter_ic_clients::sns::{ListSnsCanistersResponse, SnsRootCanister};
 
 use crate::clients::governance::NnsGovernanceCanister;
 use crate::clients::GovernanceClient;
-use crate::reward_state::{self, PendingRewardTransfer, PendingRewardTransferStatus};
+use crate::reward_state::{
+    self, PendingRewardPayout, PendingRewardRecipient, PendingRewardTransferStatus,
+};
 use crate::scheduler::reward_history;
 use crate::scheduler::reward_splitter::{self, SplitterFundingCredit};
+use crate::scheduler::reward_token_history;
 use crate::scheduler::transfer::created_at_time_is_valid;
 use crate::{logic, state};
 
 pub(crate) const REWARD_SWEEP_INTERVAL_SECONDS: u64 = 7 * 24 * 60 * 60;
 const REWARD_CONTEXT_MAX_AGE_NANOS: u64 = 48 * 60 * 60 * 1_000_000_000;
-const ICP_HISTORY_MAX_DISTINCT_SOURCES: usize = 128;
+const OWNER_RESOLUTION_CHUNK_SIZE: usize = 128;
 const REWARD_MEMO_PREFIX: &[u8; 4] = b"JRS1";
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -56,21 +61,17 @@ struct RewardLog {
     ledger: Option<Principal>,
     snapshot_id: Option<u64>,
     cutoff: Option<u64>,
-    processed_from: Option<u64>,
-    processed_through: Option<u64>,
+    attribution_commitment: Option<u64>,
     scanned_transactions: usize,
-    completed_commitments: usize,
-    splitter_credits: usize,
     splitters_scanned: usize,
-    expanded_distinct_sources: usize,
     distinct_sources: usize,
     eligible_principals: usize,
-    winner_e8s: Option<u64>,
+    eligible_e8s: Option<u64>,
+    owner_mismatch_count: usize,
     ineligible_e8s: Option<u64>,
+    recipient_count: usize,
     token_balance: Option<Nat>,
     token_fee: Option<Nat>,
-    token_amount: Option<Nat>,
-    recipient: Option<Principal>,
 }
 
 impl RewardLog {
@@ -81,19 +82,84 @@ impl RewardLog {
                 .unwrap_or_else(|| "null".to_string())
         }
         ic_cdk::println!(
-            "RELAY_SNS_REWARD status={} reason={} sns_root_canister_id={} sns_ledger_canister_id={} snapshot_id={} snapshot_cutoff_ts_nanos={} processed_from_commitment_tx_id={} processed_through_commitment_tx_id={} scanned_transactions={} completed_commitments={} splitter_credits={} splitters_scanned={} expanded_distinct_sources={} distinct_sources={} eligible_principals={} eligible_winner_icp_e8s={} ineligible_icp_e8s={} token_balance={} token_fee={} token_amount={} recipient={}",
+            "RELAY_SNS_REWARD status={} reason={} sns_root_canister_id={} sns_ledger_canister_id={} snapshot_id={} attribution_cutoff_ts_nanos={} attribution_commitment_tx_id={} scanned_transactions={} splitters_scanned={} distinct_sources={} eligible_principals={} eligible_icp_e8s={} ineligible_icp_e8s={} recipient_count={} owner_mismatch_count={} token_balance={} token_fee={}",
             self.status,
             self.reason.as_deref().map(jupiter_canister_logging::escape_value).unwrap_or_else(|| "null".to_string()),
             self.root.map(|v| v.to_text()).unwrap_or_else(|| "null".to_string()),
             self.ledger.map(|v| v.to_text()).unwrap_or_else(|| "null".to_string()),
-            opt(self.snapshot_id), opt(self.cutoff), opt(self.processed_from), opt(self.processed_through),
-            self.scanned_transactions, self.completed_commitments, self.splitter_credits,
-            self.splitters_scanned, self.expanded_distinct_sources, self.distinct_sources,
-            self.eligible_principals, opt(self.winner_e8s), opt(self.ineligible_e8s),
-            opt(self.token_balance.as_ref()), opt(self.token_fee.as_ref()), opt(self.token_amount.as_ref()),
-            self.recipient.map(|v| v.to_text()).unwrap_or_else(|| "null".to_string())
+            opt(self.snapshot_id), opt(self.cutoff), opt(self.attribution_commitment),
+            self.scanned_transactions, self.splitters_scanned, self.distinct_sources,
+            self.eligible_principals, opt(self.eligible_e8s), opt(self.ineligible_e8s),
+            self.recipient_count, self.owner_mismatch_count,
+            opt(self.token_balance.as_ref()), opt(self.token_fee.as_ref())
         );
     }
+}
+
+fn validate_reward_index_components(
+    context: &RelayRewardContext,
+    components: ListSnsCanistersResponse,
+) -> Result<Principal, String> {
+    if components.root != Some(context.sns_root_canister_id)
+        || components.ledger != Some(context.sns_ledger_canister_id)
+    {
+        return Err("reward_index_component_mismatch".to_string());
+    }
+    components
+        .index
+        .ok_or_else(|| "reward_index_unavailable".to_string())
+}
+
+fn effective_attribution_cutoff(snapshot_cutoff: u64, reward_pot_cutoff: u64) -> u64 {
+    snapshot_cutoff.min(reward_pot_cutoff)
+}
+
+fn validate_icp_index_tip(
+    ledger_chain_length: u64,
+    index_blocks_synced: u64,
+) -> Result<(), String> {
+    if index_blocks_synced < ledger_chain_length {
+        Err("icp_index_not_caught_up".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+async fn resolve_reward_index(context: &RelayRewardContext) -> Result<IcrcIndexCanister, String> {
+    let components = SnsRootCanister
+        .list_sns_canisters(context.sns_root_canister_id)
+        .await
+        .map_err(|_| "reward_index_unavailable".to_string())?;
+    let index_id = validate_reward_index_components(context, components)?;
+    let index = IcrcIndexCanister::new(index_id);
+    let indexed_ledger = index
+        .ledger_id()
+        .await
+        .map_err(|_| "reward_index_unavailable".to_string())?;
+    if indexed_ledger != context.sns_ledger_canister_id {
+        return Err("reward_index_component_mismatch".to_string());
+    }
+    Ok(index)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SweepDisposition {
+    Completed,
+    RetryNextDailyTick,
+}
+
+fn record_sweep_disposition(disposition: SweepDisposition, now_secs: u64) {
+    if disposition == SweepDisposition::Completed {
+        reward_state::mutate(|reward| {
+            reward.last_sweep_attempt_timestamp_seconds = now_secs;
+        });
+    }
+}
+
+fn sweep_is_due(last_completed_sweep_secs: u64, now_secs: u64, force: bool) -> bool {
+    force
+        || last_completed_sweep_secs == 0
+        || now_secs.saturating_sub(last_completed_sweep_secs) >= REWARD_SWEEP_INTERVAL_SECONDS
 }
 
 async fn reward_context(canister_id: Principal) -> Result<Option<RelayRewardContext>, String> {
@@ -124,8 +190,64 @@ async fn resolve_accounts(
         .map_err(|err| format!("owner lookup decode failed: {err:?}"))
 }
 
+#[async_trait]
+trait OwnerResolverClient: Send + Sync {
+    async fn resolve(
+        &self,
+        snapshot_id: u64,
+        accounts: Vec<Vec<u8>>,
+    ) -> Result<ResolveDefaultIcpAccountsResult, String>;
+}
+
+#[async_trait]
+impl OwnerResolverClient for Principal {
+    async fn resolve(
+        &self,
+        snapshot_id: u64,
+        accounts: Vec<Vec<u8>>,
+    ) -> Result<ResolveDefaultIcpAccountsResult, String> {
+        resolve_accounts(*self, snapshot_id, accounts).await
+    }
+}
+
+async fn resolve_accounts_chunked<R: OwnerResolverClient>(
+    resolver: &R,
+    snapshot_id: u64,
+    accounts: &BTreeMap<[u8; 32], u64>,
+) -> Result<Vec<Option<Principal>>, String> {
+    let ordered = accounts.keys().copied().collect::<Vec<_>>();
+    let mut owners = Vec::with_capacity(ordered.len());
+    for chunk in ordered.chunks(OWNER_RESOLUTION_CHUNK_SIZE) {
+        let response = resolver
+            .resolve(
+                snapshot_id,
+                chunk.iter().map(|account| account.to_vec()).collect(),
+            )
+            .await
+            .map_err(|_| "owner_lookup_failed".to_string())?;
+        match response {
+            ResolveDefaultIcpAccountsResult::Ok(mut resolved) => {
+                if resolved.len() != chunk.len() {
+                    return Err("owner_lookup_length_mismatch".to_string());
+                }
+                owners.append(&mut resolved);
+            }
+            ResolveDefaultIcpAccountsResult::SnapshotChanged => {
+                return Err("reward_context_changed".to_string());
+            }
+            ResolveDefaultIcpAccountsResult::TooManyAccounts => {
+                return Err("owner_lookup_chunk_rejected".to_string());
+            }
+            ResolveDefaultIcpAccountsResult::InvalidAccountIdentifier { index } => {
+                return Err(format!("invalid_source_account_identifier_{index}"));
+            }
+        }
+    }
+    Ok(owners)
+}
+
 pub(crate) async fn process(now_nanos: u64, now_secs: u64, force: bool) {
-    if reward_state::get().pending_transfer.is_some() {
+    if reward_state::get().pending_payout.is_some() {
         let result = drive_pending(now_nanos).await;
         RewardLog {
             status: result.status(),
@@ -135,52 +257,45 @@ pub(crate) async fn process(now_nanos: u64, now_secs: u64, force: bool) {
         .emit();
         return;
     }
-    let due = reward_state::get().last_sweep_attempt_timestamp_seconds == 0
-        || now_secs.saturating_sub(reward_state::get().last_sweep_attempt_timestamp_seconds)
-            >= REWARD_SWEEP_INTERVAL_SECONDS;
-    if !force && !due {
+    if !sweep_is_due(
+        reward_state::get().last_sweep_attempt_timestamp_seconds,
+        now_secs,
+        force,
+    ) {
         return;
     }
-    reward_state::mutate(|reward| reward.last_sweep_attempt_timestamp_seconds = now_secs);
     let mut log = RewardLog {
         status: "held",
         ..Default::default()
     };
-    if let Err(reason) = adjudicate(now_nanos, now_secs, &mut log).await {
-        log.status = "failed";
-        log.reason = Some(reason);
-    }
+    let disposition = match adjudicate(now_nanos, &mut log).await {
+        Ok(disposition) => disposition,
+        Err(reason) => {
+            log.status = "failed";
+            log.reason = Some(reason);
+            SweepDisposition::RetryNextDailyTick
+        }
+    };
+    record_sweep_disposition(disposition, now_secs);
     log.emit();
 }
 
-async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Result<(), String> {
+async fn adjudicate(now_nanos: u64, log: &mut RewardLog) -> Result<SweepDisposition, String> {
     let cfg = state::with_state(|st| st.config.clone());
     let Some(context) = reward_context(cfg.sns_rewards_canister_id)
         .await
         .map_err(|_| "reward_context_unavailable".to_string())?
     else {
-        log.reason = Some("reward_context_unavailable".to_string());
-        return Ok(());
+        return Err("reward_context_unavailable".to_string());
     };
     log.root = Some(context.sns_root_canister_id);
     log.ledger = Some(context.sns_ledger_canister_id);
     log.snapshot_id = Some(context.snapshot_id);
-    log.cutoff = Some(context.scan_started_at_timestamp_nanos);
     if now_nanos.saturating_sub(context.scan_completed_at_timestamp_nanos)
         > REWARD_CONTEXT_MAX_AGE_NANOS
     {
-        log.reason = Some("reward_context_stale".to_string());
-        return Ok(());
+        return Err("reward_context_stale".to_string());
     }
-    if let Err(reason) = apply_reward_epoch(context.sns_root_canister_id, now_secs) {
-        log.reason = Some(reason.to_string());
-        return Ok(());
-    }
-    let reward_boundary = reward_state::get();
-    let processed_from = reward_boundary.processed_through_commitment_tx_id;
-    let carried_credit_start = reward_boundary.carried_credit_start_tx_id;
-    log.processed_from = processed_from;
-
     let reward_ledger = IcrcLedgerCanister::new(context.sns_ledger_canister_id);
     let reward_account = Account {
         owner: ic_cdk::api::canister_self(),
@@ -188,40 +303,50 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
     };
     let balance = match reward_ledger.balance_of(reward_account).await {
         Ok(value) => value,
-        Err(_) => {
-            log.reason = Some("reward_balance_read_failed".to_string());
-            return Ok(());
-        }
+        Err(_) => return Err("reward_balance_read_failed".to_string()),
     };
     log.token_balance = Some(balance.clone());
     let fee = match reward_ledger.fee().await {
         Ok(value) => value,
-        Err(_) => {
-            log.reason = Some("reward_fee_read_failed".to_string());
-            return Ok(());
-        }
+        Err(_) => return Err("reward_fee_read_failed".to_string()),
     };
     log.token_fee = Some(fee.clone());
-    let amount = match economical_reward_amount(&balance, &fee) {
-        Ok(amount) => amount,
-        Err(reason) => {
-            log.reason = Some(reason.to_string());
-            return Ok(());
-        }
-    };
-    log.token_amount = Some(amount.clone());
+    if let Some(reason) = terminal_reward_pot_hold_reason(&balance, &fee) {
+        log.reason = Some(reason.to_string());
+        return Ok(SweepDisposition::Completed);
+    }
+
+    let reward_index = resolve_reward_index(&context).await?;
+    let reward_pot_cutoff =
+        reward_token_history::reward_pot_cutoff(&reward_index, reward_account, balance.clone())
+            .await?;
+    // This is a conservative ledger-time recency heuristic across two independent ledgers, not
+    // a cryptographic causal ordering. A Faucet commitment must be recorded strictly before both
+    // the owner-snapshot scan and the oldest unspent reward credit in the current pot.
+    let attribution_cutoff =
+        effective_attribution_cutoff(context.scan_started_at_timestamp_nanos, reward_pot_cutoff);
+    log.cutoff = Some(attribution_cutoff);
+
+    // Observe the authoritative Ledger tip first, then require the Index to contain that entire
+    // prefix. Blocks created after this Ledger read cannot carry a pre-existing attribution-cutoff
+    // timestamp, while paying from a stale ICP account history could select the wrong funder.
+    let icp_ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
+    let ledger_chain_length = icp_ledger
+        .chain_length()
+        .await
+        .map_err(|_| "icp_history_sync_unavailable".to_string())?;
+    let index = IcpIndexCanister::new(cfg.icp_index_canister_id);
+    let index_blocks_synced = index
+        .status()
+        .await
+        .map_err(|_| "icp_history_sync_unavailable".to_string())?
+        .num_blocks_synced;
+    validate_icp_index_tip(ledger_chain_length, index_blocks_synced)?;
 
     let relay = ic_cdk::api::canister_self();
     let relay_account_identifier =
         account_identifier_text(relay, Some(logic::relay_subaccount_one()));
-    let transactions = reward_history::scan_history(
-        cfg.icp_index_canister_id,
-        relay_account_identifier,
-        processed_from,
-        carried_credit_start,
-    )
-    .await?;
-    log.scanned_transactions = transactions.len();
+    let mut history = reward_history::BackwardHistory::new(relay_account_identifier);
     let staking_subaccount = NnsGovernanceCanister::new(cfg.governance_canister_id)
         .neuron_staking_subaccount(logic::JUPITER_FAUCET_NEURON_ID)
         .await
@@ -229,126 +354,125 @@ async fn adjudicate(now_nanos: u64, now_secs: u64, log: &mut RewardLog) -> Resul
     let faucet_account_identifier =
         account_identifier_text(cfg.governance_canister_id, Some(staking_subaccount));
     let intrinsic_splitters = reward_splitter::intrinsic_splitter_accounts(relay);
-    let batch = reconstruct_batch_with_splitters(
-        &transactions,
-        processed_from,
-        carried_credit_start,
-        context.scan_started_at_timestamp_nanos,
-        &account_identifier_text(relay, Some(logic::relay_subaccount_one())),
-        &faucet_account_identifier,
-        &logic::relay_faucet_commitment_memo(relay)
-            .map_err(|_| "commitment_memo_invalid".to_string())?,
-        &intrinsic_splitters,
-    )?;
-    let Some(batch) = batch else {
-        log.reason = Some("no_new_completed_commitment".to_string());
-        return Ok(());
-    };
-    log.processed_through = Some(batch.through_commitment_tx_id);
-    log.completed_commitments = batch.completed_commitments;
-    log.splitter_credits = batch.splitter_credits.len();
-    let expanded = reward_splitter::expand_splitter_provenance(
-        cfg.icp_index_canister_id,
-        relay,
-        &batch.splitter_credits,
-        &reward_boundary.splitter_boundaries,
-    )
-    .await?;
-    log.scanned_transactions = log
-        .scanned_transactions
-        .checked_add(expanded.scanned_transactions)
-        .ok_or_else(|| "history_count_overflow".to_string())?;
-    log.splitters_scanned = expanded.splitters_scanned;
-    log.expanded_distinct_sources = expanded.sources.len();
-    let (final_sources, final_ineligible) =
-        merge_attribution(batch.sources, batch.ineligible_e8s, &expanded)?;
-    log.distinct_sources = final_sources.len();
-    if final_sources.len() > ICP_HISTORY_MAX_DISTINCT_SOURCES {
-        log.reason = Some("too_many_distinct_sources".to_string());
-        return Ok(());
-    }
-    let requested = final_sources
-        .keys()
-        .map(|account| account.to_vec())
-        .collect::<Vec<_>>();
-    let owners = match resolve_accounts(cfg.sns_rewards_canister_id, context.snapshot_id, requested)
-        .await?
-    {
-        ResolveDefaultIcpAccountsResult::Ok(value) => value,
-        ResolveDefaultIcpAccountsResult::SnapshotChanged => {
-            log.reason = Some("reward_context_changed".to_string());
-            return Ok(());
+    let commitment_memo = logic::relay_faucet_commitment_memo(relay)
+        .map_err(|_| "commitment_memo_invalid".to_string())?;
+    let relay_account_identifier =
+        account_identifier_text(relay, Some(logic::relay_subaccount_one()));
+    let mut examined_commitments = BTreeSet::new();
+    let mut splitter_cache = reward_splitter::SplitterHistoryCache::new();
+    let mut splitter_transactions_scanned = 0_usize;
+
+    loop {
+        if history.transactions().is_empty() && !history.exhausted() {
+            history.extend(&index).await?;
+            log.scanned_transactions = history.transactions().len();
         }
-        ResolveDefaultIcpAccountsResult::TooManyAccounts => {
-            log.reason = Some("too_many_distinct_sources".to_string());
-            return Ok(());
+        let batches = match reconstruct_batches_with_splitters(
+            history.authoritative_transactions(),
+            history.authoritative(),
+            attribution_cutoff,
+            &relay_account_identifier,
+            &faucet_account_identifier,
+            &commitment_memo,
+            &intrinsic_splitters,
+        ) {
+            reward_history::HistoricalReconstruction::Complete(batches) => batches,
+            reward_history::HistoricalReconstruction::NeedOlderHistory => {
+                if history.exhausted() {
+                    return Err("commitment_reconciliation_failed".to_string());
+                }
+                history.extend(&index).await?;
+                log.scanned_transactions = history
+                    .transactions()
+                    .len()
+                    .checked_add(splitter_transactions_scanned)
+                    .ok_or_else(|| "history_count_overflow".to_string())?;
+                continue;
+            }
+            reward_history::HistoricalReconstruction::Malformed(error) => return Err(error),
+        };
+
+        for batch in batches.into_iter().rev() {
+            if !examined_commitments.insert(batch.commitment_tx_id) {
+                continue;
+            }
+            let expanded = splitter_cache
+                .expand(&index, relay, &batch.splitter_credits)
+                .await?;
+            splitter_transactions_scanned = splitter_transactions_scanned
+                .checked_add(expanded.scanned_transactions)
+                .ok_or_else(|| "history_count_overflow".to_string())?;
+            log.scanned_transactions = log
+                .scanned_transactions
+                .checked_add(expanded.scanned_transactions)
+                .ok_or_else(|| "history_count_overflow".to_string())?;
+            log.splitters_scanned = log
+                .splitters_scanned
+                .checked_add(expanded.splitters_scanned)
+                .ok_or_else(|| "splitter_count_overflow".to_string())?;
+            let (final_sources, final_ineligible) =
+                merge_attribution(batch.sources, batch.ineligible_e8s, &expanded)?;
+            log.distinct_sources = final_sources.len();
+            let owners = resolve_accounts_chunked(
+                &cfg.sns_rewards_canister_id,
+                context.snapshot_id,
+                &final_sources,
+            )
+            .await?;
+            let (eligible, ineligible, owner_mismatch_count) =
+                classify_sources(final_sources, final_ineligible, owners)?;
+            log.ineligible_e8s = Some(ineligible);
+            log.owner_mismatch_count = owner_mismatch_count;
+            if eligible.is_empty() {
+                continue;
+            }
+
+            let allocations = match proportional_reward_allocations(&balance, &fee, &eligible) {
+                Ok(allocations) => allocations,
+                Err(reason) => {
+                    log.attribution_commitment = Some(batch.commitment_tx_id);
+                    log.eligible_principals = eligible.len();
+                    log.eligible_e8s = Some(sum_eligible_weight(&eligible)?);
+                    log.reason = Some(reason.to_string());
+                    return Ok(SweepDisposition::Completed);
+                }
+            };
+            log.attribution_commitment = Some(batch.commitment_tx_id);
+            log.eligible_principals = eligible.len();
+            log.eligible_e8s = Some(sum_eligible_weight(&eligible)?);
+            log.recipient_count = allocations.len();
+            let pending = build_pending_payout(
+                &context,
+                batch.commitment_tx_id,
+                fee,
+                allocations,
+                now_nanos,
+            )?;
+            reward_state::mutate(|state| state.pending_payout = Some(pending));
+            log.status = "pending";
+            let result = drive_pending(now_nanos).await;
+            log.status = result.status();
+            log.reason = result.reason().map(str::to_string);
+            return Ok(result.sweep_disposition());
         }
-        ResolveDefaultIcpAccountsResult::InvalidAccountIdentifier { index } => {
-            return Err(format!("invalid_source_account_identifier_{index}"));
+
+        if history.exhausted() {
+            log.reason = Some("no_eligible_historical_commitment".to_string());
+            return Ok(SweepDisposition::Completed);
         }
-    };
-    if owners.len() != final_sources.len() {
-        return Err("owner_lookup_length_mismatch".to_string());
+        history.extend(&index).await?;
+        // Main-account reads replace the prior main count; splitter reads are accumulated above.
+        log.scanned_transactions = history
+            .transactions()
+            .len()
+            .checked_add(splitter_transactions_scanned)
+            .ok_or_else(|| "history_count_overflow".to_string())?;
     }
-    let (eligible, ineligible, mismatches) =
-        classify_sources(final_sources, final_ineligible, owners)?;
-    for principal in mismatches {
-        ic_cdk::println!(
-            "RELAY_SNS_REWARD_OWNER_MISMATCH principal={}",
-            principal.to_text()
-        );
-    }
-    log.eligible_principals = eligible.len();
-    log.ineligible_e8s = Some(ineligible);
-    let winner = select_winner(&eligible, ineligible);
-    let Some((winner, winning_e8s)) = winner else {
-        log.status = "no_winner";
-        log.reason = Some(no_winner_reason(&eligible, ineligible).to_string());
-        reward_state::mutate(|state| {
-            advance_reward_boundary(
-                state,
-                batch.through_commitment_tx_id,
-                batch.next_carried_credit_start_tx_id,
-            );
-            advance_splitter_boundaries(state, &expanded.boundary_updates);
-        });
-        return Ok(());
-    };
-    log.winner_e8s = Some(winning_e8s);
-    log.recipient = Some(winner);
-    let pending = PendingRewardTransfer {
-        sns_root_canister_id: context.sns_root_canister_id,
-        sns_ledger_canister_id: context.sns_ledger_canister_id,
-        snapshot_id: context.snapshot_id,
-        through_commitment_tx_id: batch.through_commitment_tx_id,
-        next_carried_credit_start_tx_id: batch.next_carried_credit_start_tx_id,
-        proposed_splitter_boundaries: expanded.boundary_updates,
-        recipient: Account {
-            owner: winner,
-            subaccount: None,
-        },
-        observed_balance: balance,
-        fee,
-        amount,
-        memo: reward_memo(batch.through_commitment_tx_id),
-        created_at_time_nanos: now_nanos,
-        attempt_started: false,
-        uncertain_attempt_seen: false,
-        status: PendingRewardTransferStatus::AwaitingTransfer,
-    };
-    reward_state::mutate(|state| state.pending_transfer = Some(pending));
-    log.status = "pending";
-    let result = drive_pending(now_nanos).await;
-    log.status = result.status();
-    log.reason = result.reason().map(str::to_string);
-    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
 struct ContributionBatch {
-    through_commitment_tx_id: u64,
-    next_carried_credit_start_tx_id: Option<u64>,
-    completed_commitments: usize,
+    commitment_tx_id: u64,
     sources: BTreeMap<[u8; 32], u64>,
     splitter_credits: Vec<SplitterFundingCredit>,
     ineligible_e8s: u64,
@@ -392,58 +516,108 @@ fn merge_attribution(
     Ok((direct_sources, ineligible_e8s))
 }
 
-fn economical_reward_amount(balance: &Nat, fee: &Nat) -> Result<Nat, &'static str> {
+fn sum_eligible_weight(eligible: &BTreeMap<Principal, u64>) -> Result<u64, String> {
+    eligible.values().try_fold(0_u64, |total, weight| {
+        total
+            .checked_add(*weight)
+            .ok_or_else(|| "contribution_overflow".to_string())
+    })
+}
+
+fn terminal_reward_pot_hold_reason(balance: &Nat, fee: &Nat) -> Option<&'static str> {
     if balance.0 == 0u8.into() {
-        return Err("zero_reward_balance");
+        return Some("zero_reward_balance");
     }
     if balance.0 <= fee.0 {
-        return Err("balance_not_above_fee");
+        return Some("balance_not_above_plan_fees");
     }
-    let amount = Nat(balance.0.clone() - fee.0.clone());
-    if fee.0.clone() * 10u8 > amount.0 {
-        return Err("fee_over_10_percent");
+    let single_recipient_amount = balance.0.clone() - fee.0.clone();
+    if fee.0.clone() * 10u8 > single_recipient_amount {
+        return Some("plan_fees_over_10_percent");
     }
-    Ok(amount)
+    None
 }
 
-fn advance_reward_boundary(
-    state: &mut reward_state::RewardState,
-    through_commitment_tx_id: u64,
-    next_carried_credit_start_tx_id: Option<u64>,
-) {
-    state.processed_through_commitment_tx_id = Some(through_commitment_tx_id);
-    state.carried_credit_start_tx_id = next_carried_credit_start_tx_id;
-}
-
-fn advance_splitter_boundaries(
-    state: &mut reward_state::RewardState,
-    splitter_boundary_updates: &BTreeMap<u8, reward_state::RewardHistoryBoundary>,
-) {
-    for (splitter, boundary) in splitter_boundary_updates {
-        state.splitter_boundaries.insert(*splitter, *boundary);
+fn proportional_reward_allocations(
+    balance: &Nat,
+    fee: &Nat,
+    eligible: &BTreeMap<Principal, u64>,
+) -> Result<Vec<(Principal, Nat)>, &'static str> {
+    if eligible.is_empty() {
+        return Err("no_eligible_owner");
+    }
+    let total_weight = eligible
+        .values()
+        .try_fold(0_u128, |total, weight| {
+            total.checked_add(u128::from(*weight))
+        })
+        .ok_or("contribution_overflow")?;
+    if total_weight == 0 {
+        return Err("no_eligible_owner");
+    }
+    let mut prefix = 0_u128;
+    let mut previous_floor = 0u8.into();
+    let mut allocations = Vec::with_capacity(eligible.len());
+    for (principal, weight) in eligible {
+        prefix = prefix
+            .checked_add(u128::from(*weight))
+            .ok_or("contribution_overflow")?;
+        let floor = candid::Nat::from(prefix).0 * balance.0.clone() / total_weight;
+        let gross_entitlement = floor.clone() - previous_floor;
+        if gross_entitlement > fee.0 {
+            let transfer_amount = gross_entitlement - fee.0.clone();
+            if fee.0.clone() * 10u8 <= transfer_amount {
+                allocations.push((*principal, Nat(transfer_amount)));
+            }
+        }
+        previous_floor = floor;
+    }
+    if allocations.is_empty() {
+        Err("no_economical_reward_recipient")
+    } else {
+        Ok(allocations)
     }
 }
 
-fn apply_reward_epoch(root: Principal, now_secs: u64) -> Result<(), &'static str> {
-    let current = reward_state::get();
-    if current.epoch_sns_root_canister_id == Some(root) {
-        return Ok(());
+fn build_pending_payout(
+    context: &RelayRewardContext,
+    commitment_tx_id: u64,
+    fee: Nat,
+    allocations: Vec<(Principal, Nat)>,
+    now_nanos: u64,
+) -> Result<PendingRewardPayout, String> {
+    let mut recipients = Vec::with_capacity(allocations.len());
+    for (index, (principal, amount)) in allocations.into_iter().enumerate() {
+        let memo = reward_memo(commitment_tx_id, index)?;
+        recipients.push(PendingRewardRecipient {
+            recipient: Account {
+                owner: principal,
+                subaccount: None,
+            },
+            observed_balance: None,
+            amount: amount.clone(),
+            memo,
+            created_at_time_nanos: now_nanos,
+            attempt_started: false,
+            uncertain_attempt_seen: false,
+            status: PendingRewardTransferStatus::AwaitingTransfer,
+        });
     }
-    if current.pending_transfer.is_some() {
-        return Err("pending_from_previous_sns");
+    if recipients.is_empty() {
+        return Err("reward_plan_has_no_transferable_recipient".to_string());
     }
-    reward_state::mutate(|state| {
-        state.epoch_sns_root_canister_id = Some(root);
-        state.processed_through_commitment_tx_id = None;
-        state.carried_credit_start_tx_id = None;
-        state.splitter_boundaries.clear();
-        state.last_sweep_attempt_timestamp_seconds = 0;
-    });
-    reward_state::mutate(|state| state.last_sweep_attempt_timestamp_seconds = now_secs);
-    Ok(())
+    Ok(PendingRewardPayout {
+        sns_root_canister_id: context.sns_root_canister_id,
+        sns_ledger_canister_id: context.sns_ledger_canister_id,
+        snapshot_id: context.snapshot_id,
+        attribution_commitment_tx_id: commitment_tx_id,
+        fee,
+        recipients,
+        next_recipient_index: 0,
+    })
 }
 
-type ClassifiedSources = (BTreeMap<Principal, u64>, u64, Vec<Principal>);
+type ClassifiedSources = (BTreeMap<Principal, u64>, u64, usize);
 
 fn classify_sources(
     sources: BTreeMap<[u8; 32], u64>,
@@ -455,56 +629,45 @@ fn classify_sources(
     }
     let mut eligible = BTreeMap::<Principal, u64>::new();
     let mut ineligible = initial_ineligible;
-    let mut mismatches = Vec::new();
+    let mut owner_mismatch_count = 0;
     for ((account, value), owner) in sources.into_iter().zip(owners) {
         match owner {
             Some(principal) if account_identifier_bytes(principal, None) == account => {
                 add_checked(eligible.entry(principal).or_default(), value)?;
             }
-            Some(principal) => {
+            Some(_) => {
                 add_checked(&mut ineligible, value)?;
-                mismatches.push(principal);
+                owner_mismatch_count += 1;
             }
             None => add_checked(&mut ineligible, value)?,
         }
     }
-    Ok((eligible, ineligible, mismatches))
+    Ok((eligible, ineligible, owner_mismatch_count))
 }
 
-#[allow(clippy::too_many_arguments)] // The reconstruction boundary pins each independent ledger invariant.
-fn reconstruct_batch_with_splitters(
+fn reconstruct_batches_with_splitters(
     transactions: &[IndexTransactionWithId],
-    prior_cursor: Option<u64>,
-    carried_credit_start_tx_id: Option<u64>,
+    history_authoritative: bool,
     cutoff_nanos: u64,
     relay_account_identifier: &str,
     faucet_account_identifier: &str,
     commitment_memo: &[u8],
     intrinsic_splitters: &BTreeMap<[u8; 32], u8>,
-) -> Result<Option<ContributionBatch>, String> {
+) -> reward_history::HistoricalReconstruction<Vec<ContributionBatch>> {
+    if !history_authoritative {
+        return reward_history::HistoricalReconstruction::NeedOlderHistory;
+    }
     let mut chronological = transactions.to_vec();
     chronological.sort_by_key(|transaction| transaction.id);
     let mut funding = VecDeque::<FundingCredit>::new();
-    let mut batch_sources = BTreeMap::<[u8; 32], u64>::new();
-    let mut batch_splitter_credits = Vec::new();
-    let mut batch_ineligible = 0_u64;
-    let mut through = None;
-    let mut completed = 0usize;
+    let mut batches = Vec::new();
     for entry in chronological {
-        if let Some(cursor) = prior_cursor {
-            if entry.id == cursor
-                || (entry.id < cursor
-                    && carried_credit_start_tx_id.is_none_or(|carried| entry.id < carried))
-            {
-                continue;
-            }
-        }
-        let timestamp = entry
-            .transaction
-            .timestamp
-            .as_ref()
-            .ok_or_else(|| "history_timestamp_missing".to_string())?
-            .timestamp_nanos;
+        let Some(timestamp) = entry.transaction.timestamp.as_ref() else {
+            return reward_history::HistoricalReconstruction::Malformed(
+                "history_timestamp_missing".to_string(),
+            );
+        };
+        let timestamp = timestamp.timestamp_nanos;
         if timestamp >= cutoff_nanos {
             continue;
         }
@@ -521,40 +684,66 @@ fn reconstruct_batch_with_splitters(
                         && entry.transaction.icrc1_memo.as_deref() == Some(commitment_memo)
                         && amount.e8s() >= logic::MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S;
                     if !expected {
-                        return Err("unexpected_subaccount_debit".to_string());
+                        return reward_history::HistoricalReconstruction::Malformed(
+                            "unexpected_subaccount_debit".to_string(),
+                        );
                     }
-                    let gross = amount
-                        .e8s()
-                        .checked_add(fee.e8s())
-                        .ok_or_else(|| "commitment_reconciliation_failed".to_string())?;
+                    let Some(gross) = amount.e8s().checked_add(fee.e8s()) else {
+                        return reward_history::HistoricalReconstruction::Malformed(
+                            "commitment_reconciliation_failed".to_string(),
+                        );
+                    };
                     let mut remaining = gross;
+                    let mut sources = BTreeMap::<[u8; 32], u64>::new();
+                    let mut splitter_credits = Vec::new();
+                    let mut ineligible_e8s = 0_u64;
                     while remaining > 0 {
-                        let credit = funding
-                            .pop_front()
-                            .ok_or_else(|| "commitment_reconciliation_failed".to_string())?;
+                        let Some(credit) = funding.pop_front() else {
+                            return reward_history::HistoricalReconstruction::Malformed(
+                                "commitment_reconciliation_failed".to_string(),
+                            );
+                        };
                         if credit.amount_e8s > remaining {
-                            return Err("commitment_reconciliation_failed".to_string());
+                            return reward_history::HistoricalReconstruction::Malformed(
+                                "commitment_reconciliation_failed".to_string(),
+                            );
                         }
                         remaining -= credit.amount_e8s;
                         match credit.origin {
-                            FundingOrigin::External(source) => add_checked(
-                                batch_sources.entry(source).or_default(),
-                                credit.amount_e8s,
-                            )?,
+                            FundingOrigin::External(source) => {
+                                if let Err(error) = add_checked(
+                                    sources.entry(source).or_default(),
+                                    credit.amount_e8s,
+                                ) {
+                                    return reward_history::HistoricalReconstruction::Malformed(
+                                        error,
+                                    );
+                                }
+                            }
                             FundingOrigin::Splitter(splitter_number) => {
-                                batch_splitter_credits.push(SplitterFundingCredit {
+                                splitter_credits.push(SplitterFundingCredit {
                                     splitter_number,
                                     tx_id: credit.tx_id,
                                     amount_e8s: credit.amount_e8s,
                                 });
                             }
                             FundingOrigin::MintOrInvalid => {
-                                add_checked(&mut batch_ineligible, credit.amount_e8s)?;
+                                if let Err(error) =
+                                    add_checked(&mut ineligible_e8s, credit.amount_e8s)
+                                {
+                                    return reward_history::HistoricalReconstruction::Malformed(
+                                        error,
+                                    );
+                                }
                             }
                         }
                     }
-                    through = Some(entry.id);
-                    completed += 1;
+                    batches.push(ContributionBatch {
+                        commitment_tx_id: entry.id,
+                        sources,
+                        splitter_credits,
+                        ineligible_e8s,
+                    });
                 } else if to == relay_account_identifier {
                     funding.push_back(FundingCredit {
                         tx_id: entry.id,
@@ -576,7 +765,9 @@ fn reconstruct_batch_with_splitters(
                 to, from, amount, ..
             } => {
                 if from == relay_account_identifier {
-                    return Err("unexpected_subaccount_debit".to_string());
+                    return reward_history::HistoricalReconstruction::Malformed(
+                        "unexpected_subaccount_debit".to_string(),
+                    );
                 } else if to == relay_account_identifier {
                     funding.push_back(FundingCredit {
                         tx_id: entry.id,
@@ -602,97 +793,45 @@ fn reconstruct_batch_with_splitters(
                 });
             }
             IndexOperation::Burn { from, .. } if from == relay_account_identifier => {
-                return Err("unexpected_subaccount_debit".to_string());
+                return reward_history::HistoricalReconstruction::Malformed(
+                    "unexpected_subaccount_debit".to_string(),
+                );
             }
             IndexOperation::Approve { from, fee, .. }
                 if from == relay_account_identifier && fee.e8s() > 0 =>
             {
-                return Err("unexpected_subaccount_debit".to_string());
+                return reward_history::HistoricalReconstruction::Malformed(
+                    "unexpected_subaccount_debit".to_string(),
+                );
             }
             _ => {}
         }
     }
-    Ok(through.map(|through_commitment_tx_id| {
-        let next_carried_credit_start_tx_id = funding
-            .front()
-            .and_then(|credit| (credit.tx_id < through_commitment_tx_id).then_some(credit.tx_id));
-        ContributionBatch {
-            through_commitment_tx_id,
-            next_carried_credit_start_tx_id,
-            completed_commitments: completed,
-            sources: batch_sources,
-            splitter_credits: batch_splitter_credits,
-            ineligible_e8s: batch_ineligible,
-        }
-    }))
+    reward_history::HistoricalReconstruction::Complete(batches)
 }
 
-#[cfg(test)]
-fn reconstruct_batch(
-    transactions: &[IndexTransactionWithId],
-    prior_cursor: Option<u64>,
-    carried_credit_start_tx_id: Option<u64>,
-    cutoff_nanos: u64,
-    relay_account_identifier: &str,
-    faucet_account_identifier: &str,
-    commitment_memo: &[u8],
-) -> Result<Option<ContributionBatch>, String> {
-    reconstruct_batch_with_splitters(
-        transactions,
-        prior_cursor,
-        carried_credit_start_tx_id,
-        cutoff_nanos,
-        relay_account_identifier,
-        faucet_account_identifier,
-        commitment_memo,
-        &BTreeMap::new(),
-    )
-}
-
-fn select_winner(eligible: &BTreeMap<Principal, u64>, ineligible: u64) -> Option<(Principal, u64)> {
-    let mut ranked = eligible
-        .iter()
-        .map(|(principal, amount)| (*principal, *amount))
-        .collect::<Vec<_>>();
-    ranked.sort_by(|left, right| right.1.cmp(&left.1));
-    let (winner, amount) = *ranked.first()?;
-    if amount <= ineligible || ranked.get(1).is_some_and(|second| second.1 == amount) {
-        return None;
-    }
-    Some((winner, amount))
-}
-
-fn no_winner_reason(eligible: &BTreeMap<Principal, u64>, ineligible: u64) -> &'static str {
-    if eligible.is_empty() {
-        return "no_eligible_owner";
-    }
-    let max = eligible.values().copied().max().unwrap_or(0);
-    if eligible.values().filter(|amount| **amount == max).count() > 1 {
-        "contributor_tie"
-    } else if ineligible >= max {
-        "ineligible_not_smaller"
-    } else {
-        "no_eligible_owner"
-    }
-}
-
-fn reward_memo(through_commitment_tx_id: u64) -> Vec<u8> {
+fn reward_memo(commitment_tx_id: u64, recipient_index: usize) -> Result<Vec<u8>, String> {
     let mut memo = REWARD_MEMO_PREFIX.to_vec();
-    memo.extend_from_slice(&through_commitment_tx_id.to_be_bytes());
-    memo
+    memo.extend_from_slice(&commitment_tx_id.to_be_bytes());
+    memo.extend_from_slice(
+        &u32::try_from(recipient_index)
+            .map_err(|_| "reward_recipient_index_overflow".to_string())?
+            .to_be_bytes(),
+    );
+    Ok(memo)
 }
 
 enum AttemptOutcome {
     Accepted,
     RetryableExplicit,
-    DefinitiveRejected,
-    BadFee(Nat),
+    DefinitiveRejected(&'static str),
     Uncertain,
 }
 
 #[async_trait]
 trait RewardLedgerClient: Send + Sync {
     async fn balance_of(&self, account: Account) -> Result<Nat, ()>;
+    async fn fee(&self) -> Result<Nat, ()>;
     async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, ()>;
 }
 
@@ -702,29 +841,34 @@ impl RewardLedgerClient for IcrcLedgerCanister {
         self.balance_of(account).await.map_err(|_| ())
     }
 
+    async fn fee(&self) -> Result<Nat, ()> {
+        self.fee().await.map_err(|_| ())
+    }
+
     async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, ()> {
         self.transfer(arg).await.map_err(|_| ())
     }
 }
 
-fn reward_transfer_arg(pending: &PendingRewardTransfer) -> TransferArg {
+fn reward_transfer_arg(recipient: &PendingRewardRecipient, fee: &Nat) -> TransferArg {
     TransferArg {
         from_subaccount: None,
-        to: pending.recipient,
-        fee: Some(pending.fee.clone()),
-        created_at_time: Some(pending.created_at_time_nanos),
-        memo: Some(Memo::from(pending.memo.clone())),
-        amount: pending.amount.clone(),
+        to: recipient.recipient,
+        fee: Some(fee.clone()),
+        created_at_time: Some(recipient.created_at_time_nanos),
+        memo: Some(Memo::from(recipient.memo.clone())),
+        amount: recipient.amount.clone(),
     }
 }
 
 async fn transfer_once<L: RewardLedgerClient>(
     ledger: &L,
-    pending: &PendingRewardTransfer,
+    recipient: &PendingRewardRecipient,
+    fee: &Nat,
 ) -> AttemptOutcome {
-    match ledger.transfer(reward_transfer_arg(pending)).await {
+    match ledger.transfer(reward_transfer_arg(recipient, fee)).await {
         Ok(Ok(_)) | Ok(Err(TransferError::Duplicate { .. })) => AttemptOutcome::Accepted,
-        Ok(Err(TransferError::BadFee { expected_fee })) => AttemptOutcome::BadFee(expected_fee),
+        Ok(Err(TransferError::BadFee { .. })) => AttemptOutcome::DefinitiveRejected("bad_fee"),
         Ok(Err(
             TransferError::TemporarilyUnavailable
             | TransferError::CreatedInFuture { .. }
@@ -734,49 +878,90 @@ async fn transfer_once<L: RewardLedgerClient>(
             TransferError::BadBurn { .. }
             | TransferError::InsufficientFunds { .. }
             | TransferError::TooOld,
-        )) => AttemptOutcome::DefinitiveRejected,
+        )) => AttemptOutcome::DefinitiveRejected("definitive_rejection"),
         Err(_) => AttemptOutcome::Uncertain,
     }
 }
 
-fn accept_pending(reason: &str) {
+fn accept_current_recipient() -> bool {
     reward_state::mutate(|state| {
-        if let Some(pending) = state.pending_transfer.as_ref() {
-            let through_commitment_tx_id = pending.through_commitment_tx_id;
-            let next_carried_credit_start_tx_id = pending.next_carried_credit_start_tx_id;
-            let splitter_boundary_updates = pending.proposed_splitter_boundaries.clone();
-            advance_reward_boundary(
-                state,
-                through_commitment_tx_id,
-                next_carried_credit_start_tx_id,
-            );
-            advance_splitter_boundaries(state, &splitter_boundary_updates);
-            state.pending_transfer = None;
+        let Some(payout) = state.pending_payout.as_mut() else {
+            return true;
+        };
+        let next = usize::try_from(payout.next_recipient_index)
+            .expect("validated reward recipient index")
+            + 1;
+        if next == payout.recipients.len() {
+            state.pending_payout = None;
+            true
+        } else {
+            payout.next_recipient_index = u32::try_from(next).expect("bounded reward recipients");
+            false
         }
-    });
-    ic_cdk::println!("RELAY_SNS_REWARD_TRANSFER status=accepted reason={reason}");
+    })
 }
 
-fn clear_rejected(reason: &str) {
-    reward_state::mutate(|state| state.pending_transfer = None);
-    ic_cdk::println!("RELAY_SNS_REWARD_TRANSFER status=rejected reason={reason}");
+fn clear_rejected() {
+    reward_state::mutate(|state| state.pending_payout = None);
 }
 
 fn mark_ambiguous() {
     reward_state::mutate(|state| {
-        if let Some(pending) = state.pending_transfer.as_mut() {
-            pending.uncertain_attempt_seen = true;
-            pending.status = PendingRewardTransferStatus::Ambiguous;
+        if let Some(payout) = state.pending_payout.as_mut() {
+            let index = usize::try_from(payout.next_recipient_index)
+                .expect("validated reward recipient index");
+            let recipient = &mut payout.recipients[index];
+            recipient.uncertain_attempt_seen = true;
+            recipient.status = PendingRewardTransferStatus::Ambiguous;
         }
     });
-    ic_cdk::println!("RELAY_SNS_REWARD_TRANSFER status=ambiguous reason=reward_transfer_ambiguous");
 }
 
-#[derive(Clone, Copy)]
+fn mark_retryable_explicit() {
+    reward_state::mutate(|state| {
+        if let Some(payout) = state.pending_payout.as_mut() {
+            let index = usize::try_from(payout.next_recipient_index)
+                .expect("validated reward recipient index");
+            let recipient = &mut payout.recipients[index];
+            recipient.observed_balance = None;
+            recipient.attempt_started = false;
+            recipient.status = PendingRewardTransferStatus::AwaitingTransfer;
+        }
+    });
+}
+
+fn reject_current(reason: &'static str) -> PendingDriveResult {
+    let completed_recipients = reward_state::get()
+        .pending_payout
+        .as_ref()
+        .map_or(0, |payout| payout.next_recipient_index);
+    if completed_recipients == 0 {
+        clear_rejected();
+        PendingDriveResult::Rejected(reason)
+    } else {
+        reward_state::mutate(|state| {
+            let payout = state
+                .pending_payout
+                .as_mut()
+                .expect("pending reward payout");
+            let index = usize::try_from(payout.next_recipient_index)
+                .expect("validated reward recipient index");
+            let recipient = &mut payout.recipients[index];
+            recipient.observed_balance = None;
+            recipient.attempt_started = false;
+            recipient.status = PendingRewardTransferStatus::NeedsFreshIdentity;
+        });
+        PendingDriveResult::Repricing
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingDriveResult {
     Accepted,
-    Rejected,
+    Rejected(&'static str),
     Ambiguous,
+    Repricing,
+    WaitingForBalance,
     Held,
 }
 
@@ -784,25 +969,111 @@ impl PendingDriveResult {
     fn status(self) -> &'static str {
         match self {
             Self::Accepted => "accepted",
-            Self::Rejected => "failed",
+            Self::Rejected(_) => "failed",
             Self::Ambiguous => "ambiguous",
-            Self::Held => "held",
+            Self::Repricing | Self::WaitingForBalance | Self::Held => "held",
         }
     }
+
     fn reason(self) -> Option<&'static str> {
         match self {
-            Self::Rejected => Some("reward_transfer_rejected"),
-            Self::Ambiguous | Self::Held => Some("reward_transfer_ambiguous"),
+            Self::Rejected(reason) => Some(reason),
+            Self::Ambiguous => Some("reward_payout_ambiguous"),
+            Self::Repricing => Some("reward_payout_repricing"),
+            Self::WaitingForBalance => Some("reward_payout_waiting_for_balance"),
+            Self::Held => Some("reward_payout_pending"),
             Self::Accepted => None,
+        }
+    }
+
+    fn sweep_disposition(self) -> SweepDisposition {
+        match self {
+            Self::Accepted
+            | Self::Ambiguous
+            | Self::Repricing
+            | Self::WaitingForBalance
+            | Self::Held => SweepDisposition::Completed,
+            Self::Rejected(_) => SweepDisposition::RetryNextDailyTick,
         }
     }
 }
 
+async fn reprice_unpaid_remainder<L: RewardLedgerClient>(
+    now_nanos: u64,
+    relay_account_owner: Principal,
+    ledger: &L,
+) -> PendingDriveResult {
+    let Some(payout) = reward_state::get().pending_payout else {
+        return PendingDriveResult::Accepted;
+    };
+    let fee = match ledger.fee().await {
+        Ok(fee) => fee,
+        Err(()) => return PendingDriveResult::Repricing,
+    };
+    let balance = match ledger
+        .balance_of(Account {
+            owner: relay_account_owner,
+            subaccount: None,
+        })
+        .await
+    {
+        Ok(balance) => balance,
+        Err(()) => return PendingDriveResult::Repricing,
+    };
+    let start =
+        usize::try_from(payout.next_recipient_index).expect("validated reward recipient index");
+    let remaining_amounts = payout.recipients[start..]
+        .iter()
+        .fold(Nat::from(0u8).0, |total, recipient| {
+            total + recipient.amount.0.clone()
+        });
+    let remaining_fees = fee.0.clone() * (payout.recipients.len() - start);
+    let enough_for_promises = balance.0 >= remaining_amounts.clone() + remaining_fees.clone();
+    // A fresh plan still uses the strict fee-to-distributable guard. Once some recipients have
+    // been paid, their fixed entitlements cannot be rebuilt. Repricing therefore waits until the
+    // live balance supplies both the promised remainder and fee headroom, and until the remaining
+    // fees are at most ten percent of the currently spendable post-fee balance. Extra accrual is
+    // headroom only; it is not redistributed into this already-fixed payout.
+    let economical_with_current_balance = balance.0 > remaining_fees
+        && remaining_fees.clone() * 10u8 <= balance.0.clone() - remaining_fees.clone();
+    if !enough_for_promises || !economical_with_current_balance {
+        reward_state::mutate(|state| {
+            if let Some(payout) = state.pending_payout.as_mut() {
+                let index = usize::try_from(payout.next_recipient_index)
+                    .expect("validated reward recipient index");
+                payout.recipients[index].status = PendingRewardTransferStatus::WaitingForBalance;
+            }
+        });
+        return PendingDriveResult::WaitingForBalance;
+    }
+
+    reward_state::mutate(|state| {
+        let payout = state
+            .pending_payout
+            .as_mut()
+            .expect("pending reward payout");
+        payout.fee = fee;
+        let start =
+            usize::try_from(payout.next_recipient_index).expect("validated reward recipient index");
+        for (offset, recipient) in payout.recipients[start..].iter_mut().enumerate() {
+            let offset = u64::try_from(offset).expect("bounded reward recipients");
+            recipient.created_at_time_nanos = now_nanos
+                .saturating_add(offset)
+                .max(recipient.created_at_time_nanos.saturating_add(1));
+            recipient.observed_balance = None;
+            recipient.attempt_started = false;
+            recipient.uncertain_attempt_seen = false;
+            recipient.status = PendingRewardTransferStatus::AwaitingTransfer;
+        }
+    });
+    PendingDriveResult::Held
+}
+
 async fn drive_pending(now_nanos: u64) -> PendingDriveResult {
-    let Some(pending) = reward_state::get().pending_transfer else {
+    let Some(payout) = reward_state::get().pending_payout else {
         return PendingDriveResult::Held;
     };
-    let ledger = IcrcLedgerCanister::new(pending.sns_ledger_canister_id);
+    let ledger = IcrcLedgerCanister::new(payout.sns_ledger_canister_id);
     drive_pending_with_ledger(now_nanos, ic_cdk::api::canister_self(), &ledger).await
 }
 
@@ -811,93 +1082,92 @@ async fn drive_pending_with_ledger<L: RewardLedgerClient>(
     relay_account_owner: Principal,
     ledger: &L,
 ) -> PendingDriveResult {
-    let Some(pending) = reward_state::get().pending_transfer else {
-        return PendingDriveResult::Held;
-    };
-    if pending.status == PendingRewardTransferStatus::Ambiguous {
-        let relay_account = Account {
-            owner: relay_account_owner,
-            subaccount: None,
+    loop {
+        let Some(payout) = reward_state::get().pending_payout else {
+            return PendingDriveResult::Accepted;
         };
-        if let Ok(current) = ledger.balance_of(relay_account).await {
-            if current.0 < pending.observed_balance.0 {
-                accept_pending("accepted_by_balance_reconciliation");
-                return PendingDriveResult::Accepted;
+        let index =
+            usize::try_from(payout.next_recipient_index).expect("validated reward recipient index");
+        let recipient = payout.recipients[index].clone();
+        if matches!(
+            recipient.status,
+            PendingRewardTransferStatus::NeedsFreshIdentity
+                | PendingRewardTransferStatus::WaitingForBalance
+        ) {
+            match reprice_unpaid_remainder(now_nanos, relay_account_owner, ledger).await {
+                PendingDriveResult::Held => continue,
+                result => return result,
             }
         }
-        if !created_at_time_is_valid(pending.created_at_time_nanos, now_nanos) {
-            return PendingDriveResult::Held;
-        }
-        return match transfer_once(ledger, &pending).await {
-            AttemptOutcome::Accepted => {
-                accept_pending("accepted_or_duplicate_after_ambiguity_retry");
-                PendingDriveResult::Accepted
+
+        if recipient.status == PendingRewardTransferStatus::Ambiguous || recipient.attempt_started {
+            if recipient.status != PendingRewardTransferStatus::Ambiguous {
+                mark_ambiguous();
             }
-            _ => PendingDriveResult::Ambiguous,
-        };
-    }
-    let restored_started_attempt = pending.attempt_started;
-    reward_state::mutate(|state| {
-        if let Some(pending) = state.pending_transfer.as_mut() {
-            pending.attempt_started = true;
-            if restored_started_attempt {
-                pending.uncertain_attempt_seen = true;
-            }
-        }
-    });
-    let first = transfer_once(ledger, &pending).await;
-    match first {
-        AttemptOutcome::Accepted => {
-            accept_pending("accepted_or_duplicate");
-            PendingDriveResult::Accepted
-        }
-        AttemptOutcome::BadFee(expected) if !restored_started_attempt => {
-            ic_cdk::println!("RELAY_SNS_REWARD_TRANSFER status=rejected reason=bad_fee planned_fee={} expected_fee={}", pending.fee, expected);
-            clear_rejected("bad_fee");
-            PendingDriveResult::Rejected
-        }
-        AttemptOutcome::DefinitiveRejected if !restored_started_attempt => {
-            clear_rejected("definitive_rejection");
-            PendingDriveResult::Rejected
-        }
-        AttemptOutcome::RetryableExplicit | AttemptOutcome::Uncertain
-            if !restored_started_attempt =>
-        {
-            let uncertainty = matches!(first, AttemptOutcome::Uncertain);
-            if uncertainty {
-                reward_state::mutate(|state| {
-                    if let Some(pending) = state.pending_transfer.as_mut() {
-                        pending.uncertain_attempt_seen = true;
+            let relay_account = Account {
+                owner: relay_account_owner,
+                subaccount: None,
+            };
+            if let (Some(observed), Ok(current)) = (
+                recipient.observed_balance.as_ref(),
+                ledger.balance_of(relay_account).await,
+            ) {
+                if current.0 < observed.0 {
+                    if accept_current_recipient() {
+                        return PendingDriveResult::Accepted;
                     }
-                });
+                    continue;
+                }
             }
-            reward_state::mutate(|state| {
-                if let Some(pending) = state.pending_transfer.as_mut() {
-                    pending.attempt_started = true;
-                }
-            });
-            match transfer_once(ledger, &pending).await {
+            if !created_at_time_is_valid(recipient.created_at_time_nanos, now_nanos) {
+                return PendingDriveResult::Ambiguous;
+            }
+            match transfer_once(ledger, &recipient, &payout.fee).await {
                 AttemptOutcome::Accepted => {
-                    accept_pending("accepted_or_duplicate_after_retry");
-                    PendingDriveResult::Accepted
+                    if accept_current_recipient() {
+                        return PendingDriveResult::Accepted;
+                    }
+                    continue;
                 }
-                _ if uncertainty => {
-                    mark_ambiguous();
-                    PendingDriveResult::Ambiguous
-                }
-                AttemptOutcome::Uncertain => {
-                    mark_ambiguous();
-                    PendingDriveResult::Ambiguous
-                }
-                _ => {
-                    clear_rejected("retry_rejected");
-                    PendingDriveResult::Rejected
-                }
+                _ => return PendingDriveResult::Ambiguous,
             }
         }
-        _ => {
-            mark_ambiguous();
-            PendingDriveResult::Ambiguous
+
+        let observed_balance = match ledger
+            .balance_of(Account {
+                owner: relay_account_owner,
+                subaccount: None,
+            })
+            .await
+        {
+            Ok(balance) => balance,
+            Err(()) => return PendingDriveResult::Held,
+        };
+        reward_state::mutate(|state| {
+            if let Some(payout) = state.pending_payout.as_mut() {
+                let index = usize::try_from(payout.next_recipient_index)
+                    .expect("validated reward recipient index");
+                let recipient = &mut payout.recipients[index];
+                recipient.observed_balance = Some(observed_balance);
+                recipient.attempt_started = true;
+            }
+        });
+        let first = transfer_once(ledger, &recipient, &payout.fee).await;
+        match first {
+            AttemptOutcome::Accepted => {
+                if accept_current_recipient() {
+                    return PendingDriveResult::Accepted;
+                }
+            }
+            AttemptOutcome::DefinitiveRejected(reason) => return reject_current(reason),
+            AttemptOutcome::RetryableExplicit => {
+                mark_retryable_explicit();
+                return PendingDriveResult::Held;
+            }
+            AttemptOutcome::Uncertain => {
+                mark_ambiguous();
+                return PendingDriveResult::Ambiguous;
+            }
         }
     }
 }
@@ -905,79 +1175,42 @@ async fn drive_pending_with_ledger<L: RewardLedgerClient>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scheduler::reward_history::{
-        scan_history_with_index, RewardHistoryClient, ICP_HISTORY_MAX_TRANSACTIONS,
-        ICP_HISTORY_PAGE_SIZE,
-    };
     use jupiter_ic_clients::index::{
         GetAccountIdentifierTransactionsResponse, IndexTimeStamp, IndexTransaction, Tokens,
     };
+    use std::collections::VecDeque;
     use std::sync::Mutex;
 
     fn principal(byte: u8) -> Principal {
         Principal::from_slice(&[byte])
     }
-    fn pending(root: Principal) -> PendingRewardTransfer {
-        PendingRewardTransfer {
-            sns_root_canister_id: root,
-            sns_ledger_canister_id: principal(9),
-            snapshot_id: 3,
-            through_commitment_tx_id: 44,
-            next_carried_credit_start_tx_id: Some(43),
-            proposed_splitter_boundaries: BTreeMap::from([(
-                50,
-                reward_state::RewardHistoryBoundary {
-                    processed_through_tx_id: Some(41),
-                    carried_credit_start_tx_id: Some(40),
-                },
-            )]),
-            recipient: Account {
-                owner: principal(8),
-                subaccount: None,
-            },
-            observed_balance: Nat::from(1_000_u64),
-            fee: Nat::from(10_u64),
-            amount: Nat::from(990_u64),
-            memo: reward_memo(44),
-            created_at_time_nanos: 55,
-            attempt_started: true,
-            uncertain_attempt_seen: false,
-            status: PendingRewardTransferStatus::AwaitingTransfer,
-        }
-    }
-    fn tx(
-        id: u64,
-        timestamp: u64,
-        operation: IndexOperation,
-        memo: Option<Vec<u8>>,
-    ) -> IndexTransactionWithId {
+
+    fn tx(id: u64, timestamp: u64, operation: IndexOperation) -> IndexTransactionWithId {
         IndexTransactionWithId {
             id,
             transaction: IndexTransaction {
                 memo: 0,
-                icrc1_memo: memo,
+                icrc1_memo: None,
                 operation,
-                created_at_time: Some(IndexTimeStamp {
-                    timestamp_nanos: 999_999,
-                }),
+                created_at_time: None,
                 timestamp: Some(IndexTimeStamp {
                     timestamp_nanos: timestamp,
                 }),
             },
         }
     }
+
     fn transfer(
         id: u64,
-        timestamp: u64,
         from: String,
         to: String,
         amount: u64,
         fee: u64,
         memo: Option<Vec<u8>>,
     ) -> IndexTransactionWithId {
-        tx(
+        let mut transaction = tx(
             id,
-            timestamp,
+            id,
             IndexOperation::Transfer {
                 from,
                 to,
@@ -985,30 +1218,1091 @@ mod tests {
                 fee: Tokens::new(fee),
                 spender: None,
             },
-            memo,
-        )
+        );
+        transaction.transaction.icrc1_memo = memo;
+        transaction
     }
 
-    fn transfer_from(
-        id: u64,
-        timestamp: u64,
-        from: String,
-        to: String,
-        spender: String,
-        amount: u64,
-    ) -> IndexTransactionWithId {
+    fn transfer_from(id: u64, from: String, to: String, amount: u64) -> IndexTransactionWithId {
         tx(
             id,
-            timestamp,
+            id,
             IndexOperation::TransferFrom {
                 from,
                 to,
-                spender,
+                spender: "spender".to_string(),
                 amount: Tokens::new(amount),
                 fee: Tokens::new(10_000),
             },
-            None,
         )
+    }
+
+    fn reconstruct(history: &[IndexTransactionWithId]) -> Vec<ContributionBatch> {
+        reconstruct_batches_with_splitters(
+            history,
+            true,
+            100,
+            "relay",
+            "faucet",
+            b"commit",
+            &BTreeMap::new(),
+        )
+        .unwrap_complete()
+    }
+
+    #[test]
+    fn exact_commitments_exclude_post_staging_credit_and_consume_all_whole_credits() {
+        const E8S: u64 = 100_000_000;
+        let alice = hex::encode([1; 32]);
+        let bob = hex::encode([2; 32]);
+        let batches = reconstruct(&[
+            transfer(1, alice, "relay".to_string(), 150 * E8S / 100, 0, None),
+            transfer(2, bob, "relay".to_string(), 3 * E8S, 0, None),
+            transfer(
+                3,
+                "relay".to_string(),
+                "faucet".to_string(),
+                140 * E8S / 100,
+                10 * E8S / 100,
+                Some(b"commit".to_vec()),
+            ),
+            transfer(
+                4,
+                "relay".to_string(),
+                "faucet".to_string(),
+                290 * E8S / 100,
+                10 * E8S / 100,
+                Some(b"commit".to_vec()),
+            ),
+        ]);
+        assert_eq!(batches.len(), 2);
+        assert_eq!(
+            batches[0].sources,
+            BTreeMap::from([([1; 32], 150 * E8S / 100)])
+        );
+        assert_eq!(batches[1].sources, BTreeMap::from([([2; 32], 3 * E8S)]));
+
+        let combined = reconstruct(&[
+            transfer(
+                1,
+                hex::encode([1; 32]),
+                "relay".to_string(),
+                4 * E8S,
+                0,
+                None,
+            ),
+            transfer(
+                2,
+                hex::encode([2; 32]),
+                "relay".to_string(),
+                6 * E8S,
+                0,
+                None,
+            ),
+            transfer(
+                3,
+                "relay".to_string(),
+                "faucet".to_string(),
+                990 * E8S / 100,
+                10 * E8S / 100,
+                Some(b"commit".to_vec()),
+            ),
+        ]);
+        assert_eq!(combined[0].sources.len(), 2);
+        assert_eq!(combined[0].sources.values().sum::<u64>(), 10 * E8S);
+    }
+
+    #[test]
+    fn incremental_replay_extends_past_post_pin_credit_and_recovers_carried_fifo() {
+        const E8S: u64 = 100_000_000;
+        let alice = hex::encode([1; 32]);
+        let bob = hex::encode([2; 32]);
+        let recent_suffix = vec![
+            transfer(2, bob.clone(), "relay".to_string(), 3 * E8S, 0, None),
+            transfer(
+                3,
+                "relay".to_string(),
+                "faucet".to_string(),
+                140 * E8S / 100,
+                10 * E8S / 100,
+                Some(b"commit".to_vec()),
+            ),
+        ];
+        assert_eq!(
+            reconstruct_batches_with_splitters(
+                &recent_suffix,
+                false,
+                100,
+                "relay",
+                "faucet",
+                b"commit",
+                &BTreeMap::new(),
+            ),
+            reward_history::HistoricalReconstruction::NeedOlderHistory
+        );
+
+        let complete = reconstruct(&[
+            transfer(1, alice, "relay".to_string(), 150 * E8S / 100, 0, None),
+            recent_suffix[0].clone(),
+            recent_suffix[1].clone(),
+            transfer(
+                4,
+                "relay".to_string(),
+                "faucet".to_string(),
+                290 * E8S / 100,
+                10 * E8S / 100,
+                Some(b"commit".to_vec()),
+            ),
+        ]);
+        assert_eq!(
+            complete[0].sources,
+            BTreeMap::from([([1; 32], 150 * E8S / 100)])
+        );
+        assert_eq!(complete[1].sources, BTreeMap::from([([2; 32], 3 * E8S)]));
+    }
+
+    #[test]
+    fn transfer_from_mint_exact_fee_and_trailing_deposits_are_classified_exactly() {
+        let source = hex::encode([3; 32]);
+        let batches = reconstruct(&[
+            transfer_from(1, source, "relay".to_string(), 60_000_000),
+            tx(
+                2,
+                2,
+                IndexOperation::Mint {
+                    to: "relay".to_string(),
+                    amount: Tokens::new(40_010_000),
+                },
+            ),
+            transfer(
+                3,
+                "relay".to_string(),
+                "faucet".to_string(),
+                100_000_000,
+                10_000,
+                Some(b"commit".to_vec()),
+            ),
+            transfer(
+                4,
+                hex::encode([4; 32]),
+                "relay".to_string(),
+                50_000_000,
+                0,
+                None,
+            ),
+        ]);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].sources, BTreeMap::from([([3; 32], 60_000_000)]));
+        assert_eq!(batches[0].ineligible_e8s, 40_010_000);
+    }
+
+    #[test]
+    fn whole_credit_under_overshoot_and_commitment_shape_fail_closed() {
+        let source = hex::encode([3; 32]);
+        for credited in [100_009_999, 100_010_001] {
+            let history = vec![
+                transfer(1, source.clone(), "relay".to_string(), credited, 0, None),
+                transfer(
+                    2,
+                    "relay".to_string(),
+                    "faucet".to_string(),
+                    100_000_000,
+                    10_000,
+                    Some(b"commit".to_vec()),
+                ),
+            ];
+            assert_eq!(
+                reconstruct_batches_with_splitters(
+                    &history,
+                    true,
+                    100,
+                    "relay",
+                    "faucet",
+                    b"commit",
+                    &BTreeMap::new(),
+                )
+                .unwrap_malformed(),
+                "commitment_reconciliation_failed"
+            );
+        }
+
+        for (to, memo, amount) in [
+            ("wrong", Some(b"commit".to_vec()), 100_000_000),
+            ("faucet", Some(b"wrong".to_vec()), 100_000_000),
+            ("faucet", Some(b"commit".to_vec()), 99_999_999),
+        ] {
+            let history = vec![transfer(
+                1,
+                "relay".to_string(),
+                to.to_string(),
+                amount,
+                10_000,
+                memo,
+            )];
+            assert_eq!(
+                reconstruct_batches_with_splitters(
+                    &history,
+                    true,
+                    100,
+                    "relay",
+                    "faucet",
+                    b"commit",
+                    &BTreeMap::new(),
+                )
+                .unwrap_malformed(),
+                "unexpected_subaccount_debit"
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_debits_self_transfer_and_arithmetic_overflow_fail_closed() {
+        let source = hex::encode([3; 32]);
+        let operations = [
+            IndexOperation::Burn {
+                from: "relay".to_string(),
+                amount: Tokens::new(1),
+                spender: None,
+            },
+            IndexOperation::Approve {
+                from: "relay".to_string(),
+                spender: source.clone(),
+                allowance: Tokens::new(1),
+                fee: Tokens::new(1),
+                expires_at: None,
+                expected_allowance: None,
+            },
+            IndexOperation::Transfer {
+                from: "relay".to_string(),
+                to: "relay".to_string(),
+                amount: Tokens::new(1),
+                fee: Tokens::new(1),
+                spender: None,
+            },
+        ];
+        for operation in operations {
+            assert_eq!(
+                reconstruct_batches_with_splitters(
+                    &[tx(1, 1, operation)],
+                    true,
+                    100,
+                    "relay",
+                    "faucet",
+                    b"commit",
+                    &BTreeMap::new(),
+                )
+                .unwrap_malformed(),
+                "unexpected_subaccount_debit"
+            );
+        }
+        let overflow = vec![transfer(
+            1,
+            "relay".to_string(),
+            "faucet".to_string(),
+            u64::MAX,
+            1,
+            Some(b"commit".to_vec()),
+        )];
+        assert_eq!(
+            reconstruct_batches_with_splitters(
+                &overflow,
+                true,
+                100,
+                "relay",
+                "faucet",
+                b"commit",
+                &BTreeMap::new(),
+            )
+            .unwrap_malformed(),
+            "commitment_reconciliation_failed"
+        );
+    }
+
+    #[test]
+    fn snapshot_cutoff_is_exclusive_and_uncommitted_trailing_deposit_is_not_attributed() {
+        let mut deposit = transfer(
+            1,
+            hex::encode([1; 32]),
+            "relay".to_string(),
+            100_010_000,
+            0,
+            None,
+        );
+        deposit
+            .transaction
+            .timestamp
+            .as_mut()
+            .unwrap()
+            .timestamp_nanos = 9;
+        let mut commitment = transfer(
+            2,
+            "relay".to_string(),
+            "faucet".to_string(),
+            100_000_000,
+            10_000,
+            Some(b"commit".to_vec()),
+        );
+        commitment
+            .transaction
+            .timestamp
+            .as_mut()
+            .unwrap()
+            .timestamp_nanos = 10;
+        let trailing = transfer(
+            3,
+            hex::encode([2; 32]),
+            "relay".to_string(),
+            50_000_000,
+            0,
+            None,
+        );
+        assert!(reconstruct_batches_with_splitters(
+            &[deposit.clone(), commitment.clone(), trailing],
+            true,
+            10,
+            "relay",
+            "faucet",
+            b"commit",
+            &BTreeMap::new(),
+        )
+        .unwrap_complete()
+        .is_empty());
+        assert_eq!(
+            reconstruct_batches_with_splitters(
+                &[deposit, commitment],
+                true,
+                11,
+                "relay",
+                "faucet",
+                b"commit",
+                &BTreeMap::new(),
+            )
+            .unwrap_complete()
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn reward_arrival_cutoff_excludes_later_commitment_and_allows_earlier_one() {
+        let mut alice_deposit = transfer(
+            1,
+            hex::encode([1; 32]),
+            "relay".to_string(),
+            100_010_000,
+            0,
+            None,
+        );
+        let mut alice_commitment = transfer(
+            2,
+            "relay".to_string(),
+            "faucet".to_string(),
+            100_000_000,
+            10_000,
+            Some(b"commit".to_vec()),
+        );
+        let mut bob_deposit = transfer(
+            3,
+            hex::encode([2; 32]),
+            "relay".to_string(),
+            100_010_000,
+            0,
+            None,
+        );
+        let mut bob_commitment = transfer(
+            4,
+            "relay".to_string(),
+            "faucet".to_string(),
+            100_000_000,
+            10_000,
+            Some(b"commit".to_vec()),
+        );
+        for (entry, timestamp) in [
+            (&mut alice_deposit, 5),
+            (&mut alice_commitment, 10),
+            (&mut bob_deposit, 15),
+            (&mut bob_commitment, 20),
+        ] {
+            entry
+                .transaction
+                .timestamp
+                .as_mut()
+                .unwrap()
+                .timestamp_nanos = timestamp;
+        }
+        let history = [alice_deposit, alice_commitment, bob_deposit, bob_commitment];
+
+        let before_reward_arrival = reconstruct_batches_with_splitters(
+            &history,
+            true,
+            15,
+            "relay",
+            "faucet",
+            b"commit",
+            &BTreeMap::new(),
+        )
+        .unwrap_complete();
+        assert_eq!(before_reward_arrival.last().unwrap().commitment_tx_id, 2);
+
+        let after_bob_commitment = reconstruct_batches_with_splitters(
+            &history,
+            true,
+            25,
+            "relay",
+            "faucet",
+            b"commit",
+            &BTreeMap::new(),
+        )
+        .unwrap_complete();
+        assert_eq!(after_bob_commitment.last().unwrap().commitment_tx_id, 4);
+        assert_eq!(
+            effective_attribution_cutoff(12, 15),
+            12,
+            "owner snapshot remains the tighter cutoff"
+        );
+        assert_eq!(
+            effective_attribution_cutoff(25, 15),
+            15,
+            "oldest reward credit becomes the tighter cutoff"
+        );
+    }
+
+    #[test]
+    fn root_resolved_reward_index_components_are_exactly_pinned() {
+        let context = RelayRewardContext {
+            sns_root_canister_id: principal(1),
+            sns_governance_canister_id: principal(2),
+            sns_ledger_canister_id: principal(3),
+            snapshot_id: 1,
+            scan_started_at_timestamp_nanos: 10,
+            scan_completed_at_timestamp_nanos: 11,
+        };
+        let valid = ListSnsCanistersResponse {
+            root: Some(principal(1)),
+            ledger: Some(principal(3)),
+            index: Some(principal(4)),
+            ..Default::default()
+        };
+        assert_eq!(
+            validate_reward_index_components(&context, valid.clone()).unwrap(),
+            principal(4)
+        );
+        for invalid in [
+            ListSnsCanistersResponse {
+                root: Some(principal(9)),
+                ..valid.clone()
+            },
+            ListSnsCanistersResponse {
+                ledger: Some(principal(9)),
+                ..valid.clone()
+            },
+        ] {
+            assert_eq!(
+                validate_reward_index_components(&context, invalid).unwrap_err(),
+                "reward_index_component_mismatch"
+            );
+        }
+        assert_eq!(
+            validate_reward_index_components(
+                &context,
+                ListSnsCanistersResponse {
+                    index: None,
+                    ..valid
+                }
+            )
+            .unwrap_err(),
+            "reward_index_unavailable"
+        );
+    }
+
+    struct MockHistory {
+        pages: Mutex<VecDeque<Result<GetAccountIdentifierTransactionsResponse, String>>>,
+        starts: Mutex<Vec<Option<u64>>>,
+    }
+
+    #[async_trait]
+    impl reward_history::RewardHistoryClient for MockHistory {
+        async fn get_transactions(
+            &self,
+            _account_identifier: String,
+            start: Option<u64>,
+            _max_results: u64,
+        ) -> Result<GetAccountIdentifierTransactionsResponse, String> {
+            self.starts.lock().unwrap().push(start);
+            self.pages
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Err("unexpected_history_call".to_string()))
+        }
+    }
+
+    fn pages_from_history(
+        mut chronological: Vec<IndexTransactionWithId>,
+    ) -> Vec<GetAccountIdentifierTransactionsResponse> {
+        chronological.sort_by_key(|entry| entry.id);
+        let oldest = chronological.first().map_or(0, |entry| entry.id);
+        chronological.reverse();
+        chronological
+            .chunks(reward_history::ICP_HISTORY_PAGE_SIZE as usize)
+            .map(|chunk| GetAccountIdentifierTransactionsResponse {
+                balance: 0,
+                transactions: chunk.to_vec(),
+                oldest_tx_id: Some(oldest),
+            })
+            .collect()
+    }
+
+    fn scanner_history(total: u64, eligible_oldest: bool) -> Vec<IndexTransactionWithId> {
+        let mut history = (1..=total)
+            .map(|id| {
+                tx(
+                    id,
+                    id,
+                    IndexOperation::Transfer {
+                        from: "unrelated-a".to_string(),
+                        to: "unrelated-b".to_string(),
+                        amount: Tokens::new(1),
+                        fee: Tokens::new(0),
+                        spender: None,
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        for page in 0..(total / reward_history::ICP_HISTORY_PAGE_SIZE) {
+            let deposit_id = page * reward_history::ICP_HISTORY_PAGE_SIZE + 100;
+            let commitment_id = deposit_id + 1;
+            let source = if page == 0 && eligible_oldest {
+                hex::encode([1; 32])
+            } else {
+                "invalid-source".to_string()
+            };
+            history[usize::try_from(deposit_id - 1).unwrap()] = transfer(
+                deposit_id,
+                source,
+                "relay".to_string(),
+                100_010_000,
+                0,
+                None,
+            );
+            history[usize::try_from(commitment_id - 1).unwrap()] = transfer(
+                commitment_id,
+                "relay".to_string(),
+                "faucet".to_string(),
+                100_000_000,
+                10_000,
+                Some(b"commit".to_vec()),
+            );
+        }
+        history
+    }
+
+    async fn scan_until_eligible(index: &MockHistory) -> Result<Option<ContributionBatch>, String> {
+        let mut history = reward_history::BackwardHistory::new("relay".to_string());
+        let mut examined = BTreeSet::new();
+        loop {
+            if history.transactions().is_empty() {
+                history.extend(index).await?;
+            }
+            let batches = match reconstruct_batches_with_splitters(
+                history.authoritative_transactions(),
+                history.authoritative(),
+                u64::MAX,
+                "relay",
+                "faucet",
+                b"commit",
+                &BTreeMap::new(),
+            ) {
+                reward_history::HistoricalReconstruction::Complete(batches) => batches,
+                reward_history::HistoricalReconstruction::NeedOlderHistory => Vec::new(),
+                reward_history::HistoricalReconstruction::Malformed(error) => return Err(error),
+            };
+            for batch in batches.into_iter().rev() {
+                if examined.insert(batch.commitment_tx_id) && batch.sources.contains_key(&[1; 32]) {
+                    return Ok(Some(batch));
+                }
+            }
+            if history.exhausted() {
+                return Ok(None);
+            }
+            history.extend(index).await?;
+        }
+    }
+
+    #[test]
+    fn balance_proven_suffix_prevents_post_pin_credit_from_rebinding_later_commitment() {
+        const PINNED: u64 = 100_010_000;
+        let alice = hex::encode([1; 32]);
+        let bob = hex::encode([2; 32]);
+        let carol = hex::encode([3; 32]);
+        let commitment = |id| {
+            transfer(
+                id,
+                "relay".to_string(),
+                "faucet".to_string(),
+                100_000_000,
+                10_000,
+                Some(b"commit".to_vec()),
+            )
+        };
+        let recent = vec![
+            commitment(5),
+            transfer(4, carol, "relay".to_string(), PINNED, 0, None),
+            commitment(3),
+            transfer(2, bob, "relay".to_string(), PINNED, 0, None),
+        ];
+        let index = MockHistory {
+            pages: Mutex::new(VecDeque::from([
+                Ok(GetAccountIdentifierTransactionsResponse {
+                    balance: PINNED,
+                    transactions: recent,
+                    oldest_tx_id: Some(1),
+                }),
+                Ok(GetAccountIdentifierTransactionsResponse {
+                    balance: PINNED,
+                    transactions: vec![transfer(1, alice, "relay".to_string(), PINNED, 0, None)],
+                    oldest_tx_id: Some(1),
+                }),
+            ])),
+            starts: Mutex::new(Vec::new()),
+        };
+        let mut history = reward_history::BackwardHistory::new("relay".to_string());
+        block_on(history.extend(&index)).unwrap();
+        assert!(!history.authoritative());
+        assert_eq!(
+            reconstruct_batches_with_splitters(
+                history.authoritative_transactions(),
+                history.authoritative(),
+                u64::MAX,
+                "relay",
+                "faucet",
+                b"commit",
+                &BTreeMap::new(),
+            ),
+            reward_history::HistoricalReconstruction::NeedOlderHistory
+        );
+
+        block_on(history.extend(&index)).unwrap();
+        assert!(history.authoritative());
+        let batches = reconstruct_batches_with_splitters(
+            history.authoritative_transactions(),
+            history.authoritative(),
+            u64::MAX,
+            "relay",
+            "faucet",
+            b"commit",
+            &BTreeMap::new(),
+        )
+        .unwrap_complete();
+        assert_eq!(batches[0].sources, BTreeMap::from([([1; 32], PINNED)]));
+        assert_eq!(batches[1].sources, BTreeMap::from([([2; 32], PINNED)]));
+    }
+
+    #[test]
+    fn icp_index_tip_must_cover_the_ledger_tip_before_attribution() {
+        assert_eq!(
+            validate_icp_index_tip(42, 41),
+            Err("icp_index_not_caught_up".to_string())
+        );
+        assert_eq!(validate_icp_index_tip(42, 42), Ok(()));
+        assert_eq!(validate_icp_index_tip(42, 43), Ok(()));
+    }
+
+    #[test]
+    fn hidden_net_zero_newer_commitment_cannot_pay_older_funder_before_index_catches_up() {
+        const PINNED: u64 = 100_010_000;
+        let all_history = vec![
+            transfer(
+                4,
+                "relay".to_string(),
+                "faucet".to_string(),
+                100_000_000,
+                10_000,
+                Some(b"commit".to_vec()),
+            ),
+            transfer(
+                3,
+                hex::encode([2; 32]),
+                "relay".to_string(),
+                PINNED,
+                0,
+                None,
+            ),
+            transfer(
+                2,
+                "relay".to_string(),
+                "faucet".to_string(),
+                100_000_000,
+                10_000,
+                Some(b"commit".to_vec()),
+            ),
+            transfer(
+                1,
+                hex::encode([1; 32]),
+                "relay".to_string(),
+                PINNED,
+                0,
+                None,
+            ),
+        ];
+        let index = MockHistory {
+            pages: Mutex::new(VecDeque::from([Ok(
+                GetAccountIdentifierTransactionsResponse {
+                    balance: 0,
+                    transactions: all_history,
+                    oldest_tx_id: Some(1),
+                },
+            )])),
+            starts: Mutex::new(Vec::new()),
+        };
+
+        assert_eq!(
+            validate_icp_index_tip(4, 2),
+            Err("icp_index_not_caught_up".to_string())
+        );
+        assert!(index.starts.lock().unwrap().is_empty());
+
+        validate_icp_index_tip(4, 4).unwrap();
+        let mut history = reward_history::BackwardHistory::new("relay".to_string());
+        block_on(history.extend(&index)).unwrap();
+        let batches = reconstruct_batches_with_splitters(
+            history.authoritative_transactions(),
+            history.authoritative(),
+            u64::MAX,
+            "relay",
+            "faucet",
+            b"commit",
+            &BTreeMap::new(),
+        )
+        .unwrap_complete();
+        assert_eq!(
+            batches.last().unwrap().sources,
+            BTreeMap::from([([2; 32], PINNED)])
+        );
+    }
+
+    #[test]
+    fn recent_commitment_does_not_read_huge_older_history() {
+        let mut history = scanner_history(12_000, false);
+        history[11_898] = transfer(
+            11_899,
+            hex::encode([1; 32]),
+            "relay".to_string(),
+            100_010_000,
+            0,
+            None,
+        );
+        history[11_899] = transfer(
+            11_900,
+            "relay".to_string(),
+            "faucet".to_string(),
+            100_000_000,
+            10_000,
+            Some(b"commit".to_vec()),
+        );
+        let index = MockHistory {
+            pages: Mutex::new(pages_from_history(history).into_iter().map(Ok).collect()),
+            starts: Mutex::new(Vec::new()),
+        };
+        let selected = block_on(scan_until_eligible(&index)).unwrap().unwrap();
+        assert_eq!(selected.commitment_tx_id, 11_900);
+        assert_eq!(index.starts.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn eligible_commitment_beyond_former_limit_is_found_without_depth_veto() {
+        let index = MockHistory {
+            pages: Mutex::new(
+                pages_from_history(scanner_history(12_000, true))
+                    .into_iter()
+                    .map(Ok)
+                    .collect(),
+            ),
+            starts: Mutex::new(Vec::new()),
+        };
+        let selected = block_on(scan_until_eligible(&index)).unwrap().unwrap();
+        assert_eq!(selected.commitment_tx_id, 101);
+        assert_eq!(index.starts.lock().unwrap().len(), 12);
+    }
+
+    #[test]
+    fn genuine_history_exhaustion_returns_no_eligible_commitment() {
+        let index = MockHistory {
+            pages: Mutex::new(
+                pages_from_history(scanner_history(12_000, false))
+                    .into_iter()
+                    .map(Ok)
+                    .collect(),
+            ),
+            starts: Mutex::new(Vec::new()),
+        };
+        assert!(block_on(scan_until_eligible(&index)).unwrap().is_none());
+        assert_eq!(index.starts.lock().unwrap().len(), 12);
+    }
+
+    #[test]
+    fn pro_rata_plan_is_deterministic_conserved_and_ignores_ineligible_weight() {
+        let alice = principal(1);
+        let bob = principal(2);
+        let eligible = BTreeMap::from([(alice, 4), (bob, 6)]);
+        let allocations =
+            proportional_reward_allocations(&Nat::from(1_020_u64), &Nat::from(10_u64), &eligible)
+                .unwrap();
+        assert_eq!(
+            allocations,
+            vec![(alice, Nat::from(398_u64)), (bob, Nat::from(602_u64))]
+        );
+        let transfer_total = allocations
+            .iter()
+            .fold(Nat::from(0_u8), |sum, (_, amount)| {
+                Nat(sum.0 + amount.0.clone())
+            });
+        assert_eq!(transfer_total, Nat::from(1_000_u64));
+        assert_eq!(
+            transfer_total.0 + Nat::from(20_u64).0,
+            Nat::from(1_020_u64).0
+        );
+
+        let sources = BTreeMap::from([
+            (account_identifier_bytes(alice, None), 4),
+            (account_identifier_bytes(bob, None), 6),
+            ([9; 32], 90),
+            ([10; 32], 10),
+        ]);
+        let owners = sources
+            .keys()
+            .map(|account| {
+                if *account == account_identifier_bytes(alice, None) {
+                    Some(alice)
+                } else if *account == account_identifier_bytes(bob, None) {
+                    Some(bob)
+                } else if *account == [10; 32] {
+                    Some(principal(10))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let (classified, ineligible, mismatches) = classify_sources(sources, 0, owners).unwrap();
+        assert_eq!(classified, eligible);
+        assert_eq!(ineligible, 100);
+        assert_eq!(mismatches, 1);
+    }
+
+    #[test]
+    fn gross_entitlements_charge_only_actual_transfer_fees_and_retain_dust() {
+        let tiny = principal(1);
+        let large = principal(2);
+        let allocations = proportional_reward_allocations(
+            &Nat::from(1_002_u64),
+            &Nat::from(1_u64),
+            &BTreeMap::from([(tiny, 1), (large, 10_000)]),
+        )
+        .unwrap();
+        assert_eq!(allocations, vec![(large, Nat::from(1_001_u64))]);
+        assert_eq!(
+            proportional_reward_allocations(
+                &Nat::from(111_u64),
+                &Nat::from(11_u64),
+                &BTreeMap::from([(large, 1)]),
+            ),
+            Err("no_economical_reward_recipient")
+        );
+
+        let allocations = proportional_reward_allocations(
+            &Nat::from(12_100_u64),
+            &Nat::from(1_000_u64),
+            &BTreeMap::from([(tiny, 1_000), (large, 10_000)]),
+        )
+        .unwrap();
+        assert_eq!(allocations, vec![(large, Nat::from(10_000_u64))]);
+        // The tiny owner's gross 1,100-unit entitlement remains in Relay. It is neither charged
+        // a fee nor redistributed to the large owner.
+        assert_eq!(12_100_u64 - 10_000_u64 - 1_000_u64, 1_100_u64);
+    }
+
+    #[test]
+    fn one_ten_and_hundreds_of_dust_contributors_cannot_veto_large_owner() {
+        for dust_count in [1_u8, 10, 200] {
+            let large = principal(254);
+            let mut eligible = (1..=dust_count)
+                .map(|id| (principal(id), 1_u64))
+                .collect::<BTreeMap<_, _>>();
+            // Even all 200 dust weights together round to a zero gross entitlement, so none of
+            // them can reserve a phantom fee or reduce the large owner's exact 11,000-unit gross.
+            eligible.insert(large, 10_000_000);
+            assert_eq!(
+                proportional_reward_allocations(
+                    &Nat::from(11_000_u64),
+                    &Nat::from(1_000_u64),
+                    &eligible,
+                )
+                .unwrap(),
+                vec![(large, Nat::from(10_000_u64))],
+                "dust_count={dust_count}"
+            );
+        }
+    }
+
+    #[test]
+    fn universally_uneconomical_reward_pots_are_terminal_before_attribution() {
+        assert_eq!(
+            terminal_reward_pot_hold_reason(&Nat::from(0_u8), &Nat::from(10_u8)),
+            Some("zero_reward_balance")
+        );
+        assert_eq!(
+            terminal_reward_pot_hold_reason(&Nat::from(10_u8), &Nat::from(10_u8)),
+            Some("balance_not_above_plan_fees")
+        );
+        assert_eq!(
+            terminal_reward_pot_hold_reason(&Nat::from(110_u8), &Nat::from(11_u8)),
+            Some("plan_fees_over_10_percent")
+        );
+        assert_eq!(
+            terminal_reward_pot_hold_reason(&Nat::from(111_u8), &Nat::from(10_u8)),
+            None
+        );
+    }
+
+    struct MockResolver {
+        responses: Mutex<VecDeque<Result<ResolveDefaultIcpAccountsResult, String>>>,
+        requests: Mutex<Vec<(u64, Vec<Vec<u8>>)>>,
+    }
+
+    #[async_trait]
+    impl OwnerResolverClient for MockResolver {
+        async fn resolve(
+            &self,
+            snapshot_id: u64,
+            accounts: Vec<Vec<u8>>,
+        ) -> Result<ResolveDefaultIcpAccountsResult, String> {
+            self.requests.lock().unwrap().push((snapshot_id, accounts));
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Err("unexpected_owner_lookup".to_string()))
+        }
+    }
+
+    #[test]
+    fn owner_resolution_chunks_large_candidates_with_one_snapshot_and_order() {
+        let sources = (0..300_u16)
+            .map(|value| {
+                let mut account = [0_u8; 32];
+                account[..2].copy_from_slice(&value.to_be_bytes());
+                (account, 1)
+            })
+            .collect::<BTreeMap<_, _>>();
+        let resolver = MockResolver {
+            responses: Mutex::new(VecDeque::from([
+                Ok(ResolveDefaultIcpAccountsResult::Ok(vec![
+                    Some(principal(1));
+                    128
+                ])),
+                Ok(ResolveDefaultIcpAccountsResult::Ok(vec![
+                    Some(principal(2));
+                    128
+                ])),
+                Ok(ResolveDefaultIcpAccountsResult::Ok(vec![
+                    Some(principal(3));
+                    44
+                ])),
+            ])),
+            requests: Mutex::new(Vec::new()),
+        };
+        let owners = block_on(resolve_accounts_chunked(&resolver, 77, &sources)).unwrap();
+        assert_eq!(owners.len(), 300);
+        assert_eq!(owners[0], Some(principal(1)));
+        assert_eq!(owners[128], Some(principal(2)));
+        assert_eq!(owners[256], Some(principal(3)));
+        let requests = resolver.requests.lock().unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .map(|(_, values)| values.len())
+                .collect::<Vec<_>>(),
+            [128, 128, 44]
+        );
+        assert!(requests.iter().all(|(snapshot, _)| *snapshot == 77));
+    }
+
+    #[test]
+    fn snapshot_change_in_any_owner_chunk_fails_the_whole_candidate() {
+        let sources = (0..129_u16)
+            .map(|value| {
+                let mut account = [0_u8; 32];
+                account[..2].copy_from_slice(&value.to_be_bytes());
+                (account, 1)
+            })
+            .collect::<BTreeMap<_, _>>();
+        let resolver = MockResolver {
+            responses: Mutex::new(VecDeque::from([
+                Ok(ResolveDefaultIcpAccountsResult::Ok(vec![None; 128])),
+                Ok(ResolveDefaultIcpAccountsResult::SnapshotChanged),
+            ])),
+            requests: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(resolve_accounts_chunked(&resolver, 77, &sources)).unwrap_err(),
+            "reward_context_changed"
+        );
+    }
+
+    struct MockLedger {
+        balances: Mutex<VecDeque<Result<Nat, ()>>>,
+        fees: Mutex<VecDeque<Result<Nat, ()>>>,
+        transfers: Mutex<VecDeque<Result<Result<BlockIndex, TransferError>, ()>>>,
+        args: Mutex<Vec<TransferArg>>,
+    }
+
+    #[async_trait]
+    impl RewardLedgerClient for MockLedger {
+        async fn balance_of(&self, _account: Account) -> Result<Nat, ()> {
+            self.balances.lock().unwrap().pop_front().unwrap_or(Err(()))
+        }
+
+        async fn fee(&self) -> Result<Nat, ()> {
+            self.fees.lock().unwrap().pop_front().unwrap_or(Err(()))
+        }
+
+        async fn transfer(
+            &self,
+            arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ()> {
+            self.args.lock().unwrap().push(arg);
+            self.transfers
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Err(()))
+        }
+    }
+
+    fn payout() -> PendingRewardPayout {
+        PendingRewardPayout {
+            sns_root_canister_id: principal(7),
+            sns_ledger_canister_id: principal(8),
+            snapshot_id: 9,
+            attribution_commitment_tx_id: 10,
+            fee: Nat::from(1_u64),
+            recipients: (0..3)
+                .map(|index| PendingRewardRecipient {
+                    recipient: Account {
+                        owner: principal(index + 1),
+                        subaccount: None,
+                    },
+                    observed_balance: None,
+                    amount: Nat::from(19_u64),
+                    memo: reward_memo(10, usize::from(index)).unwrap(),
+                    created_at_time_nanos: 55,
+                    attempt_started: false,
+                    uncertain_attempt_seen: false,
+                    status: PendingRewardTransferStatus::AwaitingTransfer,
+                })
+                .collect(),
+            next_recipient_index: 0,
+        }
     }
 
     fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
@@ -1019,1116 +2313,324 @@ mod tests {
             .block_on(future)
     }
 
-    struct MockHistory {
-        pages: Mutex<VecDeque<Result<GetAccountIdentifierTransactionsResponse, String>>>,
-    }
-
-    impl MockHistory {
-        fn new(pages: Vec<GetAccountIdentifierTransactionsResponse>) -> Self {
-            Self {
-                pages: Mutex::new(pages.into_iter().map(Ok).collect()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl RewardHistoryClient for MockHistory {
-        async fn get_transactions(
-            &self,
-            _account_identifier: String,
-            _start: Option<u64>,
-            _max_results: u64,
-        ) -> Result<GetAccountIdentifierTransactionsResponse, String> {
-            self.pages
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| Err("unexpected_history_call".to_string()))
-        }
-    }
-
-    fn history_page(
-        ids: impl IntoIterator<Item = u64>,
-        oldest_tx_id: u64,
-    ) -> GetAccountIdentifierTransactionsResponse {
-        GetAccountIdentifierTransactionsResponse {
-            balance: 0,
-            transactions: ids
-                .into_iter()
-                .map(|id| {
-                    tx(
-                        id,
-                        id,
-                        IndexOperation::Mint {
-                            to: "relay".to_string(),
-                            amount: Tokens::new(1),
-                        },
-                        None,
-                    )
-                })
-                .collect(),
-            oldest_tx_id: Some(oldest_tx_id),
-        }
-    }
-
-    fn scan_mock(
-        pages: Vec<GetAccountIdentifierTransactionsResponse>,
-        prior_cursor: Option<u64>,
-        carried_credit_start_tx_id: Option<u64>,
-    ) -> Result<Vec<IndexTransactionWithId>, String> {
-        block_on(scan_history_with_index(
-            &MockHistory::new(pages),
-            "relay".to_string(),
-            prior_cursor,
-            carried_credit_start_tx_id,
-        ))
-    }
-
-    struct MockRewardLedger {
-        balances: Mutex<VecDeque<Result<Nat, ()>>>,
-        outcomes: Mutex<VecDeque<Result<Result<BlockIndex, TransferError>, ()>>>,
-        args: Mutex<Vec<TransferArg>>,
-    }
-
-    impl MockRewardLedger {
-        fn new(
-            balances: Vec<Result<Nat, ()>>,
-            outcomes: Vec<Result<Result<BlockIndex, TransferError>, ()>>,
-        ) -> Self {
-            Self {
-                balances: Mutex::new(balances.into()),
-                outcomes: Mutex::new(outcomes.into()),
-                args: Mutex::new(Vec::new()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl RewardLedgerClient for MockRewardLedger {
-        async fn balance_of(&self, _account: Account) -> Result<Nat, ()> {
-            self.balances.lock().unwrap().pop_front().unwrap_or(Err(()))
-        }
-
-        async fn transfer(
-            &self,
-            arg: TransferArg,
-        ) -> Result<Result<BlockIndex, TransferError>, ()> {
-            self.args.lock().unwrap().push(arg);
-            self.outcomes.lock().unwrap().pop_front().unwrap_or(Err(()))
-        }
-    }
-
-    fn stage_pending(staged: PendingRewardTransfer, cursor: u64, carry: Option<u64>) {
+    #[test]
+    fn multi_recipient_progress_survives_ambiguity_and_duplicate_without_double_pay() {
         reward_state::reset_for_test();
-        reward_state::mutate(|state| {
-            state.processed_through_commitment_tx_id = Some(cursor);
-            state.carried_credit_start_tx_id = carry;
-            state.pending_transfer = Some(staged);
-        });
-    }
-
-    #[test]
-    fn history_first_epoch_collects_all_available_transactions() {
-        let scanned = scan_mock(vec![history_page((1..=3_u64).rev(), 1)], None, None).unwrap();
-        assert_eq!(
-            scanned.iter().map(|tx| tx.id).collect::<Vec<_>>(),
-            vec![3, 2, 1]
-        );
-    }
-
-    #[test]
-    fn history_cursor_without_carry_is_exclusive() {
-        let scanned = scan_mock(vec![history_page((1..=5_u64).rev(), 1)], Some(3), None).unwrap();
-        assert_eq!(
-            scanned.iter().map(|tx| tx.id).collect::<Vec<_>>(),
-            vec![5, 4]
-        );
-    }
-
-    #[test]
-    fn history_cursor_with_carry_collects_both_intervals_but_not_cursor() {
-        let scanned =
-            scan_mock(vec![history_page((1..=5_u64).rev(), 1)], Some(3), Some(1)).unwrap();
-        assert_eq!(
-            scanned.iter().map(|tx| tx.id).collect::<Vec<_>>(),
-            vec![5, 4, 2, 1]
-        );
-    }
-
-    #[test]
-    fn history_missing_cursor_and_missing_carry_fail_closed() {
-        assert_eq!(
-            scan_mock(vec![history_page([5, 4], 4)], Some(3), None).unwrap_err(),
-            "history_cursor_not_found"
-        );
-        assert_eq!(
-            scan_mock(vec![history_page([5, 4, 3, 2], 2)], Some(3), Some(1)).unwrap_err(),
-            "history_carried_credit_not_found"
-        );
-        assert_eq!(
-            scan_mock(vec![history_page([5, 4, 2], 2)], Some(4), Some(3)).unwrap_err(),
-            "history_carried_credit_not_found"
-        );
-    }
-
-    #[test]
-    fn history_rejects_invalid_carry_combinations_without_reading() {
-        assert_eq!(
-            scan_mock(vec![], None, Some(1)).unwrap_err(),
-            "history_carry_without_cursor"
-        );
-        for carried in [3, 4] {
-            assert_eq!(
-                scan_mock(vec![], Some(3), Some(carried)).unwrap_err(),
-                "history_carry_invalid"
-            );
-        }
-    }
-
-    #[test]
-    fn history_repeated_pagination_cursor_fails_closed() {
-        let first = history_page((2..=1_001_u64).rev(), 1);
-        let second = history_page([2], 1);
-        assert_eq!(
-            scan_mock(vec![first, second], Some(1), None).unwrap_err(),
-            "history_pagination_non_progressing"
-        );
-    }
-
-    #[test]
-    fn history_exact_limit_succeeds_and_one_more_fails() {
-        fn pages(newest: u64, oldest: u64) -> Vec<GetAccountIdentifierTransactionsResponse> {
-            let mut pages = Vec::new();
-            let mut high = newest;
-            while high >= oldest {
-                let low = high.saturating_sub(ICP_HISTORY_PAGE_SIZE - 1).max(oldest);
-                pages.push(history_page((low..=high).rev(), oldest));
-                if low == oldest {
-                    break;
-                }
-                high = low - 1;
-            }
-            pages
-        }
-
-        assert_eq!(
-            scan_mock(pages(10_000, 1), None, None).unwrap().len(),
-            ICP_HISTORY_MAX_TRANSACTIONS
-        );
-        assert_eq!(
-            scan_mock(pages(10_001, 1), None, None).unwrap_err(),
-            "history_limit_exceeded"
-        );
-    }
-
-    #[test]
-    fn concurrent_suffix_is_carried_without_funding_first_commitment() {
-        let relay = "11".repeat(32);
-        let faucet = "22".repeat(32);
-        let source_a = "33".repeat(32);
-        let source_b = "44".repeat(32);
-        let memo = b"relay".to_vec();
-        let history = vec![
-            transfer(1, 1, source_a.clone(), relay.clone(), 100_010_000, 0, None),
-            transfer(2, 2, source_b, relay.clone(), 20_000_000, 0, None),
-            transfer(
-                3,
-                3,
-                relay.clone(),
-                faucet.clone(),
-                100_000_000,
-                10_000,
-                Some(memo.clone()),
-            ),
-        ];
-        let batch = reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo)
-            .unwrap()
-            .unwrap();
-        assert_eq!(batch.through_commitment_tx_id, 3);
-        assert_eq!(batch.next_carried_credit_start_tx_id, Some(2));
-        assert_eq!(
-            batch.sources,
-            BTreeMap::from([(decode_account_identifier(&source_a).unwrap(), 100_010_000)])
-        );
-    }
-
-    #[test]
-    fn carried_credit_funds_next_commitment_before_new_credit() {
-        let relay = "11".repeat(32);
-        let faucet = "22".repeat(32);
-        let source_b = "44".repeat(32);
-        let memo = b"relay".to_vec();
-        let history = vec![
-            transfer(2, 2, source_b.clone(), relay.clone(), 20_000_000, 0, None),
-            transfer(4, 4, source_b.clone(), relay.clone(), 80_010_000, 0, None),
-            transfer(
-                5,
-                5,
-                relay.clone(),
-                faucet.clone(),
-                100_000_000,
-                10_000,
-                Some(memo.clone()),
-            ),
-        ];
-        let batch = reconstruct_batch(&history, Some(3), Some(2), 10, &relay, &faucet, &memo)
-            .unwrap()
-            .unwrap();
-        assert_eq!(batch.through_commitment_tx_id, 5);
-        assert_eq!(batch.next_carried_credit_start_tx_id, None);
-        assert_eq!(
-            batch.sources,
-            BTreeMap::from([(decode_account_identifier(&source_b).unwrap(), 100_010_000)])
-        );
-    }
-
-    #[test]
-    fn several_concurrent_suffix_credits_preserve_earliest_boundary() {
-        let relay = "11".repeat(32);
-        let faucet = "22".repeat(32);
-        let source = "33".repeat(32);
-        let memo = b"relay".to_vec();
-        let history = vec![
-            transfer(1, 1, source.clone(), relay.clone(), 100_010_000, 0, None),
-            transfer(2, 2, source.clone(), relay.clone(), 20_000_000, 0, None),
-            transfer(3, 3, source, relay.clone(), 30_000_000, 0, None),
-            transfer(
-                4,
-                4,
-                relay.clone(),
-                faucet.clone(),
-                100_000_000,
-                10_000,
-                Some(memo.clone()),
-            ),
-        ];
-        let batch = reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo)
-            .unwrap()
-            .unwrap();
-        assert_eq!(batch.next_carried_credit_start_tx_id, Some(2));
-    }
-
-    #[test]
-    fn consumed_intrinsic_splitter_credit_is_deferred_but_trailing_credit_is_not() {
-        let relay_owner = principal(77);
-        let relay = account_identifier_text(relay_owner, Some(logic::relay_subaccount_one()));
-        let faucet = "22".repeat(32);
-        let splitter =
-            account_identifier_text(relay_owner, Some(logic::relay_numbered_subaccount(50)));
-        let memo = b"relay".to_vec();
-        let history = vec![
-            transfer(
-                1,
-                1,
-                splitter.clone(),
-                relay.clone(),
-                100_010_000,
-                10_000,
-                None,
-            ),
-            transfer(
-                2,
-                2,
-                relay.clone(),
-                faucet.clone(),
-                100_000_000,
-                10_000,
-                Some(memo.clone()),
-            ),
-            transfer(3, 3, splitter, relay.clone(), 20_000_000, 10_000, None),
-        ];
-        let batch = reconstruct_batch_with_splitters(
-            &history,
-            None,
-            None,
-            10,
-            &relay,
-            &faucet,
-            &memo,
-            &reward_splitter::intrinsic_splitter_accounts(relay_owner),
-        )
-        .unwrap()
-        .unwrap();
-        assert!(batch.sources.is_empty());
-        assert_eq!(
-            batch.splitter_credits,
-            vec![SplitterFundingCredit {
-                splitter_number: 50,
-                tx_id: 1,
-                amount_e8s: 100_010_000,
-            }]
-        );
-        assert_eq!(batch.next_carried_credit_start_tx_id, None);
-    }
-
-    #[test]
-    fn fifo_never_splits_overshooting_credit_and_rejects_insufficient_queue() {
-        let relay = "11".repeat(32);
-        let faucet = "22".repeat(32);
-        let source = "33".repeat(32);
-        let memo = b"relay".to_vec();
-        for credits in [vec![60_000_000, 50_000_010], vec![60_000_000, 30_000_000]] {
-            let mut history = credits
-                .into_iter()
-                .enumerate()
-                .map(|(index, amount)| {
-                    transfer(
-                        index as u64 + 1,
-                        index as u64 + 1,
-                        source.clone(),
-                        relay.clone(),
-                        amount,
-                        0,
-                        None,
-                    )
-                })
-                .collect::<Vec<_>>();
-            history.push(transfer(
-                3,
-                3,
-                relay.clone(),
-                faucet.clone(),
-                100_000_000,
-                10,
-                Some(memo.clone()),
-            ));
-            assert_eq!(
-                reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo).unwrap_err(),
-                "commitment_reconciliation_failed"
-            );
-        }
-    }
-
-    #[test]
-    fn suffix_can_fund_later_commitment_in_same_scan() {
-        let relay = "11".repeat(32);
-        let faucet = "22".repeat(32);
-        let source_a = "33".repeat(32);
-        let source_b = "44".repeat(32);
-        let memo = b"relay".to_vec();
-        let history = vec![
-            transfer(1, 1, source_a.clone(), relay.clone(), 100_010_000, 0, None),
-            transfer(2, 2, source_b.clone(), relay.clone(), 20_000_000, 0, None),
-            transfer(
-                3,
-                3,
-                relay.clone(),
-                faucet.clone(),
-                100_000_000,
-                10_000,
-                Some(memo.clone()),
-            ),
-            transfer(4, 4, source_b.clone(), relay.clone(), 80_010_000, 0, None),
-            transfer(
-                5,
-                5,
-                relay.clone(),
-                faucet.clone(),
-                100_000_000,
-                10_000,
-                Some(memo.clone()),
-            ),
-        ];
-        let batch = reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo)
-            .unwrap()
-            .unwrap();
-        assert_eq!(batch.completed_commitments, 2);
-        assert_eq!(batch.next_carried_credit_start_tx_id, None);
-        assert_eq!(
-            batch.sources,
-            BTreeMap::from([
-                (decode_account_identifier(&source_a).unwrap(), 100_010_000),
-                (decode_account_identifier(&source_b).unwrap(), 100_010_000),
-            ])
-        );
-    }
-
-    #[test]
-    fn reconstructs_multiple_completed_segments_and_ignores_trailing_deposit() {
-        let relay = "11".repeat(32);
-        let faucet = "22".repeat(32);
-        let source = "33".repeat(32);
-        let memo = b"relay".to_vec();
-        let history = vec![
-            transfer(
-                1,
-                1,
-                source.clone(),
-                relay.clone(),
-                100_010_000,
-                10_000,
-                None,
-            ),
-            transfer(
-                2,
-                2,
-                relay.clone(),
-                faucet.clone(),
-                100_000_000,
-                10_000,
-                Some(memo.clone()),
-            ),
-            transfer(
-                3,
-                3,
-                source.clone(),
-                relay.clone(),
-                200_010_000,
-                10_000,
-                None,
-            ),
-            transfer(
-                4,
-                4,
-                relay.clone(),
-                faucet.clone(),
-                200_000_000,
-                10_000,
-                Some(memo.clone()),
-            ),
-            transfer(5, 5, source, relay.clone(), 50_000_000, 10_000, None),
-        ];
-        let batch = reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo)
-            .unwrap()
-            .unwrap();
-        assert_eq!(batch.through_commitment_tx_id, 4);
-        assert_eq!(batch.completed_commitments, 2);
-        assert_eq!(batch.sources.values().sum::<u64>(), 300_020_000);
-        assert_eq!(batch.next_carried_credit_start_tx_id, None);
-    }
-
-    #[test]
-    fn cutoff_is_exclusive_and_uses_ledger_timestamp() {
-        let relay = "11".repeat(32);
-        let faucet = "22".repeat(32);
-        let source = "33".repeat(32);
-        let memo = b"relay".to_vec();
-        let history = vec![
-            transfer(1, 9, source.clone(), relay.clone(), 100_010_000, 0, None),
-            transfer(
-                2,
-                10,
-                relay.clone(),
-                faucet.clone(),
-                100_000_000,
-                10_000,
-                Some(memo.clone()),
-            ),
-        ];
-        assert!(
-            reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo)
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn prior_commitment_boundary_is_exclusive() {
-        let relay = "11".repeat(32);
-        let faucet = "22".repeat(32);
-        let first = "33".repeat(32);
-        let second = "44".repeat(32);
-        let memo = b"relay".to_vec();
-        let history = vec![
-            transfer(1, 1, first, relay.clone(), 100_010_000, 0, None),
-            transfer(
-                2,
-                2,
-                relay.clone(),
-                faucet.clone(),
-                100_000_000,
-                10_000,
-                Some(memo.clone()),
-            ),
-            transfer(3, 3, second.clone(), relay.clone(), 200_010_000, 0, None),
-            transfer(
-                4,
-                4,
-                relay.clone(),
-                faucet.clone(),
-                200_000_000,
-                10_000,
-                Some(memo.clone()),
-            ),
-        ];
-        let batch = reconstruct_batch(&history, Some(2), None, 10, &relay, &faucet, &memo)
-            .unwrap()
-            .unwrap();
-        assert_eq!(batch.through_commitment_tx_id, 4);
-        assert_eq!(batch.completed_commitments, 1);
-        assert_eq!(
-            batch.sources,
-            BTreeMap::from([(decode_account_identifier(&second).unwrap(), 200_010_000)])
-        );
-    }
-
-    #[test]
-    fn no_completed_commitment_ignores_open_deposits() {
-        let relay = "11".repeat(32);
-        let faucet = "22".repeat(32);
-        let source = "33".repeat(32);
-        assert!(reconstruct_batch(
-            &[transfer(1, 1, source, relay.clone(), 100_000_000, 0, None)],
-            None,
-            None,
-            10,
-            &relay,
-            &faucet,
-            b"relay",
-        )
-        .unwrap()
-        .is_none());
-    }
-
-    #[test]
-    fn mint_and_transfer_from_reconcile_and_use_from_account() {
-        let relay = "11".repeat(32);
-        let faucet = "22".repeat(32);
-        let source = "33".repeat(32);
-        let spender = "44".repeat(32);
-        let memo = b"relay".to_vec();
-        let history = vec![
-            transfer_from(1, 1, source.clone(), relay.clone(), spender, 60_000_000),
-            tx(
-                2,
-                2,
-                IndexOperation::Mint {
-                    to: relay.clone(),
-                    amount: Tokens::new(40_010_000),
-                },
-                None,
-            ),
-            transfer(
-                3,
-                3,
-                relay.clone(),
-                faucet.clone(),
-                100_000_000,
-                10_000,
-                Some(memo.clone()),
-            ),
-        ];
-        let batch = reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            batch.sources[&decode_account_identifier(&source).unwrap()],
-            60_000_000
-        );
-        assert_eq!(batch.ineligible_e8s, 40_010_000);
-    }
-
-    #[test]
-    fn reconciliation_rejects_under_over_and_unexpected_debits() {
-        let relay = "11".repeat(32);
-        let faucet = "22".repeat(32);
-        let source = "33".repeat(32);
-        let memo = b"relay".to_vec();
-        for credited in [100_009_999, 100_010_001] {
-            let history = vec![
-                transfer(1, 1, source.clone(), relay.clone(), credited, 0, None),
-                transfer(
-                    2,
-                    2,
-                    relay.clone(),
-                    faucet.clone(),
-                    100_000_000,
-                    10_000,
-                    Some(memo.clone()),
-                ),
-            ];
-            assert_eq!(
-                reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo).unwrap_err(),
-                "commitment_reconciliation_failed"
-            );
-        }
-        let history = vec![transfer(1, 1, relay.clone(), source, 1, 10_000, None)];
-        assert_eq!(
-            reconstruct_batch(&history, None, None, 10, &relay, &faucet, &memo).unwrap_err(),
-            "unexpected_subaccount_debit"
-        );
-    }
-
-    #[test]
-    fn unsupported_debits_and_arithmetic_overflow_fail_closed() {
-        let relay = "11".repeat(32);
-        let faucet = "22".repeat(32);
-        let source = "33".repeat(32);
-        for operation in [
-            IndexOperation::Burn {
-                from: relay.clone(),
-                amount: Tokens::new(1),
-                spender: None,
-            },
-            IndexOperation::Approve {
-                from: relay.clone(),
-                spender: source.clone(),
-                allowance: Tokens::new(1),
-                fee: Tokens::new(1),
-                expires_at: None,
-                expected_allowance: None,
-            },
-        ] {
-            assert_eq!(
-                reconstruct_batch(
-                    &[tx(1, 1, operation, None)],
-                    None,
-                    None,
-                    10,
-                    &relay,
-                    &faucet,
-                    b"relay"
-                )
-                .unwrap_err(),
-                "unexpected_subaccount_debit"
-            );
-        }
-        let overflow = vec![
-            transfer(1, 1, source.clone(), relay.clone(), u64::MAX, 0, None),
-            transfer(
-                2,
-                2,
-                relay.clone(),
-                faucet.clone(),
-                u64::MAX - 10,
-                10,
-                Some(b"relay".to_vec()),
-            ),
-            transfer(3, 3, source, relay.clone(), u64::MAX, 0, None),
-            transfer(
-                4,
-                4,
-                relay.clone(),
-                faucet.clone(),
-                u64::MAX - 10,
-                10,
-                Some(b"relay".to_vec()),
-            ),
-        ];
-        assert_eq!(
-            reconstruct_batch(&overflow, None, None, 10, &relay, &faucet, b"relay").unwrap_err(),
-            "contribution_overflow"
-        );
-        let self_transfer = transfer(1, 1, relay.clone(), relay.clone(), 1, 1, None);
-        assert_eq!(
-            reconstruct_batch(&[self_transfer], None, None, 10, &relay, &faucet, b"relay")
-                .unwrap_err(),
-            "unexpected_subaccount_debit"
-        );
-    }
-
-    #[test]
-    fn winner_requires_unique_largest_and_more_than_ineligible() {
-        let a = principal(1);
-        let b = principal(2);
-        assert_eq!(
-            select_winner(&BTreeMap::from([(a, 11), (b, 10)]), 10),
-            Some((a, 11))
-        );
-        assert_eq!(select_winner(&BTreeMap::from([(a, 10), (b, 10)]), 0), None);
-        assert_eq!(select_winner(&BTreeMap::from([(a, 10)]), 10), None);
-        assert_eq!(select_winner(&BTreeMap::from([(a, 10)]), 11), None);
-        assert_eq!(select_winner(&BTreeMap::new(), 0), None);
-    }
-
-    #[test]
-    fn splitter_net_weight_merges_before_source_limit_and_winner_selection() {
-        let alice = principal(1);
-        let bob = principal(2);
-        let alice_account = account_identifier_bytes(alice, None);
-        let bob_account = account_identifier_bytes(bob, None);
-        let alice_splitter_90 =
-            reward_splitter::proportional_allocations(&[1_000_000_000], 99_990_000).unwrap()[0];
-        let expanded = reward_splitter::ExpandedSplitterProvenance {
-            sources: BTreeMap::from([(alice_account, alice_splitter_90)]),
-            ..Default::default()
-        };
-        let (sources, ineligible) =
-            merge_attribution(BTreeMap::from([(bob_account, 200_000_000)]), 0, &expanded).unwrap();
-        assert_eq!(sources.len(), 2);
-        let owners = sources
-            .keys()
-            .map(|account| {
-                Some(if *account == alice_account {
-                    alice
-                } else {
-                    bob
-                })
-            })
-            .collect();
-        let (eligible, ineligible, _) = classify_sources(sources, ineligible, owners).unwrap();
-        assert_eq!(
-            select_winner(&eligible, ineligible),
-            Some((bob, 200_000_000))
-        );
-
-        let repeated_owner = reward_splitter::ExpandedSplitterProvenance {
-            sources: BTreeMap::from([(alice_account, 20)]),
-            ..Default::default()
-        };
-        let (merged, _) =
-            merge_attribution(BTreeMap::from([(alice_account, 10)]), 0, &repeated_owner).unwrap();
-        assert_eq!(merged, BTreeMap::from([(alice_account, 30)]));
-
-        let direct = (0..128_u8)
-            .map(|value| ([value; 32], 1))
-            .collect::<BTreeMap<_, _>>();
-        let overlapping = reward_splitter::ExpandedSplitterProvenance {
-            sources: BTreeMap::from([([0; 32], 1)]),
-            ..Default::default()
+        reward_state::mutate(|state| state.pending_payout = Some(payout()));
+        let first = MockLedger {
+            balances: Mutex::new(VecDeque::from([
+                Ok(Nat::from(100_u64)),
+                Ok(Nat::from(80_u64)),
+            ])),
+            fees: Mutex::new(VecDeque::new()),
+            transfers: Mutex::new(VecDeque::from([Ok(Ok(Nat::from(1_u64))), Err(())])),
+            args: Mutex::new(Vec::new()),
         };
         assert_eq!(
-            merge_attribution(direct.clone(), 0, &overlapping)
-                .unwrap()
-                .0
-                .len(),
-            128
-        );
-        let new_source = reward_splitter::ExpandedSplitterProvenance {
-            sources: BTreeMap::from([([255; 32], 1)]),
-            ..Default::default()
-        };
-        assert_eq!(
-            merge_attribution(direct, 0, &new_source).unwrap().0.len(),
-            129
-        );
-    }
-
-    #[test]
-    fn dynamic_fee_rule_allows_exactly_ten_percent_of_net() {
-        assert_eq!(
-            economical_reward_amount(&Nat::from(110_u64), &Nat::from(10_u64)),
-            Ok(Nat::from(100_u64))
-        );
-        assert_eq!(
-            economical_reward_amount(&Nat::from(111_u64), &Nat::from(11_u64)),
-            Err("fee_over_10_percent")
-        );
-        assert_eq!(
-            economical_reward_amount(&Nat::from(0_u64), &Nat::from(0_u64)),
-            Err("zero_reward_balance")
-        );
-        assert_eq!(
-            economical_reward_amount(&Nat::from(10_u64), &Nat::from(10_u64)),
-            Err("balance_not_above_fee")
-        );
-    }
-
-    #[test]
-    fn source_classification_rederives_default_accounts_and_buckets_unknowns() {
-        let owner = principal(1);
-        let wrong_owner = principal(2);
-        let default = account_identifier_bytes(owner, None);
-        let explicit = account_identifier_bytes(owner, Some([1; 32]));
-        let unknown = [9; 32];
-        let sources = BTreeMap::from([(default, 50), (explicit, 30), (unknown, 20)]);
-        let owners = sources
-            .keys()
-            .map(|account| {
-                if *account == default {
-                    Some(owner)
-                } else if *account == explicit {
-                    None
-                } else {
-                    Some(wrong_owner)
-                }
-            })
-            .collect();
-        let (eligible, ineligible, mismatches) = classify_sources(sources, 10, owners).unwrap();
-        assert_eq!(eligible, BTreeMap::from([(owner, 50)]));
-        assert_eq!(ineligible, 60);
-        assert_eq!(mismatches, vec![wrong_owner]);
-    }
-
-    #[test]
-    fn source_classification_rejects_lookup_length_mismatch_and_overflow() {
-        assert_eq!(
-            classify_sources(BTreeMap::from([([1; 32], 1)]), 0, vec![]).unwrap_err(),
-            "owner_lookup_length_mismatch"
-        );
-        assert_eq!(
-            classify_sources(BTreeMap::from([([1; 32], 1)]), u64::MAX, vec![None]).unwrap_err(),
-            "contribution_overflow"
-        );
-    }
-
-    #[test]
-    fn reward_memo_is_versioned_and_pins_commitment() {
-        assert_eq!(
-            reward_memo(7),
-            [b"JRS1".as_slice(), &7_u64.to_be_bytes()].concat()
-        );
-    }
-
-    #[test]
-    fn no_winner_closure_writes_cursor_and_carry_together() {
-        reward_state::reset_for_test();
-        reward_state::mutate(|state| advance_reward_boundary(state, 9, Some(8)));
-        let state = reward_state::get();
-        assert_eq!(state.processed_through_commitment_tx_id, Some(9));
-        assert_eq!(state.carried_credit_start_tx_id, Some(8));
-    }
-
-    #[test]
-    fn staged_pending_transfer_contains_proposed_next_carry_boundary() {
-        let staged = pending(principal(1));
-        assert_eq!(staged.next_carried_credit_start_tx_id, Some(43));
-        stage_pending(staged.clone(), 7, Some(6));
-        assert_eq!(reward_state::get().pending_transfer, Some(staged));
-    }
-
-    #[test]
-    fn ambiguous_balance_reduction_accepts_without_retry_and_advances_both_boundaries() {
-        let mut staged = pending(principal(1));
-        staged.status = PendingRewardTransferStatus::Ambiguous;
-        stage_pending(staged, 7, Some(6));
-        let ledger = MockRewardLedger::new(vec![Ok(Nat::from(999_u64))], vec![]);
-        assert!(matches!(
-            block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
-            PendingDriveResult::Accepted
-        ));
-        let state = reward_state::get();
-        assert_eq!(state.processed_through_commitment_tx_id, Some(44));
-        assert_eq!(state.carried_credit_start_tx_id, Some(43));
-        assert!(state.pending_transfer.is_none());
-        assert!(ledger.args.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn ambiguous_exact_retry_success_and_duplicate_resolve() {
-        for outcome in [
-            Ok(Nat::from(77_u64)),
-            Err(TransferError::Duplicate {
-                duplicate_of: Nat::from(77_u64),
-            }),
-        ] {
-            let mut staged = pending(principal(1));
-            staged.status = PendingRewardTransferStatus::Ambiguous;
-            stage_pending(staged, 7, Some(6));
-            let ledger = MockRewardLedger::new(vec![Ok(Nat::from(1_000_u64))], vec![Ok(outcome)]);
-            assert!(matches!(
-                block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
-                PendingDriveResult::Accepted
-            ));
-            let state = reward_state::get();
-            assert_eq!(state.processed_through_commitment_tx_id, Some(44));
-            assert_eq!(state.carried_credit_start_tx_id, Some(43));
-            assert!(state.pending_transfer.is_none());
-        }
-    }
-
-    #[test]
-    fn incoming_tokens_can_mask_debit_until_exact_duplicate_resolves() {
-        let mut staged = pending(principal(1));
-        staged.status = PendingRewardTransferStatus::Ambiguous;
-        stage_pending(staged, 7, Some(6));
-        let ledger = MockRewardLedger::new(
-            vec![Ok(Nat::from(1_500_u64))],
-            vec![Ok(Err(TransferError::Duplicate {
-                duplicate_of: Nat::from(77_u64),
-            }))],
-        );
-        assert!(matches!(
-            block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
-            PendingDriveResult::Accepted
-        ));
-    }
-
-    #[test]
-    fn every_nonaccepted_ambiguous_retry_stays_ambiguous_without_advancing() {
-        let outcomes = vec![
-            Ok(Err(TransferError::BadFee {
-                expected_fee: Nat::from(11_u64),
-            })),
-            Ok(Err(TransferError::InsufficientFunds {
-                balance: Nat::from(0_u64),
-            })),
-            Ok(Err(TransferError::TemporarilyUnavailable)),
-            Err(()),
-        ];
-        for outcome in outcomes {
-            let mut staged = pending(principal(1));
-            staged.status = PendingRewardTransferStatus::Ambiguous;
-            stage_pending(staged.clone(), 7, Some(6));
-            let ledger = MockRewardLedger::new(vec![Ok(Nat::from(1_000_u64))], vec![outcome]);
-            assert!(matches!(
-                block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
-                PendingDriveResult::Ambiguous
-            ));
-            let state = reward_state::get();
-            assert_eq!(state.processed_through_commitment_tx_id, Some(7));
-            assert_eq!(state.carried_credit_start_tx_id, Some(6));
-            assert_eq!(state.pending_transfer, Some(staged));
-        }
-    }
-
-    #[test]
-    fn expired_ambiguous_identity_is_not_retried() {
-        let mut staged = pending(principal(1));
-        staged.status = PendingRewardTransferStatus::Ambiguous;
-        stage_pending(staged.clone(), 7, Some(6));
-        let ledger = MockRewardLedger::new(vec![Ok(Nat::from(1_000_u64))], vec![]);
-        assert!(matches!(
-            block_on(drive_pending_with_ledger(u64::MAX, principal(99), &ledger)),
-            PendingDriveResult::Held
-        ));
-        assert!(ledger.args.lock().unwrap().is_empty());
-        assert_eq!(reward_state::get().pending_transfer, Some(staged));
-    }
-
-    #[test]
-    fn ambiguous_retry_reuses_byte_identical_pinned_identity() {
-        let mut staged = pending(principal(1));
-        staged.status = PendingRewardTransferStatus::Ambiguous;
-        let expected = reward_transfer_arg(&staged);
-        stage_pending(staged, 7, Some(6));
-        let ledger = MockRewardLedger::new(
-            vec![Ok(Nat::from(1_000_u64))],
-            vec![Ok(Err(TransferError::Duplicate {
-                duplicate_of: Nat::from(77_u64),
-            }))],
-        );
-        let _ = block_on(drive_pending_with_ledger(56, principal(99), &ledger));
-        assert_eq!(ledger.args.lock().unwrap().as_slice(), &[expected]);
-    }
-
-    #[test]
-    fn first_attempt_rejection_and_ambiguity_leave_old_boundary_unchanged() {
-        let mut rejected = pending(principal(1));
-        rejected.attempt_started = false;
-        stage_pending(rejected, 7, Some(6));
-        let ledger = MockRewardLedger::new(
-            vec![],
-            vec![Ok(Err(TransferError::InsufficientFunds {
-                balance: Nat::from(0_u64),
-            }))],
-        );
-        assert!(matches!(
-            block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
-            PendingDriveResult::Rejected
-        ));
-        let state = reward_state::get();
-        assert_eq!(state.processed_through_commitment_tx_id, Some(7));
-        assert_eq!(state.carried_credit_start_tx_id, Some(6));
-
-        let mut ambiguous = pending(principal(1));
-        ambiguous.attempt_started = false;
-        stage_pending(ambiguous, 7, Some(6));
-        let ledger = MockRewardLedger::new(
-            vec![],
-            vec![
-                Err(()),
-                Ok(Err(TransferError::BadFee {
-                    expected_fee: Nat::from(11_u64),
-                })),
-            ],
-        );
-        assert!(matches!(
-            block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
+            block_on(drive_pending_with_ledger(56, principal(99), &first)),
             PendingDriveResult::Ambiguous
-        ));
-        let state = reward_state::get();
-        assert_eq!(state.processed_through_commitment_tx_id, Some(7));
-        assert_eq!(state.carried_credit_start_tx_id, Some(6));
+        );
+        let durable = reward_state::get().pending_payout.unwrap();
+        assert_eq!(durable.next_recipient_index, 1);
+        assert_eq!(
+            durable.recipients[1].status,
+            PendingRewardTransferStatus::Ambiguous
+        );
+
+        let second = MockLedger {
+            balances: Mutex::new(VecDeque::from([
+                Ok(Nat::from(100_u64)),
+                Ok(Nat::from(60_u64)),
+            ])),
+            fees: Mutex::new(VecDeque::new()),
+            transfers: Mutex::new(VecDeque::from([
+                Ok(Err(TransferError::Duplicate {
+                    duplicate_of: Nat::from(2_u64),
+                })),
+                Ok(Ok(Nat::from(3_u64))),
+            ])),
+            args: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(drive_pending_with_ledger(57, principal(99), &second)),
+            PendingDriveResult::Accepted
+        );
+        assert!(reward_state::get().pending_payout.is_none());
+        assert_eq!(first.args.lock().unwrap().len(), 2);
+        assert_eq!(second.args.lock().unwrap().len(), 2);
     }
 
     #[test]
-    fn root_epoch_change_resets_cursor_but_same_root_preserves_it() {
+    fn successful_multi_recipient_payout_pins_actual_balances_and_pays_once() {
         reward_state::reset_for_test();
-        let first = principal(1);
-        let second = principal(2);
-        reward_state::mutate(|state| {
-            state.epoch_sns_root_canister_id = Some(first);
-            state.processed_through_commitment_tx_id = Some(7);
-            state.carried_credit_start_tx_id = Some(6);
-            state.splitter_boundaries.insert(
-                50,
-                reward_state::RewardHistoryBoundary {
-                    processed_through_tx_id: Some(5),
-                    carried_credit_start_tx_id: Some(4),
-                },
-            );
-            state.last_sweep_attempt_timestamp_seconds = 8;
-        });
-        apply_reward_epoch(first, 100).unwrap();
+        reward_state::mutate(|state| state.pending_payout = Some(payout()));
+        let ledger = MockLedger {
+            balances: Mutex::new(VecDeque::from([
+                Ok(Nat::from(100_u64)),
+                Ok(Nat::from(80_u64)),
+                Ok(Nat::from(60_u64)),
+            ])),
+            fees: Mutex::new(VecDeque::new()),
+            transfers: Mutex::new(VecDeque::from([
+                Ok(Ok(Nat::from(1_u64))),
+                Ok(Ok(Nat::from(2_u64))),
+                Ok(Ok(Nat::from(3_u64))),
+            ])),
+            args: Mutex::new(Vec::new()),
+        };
         assert_eq!(
-            reward_state::get().processed_through_commitment_tx_id,
-            Some(7)
+            block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
+            PendingDriveResult::Accepted
         );
-        assert_eq!(reward_state::get().carried_credit_start_tx_id, Some(6));
-        assert!(reward_state::get().splitter_boundaries.contains_key(&50));
-        assert_eq!(reward_state::get().last_sweep_attempt_timestamp_seconds, 8);
-
-        apply_reward_epoch(second, 100).unwrap();
-        let changed = reward_state::get();
-        assert_eq!(changed.epoch_sns_root_canister_id, Some(second));
-        assert_eq!(changed.processed_through_commitment_tx_id, None);
-        assert_eq!(changed.carried_credit_start_tx_id, None);
-        assert!(changed.splitter_boundaries.is_empty());
-        assert_eq!(changed.last_sweep_attempt_timestamp_seconds, 100);
+        assert!(reward_state::get().pending_payout.is_none());
+        let args = ledger.args.lock().unwrap();
+        assert_eq!(args.len(), 3);
+        assert_eq!(
+            args.iter().map(|arg| arg.to.owner).collect::<Vec<_>>(),
+            [principal(1), principal(2), principal(3),]
+        );
+        assert!(args.iter().all(|arg| arg.amount == Nat::from(19_u64)));
     }
 
     #[test]
-    fn unresolved_pending_transfer_blocks_root_change_without_mutating_identity() {
+    fn bad_fee_before_first_recipient_clears_fresh_plan_without_uncertainty() {
         reward_state::reset_for_test();
-        let old_root = principal(1);
-        let staged = pending(old_root);
-        reward_state::mutate(|state| {
-            state.epoch_sns_root_canister_id = Some(old_root);
-            state.processed_through_commitment_tx_id = Some(7);
-            state.carried_credit_start_tx_id = Some(6);
-            state.pending_transfer = Some(staged.clone());
-        });
+        reward_state::mutate(|state| state.pending_payout = Some(payout()));
+        let ledger = MockLedger {
+            balances: Mutex::new(VecDeque::from([Ok(Nat::from(100_u64))])),
+            fees: Mutex::new(VecDeque::new()),
+            transfers: Mutex::new(VecDeque::from([Ok(Err(TransferError::BadFee {
+                expected_fee: Nat::from(2_u64),
+            }))])),
+            args: Mutex::new(Vec::new()),
+        };
         assert_eq!(
-            apply_reward_epoch(principal(2), 100),
-            Err("pending_from_previous_sns")
+            block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
+            PendingDriveResult::Rejected("bad_fee")
         );
-        let held = reward_state::get();
-        assert_eq!(held.epoch_sns_root_canister_id, Some(old_root));
-        assert_eq!(held.processed_through_commitment_tx_id, Some(7));
-        assert_eq!(held.carried_credit_start_tx_id, Some(6));
-        assert_eq!(held.pending_transfer, Some(staged));
+        assert!(reward_state::get().pending_payout.is_none());
     }
 
     #[test]
-    fn accepted_rejected_and_ambiguous_transitions_are_cursor_safe() {
+    fn partial_bad_fee_reprices_only_unpaid_recipients_and_completes() {
         reward_state::reset_for_test();
-        let staged = pending(principal(1));
-        reward_state::mutate(|state| state.pending_transfer = Some(staged.clone()));
-        mark_ambiguous();
-        let ambiguous = reward_state::get().pending_transfer.unwrap();
-        assert_eq!(ambiguous.recipient, staged.recipient);
-        assert_eq!(ambiguous.amount, staged.amount);
-        assert_eq!(ambiguous.fee, staged.fee);
-        assert_eq!(ambiguous.memo, staged.memo);
+        let mut pending = payout();
+        pending.next_recipient_index = 1;
+        let completed = pending.recipients[0].clone();
+        reward_state::mutate(|state| state.pending_payout = Some(pending));
+        let rejected = MockLedger {
+            balances: Mutex::new(VecDeque::from([Ok(Nat::from(80_u64))])),
+            fees: Mutex::new(VecDeque::new()),
+            transfers: Mutex::new(VecDeque::from([Ok(Err(TransferError::BadFee {
+                expected_fee: Nat::from(2_u64),
+            }))])),
+            args: Mutex::new(Vec::new()),
+        };
         assert_eq!(
-            ambiguous.created_at_time_nanos,
-            staged.created_at_time_nanos
+            block_on(drive_pending_with_ledger(56, principal(99), &rejected)),
+            PendingDriveResult::Repricing
         );
-        assert!(ambiguous.uncertain_attempt_seen);
-        assert_eq!(ambiguous.status, PendingRewardTransferStatus::Ambiguous);
-        assert_eq!(reward_state::get().processed_through_commitment_tx_id, None);
-        assert_eq!(reward_state::get().carried_credit_start_tx_id, None);
 
-        clear_rejected("test");
-        assert!(reward_state::get().pending_transfer.is_none());
-        assert_eq!(reward_state::get().processed_through_commitment_tx_id, None);
-        assert_eq!(reward_state::get().carried_credit_start_tx_id, None);
+        let resumed = MockLedger {
+            balances: Mutex::new(VecDeque::from([
+                Ok(Nat::from(60_u64)),
+                Ok(Nat::from(60_u64)),
+                Ok(Nat::from(39_u64)),
+            ])),
+            fees: Mutex::new(VecDeque::from([Ok(Nat::from(2_u64))])),
+            transfers: Mutex::new(VecDeque::from([
+                Ok(Ok(Nat::from(2_u64))),
+                Ok(Ok(Nat::from(3_u64))),
+            ])),
+            args: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(drive_pending_with_ledger(100, principal(99), &resumed)),
+            PendingDriveResult::Accepted
+        );
+        assert!(reward_state::get().pending_payout.is_none());
+        let args = resumed.args.lock().unwrap();
+        assert_eq!(
+            args.iter().map(|arg| arg.to.owner).collect::<Vec<_>>(),
+            [principal(2), principal(3),]
+        );
+        assert!(args.iter().all(|arg| arg.fee == Some(Nat::from(2_u64))));
+        assert!(!args.iter().any(|arg| arg.to == completed.recipient));
+        assert!(args
+            .iter()
+            .all(|arg| arg.created_at_time.is_some_and(|created| created >= 100)));
+    }
 
-        reward_state::mutate(|state| state.pending_transfer = Some(staged));
-        accept_pending("test");
-        assert!(reward_state::get().pending_transfer.is_none());
+    #[test]
+    fn partial_fee_increase_waits_for_accrual_then_resumes_same_entitlements() {
+        reward_state::reset_for_test();
+        let mut pending = payout();
+        pending.next_recipient_index = 1;
+        pending.recipients[1].status = PendingRewardTransferStatus::NeedsFreshIdentity;
+        let promised = pending.recipients[1..]
+            .iter()
+            .map(|recipient| recipient.amount.clone())
+            .collect::<Vec<_>>();
+        reward_state::mutate(|state| state.pending_payout = Some(pending));
+
+        let insufficient = MockLedger {
+            balances: Mutex::new(VecDeque::from([Ok(Nat::from(50_u64))])),
+            fees: Mutex::new(VecDeque::from([Ok(Nat::from(10_u64))])),
+            transfers: Mutex::new(VecDeque::new()),
+            args: Mutex::new(Vec::new()),
+        };
         assert_eq!(
-            reward_state::get().processed_through_commitment_tx_id,
-            Some(44)
+            block_on(drive_pending_with_ledger(100, principal(99), &insufficient)),
+            PendingDriveResult::WaitingForBalance
         );
-        assert_eq!(reward_state::get().carried_credit_start_tx_id, Some(43));
+        let waiting = reward_state::get().pending_payout.unwrap();
+        assert_eq!(waiting.next_recipient_index, 1);
         assert_eq!(
-            reward_state::get().splitter_boundaries[&50],
-            reward_state::RewardHistoryBoundary {
-                processed_through_tx_id: Some(41),
-                carried_credit_start_tx_id: Some(40),
-            }
+            waiting.recipients[1..]
+                .iter()
+                .map(|recipient| recipient.amount.clone())
+                .collect::<Vec<_>>(),
+            promised
         );
+
+        let funded = MockLedger {
+            balances: Mutex::new(VecDeque::from([
+                Ok(Nat::from(300_u64)),
+                Ok(Nat::from(300_u64)),
+                Ok(Nat::from(271_u64)),
+            ])),
+            fees: Mutex::new(VecDeque::from([Ok(Nat::from(10_u64))])),
+            transfers: Mutex::new(VecDeque::from([
+                Ok(Ok(Nat::from(2_u64))),
+                Ok(Ok(Nat::from(3_u64))),
+            ])),
+            args: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(drive_pending_with_ledger(200, principal(99), &funded)),
+            PendingDriveResult::Accepted
+        );
+        let args = funded.args.lock().unwrap();
+        assert_eq!(
+            args.iter()
+                .map(|arg| arg.amount.clone())
+                .collect::<Vec<_>>(),
+            promised
+        );
+    }
+
+    #[test]
+    fn lower_fee_and_expired_definitive_identity_can_be_safely_repinned() {
+        reward_state::reset_for_test();
+        let mut pending = payout();
+        pending.next_recipient_index = 2;
+        pending.fee = Nat::from(10_u64);
+        pending.recipients[2].status = PendingRewardTransferStatus::WaitingForBalance;
+        pending.recipients[2].created_at_time_nanos = 1;
+        reward_state::mutate(|state| state.pending_payout = Some(pending));
+        let ledger = MockLedger {
+            balances: Mutex::new(VecDeque::from([
+                Ok(Nat::from(30_u64)),
+                Ok(Nat::from(30_u64)),
+            ])),
+            fees: Mutex::new(VecDeque::from([Ok(Nat::from(1_u64))])),
+            transfers: Mutex::new(VecDeque::from([Ok(Ok(Nat::from(3_u64)))])),
+            args: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(drive_pending_with_ledger(
+                1_000_000_000_000,
+                principal(99),
+                &ledger
+            )),
+            PendingDriveResult::Accepted
+        );
+        let args = ledger.args.lock().unwrap();
+        assert_eq!(args[0].fee, Some(Nat::from(1_u64)));
+        assert_eq!(args[0].created_at_time, Some(1_000_000_000_000));
+    }
+
+    #[test]
+    fn expired_ambiguous_identity_is_never_replaced() {
+        reward_state::reset_for_test();
+        let mut pending = payout();
+        pending.next_recipient_index = 1;
+        pending.recipients[1].status = PendingRewardTransferStatus::Ambiguous;
+        pending.recipients[1].attempt_started = true;
+        pending.recipients[1].uncertain_attempt_seen = true;
+        pending.recipients[1].observed_balance = Some(Nat::from(80_u64));
+        pending.recipients[1].created_at_time_nanos = 1;
+        let identity = pending.recipients[1].clone();
+        reward_state::mutate(|state| state.pending_payout = Some(pending));
+        let ledger = MockLedger {
+            balances: Mutex::new(VecDeque::from([Ok(Nat::from(80_u64))])),
+            fees: Mutex::new(VecDeque::from([Ok(Nat::from(1_u64))])),
+            transfers: Mutex::new(VecDeque::new()),
+            args: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(drive_pending_with_ledger(u64::MAX, principal(99), &ledger)),
+            PendingDriveResult::Ambiguous
+        );
+        let durable = reward_state::get().pending_payout.unwrap();
+        assert_eq!(durable.recipients[1], identity);
+        assert!(ledger.args.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejection_after_partial_completion_retains_the_exact_remaining_plan() {
+        reward_state::reset_for_test();
+        let mut pinned = payout();
+        pinned.next_recipient_index = 1;
+        let expected = pinned.clone();
+        reward_state::mutate(|state| state.pending_payout = Some(pinned));
+        let rejected = MockLedger {
+            balances: Mutex::new(VecDeque::from([Ok(Nat::from(80_u64))])),
+            fees: Mutex::new(VecDeque::new()),
+            transfers: Mutex::new(VecDeque::from([Ok(Err(TransferError::BadFee {
+                expected_fee: Nat::from(2_u64),
+            }))])),
+            args: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(drive_pending_with_ledger(56, principal(99), &rejected)),
+            PendingDriveResult::Repricing
+        );
+        let pending = reward_state::get().pending_payout.unwrap();
+        assert_eq!(pending.next_recipient_index, 1);
+        assert_eq!(pending.recipients[0], expected.recipients[0]);
+        assert_eq!(pending.recipients[1].amount, expected.recipients[1].amount);
+        assert_eq!(pending.recipients[1].memo, expected.recipients[1].memo);
+        assert_eq!(
+            pending.recipients[1].created_at_time_nanos,
+            expected.recipients[1].created_at_time_nanos
+        );
+        assert_eq!(
+            pending.recipients[1].status,
+            PendingRewardTransferStatus::NeedsFreshIdentity
+        );
+        assert!(!pending.recipients[1].uncertain_attempt_seen);
+    }
+
+    #[test]
+    fn cadence_records_only_completed_or_durable_adjudication() {
+        reward_state::reset_for_test();
+        reward_state::mutate(|state| state.last_sweep_attempt_timestamp_seconds = 7);
+        record_sweep_disposition(SweepDisposition::RetryNextDailyTick, 100);
+        assert_eq!(reward_state::get().last_sweep_attempt_timestamp_seconds, 7);
+        record_sweep_disposition(SweepDisposition::Completed, 100);
+        assert_eq!(
+            reward_state::get().last_sweep_attempt_timestamp_seconds,
+            100
+        );
+        assert_eq!(
+            PendingDriveResult::Ambiguous.sweep_disposition(),
+            SweepDisposition::Completed
+        );
+        assert_eq!(
+            PendingDriveResult::Rejected("bad_fee").sweep_disposition(),
+            SweepDisposition::RetryNextDailyTick
+        );
+        assert!(sweep_is_due(99, 100, true));
     }
 }

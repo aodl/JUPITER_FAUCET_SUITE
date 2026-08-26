@@ -1,7 +1,13 @@
 use candid::{CandidType, Deserialize, Nat, Principal};
+use ic_cdk::call::Call;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError};
+use icrc_ledger_types::icrc3::transactions::{Mint, Transaction, Transfer};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
+use jupiter_ic_clients::icrc_index::{
+    GetAccountTransactionsArgs, GetAccountTransactionsResponse, GetAccountTransactionsResult,
+    TransactionWithId,
+};
 use num_traits::ToPrimitive;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -97,6 +103,9 @@ struct LedgerState {
     dedup: HashMap<DedupKey, u64>,
     transfers: Vec<TransferRecord>,
     legacy_transfers: Vec<LegacyTransferRecord>,
+    index_transactions: Vec<TransactionWithId>,
+    index_source_ledger: Option<Principal>,
+    index_hidden_newest_transactions: u64,
 }
 
 thread_local! {
@@ -122,6 +131,21 @@ pub struct BinaryAccountBalanceArgs {
 #[derive(CandidType, Deserialize, Clone, Debug)]
 pub struct Tokens {
     pub e8s: u64,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct GetBlocksArgs {
+    pub start: u64,
+    pub length: u64,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct QueryBlocksResponse {
+    pub chain_length: u64,
+    pub certificate: Option<Vec<u8>>,
+    pub blocks: Vec<Vec<u8>>,
+    pub first_block_index: u64,
+    pub archived_blocks: Vec<Vec<u8>>,
 }
 
 fn account_identifier_bytes(a: &Account) -> [u8; 32] {
@@ -176,6 +200,17 @@ fn account_balance(args: BinaryAccountBalanceArgs) -> Tokens {
         }
         Tokens { e8s }
     })
+}
+
+#[ic_cdk::query]
+fn query_blocks(_args: GetBlocksArgs) -> QueryBlocksResponse {
+    QueryBlocksResponse {
+        chain_length: ST.with(|s| s.borrow().next_block),
+        certificate: None,
+        blocks: Vec::new(),
+        first_block_index: 0,
+        archived_blocks: Vec::new(),
+    }
 }
 
 #[ic_cdk::update]
@@ -303,6 +338,21 @@ async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
             created_at_time: arg.created_at_time,
             result: "Ok".to_string(),
         });
+        st.index_transactions.push(TransactionWithId {
+            id: Nat::from(block),
+            transaction: Transaction::transfer(
+                Transfer {
+                    amount: Nat::from(amount),
+                    from,
+                    to: arg.to,
+                    spender: None,
+                    memo: arg.memo,
+                    fee: Some(Nat::from(fee)),
+                    created_at_time: arg.created_at_time,
+                },
+                ic_cdk::api::time(),
+            ),
+        });
 
         block
     });
@@ -408,7 +458,142 @@ fn debug_credit(a: Account, amount_e8s: u64) {
         let k = key(&a);
         let b = st.balances.entry(k).or_insert(0);
         *b = b.saturating_add(amount_e8s as u128);
+        st.next_block = st.next_block.saturating_add(1);
+        let block = st.next_block;
+        st.index_transactions.push(TransactionWithId {
+            id: Nat::from(block),
+            transaction: Transaction::mint(
+                Mint {
+                    amount: Nat::from(amount_e8s),
+                    to: a,
+                    memo: None,
+                    created_at_time: None,
+                    fee: None,
+                },
+                ic_cdk::api::time(),
+            ),
+        });
     });
+}
+
+#[ic_cdk::update]
+fn debug_set_index_source(ledger: Principal) {
+    ST.with(|s| s.borrow_mut().index_source_ledger = Some(ledger));
+}
+
+#[ic_cdk::update]
+fn debug_set_index_hidden_newest_transactions(count: u64) {
+    ST.with(|s| s.borrow_mut().index_hidden_newest_transactions = count);
+}
+
+#[ic_cdk::query]
+fn debug_index_transactions() -> Vec<TransactionWithId> {
+    ST.with(|s| s.borrow().index_transactions.clone())
+}
+
+#[ic_cdk::query]
+fn ledger_id() -> Principal {
+    ST.with(|s| {
+        s.borrow()
+            .index_source_ledger
+            .unwrap_or_else(ic_cdk::api::canister_self)
+    })
+}
+
+fn transaction_touches(transaction: &Transaction, account: &Account) -> bool {
+    transaction
+        .mint
+        .as_ref()
+        .is_some_and(|mint| mint.to == *account)
+        || transaction
+            .burn
+            .as_ref()
+            .is_some_and(|burn| burn.from == *account)
+        || transaction
+            .transfer
+            .as_ref()
+            .is_some_and(|transfer| transfer.from == *account || transfer.to == *account)
+        || transaction
+            .approve
+            .as_ref()
+            .is_some_and(|approve| approve.from == *account)
+}
+
+fn indexed_balance(transactions: &[TransactionWithId], account: &Account) -> Nat {
+    let mut balance = Nat::from(0_u8).0;
+    for entry in transactions {
+        if let Some(mint) = &entry.transaction.mint {
+            if mint.to == *account {
+                let fee = mint.fee.clone().unwrap_or_else(|| Nat::from(0_u8));
+                if mint.amount.0 >= fee.0 {
+                    balance += mint.amount.0.clone() - fee.0;
+                }
+            }
+        } else if let Some(transfer) = &entry.transaction.transfer {
+            if transfer.from == *account {
+                let fee = transfer.fee.clone().unwrap_or_else(|| Nat::from(0_u8));
+                let debit = transfer.amount.0.clone() + fee.0;
+                if balance >= debit {
+                    balance -= debit;
+                }
+            }
+            if transfer.to == *account {
+                balance += transfer.amount.0.clone();
+            }
+        }
+    }
+    Nat(balance)
+}
+
+#[ic_cdk::update]
+async fn get_account_transactions(
+    args: GetAccountTransactionsArgs,
+) -> GetAccountTransactionsResult {
+    let (source, hidden) = ST.with(|s| {
+        let st = s.borrow();
+        (
+            st.index_source_ledger
+                .unwrap_or_else(ic_cdk::api::canister_self),
+            st.index_hidden_newest_transactions,
+        )
+    });
+    let mut all = if source == ic_cdk::api::canister_self() {
+        ST.with(|s| s.borrow().index_transactions.clone())
+    } else {
+        let response = Call::bounded_wait(source, "debug_index_transactions")
+            .change_timeout(30)
+            .await
+            .map_err(
+                |error| jupiter_ic_clients::icrc_index::GetAccountTransactionsError {
+                    message: format!("index source call failed: {error:?}"),
+                },
+            )?;
+        response.candid().map_err(|error| {
+            jupiter_ic_clients::icrc_index::GetAccountTransactionsError {
+                message: format!("index source decode failed: {error:?}"),
+            }
+        })?
+    };
+    all.sort_by(|left, right| left.id.0.cmp(&right.id.0));
+    let hidden = usize::try_from(hidden).unwrap_or(usize::MAX).min(all.len());
+    all.truncate(all.len() - hidden);
+    let balance = indexed_balance(&all, &args.account);
+    let mut account_transactions = all
+        .into_iter()
+        .filter(|entry| transaction_touches(&entry.transaction, &args.account))
+        .collect::<Vec<_>>();
+    let oldest_tx_id = account_transactions.first().map(|entry| entry.id.clone());
+    account_transactions.reverse();
+    if let Some(start) = args.start {
+        account_transactions.retain(|entry| entry.id.0 < start.0);
+    }
+    let max_results = nat_u64(&args.max_results) as usize;
+    account_transactions.truncate(max_results);
+    Ok(GetAccountTransactionsResponse {
+        balance,
+        transactions: account_transactions,
+        oldest_tx_id,
+    })
 }
 
 #[ic_cdk::query]
