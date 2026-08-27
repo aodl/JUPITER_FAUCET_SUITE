@@ -19,7 +19,8 @@ The operational path is intentionally split across small canisters:
 - [`canisters/relay`](canisters/relay) receives suite-funding ICP from the faucet, tops up managed suite canisters from recent cycles-burn observations plus carried recovery deficits, and routes remaining surplus only after canister recovery targets are met.
 - [`canisters/historian`](canisters/historian) indexes commitment history, target canisters, cycles samples, SNS discovery, and dashboard-facing public state.
 - [`canisters/frontend`](canisters/frontend) serves the certified public site and browser dashboard.
-- [`canisters/lifeline`](canisters/lifeline) and [`canisters/sns-rewards`](canisters/sns-rewards) provide recovery/support and reward-recipient roles.
+- [`canisters/lifeline`](canisters/lifeline) provides minimal recovery support.
+- [`canisters/sns-rewards`](canisters/sns-rewards) maintains SNS owner snapshots and supplies snapshot-scoped reward context and account-owner lookups to Relay.
 
 <img src="/canisters/frontend/public/jupiter-faucet-overview.svg">
 
@@ -73,7 +74,7 @@ For local artifact work, direct local installs, frontend prototype deployment, a
   - [`historian/`](canisters/historian) - indexed public read model for dashboard and protocol history.
   - [`relay/`](canisters/relay) - suite cycles funding and surplus-routing support.
   - [`lifeline/`](canisters/lifeline) - minimal recovery/support canister.
-  - [`sns-rewards/`](canisters/sns-rewards) - rewards-recipient placeholder canister.
+  - [`sns-rewards/`](canisters/sns-rewards) - SNS owner-snapshot and Relay reward-context support canister.
   - [`frontend/`](canisters/frontend) - certified asset canister plus browser dashboard.
 - [`crates/`](crates) - reusable internal Rust crates.
 - [`tests/`](tests) - integration and end-to-end test assets.
@@ -96,6 +97,7 @@ npm run test:frontend-unit
 ./tools/scripts/build-canister all
 
 # Release verification
+./tools/scripts/security-scan
 python3 ./tools/scripts/validate-mainnet-install-args
 ./tools/scripts/docker-build
 npm run verify:reproducible-artifacts

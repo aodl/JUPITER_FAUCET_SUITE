@@ -8,7 +8,13 @@ This flow compares the live canister module hash with the canonical Docker-built
 
 ## Canonical Docker artifact build
 
-Run the canonical Docker build from the repo root:
+Before producing canonical artifacts, run the dependency-security gate from the repo root and require the pushed commit's [Dependency Security workflow](../../.github/workflows/dependency-security.yml) to be green:
+
+```bash
+./tools/scripts/security-scan
+```
+
+Do not substitute `test_all` for this networked release gate; the canonical release procedure requires both. Then run the canonical Docker build:
 
 ```bash
 ./tools/scripts/docker-build
@@ -59,6 +65,7 @@ Use the canister-specific README for expected config fields.
 | --- | --- | --- |
 | Fast local artifact build | `./tools/scripts/build-canister all` | Local-toolchain artifacts for inspection and development. |
 | One-canister local artifact build | `./tools/scripts/build-canister jupiter-faucet` | Local-toolchain artifact for one canister. |
+| Dependency-security release gate | `./tools/scripts/security-scan` | Advisory, source/license policy, reachability, lockfile, OSV, and SBOM validation; the pushed Dependency Security workflow must also be green. |
 | Canonical artifact build | `./tools/scripts/docker-build` | Docker-built `.wasm.gz` packages and hash manifest. |
 | Production deploy from canonical artifacts | `JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --mode upgrade` | Deploys the existing Docker-built `.wasm.gz` package through `icp deploy`. |
 | Ordinary local `icp deploy` | `icp deploy <canister_name> --environment ic --mode upgrade` | Runs the configured local build helper and deploys the resulting package. Convenient, but not canonical reproducibility evidence. |
@@ -121,7 +128,7 @@ Lifecycle summary:
 | Relay | Full `InitArgs` | Checked-in reviewed full `InitArgs` from `canisters/relay/mainnet-install-args.did` | Config and ordinary operational heap state reset; stable reward and splitter journals preserved |
 | Frontend/Lifeline/SNS Rewards | No args | No args | No install args |
 
-Relay has no `UpgradeArgs`. Relay config-changing upgrades update and review the checked-in full `InitArgs` file at `canisters/relay/mainnet-install-args.did`. Relay upgrades replace config and reset ordinary operational heap state, while stable memory 0 preserves the reward main and per-splitter attribution boundaries plus any pending proposed updates, and stable memory 1 preserves the independent fixed-splitter execution journal and quarantine evidence. An active splitter journal pins its ICP Ledger identity, so an upgrade supplying another Ledger fails closed. Avoid upgrades during active work where practical. After upgrade, verify `CONFIG` logs, the `BaselineOnly` first ordinary allocation tick, stable-journal continuation where applicable, and managed canister cycle balances.
+Relay has no `UpgradeArgs`. Relay config-changing upgrades update and review the checked-in full `InitArgs` file at `canisters/relay/mainnet-install-args.did`. Relay upgrades replace config and reset ordinary operational heap state, while stable memory 0 preserves the completed reward cadence timestamp plus any pending multi-recipient payout, and stable memory 1 preserves the independent fixed-splitter execution journal and quarantine evidence. An active splitter journal pins its ICP Ledger identity, so an upgrade supplying another Ledger fails closed. Avoid upgrades during active work where practical. After upgrade, verify `CONFIG` logs, the `BaselineOnly` first ordinary allocation tick, stable-journal continuation where applicable, and managed canister cycle balances.
 
 ## Ordinary local icp deploy
 

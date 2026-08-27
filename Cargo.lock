@@ -1131,7 +1131,7 @@ dependencies = [
 [[package]]
 name = "icrc-cbor"
 version = "0.1.0"
-source = "git+https://github.com/dfinity/ic?rev=80b1d5e27bfdb96d6e50fb2ecee5ff80a77900e9#80b1d5e27bfdb96d6e50fb2ecee5ff80a77900e9"
+source = "git+https://github.com/dfinity/ic?rev=d3b3351fa343a893aea2cfa8d39ac6b0d507b477#d3b3351fa343a893aea2cfa8d39ac6b0d507b477"
 dependencies = [
  "candid",
  "minicbor",
@@ -1142,7 +1142,7 @@ dependencies = [
 [[package]]
 name = "icrc-ledger-types"
 version = "0.2.0"
-source = "git+https://github.com/dfinity/ic?rev=80b1d5e27bfdb96d6e50fb2ecee5ff80a77900e9#80b1d5e27bfdb96d6e50fb2ecee5ff80a77900e9"
+source = "git+https://github.com/dfinity/ic?rev=d3b3351fa343a893aea2cfa8d39ac6b0d507b477#d3b3351fa343a893aea2cfa8d39ac6b0d507b477"
 dependencies = [
  "base32",
  "candid",
@@ -2827,7 +2827,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.52.0",
  "windows-sys 0.59.0",
 ]
 

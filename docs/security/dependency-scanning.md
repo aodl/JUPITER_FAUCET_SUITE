@@ -83,20 +83,14 @@ Global advisory ignores are allowed only when paired with automated
 reachability checks. [`tools/scripts/check-production-reachability`](../../tools/scripts/check-production-reachability), called by
 [`tools/scripts/security-scan`](../../tools/scripts/security-scan), validates the locked wasm-target normal/build
 trees for `jupiter-disburser`, `jupiter-faucet`, `jupiter-relay`,
-`jupiter-historian`, and `jupiter-lifeline`. The first four canisters own the
-current production value-moving and system-observation paths. `jupiter-lifeline`
-is included because it is the configured reserved rescue-controller principal
-for operational canisters and is therefore part of the privileged operational
-attack surface, even though its current code is intentionally minimal. The
-placeholder `jupiter-sns-rewards` canister is intentionally outside this
-automated reachability gate because its current Wasm has no public methods,
-timers, stable state, ledger/index/CMC/NNS/SNS/system clients, rescue logic, or
-controller authority; it is a passive recipient principal/account placeholder,
-not a production value-moving runtime path.
-
-Release checklist reminder: when `jupiter-sns-rewards` gains runtime logic or
-controller authority, add it to `production_canisters` in
-[`tools/scripts/check-production-reachability`](../../tools/scripts/check-production-reachability) before release validation.
+`jupiter-historian`, `jupiter-lifeline`, and `jupiter-sns-rewards`. Disburser,
+Faucet, Relay, and Historian own the current production value-moving and
+system-observation paths. `jupiter-lifeline` is included because it is the
+configured reserved rescue-controller principal for operational canisters and
+is therefore part of the privileged operational attack surface, even though
+its current code is intentionally minimal. `jupiter-sns-rewards` is included
+because its stable owner snapshots and SNS Root/Governance reads supply Relay's
+reward-context and account-owner resolution path.
 
 The gate fails if an explicitly forbidden package enters the covered production
 trees, and it fails if `paste` appears there as anything other than proc-macro
@@ -141,6 +135,21 @@ Keep broad DFINITY NNS graph crates such as `rsa`, `bincode`,
 `proc-macro-error`, and `derivative` out of disburser, faucet, relay, and
 historian production trees unless a separate dependency review explicitly
 accepts the runtime scope.
+
+## ICRC Index Transaction Schema Exception
+
+The workspace pins `icrc-ledger-types` to DFINITY's mainline ICRC-122/152
+squash-merge revision `d3b3351fa343a893aea2cfa8d39ac6b0d507b477`.
+The published crates.io `0.2.0` package does not contain the committed Index transaction schema's
+`authorized_mint` and `authorized_burn` fields or the official
+`TRANSACTION_AUTHORIZED_MINT` (`122mint`) constant. Relay requires those exact
+wire fields to reconstruct value-moving account history and fail closed on
+unsupported operations.
+
+[`deny.toml`](../../deny.toml) therefore permits only the DFINITY IC Git source,
+while the workspace manifest pins the exact reviewed revision. Remove this
+exception when a published `icrc-ledger-types` release contains the required
+schema and the locked reverse dependency tree has been revalidated.
 
 The script derives deterministic SBOM timestamps and serial numbers from
 `SOURCE_DATE_EPOCH`. If `SOURCE_DATE_EPOCH` is unset, it uses the Unix timestamp

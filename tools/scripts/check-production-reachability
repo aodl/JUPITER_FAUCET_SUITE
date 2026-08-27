@@ -14,6 +14,7 @@ production_canisters=(
   jupiter-relay
   jupiter-historian
   jupiter-lifeline
+  jupiter-sns-rewards
 )
 
 must_be_absent=(
