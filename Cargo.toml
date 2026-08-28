@@ -43,7 +43,7 @@ ic-cdk-timers = "1.0.0"
 ic-stable-structures = "0.7"
 icrc-ledger-types = { version = "=0.2.0", git = "https://github.com/dfinity/ic", rev = "d3b3351fa343a893aea2cfa8d39ac6b0d507b477" }
 num-traits = "0.2"
-pocket-ic = "13"
+pocket-ic = "=15.0.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

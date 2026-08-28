@@ -1,5 +1,9 @@
 use candid::{CandidType, Deserialize, Nat, Principal};
 use ic_cdk::call::Call;
+use jupiter_ic_clients::management::{
+    self, CanisterStatusArgs as ManagementCanisterStatusArgs,
+    CanisterStatusResult as ManagementCanisterStatusResult, UpdateSettingsArgs,
+};
 use std::cell::RefCell;
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -54,6 +58,22 @@ async fn canister_status(args: CanisterStatusArgs) -> CanisterStatusResult {
         .unwrap_or_else(|err| ic_cdk::trap(format!("management canister_status failed: {err:?}")));
     resp.candid()
         .unwrap_or_else(|err| ic_cdk::trap(format!("decode canister_status failed: {err:?}")))
+}
+
+#[ic_cdk::update]
+async fn debug_management_canister_status(
+    args: ManagementCanisterStatusArgs,
+) -> Result<ManagementCanisterStatusResult, String> {
+    management::canister_status(&args)
+        .await
+        .map_err(|err| format!("{err:?}"))
+}
+
+#[ic_cdk::update]
+async fn debug_management_update_settings(args: UpdateSettingsArgs) -> Result<(), String> {
+    management::update_settings(&args)
+        .await
+        .map_err(|err| format!("{err:?}"))
 }
 
 #[ic_cdk::query]

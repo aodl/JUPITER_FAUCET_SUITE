@@ -34,6 +34,16 @@ type TransferRecord = record {
   result : text;
 };
 
+type TransferAttemptRecord = record {
+  from_subaccount : opt Subaccount;
+  to : Account;
+  amount : nat;
+  fee : opt nat;
+  memo : opt blob;
+  created_at_time : opt nat64;
+  result : text;
+};
+
 type LegacyTransferRecord = record {
   from : Account;
   to_account_identifier_hex : text;
@@ -163,15 +173,18 @@ service : {
   query_blocks : (GetBlocksArgs) -> (QueryBlocksResponse) query;
 
   debug_reset : () -> ();
-  debug_noop : () -> ();
   debug_set_fee : (nat64) -> ();
   debug_set_fee_query_failure : (bool) -> ();
   debug_set_next_error : (opt DebugNextTransferError) -> ();
   debug_set_error_script : (vec DebugNextTransferError) -> ();
+  debug_accept_then_trap_for_subaccount : (Subaccount) -> ();
+  debug_accept_then_trap_subaccount : () -> (opt Subaccount) query;
+  debug_noop : () -> ();
   debug_credit : (Account, nat64) -> ();
   debug_set_index_source : (principal) -> ();
   debug_set_index_hidden_newest_transactions : (nat64) -> ();
   debug_index_transactions : () -> (vec IndexTransactionWithId) query;
+  debug_transfer_attempts : () -> (vec TransferAttemptRecord) query;
   debug_transfers : () -> (vec TransferRecord) query;
   debug_legacy_transfers : () -> (vec LegacyTransferRecord) query;
 }

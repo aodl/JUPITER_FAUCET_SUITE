@@ -194,6 +194,9 @@ fn candid_path_for_canister(canister: &str) -> Option<String> {
         "mock_sns_wasm" => "tests/mocks/mock-sns-wasm/mock_sns_wasm.did",
         "mock_sns_root" => "tests/mocks/mock-sns-root/mock_sns_root.did",
         "mock_sns_governance" => "tests/mocks/mock-sns-governance/mock_sns_governance.did",
+        "mock_status_controller" | "mock_status_viewer" | "mock_status_target" => {
+            "tests/mocks/mock-status-proxy/mock_status_proxy.did"
+        }
         _ => return None,
     };
     let path = std::path::Path::new(&repo)
@@ -286,6 +289,9 @@ fn build_canister_wasm(canister: &str) -> Result<()> {
         "mock_sns_wasm" => run_cargo_build("mock-sns-wasm", &[]),
         "mock_sns_root" => run_cargo_build("mock-sns-root", &[]),
         "mock_sns_governance" => run_cargo_build("mock-sns-governance", &[]),
+        "mock_status_controller" | "mock_status_viewer" | "mock_status_target" => {
+            run_cargo_build("mock-status-proxy", &[])
+        }
         "jupiter_disburser_dbg" | "jupiter_disburser_args_dbg" => {
             run_cargo_build("jupiter-disburser", &["debug_api"])
         }
@@ -590,6 +596,7 @@ struct HistorianCommitmentHistoryPage {
 enum HistorianCyclesSampleSource {
     BlackholeStatus,
     SelfCanister,
+    DirectCanisterStatus,
     SnsRootStatus,
     SnsSwapStatus,
     SnsRootSummary,
@@ -671,7 +678,7 @@ enum RelayCreationPhase {
     CodeInstalled,
     RelayFundingPrepared,
     RelayFunded,
-    HandoffAttempted,
+    FinalizationAttempted,
 }
 
 #[derive(Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -1439,6 +1446,9 @@ fn cmd_setup_historian_local() -> Result<()> {
     deploy_local_canister("mock_blackhole", None)?;
     deploy_local_canister("mock_sns_wasm", None)?;
     deploy_local_canister("mock_sns_root", None)?;
+    deploy_local_canister("mock_status_controller", None)?;
+    deploy_local_canister("mock_status_viewer", None)?;
+    deploy_local_canister("mock_status_target", None)?;
 
     let ledger_id = canister_id("mock_icrc_ledger")?;
     let gov_id = canister_id("mock_nns_governance")?;
@@ -1634,6 +1644,9 @@ fn cmd_setup() -> Result<()> {
     deploy_local_canister("mock_sns_wasm", None)?;
     deploy_local_canister("mock_sns_root", None)?;
     deploy_local_canister("mock_sns_governance", None)?;
+    deploy_local_canister("mock_status_controller", None)?;
+    deploy_local_canister("mock_status_viewer", None)?;
+    deploy_local_canister("mock_status_target", None)?;
 
     let ledger_id = canister_id("mock_icrc_ledger")?;
     let gov_id = canister_id("mock_nns_governance")?;
@@ -1836,6 +1849,9 @@ fn wasm_path_for_canister(canister: &str) -> Result<String> {
         "mock_sns_wasm" => "target/wasm32-unknown-unknown/release/mock_sns_wasm.wasm",
         "mock_sns_root" => "target/wasm32-unknown-unknown/release/mock_sns_root.wasm",
         "mock_sns_governance" => "target/wasm32-unknown-unknown/release/mock_sns_governance.wasm",
+        "mock_status_controller" | "mock_status_viewer" | "mock_status_target" => {
+            "target/wasm32-unknown-unknown/release/mock_status_proxy.wasm"
+        }
         "jupiter_disburser_dbg" | "jupiter_disburser_args_dbg" => {
             "target/wasm32-unknown-unknown/release/jupiter_disburser.wasm"
         }
@@ -1925,6 +1941,28 @@ fn get_canister_controllers(canister: &str) -> Result<BTreeSet<String>> {
     }
 
     bail!("could not find Controllers line in `icp canister status {canister}` output");
+}
+
+fn get_canister_controllers_via_mock_blackhole(canister: &str) -> Result<BTreeSet<String>> {
+    use jupiter_ic_clients::management::CanisterStatusResult;
+
+    let target = canister_id(canister)?;
+    let status: std::result::Result<CanisterStatusResult, String> = call_raw(
+        "mock_blackhole",
+        "debug_management_canister_status",
+        &format!(
+            "(record {{ canister_id = principal \"{}\" }})",
+            target.trim()
+        ),
+    )?;
+    let status = status
+        .map_err(|err| anyhow::anyhow!("mock blackhole could not read {canister} status: {err}"))?;
+    Ok(status
+        .settings
+        .controllers
+        .into_iter()
+        .map(|principal| principal.to_text())
+        .collect())
 }
 
 fn assert_controllers_eq(
@@ -2217,7 +2255,7 @@ fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             // Run rescue tick: should set controllers to {blackhole, rescue, self}
             let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_rescue_tick")?;
 
-            let actual = get_canister_controllers("jupiter_disburser_dbg")?;
+            let actual = get_canister_controllers_via_mock_blackhole("jupiter_disburser_dbg")?;
             let expected_broken: BTreeSet<String> =
                 [blackhole_txt.clone(), rescue_txt.clone(), self_txt.clone()]
                     .into_iter()
@@ -2233,7 +2271,7 @@ fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
             let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_rescue_tick")?;
 
-            let actual2 = get_canister_controllers("jupiter_disburser_dbg")?;
+            let actual2 = get_canister_controllers_via_mock_blackhole("jupiter_disburser_dbg")?;
             let expected_healthy: BTreeSet<String> =
                 [blackhole_txt, self_txt].into_iter().collect();
             assert_controllers_eq("jupiter_disburser_dbg", &actual2, &expected_healthy)?;
@@ -2264,12 +2302,12 @@ fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
             let expected: BTreeSet<String> =
                 [blackhole_txt, self_txt.clone()].into_iter().collect();
-            let before = get_canister_controllers("jupiter_disburser_dbg")?;
+            let before = get_canister_controllers_via_mock_blackhole("jupiter_disburser_dbg")?;
             assert_controllers_eq("jupiter_disburser_dbg", &before, &expected)?;
 
             // Run rescue tick again; should remain unchanged.
             let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_rescue_tick")?;
-            let after = get_canister_controllers("jupiter_disburser_dbg")?;
+            let after = get_canister_controllers_via_mock_blackhole("jupiter_disburser_dbg")?;
             assert_controllers_eq("jupiter_disburser_dbg", &after, &expected)?;
 
             Ok(())
@@ -2284,7 +2322,7 @@ fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             "Rescue is not armed before first successful payout",
         ),
         || {
-            let before = get_canister_controllers("jupiter_disburser_dbg")?;
+            let before = get_canister_controllers_via_mock_blackhole("jupiter_disburser_dbg")?;
 
             let _: () = call_raw(
                 "jupiter_disburser_dbg",
@@ -2294,7 +2332,7 @@ fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
             let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_rescue_tick")?;
 
-            let after = get_canister_controllers("jupiter_disburser_dbg")?;
+            let after = get_canister_controllers_via_mock_blackhole("jupiter_disburser_dbg")?;
             if before != after {
                 bail!(
                 "expected controllers to remain unchanged before first successful payout, before={before:?} after={after:?}"
@@ -3511,7 +3549,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             &opt_nat64_to_candid(0),
         )?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_rescue_tick")?;
-        let broken = get_canister_controllers("jupiter_faucet_dbg")?;
+        let broken = get_canister_controllers_via_mock_blackhole("jupiter_faucet_dbg")?;
         assert_controllers_eq("jupiter_faucet_dbg", &broken, &expected_broken)?;
 
         let now_secs = (std::time::SystemTime::now()
@@ -3525,7 +3563,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             &opt_nat64_to_candid(now_secs),
         )?;
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_rescue_tick")?;
-        let healthy = get_canister_controllers("jupiter_faucet_dbg")?;
+        let healthy = get_canister_controllers_via_mock_blackhole("jupiter_faucet_dbg")?;
         assert_controllers_eq("jupiter_faucet_dbg", &healthy, &expected_healthy)?;
 
         Ok(())
@@ -3757,6 +3795,116 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let recipient_a = Principal::from_slice(&[92, 1]);
     let recipient_b = Principal::from_slice(&[92, 2]);
+
+    run_scenario(
+        outcomes,
+        label(
+            "icp",
+            "historian",
+            "managed launcher enforces public status visibility after controller removal",
+        ),
+        || {
+            use jupiter_ic_clients::management::{
+                CanisterStatusResult, LogVisibility, StatusVisibility,
+            };
+
+            let controller = canister_id("mock_status_controller")?;
+            let _viewer = canister_id("mock_status_viewer")?;
+            let target = canister_id("mock_status_target")?;
+            run_icp_with_identity(&[
+                "canister",
+                "settings",
+                "update",
+                "--environment",
+                LOCAL_ENVIRONMENT,
+                "mock_status_target",
+                "--add-controller",
+                controller.trim(),
+                "--force",
+            ])?;
+
+            let controller_status: std::result::Result<CanisterStatusResult, String> = call_raw(
+                "mock_status_controller",
+                "debug_management_canister_status",
+                &format!(
+                    "(record {{ canister_id = principal \"{}\" }})",
+                    target.trim()
+                ),
+            )?;
+            let controller_status = controller_status
+                .map_err(|err| anyhow::anyhow!("controller status failed: {err}"))?;
+
+            let denied: std::result::Result<CanisterStatusResult, String> = call_raw(
+                "mock_status_viewer",
+                "debug_management_canister_status",
+                &format!(
+                    "(record {{ canister_id = principal \"{}\" }})",
+                    target.trim()
+                ),
+            )?;
+            let denied = denied.expect_err("non-controller viewer must be denied");
+            if !denied.contains("is not allowed to read the canister status") {
+                bail!("unexpected controller-only status denial: {denied}");
+            }
+
+            let made_public: std::result::Result<(), String> = call_raw(
+                "mock_status_controller",
+                "debug_management_update_settings",
+                &format!(
+                    "(record {{ canister_id = principal \"{}\"; settings = record {{ controllers = null; log_visibility = null; status_visibility = opt variant {{ public }} }} }})",
+                    target.trim()
+                ),
+            )?;
+            made_public.map_err(|err| anyhow::anyhow!("public status update failed: {err}"))?;
+
+            let public_status: std::result::Result<CanisterStatusResult, String> = call_raw(
+                "mock_status_viewer",
+                "debug_management_canister_status",
+                &format!(
+                    "(record {{ canister_id = principal \"{}\" }})",
+                    target.trim()
+                ),
+            )?;
+            let public_status =
+                public_status.map_err(|err| anyhow::anyhow!("public status failed: {err}"))?;
+            if public_status.cycles == candid::Nat::from(0_u8)
+                || public_status.cycles > controller_status.cycles
+                || public_status.settings.status_visibility != StatusVisibility::Public
+            {
+                bail!("public viewer did not observe public status with a live cycle balance: controller={controller_status:?} viewer={public_status:?}");
+            }
+
+            let finalized: std::result::Result<(), String> = call_raw(
+                "mock_status_controller",
+                "debug_management_update_settings",
+                &format!(
+                    "(record {{ canister_id = principal \"{}\"; settings = record {{ controllers = opt vec {{}}; log_visibility = opt variant {{ public }}; status_visibility = opt variant {{ public }} }} }})",
+                    target.trim()
+                ),
+            )?;
+            finalized.map_err(|err| anyhow::anyhow!("controller removal failed: {err}"))?;
+
+            let final_status: std::result::Result<CanisterStatusResult, String> = call_raw(
+                "mock_status_viewer",
+                "debug_management_canister_status",
+                &format!(
+                    "(record {{ canister_id = principal \"{}\" }})",
+                    target.trim()
+                ),
+            )?;
+            let final_status = final_status
+                .map_err(|err| anyhow::anyhow!("controllerless public status failed: {err}"))?;
+            if !final_status.settings.controllers.is_empty()
+                || final_status.settings.log_visibility != LogVisibility::Public
+                || final_status.settings.status_visibility != StatusVisibility::Public
+                || final_status.cycles == candid::Nat::from(0_u8)
+                || final_status.cycles > public_status.cycles
+            {
+                bail!("controllerless public status invariant failed: {final_status:?}");
+            }
+            Ok(())
+        },
+    );
 
     run_scenario(
         outcomes,
@@ -4398,7 +4546,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         label(
             "icp",
             "historian",
-            "SNS discovery adds summary-tracked canisters",
+            "SNS discovery adds membership-tracked canisters",
         ),
         || {
             reset_historian_local_replica_state()?;
@@ -4409,12 +4557,12 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 "debug_set_roots",
                 &format!(r#"(vec {{ principal "{}" }})"#, sns_root.to_text()),
             )?;
-            let summary_args = format!(
-                r#"(record {{ root = opt record {{ canister_id = opt principal "{}"; status = opt record {{ cycles = opt (1000:nat) }} }}; governance = opt record {{ canister_id = opt principal "{}"; status = opt record {{ cycles = opt (2000:nat) }} }}; ledger = null; swap = null; index = null; dapps = vec {{}}; archives = vec {{}} }})"#,
+            let membership_args = format!(
+                r#"(record {{ root = opt principal "{}"; governance = opt principal "{}"; ledger = null; swap = null; index = null; dapps = vec {{}}; archives = vec {{}}; extensions = null }})"#,
                 sns_root.to_text(),
                 governance.to_text()
             );
-            let _: () = call_raw("mock_sns_root", "debug_set_summary", &summary_args)?;
+            let _: () = call_raw("mock_sns_root", "debug_set_canisters", &membership_args)?;
             let _: () = call_raw(
                 "jupiter_historian_dbg",
                 "debug_set_last_sns_discovery_ts",
@@ -4901,12 +5049,12 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 "debug_set_roots",
                 &format!(r#"(vec {{ principal "{}" }})"#, sns_root.to_text()),
             )?;
-            let summary_args = format!(
-                r#"(record {{ root = opt record {{ canister_id = opt principal "{}"; status = opt record {{ cycles = opt (1000:nat) }} }}; governance = opt record {{ canister_id = opt principal "{}"; status = opt record {{ cycles = opt (2000:nat) }} }}; ledger = null; swap = null; index = null; dapps = vec {{}}; archives = vec {{}} }})"#,
+            let membership_args = format!(
+                r#"(record {{ root = opt principal "{}"; governance = opt principal "{}"; ledger = null; swap = null; index = null; dapps = vec {{}}; archives = vec {{}}; extensions = null }})"#,
                 sns_root.to_text(),
                 governance.to_text()
             );
-            let _: () = call_raw("mock_sns_root", "debug_set_summary", &summary_args)?;
+            let _: () = call_raw("mock_sns_root", "debug_set_canisters", &membership_args)?;
             let _: () = call_raw(
                 "jupiter_historian_dbg",
                 "debug_set_last_sns_discovery_ts",

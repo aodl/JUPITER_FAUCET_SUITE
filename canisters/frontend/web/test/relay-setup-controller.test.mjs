@@ -2023,7 +2023,7 @@ test('ManualRecoveryRequired notify result renders phase, Relay ID, and error an
     const harness = controllerHarness({
       notify: {
         ManualRecoveryRequired: {
-          phase: { HandoffAttempted: null },
+          phase: { FinalizationAttempted: null },
           relay_canister_id: [Principal.fromText(RELAY)],
           message: 'final state mismatch',
         },
@@ -2031,7 +2031,7 @@ test('ManualRecoveryRequired notify result renders phase, Relay ID, and error an
     });
     await submit(nodes, harness);
     await harness.controller.createRelay();
-    assert.match(nodes.get('relay-setup-status-label').textContent, /HandoffAttempted/);
+    assert.match(nodes.get('relay-setup-status-label').textContent, /FinalizationAttempted/);
     assert.match(nodes.get('relay-setup-status-label').textContent, /br5f7/);
     assert.match(nodes.get('relay-setup-status-label').textContent, /final state mismatch/);
     assert.equal(nodes.get('relay-setup-create-panel').hidden, true);
@@ -2166,13 +2166,13 @@ test('polling stops when Active is reached', async () => {
 
 test('polling stops and controls hide on ManualRecoveryRequired', async () => {
   await withDom(async (nodes) => {
-    const manual = { ManualRecoveryRequired: { phase: { RelayFunded: null }, relay_canister_id: [Principal.fromText(RELAY)], message: 'handoff failed' } };
+    const manual = { ManualRecoveryRequired: { phase: { RelayFunded: null }, relay_canister_id: [Principal.fromText(RELAY)], message: 'finalization failed' } };
     const harness = controllerHarness();
     await submit(nodes, harness);
     harness.setView(viewFor({ account: null, state: manual }));
     await harness.controller.refresh();
     assert.ok(harness.calls.clears >= 1);
-    assert.match(nodes.get('relay-setup-status-label').textContent, /handoff failed/);
+    assert.match(nodes.get('relay-setup-status-label').textContent, /finalization failed/);
     assert.equal(nodes.get('relay-setup-create-panel').hidden, true);
   });
 });

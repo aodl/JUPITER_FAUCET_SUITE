@@ -424,7 +424,7 @@ test('cycles help opens a dedicated observability slide with actionable route gu
   );
   assert.match(
     bootstrapJs,
-    /Cycles observability is attempted automatically through recognized blackhole and SNS routes/
+    /Cycles observability first uses protocol-native direct canister status/
   );
   assert.doesNotMatch(bootstrapJs, /For ordinary canisters, cycles observability/);
   assert.match(
@@ -446,14 +446,15 @@ test('cycles help opens a dedicated observability slide with actionable route gu
   assert.match(howItWorks, /Both are immutable, run the same independently reproducible\s*blackhole Wasm/);
   assert.match(howItWorks, /trust-in-canisters\/#black-holed-canisters[^>]*>documented by DFINITY<\/a>/);
   assert.match(howItWorks, /introduces no trusted operator and does not remove existing controllers/);
-  assert.match(howItWorks, /<strong>SNS routes:<\/strong>/);
+  assert.match(howItWorks, /<strong>Direct canister status:<\/strong>/);
+  assert.match(howItWorks, /<code>canister_status<\/code>/);
+  assert.match(howItWorks, /<strong>SNS fallback:<\/strong>/);
   assert.doesNotMatch(howItWorks, /Direct self balance/);
   assert.doesNotMatch(howItWorks, /Cached positive route/);
-  assert.doesNotMatch(howItWorks, /Historian/);
   assert.doesNotMatch(howItWorks, /Adding a controller changes the canister's security/);
   assert.match(howItWorks, /<strong>TL;DR:<\/strong>/);
-  assert.match(howItWorks, /Non-SNS target canisters require a recognized blackhole controller/);
-  assert.match(howItWorks, /cycles for SNS-governed dapps are observable by default/);
+  assert.match(howItWorks, /Direct status is tried before every cached, blackhole, or SNS proxy route/);
+  assert.match(howItWorks, /new self-service Relay can rely on direct status\s*only when the target sets it to <code>public<\/code>/);
   assert.match(howItWorks, /href="#how-it-works" data-page-target="0"[^>]*>Jupiter Faucet<\/a>/);
   assert.match(howItWorks, /href="#how-it-works:3" data-page-target="3"[^>]*>Jupiter Relay<\/a>/);
   assert.match(howItWorks, /Jupiter Relay<\/a>\s*target canisters must expose their cycles so the Relay can calculate how much each needs/);

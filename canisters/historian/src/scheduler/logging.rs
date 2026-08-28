@@ -1,8 +1,4 @@
 use super::*;
-pub(super) fn nat_to_u128(n: &Nat) -> Option<u128> {
-    use num_traits::ToPrimitive;
-    n.0.to_u128()
-}
 
 pub(super) fn log_cycles_once_per_week(cycles: u128) {
     #[cfg(test)]

@@ -65,6 +65,7 @@ export const idlFactory = ({ IDL }) => {
   });
   const CyclesSampleSource = IDL.Variant({
     'SnsSwapStatus' : IDL.Null,
+    'DirectCanisterStatus' : IDL.Null,
     'BlackholeStatus' : IDL.Null,
     'SnsRootStatus' : IDL.Null,
     'SelfCanister' : IDL.Null,
@@ -191,7 +192,7 @@ export const idlFactory = ({ IDL }) => {
     'CmcTransferPrepared' : IDL.Null,
     'CmcTransferAccepted' : IDL.Null,
     'RelayFundingPrepared' : IDL.Null,
-    'HandoffAttempted' : IDL.Null,
+    'FinalizationAttempted' : IDL.Null,
     'ProbingTargets' : IDL.Null,
     'ChildCreated' : IDL.Null,
     'CreateDispatched' : IDL.Null,

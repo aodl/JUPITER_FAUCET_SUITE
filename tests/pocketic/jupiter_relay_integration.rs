@@ -633,6 +633,17 @@ struct TransferRecord {
     result: String,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct TransferAttemptRecord {
+    from_subaccount: Option<[u8; 32]>,
+    to: Account,
+    amount: Nat,
+    fee: Option<Nat>,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+    result: String,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugState {
     last_main_run_ts: u64,
@@ -931,6 +942,16 @@ impl RelayEnv {
         )
     }
 
+    fn transfer_attempts(&self) -> Result<Vec<TransferAttemptRecord>> {
+        query_one(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "debug_transfer_attempts",
+            (),
+        )
+    }
+
     fn relay_balance(&self) -> Result<u64> {
         let balance: Nat = query_one(
             &self.pic,
@@ -1024,6 +1045,26 @@ impl RelayEnv {
             Principal::anonymous(),
             "debug_set_error_script",
             script,
+        )
+    }
+
+    fn accept_then_trap_for_subaccount(&self, subaccount: [u8; 32]) -> Result<()> {
+        update_one(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "debug_accept_then_trap_for_subaccount",
+            subaccount,
+        )
+    }
+
+    fn accept_then_trap_subaccount(&self) -> Result<Option<[u8; 32]>> {
+        query_one(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "debug_accept_then_trap_subaccount",
+            (),
         )
     }
 
@@ -1296,18 +1337,136 @@ fn splitter_lost_response_retries_exact_identity_without_duplicate_spend() -> Re
     require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.advance_time_and_tick(5 * 60, 5);
-    let starting_balance = 500_000_007;
-    env.credit_relay_numbered_subaccount(50, starting_balance)?;
-    env.set_ledger_error_script(vec![DebugNextTransferError::AcceptThenTrap])?;
-    env.trigger_relay()?;
-    let first = env.splitter_transfers(50)?;
-    if first.len() != 1 || env.transfers()?.len() != 1 {
-        bail!("expected one accepted transfer with a lost response, got {first:?}");
+    // Keep both destination balances below the commitment threshold so this regression observes
+    // only the two splitter legs, even after the retry timer and main continuation run.
+    let starting_balance = 200_000_007;
+    env.accept_then_trap_for_subaccount(relay_numbered_subaccount(50))?;
+    if env.accept_then_trap_subaccount()? != Some(relay_numbered_subaccount(50)) {
+        bail!("failed to arm exact-subaccount accepted-response-loss injection");
     }
+    env.credit_relay_numbered_subaccount(50, starting_balance)?;
+    let _: () = update_noargs(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_main_tick",
+    )?;
+
+    let first_attempts = env.transfer_attempts()?;
+    if first_attempts.len() != 1 || first_attempts[0].result != "AcceptedResponseLost" {
+        bail!("first splitter attempt was not accepted with its response lost: {first_attempts:?}");
+    }
+    let first_accepted = env.transfers()?;
+    if first_accepted.len() != 1 || env.splitter_transfers(50)?.len() != 1 {
+        bail!(
+            "accepted lost-response leg was not durably recorded exactly once: {first_accepted:?}"
+        );
+    }
+    let source_subaccount = relay_numbered_subaccount(50);
+    let original = &first_attempts[0];
+    if original.from_subaccount != Some(source_subaccount)
+        || original.to != first_accepted[0].to
+        || original.amount != first_accepted[0].amount
+        || original.fee.as_ref() != Some(&first_accepted[0].fee)
+        || original.memo != first_accepted[0].memo
+        || original.created_at_time != first_accepted[0].created_at_time
+    {
+        bail!("accepted lost-response attempt did not match its durable transfer: attempts={first_attempts:?} transfers={first_accepted:?}");
+    }
+    let expected_second_gross = starting_balance - starting_balance / 2;
+    if env.relay_numbered_subaccount_balance(50)? != expected_second_gross
+        || !matches!(
+            read_splitter_state_fixture(&env.pic, env.relay),
+            VersionedSplitterStateFixture::V1(SplitterStateFixture {
+                active_job: Some(_),
+                ..
+            })
+        )
+    {
+        bail!("accepted lost-response first leg did not remain unresolved for retry");
+    }
+
+    env.pic.advance_time(Duration::from_secs(3_601));
+    for _ in 0..30 {
+        tick_n(&env.pic, 1);
+        if env.transfer_attempts()?.len() >= 3 {
+            break;
+        }
+    }
+
+    let attempts = env.transfer_attempts()?;
+    if attempts.len() != 3 {
+        bail!("expected lost response, duplicate retry, and second-leg attempts, got {attempts:?}");
+    }
+    let original = &attempts[0];
+    let retry = &attempts[1];
+    let second_leg = &attempts[2];
+    if original.result != "AcceptedResponseLost" || retry.result != "Duplicate" {
+        bail!("expected accepted-lost first attempt followed by duplicate retry, got {attempts:?}");
+    }
+    if original.from_subaccount != retry.from_subaccount
+        || original.to != retry.to
+        || original.amount != retry.amount
+        || original.fee != retry.fee
+        || original.memo != retry.memo
+        || original.created_at_time != retry.created_at_time
+    {
+        bail!("lost-response retry did not reuse the exact TransferArg: {attempts:?}");
+    }
+
+    let accepted = assert_splitter_transfer_pair(&env, 50, starting_balance, 10_000)?;
+    if env.transfers()?.len() != 2 {
+        bail!("duplicate retry must not create a third accepted spend: {accepted:?}");
+    }
+    if attempts
+        .iter()
+        .any(|attempt| attempt.from_subaccount != Some(source_subaccount))
+        || second_leg.result != "Ok"
+        || second_leg.to
+            != (Account {
+                owner: env.relay,
+                subaccount: Some(relay_subaccount_one()),
+            })
+        || nat_to_u64(&second_leg.amount) + 10_000 != expected_second_gross
+        || second_leg.fee != Some(Nat::from(10_000_u64))
+        || second_leg.memo.is_some()
+        || second_leg.created_at_time.is_none()
+        || second_leg.created_at_time == original.created_at_time
+    {
+        bail!("second splitter leg did not use its independently pinned identity: {attempts:?}");
+    }
+    if original.to != accepted[0].to
+        || original.amount != accepted[0].amount
+        || original.fee.as_ref() != Some(&accepted[0].fee)
+        || original.memo != accepted[0].memo
+        || original.created_at_time != accepted[0].created_at_time
+        || second_leg.to != accepted[1].to
+        || second_leg.amount != accepted[1].amount
+        || second_leg.fee.as_ref() != Some(&accepted[1].fee)
+        || second_leg.memo != accepted[1].memo
+        || second_leg.created_at_time != accepted[1].created_at_time
+    {
+        bail!("attempt identities did not match the two accepted splitter transfers");
+    }
+    if !matches!(
+        read_splitter_state_fixture(&env.pic, env.relay),
+        VersionedSplitterStateFixture::V1(SplitterStateFixture {
+            active_job: None,
+            ..
+        })
+    ) {
+        bail!("duplicate retry did not advance and complete the original splitter job");
+    }
+    if env.relay_numbered_subaccount_balance(50)? != 0 {
+        bail!("completed lost-response splitter job did not drain numbered subaccount 50");
+    }
+
     env.advance_time_and_tick(3_601, 30);
-    let completed = assert_splitter_transfer_pair(&env, 50, starting_balance, 10_000)?;
-    if completed[0] != first[0] || env.relay_numbered_subaccount_balance(50)? != 0 {
-        bail!("lost-response retry changed the accepted first transfer or re-split residual funds");
+    if env.transfers()? != accepted
+        || env.transfer_attempts()? != attempts
+        || env.relay_numbered_subaccount_balance(50)? != 0
+    {
+        bail!("completed lost-response splitter job changed after another retry interval");
     }
     Ok(())
 }

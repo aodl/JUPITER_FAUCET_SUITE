@@ -12,8 +12,8 @@ use jupiter_ic_clients::xrc::XrcCanister;
 
 use crate::clients::blackhole::BlackholeCanisterStatus;
 use crate::clients::index::GetAccountIdentifierTransactionsResponse;
-use crate::clients::sns_root::GetSnsCanistersSummaryResponse;
 use crate::clients::sns_wasm::ListDeployedSnsesResponse;
+use jupiter_ic_clients::sns::ListSnsCanistersResponse;
 
 pub(crate) type IcpXdrRate = jupiter_ic_clients::xrc::IcpXdrRate;
 #[allow(dead_code)]
@@ -67,10 +67,10 @@ pub(crate) trait SnsWasmClient: Send + Sync {
 
 #[async_trait]
 pub(crate) trait SnsRootClient: Send + Sync {
-    async fn get_sns_canisters_summary(
+    async fn list_sns_canisters(
         &self,
         root_id: Principal,
-    ) -> Result<GetSnsCanistersSummaryResponse, ClientError>;
+    ) -> Result<ListSnsCanistersResponse, ClientError>;
 }
 
 #[async_trait]

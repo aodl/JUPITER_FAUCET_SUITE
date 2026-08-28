@@ -1,4 +1,5 @@
 use candid::{CandidType, Deserialize, Nat, Principal};
+use jupiter_ic_clients::management::{self, CanisterStatusArgs, CanisterStatusResult};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
@@ -53,6 +54,15 @@ fn canister_status(args: Args) -> BlackholeCanisterStatus {
             .cloned()
             .unwrap_or_else(|| ic_cdk::trap("status not found"))
     })
+}
+
+#[ic_cdk::update]
+async fn debug_management_canister_status(
+    args: CanisterStatusArgs,
+) -> Result<CanisterStatusResult, String> {
+    management::canister_status(&args)
+        .await
+        .map_err(|err| format!("{err:?}"))
 }
 
 #[ic_cdk::update]

@@ -40,6 +40,14 @@ impl<C: CyclesProbeClient> CyclesProbeClient for RelayCyclesProbeClient<'_, C> {
         }
     }
 
+    async fn direct_canister_status(
+        &self,
+        target: Principal,
+    ) -> Result<jupiter_ic_clients::cycles_probe::DirectCanisterStatusObservation, ClientError>
+    {
+        self.inner.direct_canister_status(target).await
+    }
+
     async fn blackhole_cycles(
         &self,
         probe_canister_id: Principal,
@@ -135,9 +143,23 @@ pub(super) async fn probe_cycles_batch<C: CyclesProbeClient>(
 pub(crate) fn sample_source_from_route(route: Option<&CyclesProbeRoute>) -> CyclesSampleSource {
     match route {
         None => CyclesSampleSource::SelfCanister,
+        Some(CyclesProbeRoute::DirectCanisterStatus) => CyclesSampleSource::DirectCanisterStatus,
         Some(CyclesProbeRoute::Blackhole { .. }) => CyclesSampleSource::BlackholeStatus,
         Some(CyclesProbeRoute::SnsRoot { .. }) => CyclesSampleSource::SnsRootStatus,
         Some(CyclesProbeRoute::SnsSwap { .. }) => CyclesSampleSource::SnsSwapStatus,
+    }
+}
+
+#[cfg(test)]
+mod direct_route_tests {
+    use super::*;
+
+    #[test]
+    fn direct_route_maps_to_direct_sample_source() {
+        assert_eq!(
+            sample_source_from_route(Some(&CyclesProbeRoute::DirectCanisterStatus)),
+            CyclesSampleSource::DirectCanisterStatus
+        );
     }
 }
 
@@ -182,6 +204,7 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum TestCall {
+        DirectCanisterStatus(Principal),
         Blackhole { probe: Principal, target: Principal },
         ListDeployedSnses,
         CanisterInfo(Principal),
@@ -229,6 +252,20 @@ mod tests {
     impl CyclesProbeClient for RecordingClient {
         async fn self_cycles(&self, _target: Principal) -> Option<u128> {
             None
+        }
+
+        async fn direct_canister_status(
+            &self,
+            target: Principal,
+        ) -> Result<jupiter_ic_clients::cycles_probe::DirectCanisterStatusObservation, ClientError>
+        {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(TestCall::DirectCanisterStatus(target));
+            Err(ClientError::Call(
+                "direct canister_status unavailable in relay probe mock".to_string(),
+            ))
         }
 
         async fn blackhole_cycles(
@@ -384,7 +421,13 @@ mod tests {
                 canister_id: thirteen
             })
         );
-        assert_eq!(client.calls(), vec![blackhole_call(thirteen, target)]);
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::DirectCanisterStatus(target),
+                blackhole_call(thirteen, target),
+            ]
+        );
     }
 
     #[test]
@@ -412,6 +455,7 @@ mod tests {
         assert_eq!(
             client.calls(),
             vec![
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(thirteen, target),
                 blackhole_call(fiduciary, target),
             ]
@@ -517,7 +561,13 @@ mod tests {
             CyclesSampleSource::SnsRootStatus
         );
         assert_eq!(batch.route_updates[&target], Some(cached));
-        assert_eq!(client.calls(), vec![root_status(root, target)]);
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::DirectCanisterStatus(target),
+                root_status(root, target),
+            ]
+        );
     }
 
     #[test]
@@ -549,7 +599,11 @@ mod tests {
         );
         assert_eq!(
             client.calls(),
-            vec![root_status(root, target), blackhole_call(thirteen, target)]
+            vec![
+                TestCall::DirectCanisterStatus(target),
+                root_status(root, target),
+                blackhole_call(thirteen, target),
+            ]
         );
     }
 
@@ -590,6 +644,7 @@ mod tests {
         assert_eq!(
             client.calls(),
             vec![
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(thirteen, target),
                 blackhole_call(fiduciary, target),
                 TestCall::ListDeployedSnses,
@@ -636,6 +691,7 @@ mod tests {
         assert_eq!(
             client.calls(),
             vec![
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(thirteen, target),
                 blackhole_call(fiduciary, target),
                 TestCall::ListDeployedSnses,

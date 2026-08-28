@@ -104,6 +104,7 @@ pub enum CanisterTrackingReason {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum CyclesSampleSource {
     SelfCanister,
+    DirectCanisterStatus,
     BlackholeStatus,
     SnsRootStatus,
     SnsSwapStatus,

@@ -1,9 +1,8 @@
-pub(super) use candid::Nat;
 pub(super) use std::time::Duration;
 
 pub(super) use crate::clients::governance::NnsGovernanceCanister;
 pub(super) use crate::clients::index::{account_identifier_text_for_account, IcpIndexCanister};
-pub(super) use crate::clients::sns_root::{SnsCanisterSummary, SnsRootCanister};
+pub(super) use crate::clients::sns_root::SnsRootCanister;
 pub(super) use crate::clients::sns_wasm::SnsWasmCanister;
 pub(super) use crate::clients::{
     ExchangeRateClient, GovernanceClient, IndexClient, SnsRootClient, SnsWasmClient,

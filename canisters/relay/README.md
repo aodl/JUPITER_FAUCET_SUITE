@@ -20,7 +20,7 @@ Relay is useful when a project has several canisters, changing cycles demand, or
 - **Allocation follows demand.** Higher-burn canisters naturally receive more because Relay derives demand from observed cycles consumption rather than a fixed percentage split.
 - **Surplus stays useful.** After the managed set is covered, excess ICP can go to a treasury, user/canister account, or public NNS neuron rather than becoming an unnecessarily large cycles buffer.
 - **Current and future funding can be combined.** Relay can keep some ICP spendable now while routing another portion into a Jupiter Faucet commitment that feeds the Relay again in future.
-- **Self-service deployment is immutable and observable.** The frontend/Historian flow can create a dedicated Relay, blackhole it after verification, and register both the Relay and its targets for Historian cycles tracking.
+- **Self-service deployment is immutable and observable.** The frontend/Historian flow creates a dedicated Relay, verifies it, removes every controller while retaining public logs and public status, and registers the Relay and its targets for Historian cycles tracking.
 
 For example, a project with a low-burn frontend and a high-burn storage canister does not need to guess a permanent funding split. One Relay funding stream can follow the observed burn. If total burn later falls, or ICP rises enough that the stream becomes excessive, the residual ICP can leave the cycles loop through the configured surplus recipients.
 
@@ -43,10 +43,10 @@ The current self-service configuration is:
 2. Historian canonicalizes both lists and returns the deterministic setup account and current funding requirement for that complete configuration.
 3. Fund the setup account, then explicitly press **Create Relay**. Funding alone never starts creation.
 4. Historian verifies that every target is observable, creates the child canister, installs the reviewed Relay Wasm and immutable configuration, and sends the remaining eligible setup balance to the child's **subaccount 1**.
-5. Historian verifies the installed module/settings, hands the child to the Fiduciary blackhole, verifies the final blackholed state, and records the configuration as active.
+5. Historian verifies the installed module/settings, atomically removes all controllers while retaining public logs and public status, directly audits that controllerless state, and records the configuration as active.
 6. Historian adds `RelayTarget` tracking to the targets and `RelayInstance` tracking to the spawned Relay so their cycles histories can be sampled and shown by the frontend.
 
-After activation, fund the **Relay itself**, not the setup account. Historian does not control, upgrade, reconstruct, or mutate a successfully blackholed child.
+After activation, fund the **Relay itself**, not the setup account. Historian does not control, upgrade, reconstruct, or mutate a finalized controllerless child.
 
 Targets, recipient destinations, and exact memo bytes jointly define the immutable configuration. One explicitly framed canonical encoder covers every configuration, including empty memos and zero recipients. Order does not matter, but changing any target, destination, type, or memo produces a different setup account and Relay configuration. Repeating the exact same configuration returns its existing active Relay rather than creating a duplicate.
 
@@ -56,7 +56,7 @@ The detailed factory state machine, funding formula, fail-closed reconciliation,
 
 ### Target observability
 
-Relay must be able to measure cycles balances before it can allocate by burn. Self-service Historian therefore probes every target before spending setup ICP, and the child uses the shared **Auto** observation policy at runtime. Auto mode can use recognized blackhole and SNS status routes, including SNS-governed dapps that are not themselves blackholed.
+Relay must be able to measure cycles balances before it can allocate by burn. Self-service Historian therefore probes every target before spending setup ICP, and the child uses the shared **Auto** observation policy at runtime. Auto tries local self balance, then protocol-native direct `canister_status`, then cached/recognized blackhole and SNS fallbacks. Ordinary sampling can use `public` or caller-specific `allowed_viewers` access. Preflight for a not-yet-created child accepts direct status only when visibility is exactly `public`; Historian-only access is not reusable, though a recognized blackhole/SNS fallback can still qualify the target. Public status exposes the management canister's status response, not only the cycles number.
 
 A manually installed Relay can instead set `blackhole_canister_id`, selecting a fixed blackhole route for non-self targets.
 
@@ -336,7 +336,7 @@ Two versioned stable journals survive ordinary same-canister upgrades:
 
 Memory 0 uses an explicit V3 schema. Frozen V1 and V2 decoders exist only for migration. A legacy pending single-recipient transfer becomes an equivalent one-recipient payout with the exact amount, fee, memo, timestamp and ambiguity state preserved. Obsolete main and splitter attribution cursors are discarded and never constrain new attribution. The legacy cadence timestamp is reset to zero because V1/V2 recorded attempts rather than only completed adjudications; once any migrated pending transfer settles, V3 can adjudicate immediately. Reward attribution reconstructs provenance and its temporal cutoff from ICP and reward Ledger/Index history; neither side has a stable attribution cursor, and attribution does not derive from the mutable splitter execution journal in memory 1.
 
-An active splitter requires the replacement args to retain the same ICP Ledger, otherwise the upgrade fails closed. A reinstall clears both journals with the canister's stable memory. Avoid controller-managed upgrades during active value-moving work where practical, especially ICP top-ups, ambiguous ordinary ICP transfers, CMC notify sequences, active splitter work, or pending reward transfers. After upgrade, verify the fresh `CONFIG` log, stable-journal continuation where applicable, the first successful `BaselineOnly` ordinary allocation tick, and managed-canister cycle balances. Self-service blackholed Relays are not upgraded by Historian at all.
+An active splitter requires the replacement args to retain the same ICP Ledger, otherwise the upgrade fails closed. A reinstall clears both journals with the canister's stable memory. Avoid controller-managed upgrades during active value-moving work where practical, especially ICP top-ups, ambiguous ordinary ICP transfers, CMC notify sequences, active splitter work, or pending reward transfers. After upgrade, verify the fresh `CONFIG` log, stable-journal continuation where applicable, the first successful `BaselineOnly` ordinary allocation tick, and managed-canister cycle balances. Controllerless self-service Relays cannot be upgraded and are not reconstructed by Historian.
 
 The suite-wide lifecycle matrix and deployment cautions live in [`../../docs/operations/deployment.md`](../../docs/operations/deployment.md).
 
@@ -449,7 +449,7 @@ Useful production checks:
 icp canister logs u2qkp-aqaaa-aaaar-qb7ea-cai -n ic
 ```
 
-For the full production lifecycle, settings/handoff procedure, rollback guidance and cross-canister deployment order, use [`../../docs/operations/deployment.md`](../../docs/operations/deployment.md) rather than duplicating it here.
+For the full production lifecycle, settings/finalization procedure, rollback guidance and cross-canister deployment order, use [`../../docs/operations/deployment.md`](../../docs/operations/deployment.md) rather than duplicating it here.
 
 ## Related documentation
 

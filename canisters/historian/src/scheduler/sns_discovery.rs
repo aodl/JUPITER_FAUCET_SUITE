@@ -1,38 +1,17 @@
 use super::*;
-pub(super) fn apply_sns_canister_summary(
-    timestamp_nanos: u64,
-    now_secs: u64,
-    max_cycles_entries: u32,
-    summary: SnsCanisterSummary,
-) {
-    let Some(canister_id) = summary.canister_id else {
-        return;
-    };
-    let cycles = summary
-        .status
-        .and_then(|status| status.cycles)
-        .and_then(|cycles| nat_to_u128(&cycles));
-    let dirty_canister_id = canister_id;
-    state::with_root_registry_and_cycles_canister_state_mut(dirty_canister_id, |st| {
-        st.distinct_canisters.insert(canister_id);
-        st.canister_tracking_reasons.insert(
-            canister_id,
-            logic::merge_tracking_reasons(
-                st.canister_tracking_reasons.get(&canister_id),
-                CanisterTrackingReason::SnsDiscovery,
-            ),
-        );
-        if let Some(cycles) = cycles {
-            crate::state::ensure_cycles_history_loaded(st, canister_id);
-            let history = st.cycles_history.entry(canister_id).or_default();
-            let inserted = logic::push_cycles_sample(
-                history,
-                logic::make_cycles_sample(
-                    timestamp_nanos,
-                    cycles,
-                    CyclesSampleSource::SnsRootSummary,
+use jupiter_ic_clients::sns::ListSnsCanistersResponse;
+use std::collections::BTreeSet;
+
+fn register_sns_membership(canister_ids: BTreeSet<candid::Principal>, now_secs: u64) {
+    for canister_id in canister_ids {
+        state::with_root_and_registry_canister_state_mut(canister_id, |st| {
+            st.distinct_canisters.insert(canister_id);
+            st.canister_tracking_reasons.insert(
+                canister_id,
+                logic::merge_tracking_reasons(
+                    st.canister_tracking_reasons.get(&canister_id),
+                    CanisterTrackingReason::SnsDiscovery,
                 ),
-                max_cycles_entries,
             );
             let meta = st
                 .per_canister_meta
@@ -41,29 +20,45 @@ pub(super) fn apply_sns_canister_summary(
             if meta.first_seen_ts.is_none() {
                 meta.first_seen_ts = Some(now_secs);
             }
-            if inserted {
-                logic::apply_cycles_probe_result(
-                    meta,
-                    timestamp_nanos,
-                    CyclesProbeResult::Ok(CyclesSampleSource::SnsRootSummary),
-                );
+            if meta.last_cycles_probe_ts.is_none() {
+                enqueue_initial_cycles_probe(st, canister_id);
             }
-        } else {
-            let meta = st
-                .per_canister_meta
-                .entry(canister_id)
-                .or_insert_with(CanisterMeta::default);
-            if meta.first_seen_ts.is_none() {
-                meta.first_seen_ts = Some(now_secs);
-            }
-            logic::apply_cycles_probe_result(
-                meta,
-                timestamp_nanos,
-                CyclesProbeResult::NotAvailable,
-            );
-        }
-        crate::refresh_memo_registered_canister_summary(st, canister_id);
-    });
+            crate::refresh_memo_registered_canister_summary(st, canister_id);
+        });
+    }
+}
+
+fn authoritative_membership(
+    requested_root: candid::Principal,
+    response: ListSnsCanistersResponse,
+) -> Result<BTreeSet<candid::Principal>, String> {
+    if response
+        .root
+        .is_some_and(|returned| returned != requested_root)
+    {
+        return Err(format!(
+            "SNS Root {} returned a conflicting root principal",
+            requested_root.to_text()
+        ));
+    }
+
+    let mut canister_ids = BTreeSet::from([requested_root]);
+    canister_ids.extend(
+        [
+            response.governance,
+            response.ledger,
+            response.swap,
+            response.index,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    canister_ids.extend(response.dapps);
+    canister_ids.extend(response.archives);
+    if let Some(extensions) = response.extensions {
+        canister_ids.extend(extensions.extension_canister_ids);
+    }
+    Ok(canister_ids)
 }
 
 pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
@@ -72,7 +67,7 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
     sns_wasm: &W,
     sns_root: &R,
 ) -> Result<(), String> {
-    let (snapshot, max_per_tick, max_cycles_entries) = state::with_root_state_mut(|st| {
+    let (snapshot, max_per_tick) = state::with_root_state_mut(|st| {
         if st.active_sns_discovery.is_none() {
             st.active_sns_discovery = Some(ActiveSnsDiscovery {
                 started_at_ts_nanos: timestamp_nanos,
@@ -85,7 +80,6 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
                 .clone()
                 .expect("active sns discovery"),
             st.config.max_canisters_per_cycles_tick.max(1),
-            st.config.max_cycles_entries_per_canister,
         )
     });
 
@@ -115,76 +109,26 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
         snapshot
     };
 
-    let discovery_timestamp_nanos = snapshot.started_at_ts_nanos;
     let start = snapshot.next_index as usize;
     let end = (snapshot.next_index + max_per_tick as u64)
         .min(snapshot.root_canister_ids.len() as u64) as usize;
     for root_id in snapshot.root_canister_ids[start..end].iter().copied() {
-        let summary = match sns_root.get_sns_canisters_summary(root_id).await {
-            Ok(summary) => summary,
+        register_sns_membership(BTreeSet::from([root_id]), now_secs);
+        let response = match sns_root.list_sns_canisters(root_id).await {
+            Ok(response) => response,
             Err(err) => {
                 log_error(&format!(
-                    "historian SNS discovery skipped root {} after get_sns_canisters_summary failed: {err}",
+                    "historian SNS discovery skipped membership for {} after list_sns_canisters failed: {err}",
                     root_id.to_text()
                 ));
                 continue;
             }
         };
-        if let Some(summary) = summary.root {
-            apply_sns_canister_summary(
-                discovery_timestamp_nanos,
-                now_secs,
-                max_cycles_entries,
-                summary,
-            );
-        }
-        if let Some(summary) = summary.governance {
-            apply_sns_canister_summary(
-                discovery_timestamp_nanos,
-                now_secs,
-                max_cycles_entries,
-                summary,
-            );
-        }
-        if let Some(summary) = summary.ledger {
-            apply_sns_canister_summary(
-                discovery_timestamp_nanos,
-                now_secs,
-                max_cycles_entries,
-                summary,
-            );
-        }
-        if let Some(summary) = summary.swap {
-            apply_sns_canister_summary(
-                discovery_timestamp_nanos,
-                now_secs,
-                max_cycles_entries,
-                summary,
-            );
-        }
-        if let Some(summary) = summary.index {
-            apply_sns_canister_summary(
-                discovery_timestamp_nanos,
-                now_secs,
-                max_cycles_entries,
-                summary,
-            );
-        }
-        for summary in summary.dapps {
-            apply_sns_canister_summary(
-                discovery_timestamp_nanos,
-                now_secs,
-                max_cycles_entries,
-                summary,
-            );
-        }
-        for summary in summary.archives {
-            apply_sns_canister_summary(
-                discovery_timestamp_nanos,
-                now_secs,
-                max_cycles_entries,
-                summary,
-            );
+        match authoritative_membership(root_id, response) {
+            Ok(canister_ids) => register_sns_membership(canister_ids, now_secs),
+            Err(err) => log_error(&format!(
+                "historian SNS discovery rejected membership: {err}"
+            )),
         }
     }
 
@@ -198,4 +142,62 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jupiter_ic_clients::sns::SnsExtensions;
+
+    fn principal(byte: u8) -> candid::Principal {
+        candid::Principal::from_slice(&[byte])
+    }
+
+    #[test]
+    fn membership_includes_every_supported_field_and_deduplicates() {
+        let root = principal(1);
+        let result = authoritative_membership(
+            root,
+            ListSnsCanistersResponse {
+                root: Some(root),
+                governance: Some(principal(2)),
+                ledger: Some(principal(3)),
+                swap: Some(principal(4)),
+                index: Some(principal(5)),
+                dapps: vec![principal(6), principal(2)],
+                archives: vec![principal(7), principal(6)],
+                extensions: Some(SnsExtensions {
+                    extension_canister_ids: vec![principal(8), principal(7)],
+                }),
+            },
+        )
+        .unwrap();
+        assert_eq!(result, (1..=8).map(principal).collect());
+    }
+
+    #[test]
+    fn missing_extensions_is_supported_and_conflicting_root_is_rejected() {
+        let root = principal(1);
+        assert_eq!(
+            authoritative_membership(
+                root,
+                ListSnsCanistersResponse {
+                    root: None,
+                    extensions: None,
+                    ..Default::default()
+                }
+            )
+            .unwrap(),
+            BTreeSet::from([root])
+        );
+        assert!(authoritative_membership(
+            root,
+            ListSnsCanistersResponse {
+                root: Some(principal(9)),
+                dapps: vec![principal(10)],
+                ..Default::default()
+            }
+        )
+        .is_err());
+    }
 }

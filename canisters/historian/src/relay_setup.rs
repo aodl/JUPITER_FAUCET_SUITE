@@ -7,23 +7,23 @@ pub(crate) use setup_key::RelaySetupKey;
 use setup_spec::CanonicalRelaySetup;
 use target_set::CanonicalRelayTargetSet;
 
-use crate::clients::blackhole::BlackholeCanisterStatusKind;
-use crate::clients::{
-    BlackholeClient, ClientError, CmcCanister, CmcClient, IcpXdrConversionRate, LedgerClient,
-};
+use crate::clients::{ClientError, CmcCanister, CmcClient, IcpXdrConversionRate, LedgerClient};
 use crate::state::{self, Config};
 use crate::*;
 use candid::{CandidType, Encode, Principal};
-use ic_cdk::call::Call;
 use ic_stable_structures::{storable::Bound, Storable};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, Memo, TransferArg, TransferError};
 use jupiter_ic_clients::account::principal_to_subaccount;
-use jupiter_ic_clients::cycles_probe::{probe_cycles, CyclesProbeClient, CyclesProbePolicy};
+use jupiter_ic_clients::cycles_probe::{
+    probe_cycles_for_audience, CyclesProbeAudience, CyclesProbeClient, CyclesProbePolicy,
+};
 use jupiter_ic_clients::governance::NnsGovernanceCanister;
+use jupiter_ic_clients::management::{
+    CanisterStatusKind, CanisterStatusResult, LogVisibility, StatusVisibility,
+};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::collections::BTreeSet;
 
 pub(crate) const EXTRA_TARGET_CHARGE_E8S: u64 = 25_000_000;
 pub(crate) const MAX_CONCURRENT_FUNDED_RELAY_SETUPS: usize = 4;
@@ -49,7 +49,7 @@ pub enum RelayCreationPhase {
     CodeInstalled,
     RelayFundingPrepared,
     RelayFunded,
-    HandoffAttempted,
+    FinalizationAttempted,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -111,29 +111,6 @@ impl Storable for RelaySetupEntry {
     };
 }
 
-#[derive(Clone, Copy, Debug, CandidType, Deserialize, PartialEq, Eq)]
-enum AuditedCanisterStatusKind {
-    #[serde(rename = "running")]
-    Running,
-    #[serde(rename = "stopping")]
-    Stopping,
-    #[serde(rename = "stopped")]
-    Stopped,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
-struct AuditedCanisterSettings {
-    controllers: Vec<Principal>,
-    log_visibility: jupiter_ic_clients::management::LogVisibility,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
-struct AuditedCanisterStatus {
-    status: AuditedCanisterStatusKind,
-    module_hash: Option<Vec<u8>>,
-    settings: AuditedCanisterSettings,
-}
-
 #[async_trait::async_trait]
 trait ManagementClient: Send + Sync {
     async fn create_canister(
@@ -145,10 +122,8 @@ trait ManagementClient: Send + Sync {
         &self,
         args: &jupiter_ic_clients::management::InstallCodeArgs,
     ) -> Result<(), String>;
-    async fn canister_status(
-        &self,
-        canister_id: Principal,
-    ) -> Result<AuditedCanisterStatus, String>;
+    async fn canister_status(&self, canister_id: Principal)
+        -> Result<CanisterStatusResult, String>;
     async fn update_settings(
         &self,
         args: &jupiter_ic_clients::management::UpdateSettingsArgs,
@@ -195,15 +170,12 @@ impl ManagementClient for IcManagementClient {
     async fn canister_status(
         &self,
         canister_id: Principal,
-    ) -> Result<AuditedCanisterStatus, String> {
-        let response = Call::bounded_wait(Principal::management_canister(), "canister_status")
-            .with_arg(jupiter_ic_clients::management::CanisterStatusArgs { canister_id })
-            .change_timeout(60)
-            .await
-            .map_err(|err| format!("{err:?}"))?;
-        response
-            .candid()
-            .map_err(|err| format!("decode canister_status failed: {err:?}"))
+    ) -> Result<CanisterStatusResult, String> {
+        jupiter_ic_clients::management::canister_status(
+            &jupiter_ic_clients::management::CanisterStatusArgs { canister_id },
+        )
+        .await
+        .map_err(|err| format!("{err:?}"))
     }
 
     async fn update_settings(
@@ -315,7 +287,7 @@ pub(crate) fn reconcile_interrupted_creating_entries_after_upgrade() {
                 | RelayCreationPhase::CodeInstalled
                 | RelayCreationPhase::RelayFundingPrepared
                 | RelayCreationPhase::RelayFunded
-                | RelayCreationPhase::HandoffAttempted => {
+                | RelayCreationPhase::FinalizationAttempted => {
                     progress.last_error = Some("HistorianUpgradeInterrupted".to_string());
                     map.insert(key, RelaySetupEntry::ManualRecoveryRequired(progress));
                 }
@@ -673,49 +645,53 @@ fn accepted_transfer(
     }
 }
 
-fn same_principal_set(actual: &[Principal], expected: &[Principal]) -> bool {
-    actual.iter().copied().collect::<BTreeSet<_>>()
-        == expected.iter().copied().collect::<BTreeSet<_>>()
-        && actual.len() == expected.len()
-}
-
-fn validate_pre_handoff(
-    status: &AuditedCanisterStatus,
+fn validate_pre_finalization(
+    status: &CanisterStatusResult,
     expected_hash: &[u8; 32],
     historian: Principal,
 ) -> Result<(), String> {
-    if status.status != AuditedCanisterStatusKind::Running {
-        return Err("Relay is not running before handoff".to_string());
+    if status.status != CanisterStatusKind::Running {
+        return Err("Relay is not running before finalization".to_string());
     }
     if status.module_hash.as_deref() != Some(expected_hash.as_slice()) {
         return Err(
-            "Relay module hash does not match the approved module before handoff".to_string(),
+            "Relay module hash does not match the approved module before finalization".to_string(),
         );
     }
-    if !same_principal_set(&status.settings.controllers, &[historian]) {
-        return Err("Relay controllers are not exactly {Historian} before handoff".to_string());
+    if status.settings.controllers != [historian] {
+        return Err(
+            "Relay controllers are not exactly [Historian] before finalization".to_string(),
+        );
     }
-    if status.settings.log_visibility != jupiter_ic_clients::management::LogVisibility::Public {
-        return Err("Relay logs are not public before handoff".to_string());
+    if status.settings.log_visibility != LogVisibility::Public {
+        return Err("Relay logs are not public before finalization".to_string());
+    }
+    if status.settings.status_visibility != StatusVisibility::Public {
+        return Err("Relay status is not public before finalization".to_string());
     }
     Ok(())
 }
 
-fn validate_post_handoff(
-    status: &crate::clients::blackhole::BlackholeCanisterStatus,
+fn validate_finalized_relay(
+    status: &CanisterStatusResult,
     expected_hash: &[u8; 32],
-    fiduciary: Principal,
 ) -> Result<(), String> {
-    if status.status != BlackholeCanisterStatusKind::Running {
-        return Err("Relay is not running after Fiduciary handoff".to_string());
+    if status.status != CanisterStatusKind::Running {
+        return Err("Relay is not running after finalization".to_string());
     }
     if status.module_hash.as_deref() != Some(expected_hash.as_slice()) {
         return Err(
-            "Relay module hash does not match the approved module after handoff".to_string(),
+            "Relay module hash does not match the approved module after finalization".to_string(),
         );
     }
-    if !same_principal_set(&status.settings.controllers, &[fiduciary]) {
-        return Err("Relay controllers are not exactly {Fiduciary} after handoff".to_string());
+    if !status.settings.controllers.is_empty() {
+        return Err("Relay controllers are not empty after finalization".to_string());
+    }
+    if status.settings.log_visibility != LogVisibility::Public {
+        return Err("Relay logs are not public after finalization".to_string());
+    }
+    if status.settings.status_visibility != StatusVisibility::Public {
+        return Err("Relay status is not public after finalization".to_string());
     }
     Ok(())
 }
@@ -794,7 +770,6 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
     cycles_probe_client: &C,
     cmc: &dyn CmcClient,
     management: &dyn ManagementClient,
-    fiduciary_blackhole: &dyn BlackholeClient,
 ) -> RelaySetupNotifyResult {
     let neuron_resolver =
         NnsGovernanceCanister::new(jupiter_ic_clients::constants::nns_governance_id());
@@ -805,7 +780,6 @@ async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
         cycles_probe_client,
         cmc,
         management,
-        fiduciary_blackhole,
         &neuron_resolver,
     )
     .await
@@ -842,7 +816,6 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     cycles_probe_client: &C,
     cmc: &dyn CmcClient,
     management: &dyn ManagementClient,
-    fiduciary_blackhole: &dyn BlackholeClient,
     neuron_resolver: &dyn RelayNeuronResolver,
 ) -> RelaySetupNotifyResult {
     let config = state::with_state(|state| state.config.clone());
@@ -928,10 +901,11 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     for target in setup.targets() {
         let cached_route =
             state::with_state(|state| state.cached_cycles_probe_routes.get(target).cloned());
-        let result = probe_cycles(
+        let result = probe_cycles_for_audience(
             &CyclesProbePolicy::Auto,
             *target,
             cached_route,
+            CyclesProbeAudience::AnyCanister,
             cycles_probe_client,
         )
         .await;
@@ -1057,7 +1031,8 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
             &jupiter_ic_clients::management::CreateCanisterArgs {
                 settings: Some(jupiter_ic_clients::management::CanisterSettings {
                     controllers: Some(vec![historian]),
-                    log_visibility: Some(jupiter_ic_clients::management::LogVisibility::Public),
+                    log_visibility: Some(LogVisibility::Public),
+                    status_visibility: Some(StatusVisibility::Public),
                 }),
             },
             config.relay_initial_cycles,
@@ -1230,13 +1205,13 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     {
         return result;
     }
-    let pre_handoff = management.canister_status(relay_canister_id).await;
+    let pre_finalization = management.canister_status(relay_canister_id).await;
     if let Err(result) = require_phase(key, RelayCreationPhase::RelayFunded) {
         return result;
     }
-    match pre_handoff {
+    match pre_finalization {
         Ok(status) => {
-            if let Err(message) = validate_pre_handoff(&status, &expected_hash, historian) {
+            if let Err(message) = validate_pre_finalization(&status, &expected_hash, historian) {
                 return manual_recovery(key, RelayCreationPhase::RelayFunded, message);
             }
         }
@@ -1244,42 +1219,42 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
             return manual_recovery(
                 key,
                 RelayCreationPhase::RelayFunded,
-                format!("pre-handoff management audit failed: {error}"),
+                format!("pre-finalization management audit failed: {error}"),
             );
         }
     }
     if let Err(result) = update_progress(key, RelayCreationPhase::RelayFunded, |progress| {
-        progress.phase = RelayCreationPhase::HandoffAttempted;
+        progress.phase = RelayCreationPhase::FinalizationAttempted;
     }) {
         return result;
     }
-    let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
-    let handoff_result = management
+    let finalization_result = management
         .update_settings(&jupiter_ic_clients::management::UpdateSettingsArgs {
             canister_id: relay_canister_id,
             settings: jupiter_ic_clients::management::CanisterSettings {
-                controllers: Some(vec![fiduciary]),
-                log_visibility: Some(jupiter_ic_clients::management::LogVisibility::Public),
+                controllers: Some(Vec::new()),
+                log_visibility: Some(LogVisibility::Public),
+                status_visibility: Some(StatusVisibility::Public),
             },
         })
         .await;
-    if let Err(result) = require_phase(key, RelayCreationPhase::HandoffAttempted) {
+    if let Err(result) = require_phase(key, RelayCreationPhase::FinalizationAttempted) {
         return result;
     }
-    let post_handoff = fiduciary_blackhole.canister_status(relay_canister_id).await;
-    if let Err(result) = require_phase(key, RelayCreationPhase::HandoffAttempted) {
+    let finalized_status = management.canister_status(relay_canister_id).await;
+    if let Err(result) = require_phase(key, RelayCreationPhase::FinalizationAttempted) {
         return result;
     }
-    match post_handoff {
+    match finalized_status {
         Ok(status) => {
-            if let Err(message) = validate_post_handoff(&status, &expected_hash, fiduciary) {
-                let prefix = handoff_result
+            if let Err(message) = validate_finalized_relay(&status, &expected_hash) {
+                let prefix = finalization_result
                     .err()
                     .map(|error| format!("update_settings reported {error}; "))
                     .unwrap_or_default();
                 return manual_recovery(
                     key,
-                    RelayCreationPhase::HandoffAttempted,
+                    RelayCreationPhase::FinalizationAttempted,
                     format!("{prefix}{message}"),
                 );
             }
@@ -1287,12 +1262,12 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
         Err(error) => {
             return manual_recovery(
                 key,
-                RelayCreationPhase::HandoffAttempted,
-                format!("post-handoff Fiduciary audit failed: {error}"),
+                RelayCreationPhase::FinalizationAttempted,
+                format!("post-finalization direct management audit failed: {error}"),
             );
         }
     }
-    let final_progress = match require_phase(key, RelayCreationPhase::HandoffAttempted) {
+    let final_progress = match require_phase(key, RelayCreationPhase::FinalizationAttempted) {
         Ok(progress) => progress,
         Err(result) => return result,
     };
@@ -1311,7 +1286,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     if !ready {
         return manual_recovery(
             key,
-            RelayCreationPhase::HandoffAttempted,
+            RelayCreationPhase::FinalizationAttempted,
             "activation prerequisites are incomplete",
         );
     }
@@ -1337,9 +1312,6 @@ pub(crate) async fn notify_relay_configuration(args: RelaySetupArgs) -> RelaySet
             .cmc_canister_id
             .unwrap_or_else(Principal::management_canister),
     );
-    let fiduciary_blackhole = clients::blackhole::BlackholeCanister::new(
-        jupiter_ic_clients::constants::fiduciary_blackhole_canister_id(),
-    );
     notify_with_clients_for_historian(
         args,
         self_canister_id(),
@@ -1347,7 +1319,6 @@ pub(crate) async fn notify_relay_configuration(args: RelaySetupArgs) -> RelaySet
         &cycles_probe_client,
         &cmc,
         &IcManagementClient,
-        &fiduciary_blackhole,
     )
     .await
 }
@@ -1399,9 +1370,13 @@ mod tests {
     };
     use std::collections::VecDeque;
     use std::future::Future;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
     use std::task::{Context, Poll};
+
+    type AuditedCanisterStatus = CanisterStatusResult;
+    type AuditedCanisterStatusKind = CanisterStatusKind;
+    type AuditedCanisterSettings = jupiter_ic_clients::management::DefiniteCanisterSettings;
 
     fn principal(byte: u8) -> Principal {
         Principal::from_slice(&[byte])
@@ -1691,6 +1666,7 @@ mod tests {
 
     struct MixedRouteCyclesProbe {
         direct_target: Principal,
+        direct_visibility: StatusVisibility,
         sns_swap_target: Principal,
         sns_root: Principal,
         expose_sns_route: bool,
@@ -1702,6 +1678,28 @@ mod tests {
         async fn self_cycles(&self, target: Principal) -> Option<u128> {
             self.calls.lock().unwrap().push(format!("self:{target}"));
             (target == self.direct_target).then_some(1_000_000)
+        }
+
+        async fn direct_canister_status(
+            &self,
+            target: Principal,
+        ) -> Result<
+            jupiter_ic_clients::cycles_probe::DirectCanisterStatusObservation,
+            jupiter_ic_clients::ClientError,
+        > {
+            self.calls.lock().unwrap().push(format!("direct:{target}"));
+            if target == self.direct_target {
+                Ok(
+                    jupiter_ic_clients::cycles_probe::DirectCanisterStatusObservation {
+                        cycles: 1_000_000,
+                        status_visibility: self.direct_visibility.clone(),
+                    },
+                )
+            } else {
+                Err(jupiter_ic_clients::ClientError::Call(
+                    "direct status denied".to_string(),
+                ))
+            }
         }
 
         async fn blackhole_cycles(
@@ -1786,6 +1784,18 @@ mod tests {
             None
         }
 
+        async fn direct_canister_status(
+            &self,
+            _target: Principal,
+        ) -> Result<
+            jupiter_ic_clients::cycles_probe::DirectCanisterStatusObservation,
+            jupiter_ic_clients::ClientError,
+        > {
+            Err(jupiter_ic_clients::ClientError::Call(
+                "direct canister_status unavailable in yielding mock".to_string(),
+            ))
+        }
+
         async fn blackhole_cycles(
             &self,
             _probe_canister_id: Principal,
@@ -1848,6 +1858,18 @@ mod tests {
             None
         }
 
+        async fn direct_canister_status(
+            &self,
+            _target: Principal,
+        ) -> Result<
+            jupiter_ic_clients::cycles_probe::DirectCanisterStatusObservation,
+            jupiter_ic_clients::ClientError,
+        > {
+            Err(jupiter_ic_clients::ClientError::Call(
+                "direct canister_status unavailable in relay setup mock".to_string(),
+            ))
+        }
+
         async fn blackhole_cycles(
             &self,
             _probe_canister_id: Principal,
@@ -1907,6 +1929,10 @@ mod tests {
         create_calls: AtomicUsize,
         status_calls: AtomicUsize,
         update_calls: AtomicUsize,
+        clear_cycles_minted_on_final_status: bool,
+        creates: Mutex<Vec<jupiter_ic_clients::management::CreateCanisterArgs>>,
+        updates: Mutex<Vec<jupiter_ic_clients::management::UpdateSettingsArgs>>,
+        finalization_phase_observed_at_update: AtomicBool,
         installs: Mutex<Vec<jupiter_ic_clients::management::InstallCodeArgs>>,
         status_results: Mutex<VecDeque<Result<AuditedCanisterStatus, String>>>,
     }
@@ -2030,10 +2056,11 @@ mod tests {
     impl ManagementClient for MockManagement {
         async fn create_canister(
             &self,
-            _args: &jupiter_ic_clients::management::CreateCanisterArgs,
+            args: &jupiter_ic_clients::management::CreateCanisterArgs,
             _cycles: u128,
         ) -> Result<jupiter_ic_clients::management::CreateCanisterResult, String> {
             self.create_calls.fetch_add(1, Ordering::SeqCst);
+            self.creates.lock().unwrap().push(args.clone());
             if let Some(error) = &self.create_error {
                 Err(error.clone())
             } else {
@@ -2055,54 +2082,8 @@ mod tests {
             &self,
             _canister_id: Principal,
         ) -> Result<AuditedCanisterStatus, String> {
-            self.status_calls.fetch_add(1, Ordering::SeqCst);
-            if let Some(result) = self.status_results.lock().unwrap().pop_front() {
-                return result;
-            }
-            Ok(AuditedCanisterStatus {
-                status: AuditedCanisterStatusKind::Running,
-                module_hash: approved_relay_onchain_module_hash().map(|hash| hash.to_vec()),
-                settings: AuditedCanisterSettings {
-                    controllers: vec![principal(42)],
-                    log_visibility: jupiter_ic_clients::management::LogVisibility::Public,
-                },
-            })
-        }
-
-        async fn update_settings(
-            &self,
-            _args: &jupiter_ic_clients::management::UpdateSettingsArgs,
-        ) -> Result<(), String> {
-            self.update_calls.fetch_add(1, Ordering::SeqCst);
-            self.update_error.clone().map_or(Ok(()), Err)
-        }
-    }
-
-    struct MockFiduciary {
-        calls: AtomicUsize,
-        result:
-            Mutex<Option<Result<crate::clients::blackhole::BlackholeCanisterStatus, ClientError>>>,
-        clear_cycles_minted_on_call: bool,
-    }
-
-    impl MockFiduciary {
-        fn new() -> Self {
-            Self {
-                calls: AtomicUsize::new(0),
-                result: Mutex::new(None),
-                clear_cycles_minted_on_call: false,
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl BlackholeClient for MockFiduciary {
-        async fn canister_status(
-            &self,
-            _canister_id: Principal,
-        ) -> Result<crate::clients::blackhole::BlackholeCanisterStatus, ClientError> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            if self.clear_cycles_minted_on_call {
+            let call_index = self.status_calls.fetch_add(1, Ordering::SeqCst);
+            if call_index == 1 && self.clear_cycles_minted_on_final_status {
                 state::with_relay_setup_entries_map(|map| {
                     let Some(entry) = map.iter().next() else {
                         return;
@@ -2114,21 +2095,46 @@ mod tests {
                     }
                 });
             }
-            if let Some(result) = self.result.lock().unwrap().take() {
+            if let Some(result) = self.status_results.lock().unwrap().pop_front() {
                 return result;
             }
-            Ok(crate::clients::blackhole::BlackholeCanisterStatus {
-                status: BlackholeCanisterStatusKind::Running,
+            Ok(AuditedCanisterStatus {
+                status: AuditedCanisterStatusKind::Running,
+                cycles: Nat::from(1_000_000_u64),
                 module_hash: approved_relay_onchain_module_hash().map(|hash| hash.to_vec()),
-                cycles: Nat::from(1_000_000u64),
-                settings: crate::clients::blackhole::BlackholeSettings {
-                    controllers: vec![
-                        jupiter_ic_clients::constants::fiduciary_blackhole_canister_id(),
-                    ],
+                settings: AuditedCanisterSettings {
+                    controllers: if call_index == 0 {
+                        vec![principal(42)]
+                    } else {
+                        Vec::new()
+                    },
+                    log_visibility: LogVisibility::Public,
+                    status_visibility: StatusVisibility::Public,
                 },
-                memory_size: None,
-                memory_metrics: None,
             })
+        }
+
+        async fn update_settings(
+            &self,
+            args: &jupiter_ic_clients::management::UpdateSettingsArgs,
+        ) -> Result<(), String> {
+            self.update_calls.fetch_add(1, Ordering::SeqCst);
+            self.updates.lock().unwrap().push(args.clone());
+            self.finalization_phase_observed_at_update.store(
+                state::with_relay_setup_entries_map(|map| {
+                    map.iter().any(|entry| {
+                        matches!(
+                            entry.value(),
+                            RelaySetupEntry::Creating(RelayCreationProgress {
+                                phase: RelayCreationPhase::FinalizationAttempted,
+                                ..
+                            })
+                        )
+                    })
+                }),
+                Ordering::SeqCst,
+            );
+            self.update_error.clone().map_or(Ok(()), Err)
         }
     }
 
@@ -2136,13 +2142,7 @@ mod tests {
         ledger: MockLedger,
         probe_succeeds: bool,
         create_error: Option<&str>,
-    ) -> (
-        MockLedger,
-        MockCyclesProbe,
-        MockCmc,
-        MockManagement,
-        MockFiduciary,
-    ) {
+    ) -> (MockLedger, MockCyclesProbe, MockCmc, MockManagement) {
         (
             ledger,
             MockCyclesProbe {
@@ -2164,11 +2164,27 @@ mod tests {
                 create_calls: AtomicUsize::new(0),
                 status_calls: AtomicUsize::new(0),
                 update_calls: AtomicUsize::new(0),
+                clear_cycles_minted_on_final_status: false,
+                creates: Mutex::new(Vec::new()),
+                updates: Mutex::new(Vec::new()),
+                finalization_phase_observed_at_update: AtomicBool::new(false),
                 installs: Mutex::new(Vec::new()),
                 status_results: Mutex::new(VecDeque::new()),
             },
-            MockFiduciary::new(),
         )
+    }
+
+    fn audited_relay_status(controllers: Vec<Principal>) -> AuditedCanisterStatus {
+        AuditedCanisterStatus {
+            status: CanisterStatusKind::Running,
+            cycles: Nat::from(1_000_000_u64),
+            module_hash: approved_relay_onchain_module_hash().map(|hash| hash.to_vec()),
+            settings: AuditedCanisterSettings {
+                controllers,
+                log_visibility: LogVisibility::Public,
+                status_visibility: StatusVisibility::Public,
+            },
+        }
     }
 
     #[test]
@@ -2258,7 +2274,7 @@ mod tests {
 
     #[test]
     fn maximum_manual_recovery_entry_fits_the_stable_bound() {
-        let progress = progress_for_phase(RelayCreationPhase::HandoffAttempted);
+        let progress = progress_for_phase(RelayCreationPhase::FinalizationAttempted);
         assert_eq!(
             progress.last_error.as_ref().unwrap().len(),
             MAX_DIAGNOSTIC_BYTES
@@ -2283,7 +2299,7 @@ mod tests {
             RelayCreationPhase::CodeInstalled,
             RelayCreationPhase::RelayFundingPrepared,
             RelayCreationPhase::RelayFunded,
-            RelayCreationPhase::HandoffAttempted,
+            RelayCreationPhase::FinalizationAttempted,
         ];
 
         for (index, phase) in retryable.into_iter().enumerate() {
@@ -2559,7 +2575,7 @@ mod tests {
         state::with_state_mut_sections(state::DIRTY_ROOT, |state| {
             state.config.canonical_relay_targets = vec![principal(1), principal(2)];
         });
-        let (ledger, probe, cmc, management, fiduciary) =
+        let (ledger, probe, cmc, management) =
             mocks(MockLedger::new([], []), false, Some("must not create"));
         let result = block_on(notify_with_clients_for_historian(
             setup_args(vec![principal(2), principal(1)]),
@@ -2568,7 +2584,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             result,
@@ -2641,7 +2656,7 @@ mod tests {
                 }) if relay_canister_id == relay
             ));
 
-            let (ledger, probe, cmc, management, fiduciary) =
+            let (ledger, probe, cmc, management) =
                 mocks(MockLedger::new([], []), false, Some("must not create"));
             let notify = block_on(notify_with_clients_for_historian(
                 setup_args(vec![target]),
@@ -2650,7 +2665,6 @@ mod tests {
                 &probe,
                 &cmc,
                 &management,
-                &fiduciary,
             ));
             assert_eq!(
                 notify,
@@ -2668,7 +2682,6 @@ mod tests {
             assert_eq!(management.status_calls.load(Ordering::SeqCst), 0);
             assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
             assert!(management.installs.lock().unwrap().is_empty());
-            assert_eq!(fiduciary.calls.load(Ordering::SeqCst), 0);
         }
     }
 
@@ -2702,7 +2715,7 @@ mod tests {
             }) if relay_canister_id == principal(73) && message == "stored manual recovery detail"
         ));
 
-        let (ledger, probe, cmc, management, fiduciary) =
+        let (ledger, probe, cmc, management) =
             mocks(MockLedger::new([], []), false, Some("must not create"));
         let notify = block_on(notify_with_clients_for_historian(
             setup_args(vec![target]),
@@ -2711,7 +2724,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert_eq!(
             notify,
@@ -2735,7 +2747,6 @@ mod tests {
         assert_eq!(management.status_calls.load(Ordering::SeqCst), 0);
         assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
         assert!(management.installs.lock().unwrap().is_empty());
-        assert_eq!(fiduciary.calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -2763,7 +2774,7 @@ mod tests {
             })
         ));
 
-        let (ledger, probe, cmc, management, fiduciary) =
+        let (ledger, probe, cmc, management) =
             mocks(MockLedger::new([], []), false, Some("must not create"));
         let notify = block_on(notify_with_clients_for_historian(
             setup_args(vec![target]),
@@ -2772,7 +2783,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert_eq!(
             notify,
@@ -2791,13 +2801,12 @@ mod tests {
         assert_eq!(management.status_calls.load(Ordering::SeqCst), 0);
         assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
         assert!(management.installs.lock().unwrap().is_empty());
-        assert_eq!(fiduciary.calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
     fn static_and_underfunded_calls_make_only_the_permitted_external_reads() {
         reset();
-        let (ledger, probe, cmc, management, fiduciary) =
+        let (ledger, probe, cmc, management) =
             mocks(MockLedger::new([299_999_999], []), true, None);
         let invalid = block_on(notify_with_clients_for_historian(
             setup_args(vec![Principal::anonymous()]),
@@ -2806,7 +2815,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             invalid,
@@ -2821,7 +2829,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert_eq!(
             below,
@@ -2847,7 +2854,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             disabled_result,
@@ -2860,8 +2866,7 @@ mod tests {
     fn unfunded_neuron_configuration_does_not_call_governance_or_reserve() {
         reset();
         let args = neuron_setup_args(principal(1), 42);
-        let (ledger, probe, cmc, management, fiduciary) =
-            mocks(MockLedger::new([0], []), true, None);
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([0], []), true, None);
         let resolver = MockNeuronResolver::readable();
 
         let result = block_on(notify_with_clients_and_neuron_resolver(
@@ -2871,7 +2876,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &resolver,
         ));
 
@@ -2904,7 +2908,7 @@ mod tests {
         cfg.relay_setup_min_e8s = 1;
         state::set_state(State::new(cfg, 0));
         let args = neuron_setup_args(principal(1), 42);
-        let (ledger, probe, cmc, management, fiduciary) =
+        let (ledger, probe, cmc, management) =
             mocks(MockLedger::new([107_039_999], []), true, None);
         let resolver = MockNeuronResolver::readable();
 
@@ -2915,7 +2919,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &resolver,
         ));
 
@@ -2946,8 +2949,7 @@ mod tests {
         let args = setup_args(vec![principal(1)]);
 
         reset();
-        let (ledger, probe, cmc, management, fiduciary) =
-            mocks(MockLedger::new([], []), true, None);
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
         let balance_failure = block_on(notify_with_clients_for_historian(
             args.clone(),
             principal(42),
@@ -2955,7 +2957,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             balance_failure,
@@ -2968,7 +2969,7 @@ mod tests {
 
         reset();
         let ledger = MockLedger::new([300_000_000], []).with_fee_failures([true]);
-        let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
+        let (ledger, probe, cmc, management) = mocks(ledger, true, None);
         let fee_failure = block_on(notify_with_clients_for_historian(
             args.clone(),
             principal(42),
@@ -2976,7 +2977,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             fee_failure,
@@ -2988,7 +2988,7 @@ mod tests {
         assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
 
         reset();
-        let (ledger, probe, mut cmc, management, fiduciary) =
+        let (ledger, probe, mut cmc, management) =
             mocks(MockLedger::new([300_000_000], []), true, None);
         cmc.rate_error = Some("CMC rate unavailable".to_string());
         let rate_failure = block_on(notify_with_clients_for_historian(
@@ -2998,7 +2998,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             rate_failure,
@@ -3013,7 +3012,7 @@ mod tests {
         let mut cfg = config();
         cfg.relay_setup_min_e8s = 1;
         state::set_state(State::new(cfg, 0));
-        let (ledger, probe, cmc, management, fiduciary) =
+        let (ledger, probe, cmc, management) =
             mocks(MockLedger::new([107_039_999], []), true, None);
         let below_current = block_on(notify_with_clients_for_historian(
             args,
@@ -3022,7 +3021,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert_eq!(
             below_current,
@@ -3042,7 +3040,7 @@ mod tests {
     #[test]
     fn failed_probe_removes_reservation_before_any_spend() {
         reset();
-        let (ledger, probe, cmc, management, fiduciary) =
+        let (ledger, probe, cmc, management) =
             mocks(MockLedger::new([300_000_000], []), false, None);
         let result = block_on(notify_with_clients_for_historian(
             setup_args(vec![principal(1)]),
@@ -3051,7 +3049,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             result,
@@ -3070,6 +3067,7 @@ mod tests {
         let sns_swap_target = principal(2);
         let probe = MixedRouteCyclesProbe {
             direct_target,
+            direct_visibility: StatusVisibility::Public,
             sns_swap_target,
             sns_root: principal(3),
             expose_sns_route: true,
@@ -3087,6 +3085,10 @@ mod tests {
             minted_cycles: 2_000_000_000_000,
         };
         let management = MockManagement {
+            clear_cycles_minted_on_final_status: false,
+            creates: Mutex::new(Vec::new()),
+            updates: Mutex::new(Vec::new()),
+            finalization_phase_observed_at_update: AtomicBool::new(false),
             relay_id: principal(80),
             create_error: None,
             install_error: None,
@@ -3097,7 +3099,6 @@ mod tests {
             installs: Mutex::new(Vec::new()),
             status_results: Mutex::new(VecDeque::new()),
         };
-        let fiduciary = MockFiduciary::new();
         let result = block_on(notify_with_clients_for_historian(
             setup_args(vec![sns_swap_target, direct_target]),
             principal(42),
@@ -3105,12 +3106,11 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(result, RelaySetupNotifyResult::Active { .. }));
         let calls = probe.calls.lock().unwrap();
-        assert_eq!(calls[0], format!("self:{direct_target}"));
-        assert_eq!(calls[1], format!("self:{sns_swap_target}"));
+        assert_eq!(calls[0], format!("direct:{direct_target}"));
+        assert_eq!(calls[1], format!("direct:{sns_swap_target}"));
         let list_position = calls.iter().position(|call| call == "list_sns").unwrap();
         let swap_position = calls
             .iter()
@@ -3124,12 +3124,109 @@ mod tests {
     }
 
     #[test]
+    fn non_public_direct_target_without_reusable_fallback_fails_before_spend() {
+        reset();
+        let target = principal(1);
+        let probe = MixedRouteCyclesProbe {
+            direct_target: target,
+            direct_visibility: StatusVisibility::Controllers,
+            sns_swap_target: target,
+            sns_root: principal(3),
+            expose_sns_route: false,
+            calls: Mutex::new(Vec::new()),
+        };
+        let ledger = MockLedger::new([325_000_000], []);
+        let (_, _, cmc, management) = mocks(MockLedger::new([], []), true, None);
+
+        let result = block_on(notify_with_clients_for_historian(
+            setup_args(vec![target]),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::FailedPreSpend { message }
+                if message.contains("not reusable by any canister")
+        ));
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            probe
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|call| *call == &format!("direct:{target}"))
+                .count(),
+            1
+        );
+        assert!(debug_setup_entries().is_empty());
+    }
+
+    #[test]
+    fn non_public_direct_target_qualifies_through_reusable_sns_fallback() {
+        reset();
+        let target = principal(1);
+        let root = principal(3);
+        let probe = MixedRouteCyclesProbe {
+            direct_target: target,
+            direct_visibility: StatusVisibility::AllowedViewers(vec![principal(42)]),
+            sns_swap_target: target,
+            sns_root: root,
+            expose_sns_route: true,
+            calls: Mutex::new(Vec::new()),
+        };
+        let ledger = MockLedger::new(
+            [325_000_000, 322_990_000],
+            [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+        );
+        let (_, _, cmc, management) = mocks(MockLedger::new([], []), true, None);
+
+        let result = block_on(notify_with_clients_for_historian(
+            setup_args(vec![target]),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+
+        assert!(matches!(result, RelaySetupNotifyResult::Active { .. }));
+        let accepted_route =
+            state::with_state(|st| st.cached_cycles_probe_routes.get(&target).cloned());
+        assert_eq!(
+            accepted_route,
+            Some(CyclesProbeRoute::SnsSwap {
+                root_canister_id: root,
+                swap_canister_id: target,
+            })
+        );
+        let calls = probe.calls.lock().unwrap();
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| *call == &format!("direct:{target}"))
+                .count(),
+            1
+        );
+        assert!(calls
+            .iter()
+            .any(|call| call == &format!("sns_swap:{target}")));
+    }
+
+    #[test]
     fn one_unobservable_target_prevents_all_irreversible_operations() {
         reset();
         let direct_target = principal(1);
         let unobservable_target = principal(2);
         let probe = MixedRouteCyclesProbe {
             direct_target,
+            direct_visibility: StatusVisibility::Public,
             sns_swap_target: unobservable_target,
             sns_root: principal(3),
             expose_sns_route: false,
@@ -3144,6 +3241,10 @@ mod tests {
             minted_cycles: 2_000_000_000_000,
         };
         let management = MockManagement {
+            clear_cycles_minted_on_final_status: false,
+            creates: Mutex::new(Vec::new()),
+            updates: Mutex::new(Vec::new()),
+            finalization_phase_observed_at_update: AtomicBool::new(false),
             relay_id: principal(80),
             create_error: None,
             install_error: None,
@@ -3154,7 +3255,6 @@ mod tests {
             installs: Mutex::new(Vec::new()),
             status_results: Mutex::new(VecDeque::new()),
         };
-        let fiduciary = MockFiduciary::new();
         let result = block_on(notify_with_clients_for_historian(
             setup_args(vec![direct_target, unobservable_target]),
             principal(42),
@@ -3162,7 +3262,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             result,
@@ -3174,7 +3273,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|call| call.starts_with("self:"))
+                .filter(|call| call.starts_with("direct:"))
                 .count(),
             2
         );
@@ -3196,6 +3295,10 @@ mod tests {
         };
         let cmc = ReadBarrierCmc::new();
         let management = MockManagement {
+            clear_cycles_minted_on_final_status: false,
+            creates: Mutex::new(Vec::new()),
+            updates: Mutex::new(Vec::new()),
+            finalization_phase_observed_at_update: AtomicBool::new(false),
             relay_id: principal(80),
             create_error: None,
             install_error: None,
@@ -3206,7 +3309,6 @@ mod tests {
             installs: Mutex::new(Vec::new()),
             status_results: Mutex::new(VecDeque::new()),
         };
-        let fiduciary = MockFiduciary::new();
 
         let first = notify_with_clients_for_historian(
             args.clone(),
@@ -3215,7 +3317,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         );
         let second = notify_with_clients_for_historian(
             args,
@@ -3224,7 +3325,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         );
         let (first, second) = block_on(futures::future::join(first, second));
         assert!(matches!(
@@ -3251,7 +3351,7 @@ mod tests {
             [400_000_000, 397_990_000],
             [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
         );
-        let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
+        let (ledger, probe, cmc, management) = mocks(ledger, true, None);
         let resolver = YieldingNeuronResolver {
             calls: Mutex::new(Vec::new()),
             unreadable: false,
@@ -3264,7 +3364,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &resolver,
         );
         let second = notify_with_clients_and_neuron_resolver(
@@ -3274,7 +3373,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &resolver,
         );
         let (first, second) = block_on(futures::future::join(first, second));
@@ -3308,7 +3406,7 @@ mod tests {
     fn neuron_validation_reservations_count_toward_global_concurrency_limit() {
         reset();
         let ledger = MockLedger::new([400_000_000; 5], []);
-        let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
+        let (ledger, probe, cmc, management) = mocks(ledger, true, None);
         let mut releases = Vec::new();
         let mut waiters = VecDeque::new();
         for _ in 0..MAX_CONCURRENT_FUNDED_RELAY_SETUPS {
@@ -3328,7 +3426,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &resolver,
         ));
         let mut two = Box::pin(notify_with_clients_and_neuron_resolver(
@@ -3338,7 +3435,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &resolver,
         ));
         let mut three = Box::pin(notify_with_clients_and_neuron_resolver(
@@ -3348,7 +3444,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &resolver,
         ));
         let mut four = Box::pin(notify_with_clients_and_neuron_resolver(
@@ -3358,7 +3453,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &resolver,
         ));
         let five = notify_with_clients_and_neuron_resolver(
@@ -3368,7 +3462,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &resolver,
         );
         let mut context = Context::from_waker(futures::task::noop_waker_ref());
@@ -3412,7 +3505,7 @@ mod tests {
         let args = setup_args(vec![principal(1)]);
 
         reset();
-        let (ledger, probe, cmc, management, fiduciary) = mocks(
+        let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
                 [300_000_000, 297_990_000],
                 [LedgerOutcome::Duplicate(10), LedgerOutcome::Accepted(11)],
@@ -3427,7 +3520,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert_eq!(
             duplicate,
@@ -3438,7 +3530,7 @@ mod tests {
         assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
 
         reset();
-        let (ledger, probe, cmc, management, fiduciary) = mocks(
+        let (ledger, probe, cmc, management) = mocks(
             MockLedger::new([300_000_000], [LedgerOutcome::Rejected]),
             true,
             None,
@@ -3450,7 +3542,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             rejected,
@@ -3462,7 +3553,7 @@ mod tests {
         assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
 
         reset();
-        let (ledger, probe, mut cmc, management, fiduciary) = mocks(
+        let (ledger, probe, mut cmc, management) = mocks(
             MockLedger::new([300_000_000], [LedgerOutcome::Accepted(10)]),
             true,
             None,
@@ -3475,7 +3566,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             notify_error,
@@ -3491,7 +3581,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             repeated,
@@ -3502,7 +3591,7 @@ mod tests {
         assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
 
         reset();
-        let (ledger, probe, mut cmc, management, fiduciary) = mocks(
+        let (ledger, probe, mut cmc, management) = mocks(
             MockLedger::new([300_000_000], [LedgerOutcome::Accepted(10)]),
             true,
             None,
@@ -3515,7 +3604,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             insufficient_cycles,
@@ -3532,7 +3620,7 @@ mod tests {
     fn ambiguous_transfer_and_dispatched_create_are_never_replayed() {
         reset();
         let args = setup_args(vec![principal(1)]);
-        let (ledger, probe, cmc, management, fiduciary) = mocks(
+        let (ledger, probe, cmc, management) = mocks(
             MockLedger::new([300_000_000], [LedgerOutcome::Ambiguous]),
             true,
             None,
@@ -3544,7 +3632,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             first,
@@ -3560,7 +3647,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             second,
@@ -3569,7 +3655,7 @@ mod tests {
         assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
 
         reset();
-        let (ledger, probe, cmc, management, fiduciary) = mocks(
+        let (ledger, probe, cmc, management) = mocks(
             MockLedger::new([300_000_000], [LedgerOutcome::Accepted(10)]),
             true,
             Some("create result was lost"),
@@ -3581,7 +3667,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             first,
@@ -3598,7 +3683,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             second,
@@ -3612,15 +3696,17 @@ mod tests {
         let args = setup_args(vec![principal(1)]);
         let approved_status = || AuditedCanisterStatus {
             status: AuditedCanisterStatusKind::Running,
+            cycles: Nat::from(1_000_000_u64),
             module_hash: approved_relay_onchain_module_hash().map(|hash| hash.to_vec()),
             settings: AuditedCanisterSettings {
                 controllers: vec![principal(42)],
-                log_visibility: jupiter_ic_clients::management::LogVisibility::Public,
+                log_visibility: LogVisibility::Public,
+                status_visibility: StatusVisibility::Public,
             },
         };
 
         reset();
-        let (ledger, probe, cmc, mut management, fiduciary) = mocks(
+        let (ledger, probe, cmc, mut management) = mocks(
             MockLedger::new(
                 [300_000_000, 297_990_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
@@ -3629,11 +3715,11 @@ mod tests {
             None,
         );
         management.install_error = Some("install callback reported failure".to_string());
-        management
-            .status_results
-            .lock()
-            .unwrap()
-            .push_back(Ok(approved_status()));
+        management.status_results.lock().unwrap().extend([
+            Ok(approved_status()),
+            Ok(approved_status()),
+            Ok(audited_relay_status(Vec::new())),
+        ]);
         let reconciled = block_on(notify_with_clients_for_historian(
             args.clone(),
             principal(42),
@@ -3641,7 +3727,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert_eq!(
             reconciled,
@@ -3649,10 +3734,10 @@ mod tests {
                 relay_canister_id: principal(80),
             }
         );
-        assert_eq!(management.status_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 3);
 
         reset();
-        let (ledger, probe, cmc, mut management, fiduciary) = mocks(
+        let (ledger, probe, cmc, mut management) = mocks(
             MockLedger::new([300_000_000], [LedgerOutcome::Accepted(10)]),
             true,
             None,
@@ -3672,7 +3757,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             wrong_hash_result,
@@ -3685,7 +3769,7 @@ mod tests {
         assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
 
         reset();
-        let (ledger, probe, cmc, mut management, fiduciary) = mocks(
+        let (ledger, probe, cmc, mut management) = mocks(
             MockLedger::new([300_000_000], [LedgerOutcome::Accepted(10)]),
             true,
             None,
@@ -3703,7 +3787,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             status_error_result,
@@ -3721,7 +3804,7 @@ mod tests {
         let args = setup_args(vec![principal(1)]);
 
         reset();
-        let (ledger, probe, cmc, management, fiduciary) = mocks(
+        let (ledger, probe, cmc, management) = mocks(
             MockLedger::new([300_000_000], [LedgerOutcome::Accepted(10)]),
             true,
             None,
@@ -3733,7 +3816,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             balance_failure,
@@ -3747,7 +3829,7 @@ mod tests {
         reset();
         let ledger = MockLedger::new([300_000_000, 297_990_000], [LedgerOutcome::Accepted(10)])
             .with_fee_failures([false, true]);
-        let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
+        let (ledger, probe, cmc, management) = mocks(ledger, true, None);
         let fee_failure = block_on(notify_with_clients_for_historian(
             args.clone(),
             principal(42),
@@ -3755,7 +3837,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             fee_failure,
@@ -3767,7 +3848,7 @@ mod tests {
         assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
 
         reset();
-        let (ledger, probe, cmc, management, fiduciary) = mocks(
+        let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
                 [300_000_000, 297_990_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Duplicate(11)],
@@ -3782,12 +3863,11 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(duplicate, RelaySetupNotifyResult::Active { .. }));
 
         reset();
-        let (ledger, probe, cmc, management, fiduciary) = mocks(
+        let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
                 [300_000_000, 297_990_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Rejected],
@@ -3802,7 +3882,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             rejected,
@@ -3813,7 +3892,7 @@ mod tests {
         ));
 
         reset();
-        let (ledger, probe, cmc, management, fiduciary) = mocks(
+        let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
                 [300_000_000, 297_990_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Ambiguous],
@@ -3828,7 +3907,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             ambiguous,
@@ -3844,7 +3922,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             repeated,
@@ -3861,7 +3938,7 @@ mod tests {
         state::set_state(State::new(cfg, 0));
         let ledger = MockLedger::new([107_040_000, 105_030_000], [LedgerOutcome::Accepted(10)])
             .with_fees([10_000, 10_001]);
-        let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
+        let (ledger, probe, cmc, management) = mocks(ledger, true, None);
         let result = block_on(notify_with_clients_for_historian(
             setup_args(vec![principal(1)]),
             principal(42),
@@ -3869,7 +3946,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             result,
@@ -3899,7 +3975,7 @@ mod tests {
             [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
         )
         .with_fees([10_000, 10_000]);
-        let (ledger, probe, cmc, management, fiduciary) = mocks(ledger, true, None);
+        let (ledger, probe, cmc, management) = mocks(ledger, true, None);
         let result = block_on(notify_with_clients_for_historian(
             setup_args(vec![principal(1)]),
             principal(42),
@@ -3907,7 +3983,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert_eq!(
             result,
@@ -3937,7 +4012,7 @@ mod tests {
             target_canister_ids: targets,
             surplus_recipients: recipients,
         };
-        let (ledger, probe, cmc, management, fiduciary) = mocks(
+        let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
                 [775_000_000, 772_990_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
@@ -3953,7 +4028,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &neuron_resolver,
         ));
         assert_eq!(
@@ -4120,7 +4194,7 @@ mod tests {
             target_canister_ids: vec![principal(1)],
             surplus_recipients: vec![],
         };
-        let (ledger, probe, cmc, management, fiduciary) = mocks(
+        let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
                 [107_040_000, 105_030_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
@@ -4138,7 +4212,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &resolver,
         ));
 
@@ -4188,7 +4261,7 @@ mod tests {
         )
         .unwrap()
         .key();
-        let (ledger, probe, cmc, management, fiduciary) =
+        let (ledger, probe, cmc, management) =
             mocks(MockLedger::new([400_000_000], []), true, None);
         let resolver = MockNeuronResolver {
             calls: Mutex::new(Vec::new()),
@@ -4203,7 +4276,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &resolver,
         ));
         assert!(matches!(
@@ -4240,7 +4312,7 @@ mod tests {
         .unwrap()
         .key();
         let relay_canister_id = principal(81);
-        let (ledger, probe, cmc, management, fiduciary) =
+        let (ledger, probe, cmc, management) =
             mocks(MockLedger::new([400_000_000], []), true, None);
         let resolver = SupersedingNeuronResolver {
             key,
@@ -4254,7 +4326,6 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
             &resolver,
         ));
 
@@ -4271,54 +4342,110 @@ mod tests {
     }
 
     #[test]
-    fn handoff_audits_cover_pre_and_post_status_hash_controller_and_log_requirements() {
+    fn finalization_audits_cover_pre_and_post_status_hash_controller_and_log_requirements() {
         let expected_hash = approved_relay_onchain_module_hash().unwrap();
         let historian = principal(42);
         let mut status = AuditedCanisterStatus {
             status: AuditedCanisterStatusKind::Running,
+            cycles: Nat::from(1_000_000_u64),
             module_hash: Some(expected_hash.to_vec()),
             settings: AuditedCanisterSettings {
                 controllers: vec![historian],
-                log_visibility: jupiter_ic_clients::management::LogVisibility::Public,
+                log_visibility: LogVisibility::Public,
+                status_visibility: StatusVisibility::Public,
             },
         };
-        assert!(validate_pre_handoff(&status, &expected_hash, historian).is_ok());
+        assert!(validate_pre_finalization(&status, &expected_hash, historian).is_ok());
         status.status = AuditedCanisterStatusKind::Stopped;
-        assert!(validate_pre_handoff(&status, &expected_hash, historian).is_err());
+        assert!(validate_pre_finalization(&status, &expected_hash, historian).is_err());
         status.status = AuditedCanisterStatusKind::Running;
         status.module_hash = Some(vec![0; 32]);
-        assert!(validate_pre_handoff(&status, &expected_hash, historian).is_err());
+        assert!(validate_pre_finalization(&status, &expected_hash, historian).is_err());
         status.module_hash = Some(expected_hash.to_vec());
         status.settings.controllers = vec![historian, principal(90)];
-        assert!(validate_pre_handoff(&status, &expected_hash, historian).is_err());
+        assert!(validate_pre_finalization(&status, &expected_hash, historian).is_err());
         status.settings.controllers = vec![historian];
-        status.settings.log_visibility = jupiter_ic_clients::management::LogVisibility::Controllers;
-        assert!(validate_pre_handoff(&status, &expected_hash, historian).is_err());
+        status.settings.log_visibility = LogVisibility::Controllers;
+        assert!(validate_pre_finalization(&status, &expected_hash, historian).is_err());
+        status.settings.log_visibility = LogVisibility::Public;
+        status.settings.status_visibility = StatusVisibility::Controllers;
+        assert!(validate_pre_finalization(&status, &expected_hash, historian).is_err());
 
-        let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
-        let mut post_status = crate::clients::blackhole::BlackholeCanisterStatus {
-            status: BlackholeCanisterStatusKind::Running,
+        let mut post_status = AuditedCanisterStatus {
+            status: CanisterStatusKind::Running,
             module_hash: Some(expected_hash.to_vec()),
             cycles: Nat::from(1_000_000u64),
-            settings: crate::clients::blackhole::BlackholeSettings {
-                controllers: vec![fiduciary],
+            settings: AuditedCanisterSettings {
+                controllers: Vec::new(),
+                log_visibility: LogVisibility::Public,
+                status_visibility: StatusVisibility::Public,
             },
-            memory_size: None,
-            memory_metrics: None,
         };
-        assert!(validate_post_handoff(&post_status, &expected_hash, fiduciary).is_ok());
-        post_status.status = BlackholeCanisterStatusKind::Stopped;
-        assert!(validate_post_handoff(&post_status, &expected_hash, fiduciary).is_err());
-        post_status.status = BlackholeCanisterStatusKind::Running;
+        assert!(validate_finalized_relay(&post_status, &expected_hash).is_ok());
+        post_status.status = CanisterStatusKind::Stopped;
+        assert!(validate_finalized_relay(&post_status, &expected_hash).is_err());
+        post_status.status = CanisterStatusKind::Running;
         post_status.module_hash = Some(vec![0; 32]);
-        assert!(validate_post_handoff(&post_status, &expected_hash, fiduciary).is_err());
+        assert!(validate_finalized_relay(&post_status, &expected_hash).is_err());
         post_status.module_hash = Some(expected_hash.to_vec());
         post_status.settings.controllers.push(principal(90));
-        assert!(validate_post_handoff(&post_status, &expected_hash, fiduciary).is_err());
+        assert!(validate_finalized_relay(&post_status, &expected_hash).is_err());
+        post_status.settings.controllers.clear();
+        post_status.settings.log_visibility = LogVisibility::Controllers;
+        assert!(validate_finalized_relay(&post_status, &expected_hash).is_err());
+        post_status.settings.log_visibility = LogVisibility::Public;
+        post_status.settings.status_visibility = StatusVisibility::AllowedViewers(Vec::new());
+        assert!(validate_finalized_relay(&post_status, &expected_hash).is_err());
     }
 
     #[test]
-    fn handoff_errors_are_reconciled_and_activation_requires_complete_progress() {
+    fn create_and_final_settings_are_explicit_public_and_controllerless() {
+        reset();
+        let ledger = MockLedger::new(
+            [300_000_000, 297_990_000],
+            [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+        );
+        let (ledger, probe, cmc, management) = mocks(ledger, true, None);
+
+        let result = block_on(notify_with_clients_for_historian(
+            setup_args(vec![principal(1)]),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+        assert!(matches!(result, RelaySetupNotifyResult::Active { .. }));
+
+        let creates = management.creates.lock().unwrap();
+        assert_eq!(creates.len(), 1);
+        assert_eq!(
+            creates[0].settings,
+            Some(jupiter_ic_clients::management::CanisterSettings {
+                controllers: Some(vec![principal(42)]),
+                log_visibility: Some(LogVisibility::Public),
+                status_visibility: Some(StatusVisibility::Public),
+            })
+        );
+        drop(creates);
+
+        let updates = management.updates.lock().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(
+            updates[0].settings,
+            jupiter_ic_clients::management::CanisterSettings {
+                controllers: Some(Vec::new()),
+                log_visibility: Some(LogVisibility::Public),
+                status_visibility: Some(StatusVisibility::Public),
+            }
+        );
+        assert!(management
+            .finalization_phase_observed_at_update
+            .load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn finalization_errors_are_reconciled_and_activation_requires_complete_progress() {
         let args = setup_args(vec![principal(1)]);
         let successful_ledger = || {
             MockLedger::new(
@@ -4328,8 +4455,7 @@ mod tests {
         };
 
         reset();
-        let (ledger, probe, cmc, mut management, fiduciary) =
-            mocks(successful_ledger(), true, None);
+        let (ledger, probe, cmc, mut management) = mocks(successful_ledger(), true, None);
         management.update_error = Some("update_settings callback failed".to_string());
         let observed_success = block_on(notify_with_clients_for_historian(
             args.clone(),
@@ -4338,31 +4464,20 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             observed_success,
             RelaySetupNotifyResult::Active { .. }
         ));
         assert_eq!(management.update_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(fiduciary.calls.load(Ordering::SeqCst), 1);
 
         reset();
-        let (ledger, probe, cmc, mut management, fiduciary) =
-            mocks(successful_ledger(), true, None);
+        let (ledger, probe, cmc, mut management) = mocks(successful_ledger(), true, None);
         management.update_error = Some("update_settings callback failed".to_string());
-        fiduciary.result.lock().unwrap().replace(Ok(
-            crate::clients::blackhole::BlackholeCanisterStatus {
-                status: BlackholeCanisterStatusKind::Running,
-                module_hash: approved_relay_onchain_module_hash().map(|hash| hash.to_vec()),
-                cycles: Nat::from(1_000_000u64),
-                settings: crate::clients::blackhole::BlackholeSettings {
-                    controllers: vec![principal(90)],
-                },
-                memory_size: None,
-                memory_metrics: None,
-            },
-        ));
+        management.status_results = Mutex::new(VecDeque::from([
+            Ok(audited_relay_status(vec![principal(42)])),
+            Ok(audited_relay_status(vec![principal(90)])),
+        ]));
         let observed_incorrect = block_on(notify_with_clients_for_historian(
             args.clone(),
             principal(42),
@@ -4370,46 +4485,40 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             observed_incorrect,
             RelaySetupNotifyResult::ManualRecoveryRequired {
-                phase: RelayCreationPhase::HandoffAttempted,
+                phase: RelayCreationPhase::FinalizationAttempted,
                 ..
             }
         ));
 
         reset();
-        let (ledger, probe, cmc, management, fiduciary) = mocks(successful_ledger(), true, None);
-        fiduciary
-            .result
-            .lock()
-            .unwrap()
-            .replace(Err(ClientError::Call(
-                "Fiduciary status unavailable".to_string(),
-            )));
-        let fiduciary_error = block_on(notify_with_clients_for_historian(
+        let (ledger, probe, cmc, mut management) = mocks(successful_ledger(), true, None);
+        management.status_results = Mutex::new(VecDeque::from([
+            Ok(audited_relay_status(vec![principal(42)])),
+            Err("direct status unavailable".to_string()),
+        ]));
+        let status_error = block_on(notify_with_clients_for_historian(
             args.clone(),
             principal(42),
             &ledger,
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
-            fiduciary_error,
+            status_error,
             RelaySetupNotifyResult::ManualRecoveryRequired {
-                phase: RelayCreationPhase::HandoffAttempted,
+                phase: RelayCreationPhase::FinalizationAttempted,
                 ..
             }
         ));
 
         reset();
-        let (ledger, probe, cmc, management, mut fiduciary) =
-            mocks(successful_ledger(), true, None);
-        fiduciary.clear_cycles_minted_on_call = true;
+        let (ledger, probe, cmc, mut management) = mocks(successful_ledger(), true, None);
+        management.clear_cycles_minted_on_final_status = true;
         let incomplete = block_on(notify_with_clients_for_historian(
             args,
             principal(42),
@@ -4417,12 +4526,11 @@ mod tests {
             &probe,
             &cmc,
             &management,
-            &fiduciary,
         ));
         assert!(matches!(
             incomplete,
             RelaySetupNotifyResult::ManualRecoveryRequired {
-                phase: RelayCreationPhase::HandoffAttempted,
+                phase: RelayCreationPhase::FinalizationAttempted,
                 ..
             }
         ));

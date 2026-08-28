@@ -25,6 +25,7 @@ type RecentCommitmentListItem = record {
 };
 type CyclesSampleSource = variant {
   SelfCanister;
+  DirectCanisterStatus;
   BlackholeStatus;
   SnsRootStatus;
   SnsSwapStatus;
@@ -177,7 +178,7 @@ type RelayCreationPhase = variant {
   CodeInstalled;
   RelayFundingPrepared;
   RelayFunded;
-  HandoffAttempted;
+  FinalizationAttempted;
 };
 type RelaySetupState = variant {
   NotFunded;

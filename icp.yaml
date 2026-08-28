@@ -86,6 +86,21 @@ canisters:
       steps:
         - type: pre-built
           path: target/wasm32-unknown-unknown/release/mock_sns_governance.wasm
+  - name: mock_status_controller
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/mock_status_proxy.wasm
+  - name: mock_status_viewer
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/mock_status_proxy.wasm
+  - name: mock_status_target
+    build:
+      steps:
+        - type: pre-built
+          path: target/wasm32-unknown-unknown/release/mock_status_proxy.wasm
   - name: jupiter_disburser_dbg
     build:
       steps:
@@ -135,6 +150,7 @@ canisters:
 networks:
   - name: local
     mode: managed
+    version: 15.0.0-2026-08-20-03-30
     gateway:
       bind: 127.0.0.1
       port: 4943
@@ -152,6 +168,9 @@ environments:
       - mock_sns_wasm
       - mock_sns_root
       - mock_sns_governance
+      - mock_status_controller
+      - mock_status_viewer
+      - mock_status_target
       - jupiter_disburser_dbg
       - jupiter_faucet_dbg
       - jupiter_historian_dbg

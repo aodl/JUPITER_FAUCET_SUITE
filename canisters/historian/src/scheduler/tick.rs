@@ -207,7 +207,6 @@ pub(super) async fn run_main_tick_with_clients<
         last_sns_discovery_ts,
         last_completed_cycles_sweep_ts,
         active_cycles_present,
-        initial_cycles_probe_queue_present,
         active_sns_present,
         interval_secs,
     ) = state::with_state(|st| {
@@ -216,7 +215,6 @@ pub(super) async fn run_main_tick_with_clients<
             st.last_sns_discovery_ts,
             st.last_completed_cycles_sweep_ts,
             st.active_cycles_sweep.is_some(),
-            !st.initial_cycles_probe_queue.is_empty(),
             st.active_sns_discovery.is_some(),
             st.config.cycles_interval_seconds,
         )
@@ -230,6 +228,8 @@ pub(super) async fn run_main_tick_with_clients<
         }
     }
 
+    let initial_cycles_probe_queue_present =
+        state::with_state(|st| !st.initial_cycles_probe_queue.is_empty());
     if initial_cycles_probe_queue_present {
         process_initial_cycles_probe_queue(now_nanos, now_secs, cycles_probe_client, governance)
             .await?;

@@ -67,20 +67,22 @@ Cycles history is recorded periodically rather than on every driver tick.
 
 The historian records cycles samples from these observation routes:
 
+- `DirectCanisterStatus`
+  - for the protocol-native management-canister `canister_status` route
 - `BlackholeStatus`
-  - for tracked canisters that expose public `canister_status` through a recognized blackhole route
+  - for tracked canisters observed through a recognized blackhole fallback
 - `SnsRootStatus`
   - for targeted SNS dapp/framework observation through SNS Root `canister_status` calls
 - `SnsSwapStatus`
   - for SNS swap `get_canister_status` calls
 - `SnsRootSummary`
-  - for actual cycles values reported by SNS Root `get_sns_canisters_summary`
+  - retained only so historical samples remain decodable; discovery no longer creates this source
 - `SelfCanister`
   - for the historian canister’s own balance sample
 
-The historian intentionally does **not** attempt to fetch logs from other canisters. Canisters cannot pull `fetch_canister_logs` from other canisters on-chain, so the historian stays strictly on-chain and uses supported status and SNS summary routes instead.
+The historian intentionally does **not** attempt to fetch logs from other canisters. Canisters cannot pull `fetch_canister_logs` from other canisters on-chain, so the historian stays strictly on-chain and uses supported status routes.
 
-Historian probing is always Auto. For each target it attempts direct self balance first, and recognized blackhole canisters are probed through their own self-status before any fallback. For ordinary targets, Auto mode first reuses the target's previously successful positive route, whether that route is the 13-node blackhole, the Fiduciary blackhole, SNS Root, or SNS Swap. This sticky route cache is heap-only runtime state and is rebuilt after upgrade as targets are probed again. If that route is absent or fails, route discovery tries the 13-node blackhole, then the Fiduciary blackhole, then SNS discovery. The 13-node blackhole is preferred when selecting an unknown blackhole route, while a healthy positive route is reused to avoid predictable failed calls and unnecessary cycles burn. Route failure triggers immediate rediscovery. No route TTL, negative cache, or stable route map is used. SNS-governed targets do not need blackhole control for discovery or SNS-root-summary cycles observations. Each cycles sweep also includes the historian canister **itself** as a `SelfCanister` sample target.
+Historian probing is always Auto. It uses local self balance for Historian itself, then attempts direct management-canister `canister_status` before every cached or newly discovered proxy. A successful direct call may rely on `public`, a suitable `allowed_viewers` entry, or controller access. If direct access is unavailable, Auto tries the canonical-blackhole self-status special case, the cached positive fallback, the 13-node blackhole, the Fiduciary blackhole, and finally SNS Root or Swap discovery. The heap-only positive-route cache is rebuilt after upgrade and can never pre-empt a later direct success. Direct denial is not negatively cached. Route failure triggers immediate rediscovery; no route TTL, negative cache, or stable route map is used. Each cycles sweep also includes the historian canister **itself** as a `SelfCanister` sample target.
 
 Tracked principals carry one or more `CanisterTrackingReason` values: `MemoCommitment`, `SnsDiscovery`, `RelayTarget`, and `RelayInstance`. `tracked_canister_count` is the number of unique principals with at least one currently visible tracking reason. The specialized counts `memo_registered_canister_count`, `sns_discovered_canister_count`, `relay_target_canister_count`, and `relay_instance_canister_count` are per-reason counts and do not change the unique-principal rule for `tracked_canister_count`. Active self-service configurations add `RelayTarget` to every managed target and `RelayInstance` to the spawned Relay; surplus recipients of either type are not tracked or probed as targets. These reasons and cycles histories are independent; they do not form a target-to-Relay relationship.
 
@@ -89,13 +91,13 @@ Tracked principals carry one or more `CanisterTrackingReason` values: `MemoCommi
 When `enable_sns_tracking = true`, the historian periodically:
 
 1. calls SNS-W (`qaa6y-5yaaa-aaaaa-aaafa-cai`) `list_deployed_snses`
-2. reads each SNS root canister summary
-3. adds all discovered SNS canister IDs to its tracked set with source `SnsDiscovery`
-4. records any cycles values available in the SNS root summary as `SnsRootSummary` samples
+2. calls each authoritative SNS Root's `list_sns_canisters`
+3. adds the root, governance, ledger, swap, index, dapps, archives, and extensions to its tracked set with source `SnsDiscovery`
+4. queues newly discovered members for the ordinary direct-first cycles probe
 
 The discovery pass is intentionally chunked and resumable across ticks. The historian snapshots the deployed SNS root list once, then walks it in bounded batches using the same per-tick cap used by the cycles sweep. That keeps each run bounded even if the deployed SNS set grows materially over time.
 
-SNS-discovered canisters are not probed through blackhole status in the regular cycles sweep when the source set indicates they should be handled via SNS summaries instead.
+SNS discovery supplies membership only. It writes no cycles sample or probe result. SNS-only and mixed-reason members participate in the same ordinary cycles sweep as every other target; SNS Root and Swap status remain fallbacks when direct status is unavailable.
 
 ## Retention and deduplication
 
@@ -153,13 +155,13 @@ The public read model is intentionally richer than the raw history methods becau
 
 Self-service setup accepts 1–20 external target canisters and either zero or 1–5 typed surplus recipients. Each recipient carries an exact 0–32-byte memo; empty means no outgoing Ledger memo. Targets are sorted by raw principal bytes. Recipients are ordered with Principals first in raw-byte order, followed by nonzero `u64` neuron IDs in numeric order, without sorting by memo. Duplicate destinations are rejected even when their memos differ, while one principal may still be both a target and a surplus Principal recipient. Principal recipients may be arbitrary non-anonymous, non-management principals. Recipient destinations do not receive target-only protected-dependency or probe checks. The two canonical vectors jointly determine identity, so input order does not matter and changing a recipient type, destination, or memo forms a different immutable configuration. The canonical production Relay target set remains reserved as an explicit policy preventing a self-service duplicate, regardless of supplied recipients.
 
-Memory ID 26 is the one Relay setup map. Its key is the 32-byte canonical configuration hash and its value is the current `RelaySetupEntry`. Targets and Relay instances remain visible independently through generic tracking reasons and `list_canisters` filtering. A blackholed child is immutable, is never upgraded through Historian, and is never queried to reconstruct configuration.
+Memory ID 26 is the one Relay setup map. Its key is the 32-byte canonical configuration hash and its value is the current `RelaySetupEntry`. Targets and Relay instances remain visible independently through generic tracking reasons and `list_canisters` filtering. A finalized child is immutable because it has zero controllers; it is never upgraded through Historian and is never queried to reconstruct configuration.
 
 The deterministic setup subaccount is the 32-byte SHA-256 configuration hash. Every configuration uses the explicitly framed `jupiter-relay-configuration-v1\0` encoding documented in [`../../docs/relay-setup-recovery.md`](../../docs/relay-setup-recovery.md). Empty memos and zero recipients are encoded explicitly in that same format. Funding uses only aggregate ICP ledger `icrc1_balance_of`, with no index/history scan or payer attribution. Pricing remains target-based: notification computes `max(singleton nominal minimum, conversion + safety margin + configured seed + two ledger fees) + 0.25 ICP × extra targets`. Recipient count affects Relay's runtime allocation and transfer cap, not creation price. Deposits are not automatically discovered, refunded, or swept.
 
 Child install arguments split canonical typed recipients into Relay's existing fields and copy each memo byte-for-byte: Principals become `SurplusCanisterRecipient` values and neuron IDs become `SurplusNeuronRecipient` values. Zero recipients produces `surplus_canister_recipients = null` plus an empty neuron vector and selects all-cycles allocation, which routes no raw ICP surplus. A Principal receives at `Account { owner: principal, subaccount: None }`; a neuron receives at `Account { owner: NNS Governance, subaccount: resolved staking subaccount }`, and Relay attempts `claim_or_refresh` after a successful neuron transfer. Historian first validates the setup balance and live current requirement, then reserves the configuration in the existing `Reserved` phase. While reserved, it independently confirms only configured neurons are public/readable and have valid staking subaccounts; zero-recipient and Principal-only configurations make no Governance lookup. A clean validation failure removes the reservation before target probes or spending. Relay repeats immutable recipient validation and resolves neurons at runtime. `max_transfers_per_tick` is `targets + recipients + Relay self` (at most 26, or `targets + 1` in all-cycles mode). No IO recipient is added automatically.
 
-Creation is an explicit user action. A narrow same-key reservation prevents duplicate execution, all targets are probed before spend, transfer records are persisted before dispatch with fixed timestamps, and create dispatch is fail-closed. Final activation requires small pre- and post-handoff audits around the Fiduciary controller transition. See [`../../docs/relay-setup-recovery.md`](../../docs/relay-setup-recovery.md) for the state and operational procedure.
+Creation is an explicit user action. A narrow same-key reservation prevents duplicate execution, all targets are probed before spend, transfer records are persisted before dispatch with fixed timestamps, and create dispatch is fail-closed. For a future child, direct status is reusable only when visibility is exactly `public`; Historian-only controller or `allowed_viewers` access is insufficient, although a recognized reusable blackhole/SNS fallback may qualify the target. Final activation requires exact pre-finalization and post-controller-removal audits of the approved module, running state, controller set, public logs, and public status. See [`../../docs/relay-setup-recovery.md`](../../docs/relay-setup-recovery.md) for the state and operational procedure.
 
 On Historian upgrade, interrupted `Reserved` and `ProbingTargets` entries are removed. Every later `Creating` phase becomes terminal manual recovery with `HistorianUpgradeInterrupted`; active mappings and existing manual-recovery entries are preserved without calling any child.
 
@@ -326,8 +328,8 @@ Coverage includes, among other things:
 - memo-derived commitment indexing without duplicate replay
 - recent invalid-memo handling
 - commitment-index degraded-state detection and automatic recovery on non-monotonic staking-account tx pages
-- weekly blackhole-based cycles sampling
-- SNS discovery and SNS-root-summary cycles sampling
+- direct-first cycles sampling with blackhole/SNS fallbacks
+- SNS membership discovery feeding the unified cycles probe
 - state preservation across historian upgrades
 - frontend-facing public query surfaces such as:
   - `get_public_counts`

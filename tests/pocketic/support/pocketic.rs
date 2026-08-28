@@ -7,7 +7,8 @@ use std::time::Duration;
 const SERVER_HARD_TTL_SECS: u64 = 3 * 60 * 60;
 const SERVER_IDLE_TTL_SECS: u64 = 15 * 60;
 const SERVER_IDLE_TTL_ENV: &str = "JUPITER_POCKETIC_IDLE_TTL_SECS";
-const SERVER_VERSION: &str = "13.0.0";
+const SERVER_VERSION: &str = "15.0.0";
+const NETWORK_LAUNCHER_PACKAGE: &str = "15.0.0-2026-08-20-03-30";
 
 static SERVER_URL: OnceLock<String> = OnceLock::new();
 
@@ -40,12 +41,11 @@ fn discover_pocketic_binary() -> Option<PathBuf> {
     }
 
     let home = std::env::var_os("HOME")?;
-    let root = PathBuf::from(home).join(".local/share/icp-cli/pkg/network-launcher");
-    std::fs::read_dir(root)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path().join("pocket-ic"))
-        .find(|path| validate_pocketic_binary(path))
+    let path = PathBuf::from(home)
+        .join(".local/share/icp-cli/pkg/network-launcher")
+        .join(format!("v{NETWORK_LAUNCHER_PACKAGE}"))
+        .join("pocket-ic");
+    validate_pocketic_binary(&path).then_some(path)
 }
 
 fn server_idle_ttl() -> Duration {
@@ -63,8 +63,12 @@ pub fn builder() -> PocketIcBuilder {
             .enable_io()
             .build()
             .expect("failed to create PocketIC server runtime");
-        let server_binary = discover_pocketic_binary()
-            .expect("failed to find a local executable pocket-ic-server 13.0.0 binary");
+        let server_binary = discover_pocketic_binary().unwrap_or_else(|| {
+            panic!(
+                "failed to find PocketIC from network-launcher package \
+                 v{NETWORK_LAUNCHER_PACKAGE}; download the pinned package or set POCKET_IC_BIN"
+            )
+        });
         let (_, url) = runtime.block_on(start_server(StartServerParams {
             server_binary: Some(server_binary),
             reuse: true,

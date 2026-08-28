@@ -1678,6 +1678,18 @@ mod tests {
             None
         }
 
+        async fn direct_canister_status(
+            &self,
+            _target: Principal,
+        ) -> Result<
+            jupiter_ic_clients::cycles_probe::DirectCanisterStatusObservation,
+            jupiter_ic_clients::ClientError,
+        > {
+            Err(jupiter_ic_clients::ClientError::Call(
+                "direct canister_status unavailable in recording scheduler mock".to_string(),
+            ))
+        }
+
         async fn blackhole_cycles(
             &self,
             probe_canister_id: Principal,
@@ -1743,6 +1755,18 @@ mod tests {
     impl CyclesProbeClient for MockSchedulerCyclesProbe {
         async fn self_cycles(&self, _target: Principal) -> Option<u128> {
             None
+        }
+
+        async fn direct_canister_status(
+            &self,
+            _target: Principal,
+        ) -> Result<
+            jupiter_ic_clients::cycles_probe::DirectCanisterStatusObservation,
+            jupiter_ic_clients::ClientError,
+        > {
+            Err(jupiter_ic_clients::ClientError::Call(
+                "direct canister_status unavailable in scheduler mock".to_string(),
+            ))
         }
 
         async fn blackhole_cycles(

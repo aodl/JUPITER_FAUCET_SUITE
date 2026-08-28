@@ -1,15 +1,4 @@
-type SnsCanisterStatus = record { cycles : opt nat };
-type SnsCanisterSummary = record { canister_id : opt principal; status : opt SnsCanisterStatus };
 type SnsExtensions = record { extension_canister_ids : vec principal };
-type GetSnsCanistersSummaryResponse = record {
-  root : opt SnsCanisterSummary;
-  governance : opt SnsCanisterSummary;
-  ledger : opt SnsCanisterSummary;
-  swap : opt SnsCanisterSummary;
-  index : opt SnsCanisterSummary;
-  dapps : vec SnsCanisterSummary;
-  archives : vec SnsCanisterSummary;
-};
 type ListSnsCanistersResponse = record {
   root : opt principal;
   governance : opt principal;
@@ -26,10 +15,8 @@ type DebugCall = record {
   caller : principal;
 };
 service : {
-  get_sns_canisters_summary : (record { update_canister_list : opt bool }) -> (GetSnsCanistersSummaryResponse);
   list_sns_canisters : (record {}) -> (ListSnsCanistersResponse);
   canister_status : (record { canister_id : principal }) -> (record { cycles : nat });
-  debug_set_summary : (GetSnsCanistersSummaryResponse) -> ();
   debug_set_canisters : (ListSnsCanistersResponse) -> ();
   debug_calls : () -> (vec DebugCall) query;
   debug_reset_calls : () -> ();

@@ -3,6 +3,7 @@ use super::*;
 fn cycles_sample_source_for_route(route: Option<&CyclesProbeRoute>) -> CyclesSampleSource {
     match route {
         None => CyclesSampleSource::SelfCanister,
+        Some(CyclesProbeRoute::DirectCanisterStatus) => CyclesSampleSource::DirectCanisterStatus,
         Some(CyclesProbeRoute::Blackhole { .. }) => CyclesSampleSource::BlackholeStatus,
         Some(CyclesProbeRoute::SnsRoot { .. }) => CyclesSampleSource::SnsRootStatus,
         Some(CyclesProbeRoute::SnsSwap { .. }) => CyclesSampleSource::SnsSwapStatus,
@@ -190,10 +191,20 @@ pub(super) async fn process_cycles_sweep<C: CyclesProbeClient>(
     });
 
     let started_at_ts_nanos = snapshot.started_at_ts_nanos;
+    let started_at_secs = started_at_ts_nanos / 1_000_000_000;
     let start = snapshot.next_index as usize;
     let end =
         (snapshot.next_index + max_per_tick as u64).min(snapshot.canisters.len() as u64) as usize;
     for canister_id in snapshot.canisters[start..end].iter().copied() {
+        let probed_since_sweep_started = state::with_state(|st| {
+            st.per_canister_meta
+                .get(&canister_id)
+                .and_then(|meta| meta.last_cycles_probe_ts)
+                .is_some_and(|last_probe_secs| last_probe_secs >= started_at_secs)
+        });
+        if probed_since_sweep_started {
+            continue;
+        }
         if let Err(err) = probe_and_record_cycles(
             started_at_ts_nanos,
             now_secs,
@@ -220,4 +231,17 @@ pub(super) async fn process_cycles_sweep<C: CyclesProbeClient>(
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod direct_route_tests {
+    use super::*;
+
+    #[test]
+    fn direct_route_maps_to_direct_sample_source() {
+        assert_eq!(
+            cycles_sample_source_for_route(Some(&CyclesProbeRoute::DirectCanisterStatus)),
+            CyclesSampleSource::DirectCanisterStatus
+        );
+    }
 }

@@ -56,6 +56,7 @@ pub enum RelayMode {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum CyclesSampleSource {
     SelfCanister,
+    DirectCanisterStatus,
     BlackholeStatus,
     SnsRootStatus,
     SnsSwapStatus,
@@ -1018,5 +1019,18 @@ mod tests {
             assert!(stored.conversion_estimate.is_none());
             assert_eq!(stored.next_job_id, 1);
         });
+    }
+
+    #[test]
+    fn direct_canister_status_snapshot_candid_round_trips() {
+        let snapshot = CyclesSnapshot {
+            cycles: 1_234_567_890,
+            timestamp_nanos: 987_654_321,
+            source: CyclesSampleSource::DirectCanisterStatus,
+        };
+        let bytes = candid::encode_one(&snapshot).expect("encode direct status snapshot");
+        let decoded: CyclesSnapshot =
+            candid::decode_one(&bytes).expect("decode direct status snapshot");
+        assert_eq!(decoded, snapshot);
     }
 }

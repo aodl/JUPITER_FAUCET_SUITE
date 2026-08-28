@@ -147,7 +147,7 @@ The maintenance sequence is:
 6. Start Historian only after both deployments succeed.
 7. Verify preserved public state and the current setup API with both canonical vectors.
 8. Verify order independence and that the same targets with a recipient change use a different account and Relay.
-9. Verify each child module hash, running status, Fiduciary-only controller set, and independent tracking counts.
+9. Verify each child module hash, running status, empty controller set, public logs/status, and independent tracking counts.
 10. Retain the snapshot until acceptance is complete.
 
 For later Historian upgrades:
@@ -161,7 +161,7 @@ For later Historian upgrades:
 7. Verify `RelayTarget` and `RelayInstance` counts.
 8. Verify any interrupted post-spend setup is `ManualRecoveryRequired`.
 
-Self-service children are blackholed and are never upgraded or reconstructed by Historian.
+Self-service children are finalized with zero controllers and public log/status visibility. They cannot be upgraded and are never reconstructed by Historian.
 
 ## Production canister IDs
 

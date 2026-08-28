@@ -1,6 +1,6 @@
 # Self-service Relay configuration and recovery
 
-Historian creates an immutable blackholed Relay from one complete configuration: 1–20 managed target canister principals and either zero or 1–5 typed surplus recipients. Each recipient is `Principal { principal; memo }` or `Neuron { neuron_id; memo }`, where `memo` is a required exact 0–32-byte blob and an empty blob means no outgoing Ledger memo. Both vectors are required by `get_relay_configuration_view` and `notify_relay_configuration`. The empty recipient vector is the sole backend representation of all-cycles mode.
+Historian creates an immutable controllerless Relay from one complete configuration: 1–20 managed target canister principals and either zero or 1–5 typed surplus recipients. Each recipient is `Principal { principal; memo }` or `Neuron { neuron_id; memo }`, where `memo` is a required exact 0–32-byte blob and an empty blob means no outgoing Ledger memo. Both vectors are required by `get_relay_configuration_view` and `notify_relay_configuration`. The empty recipient vector is the sole backend representation of all-cycles mode.
 
 Targets are sorted by raw principal bytes. Recipients are canonicalized with Principals first in raw-byte order and neurons second in ascending numeric order. A memo stays attached to its destination and does not participate in sorting. Duplicate type-and-destination pairs are rejected even when their memos differ. No IO recipient, custom subaccount, weighting, or target-canister memo is added.
 
@@ -67,7 +67,7 @@ Funding authority is the aggregate `icrc1_balance_of` value for the authoritativ
 
 Notification rereads the setup balance, Ledger fee, and CMC rate before Governance work. Underfunded calls do not reserve an entry, resolve a neuron, probe a target, or spend funds. A funded exact key enters `Reserved`; same-key callers observe the existing phase, and at most four distinct funded configurations may be creating concurrently. Public neuron recipients must resolve through NNS Governance before targets are probed. Zero-recipient and Principal-only configurations make no Governance request.
 
-Every target must pass the shared Auto cycles probe before irreversible work. The state machine journals the prepared CMC transfer, accepted block, cycles minted, child-create dispatch fence and returned ID, prepared Relay-funding transfer, accepted block, phase, and bounded diagnostic information. Clean pre-spend failures remove the reservation. Ambiguous transfer results, creation results after dispatch, install reconciliation failures, funding failures, and failed final audits become `ManualRecoveryRequired`; public notification never replays those operations.
+Every target must pass the shared Auto cycles probe before irreversible work. Auto prefers protocol-native direct `canister_status`; recognized blackhole and SNS status routes remain fallbacks. Preflight uses the `AnyCanister` requirement: a direct observation is reusable by the future Relay only when status visibility is exactly `public`. Historian controller access or a Historian-only `allowed_viewers` entry is insufficient, although a recognized reusable proxy fallback may still qualify the target. The state machine journals the prepared CMC transfer, accepted block, cycles minted, child-create dispatch fence and returned ID, prepared Relay-funding transfer, accepted block, phase, and bounded diagnostic information. Clean pre-spend failures remove the reservation. Ambiguous transfer results, creation results after dispatch, install reconciliation failures, funding failures, and failed final audits become `ManualRecoveryRequired`; public notification never replays those operations.
 
 ## Child configuration and surplus
 
@@ -77,7 +77,7 @@ The browser treats Hexadecimal as authoritative for arbitrary bytes. A switch to
 
 Zero recipients installs `surplus_canister_recipients = null` and an empty neuron-recipient vector. The child then uses all-cycles allocation: positive measured needs receive fee-efficient top-ups; funds remain when no need is positive or a share is fee-inefficient; no raw-ICP recipient transfer is produced. Routing mode requires at least one recipient. `max_transfers_per_tick` is `target_count + recipient_count + 1`, so all-cycles mode uses `target_count + 1`.
 
-Historian audits the installed module hash, running state, public logs, and controller set before and after handing control to Fiduciary. Successful activation stores `Active { relay_canister_id }` and records generic `RelayTarget` and `RelayInstance` tracking.
+Historian creates the child with `[Historian]` as its temporary controller plus public logs and public status. Before finalization it directly audits the running state, approved module hash, exact `[Historian]` controller set, public logs, and public status. It then journals `FinalizationAttempted` and performs one settings update to empty controllers while explicitly retaining public logs and public status. Whether that update reports success or error, Historian directly reads live status again. Activation requires the running approved module with exactly zero controllers and public log/status visibility; public status is what permits this audit after Historian has lost control. A correct live state can reconcile an ambiguous update result, while an unreadable or mismatched state becomes `ManualRecoveryRequired`. Successful activation stores `Active { relay_canister_id }` and records generic `RelayTarget` and `RelayInstance` tracking.
 
 ## Upgrade and manual recovery
 
@@ -89,7 +89,7 @@ Historian persists one Relay setup map keyed by the 32-byte canonical configurat
 
 Normal upgrades preserve current entries. `Reserved` and `ProbingTargets` entries can be removed because no irreversible action occurred. Later interrupted `Creating` phases become `ManualRecoveryRequired` with `HistorianUpgradeInterrupted`. `Active` and existing manual-recovery entries remain unchanged. Reconciliation issues no external call.
 
-`ManualRecoveryRequired` is terminal for public automation. Operators use the exact configuration view together with reviewed Ledger, CMC, management-canister, and Fiduciary evidence. Debug entry listing exists only in local and non-production debug builds. Production has no configuration-wide entry enumeration, so operational records must retain exact immutable configurations.
+`ManualRecoveryRequired` is terminal for public automation. Operators use the exact configuration view together with reviewed Ledger, CMC, and management-canister evidence. Debug entry listing exists only in local and non-production debug builds. Production has no configuration-wide entry enumeration, so operational records must retain exact immutable configurations.
 
 Operator triage distinguishes `create_canister ambiguous relay ID loss` from `install_code module-hash reconciliation`. If a module hash exists but differs from the reviewed Relay hash, Historian fails closed and does not reinstall or continue automatically.
 
@@ -105,7 +105,7 @@ Deploy matching Historian and frontend builds in the same maintenance window bec
 4. Upgrade Historian in place; do not reinstall.
 5. While Historian remains stopped, deploy the matching frontend.
 6. Start Historian only after both upgrades succeed.
-7. Verify public state, canonical hashes/accounts, exact recipient memo behavior, zero-recipient all-cycles behavior, module hash, controllers, and tracking counts.
+7. Verify public state, canonical hashes/accounts, exact recipient memo behavior, zero-recipient all-cycles behavior, approved module hash, empty controllers, public logs/status, and tracking counts.
 8. Retain the snapshot until acceptance is complete.
 
 If any precondition or audit fails, restore the maintenance-window snapshot and prove the restored canister is queryable before rescheduling.

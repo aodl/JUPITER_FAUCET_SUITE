@@ -881,7 +881,7 @@ test('loadTrackerData loads commitment, observed CMC top-up, and cycles historie
             first_seen_ts: [100n],
             last_commitment_ts: [200n],
             last_cycles_probe_ts: [300n],
-            last_cycles_probe_result: [{ Ok: { BlackholeStatus: null } }],
+            last_cycles_probe_result: [{ Ok: { DirectCanisterStatus: null } }],
           },
           cycles_points: 1,
           commitment_points: 1,

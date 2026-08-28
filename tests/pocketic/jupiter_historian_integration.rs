@@ -36,6 +36,7 @@ fn require_ignored_flag() -> Result<()> {
     // invoke them explicitly with `--ignored`.
     support::assertions::require_ignored_flag()
 }
+
 fn build_pic_with_real_icp() -> PocketIc {
     support::ledger::build_pic_with_real_icp()
 }
@@ -245,6 +246,7 @@ struct CommitmentHistoryPage {
 enum CyclesSampleSource {
     BlackholeStatus,
     SelfCanister,
+    DirectCanisterStatus,
     SnsRootStatus,
     SnsSwapStatus,
     SnsRootSummary,
@@ -271,27 +273,6 @@ struct GetCyclesHistoryArgs {
     descending: Option<bool>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct SnsCanisterStatus {
-    cycles: Option<Nat>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct SnsCanisterSummary {
-    canister_id: Option<Principal>,
-    status: Option<SnsCanisterStatus>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize, Default)]
-struct GetSnsCanistersSummaryResponse {
-    root: Option<SnsCanisterSummary>,
-    governance: Option<SnsCanisterSummary>,
-    ledger: Option<SnsCanisterSummary>,
-    swap: Option<SnsCanisterSummary>,
-    index: Option<SnsCanisterSummary>,
-    dapps: Vec<SnsCanisterSummary>,
-    archives: Vec<SnsCanisterSummary>,
-}
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct PublicCounts {
     tracked_canister_count: u64,
@@ -469,6 +450,13 @@ struct ListSnsCanistersResponse {
     extensions: Option<SnsExtensions>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct SnsRootDebugCall {
+    method: String,
+    canister_id: Option<Principal>,
+    caller: Principal,
+}
+
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
 struct ListDeployedSnsesArgs {}
 
@@ -504,7 +492,7 @@ enum RelayCreationPhase {
     CodeInstalled,
     RelayFundingPrepared,
     RelayFunded,
-    HandoffAttempted,
+    FinalizationAttempted,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -784,13 +772,52 @@ fn install_status_proxy(pic: &PocketIc, canister_id: Principal) -> Result<()> {
     Ok(())
 }
 
+fn set_public_status_via_proxy(
+    pic: &PocketIc,
+    controller_proxy: Principal,
+    target: Principal,
+) -> Result<()> {
+    use jupiter_ic_clients::management::{CanisterSettings, StatusVisibility, UpdateSettingsArgs};
+    let result: Result<(), String> = update_one(
+        pic,
+        controller_proxy,
+        Principal::anonymous(),
+        "debug_management_update_settings",
+        UpdateSettingsArgs {
+            canister_id: target,
+            settings: CanisterSettings {
+                controllers: None,
+                log_visibility: None,
+                status_visibility: Some(StatusVisibility::Public),
+            },
+        },
+    )?;
+    result.map_err(|err| anyhow!("set public status through controller proxy failed: {err}"))
+}
+
+fn management_status_via_proxy(
+    pic: &PocketIc,
+    viewer_proxy: Principal,
+    target: Principal,
+) -> Result<jupiter_ic_clients::management::CanisterStatusResult> {
+    let result: Result<jupiter_ic_clients::management::CanisterStatusResult, String> = update_one(
+        pic,
+        viewer_proxy,
+        Principal::anonymous(),
+        "debug_management_canister_status",
+        jupiter_ic_clients::management::CanisterStatusArgs {
+            canister_id: target,
+        },
+    )?;
+    result.map_err(|err| anyhow!("management status through viewer proxy failed: {err}"))
+}
+
 struct SelfServiceTestEnv {
     pic: PocketIc,
     ledger: Principal,
     index: Principal,
     cmc: Principal,
     governance: Principal,
-    fiduciary: Principal,
     historian: Principal,
     target: Principal,
     cycle_sink: Principal,
@@ -843,7 +870,6 @@ impl SelfServiceTestEnv {
             index,
             cmc,
             governance,
-            fiduciary,
             historian,
             target,
             cycle_sink,
@@ -1298,11 +1324,8 @@ fn canonical_configurations_survive_current_schema_upgrade() -> Result<()> {
         }
     );
     assert_eq!(counts_after, counts_before);
-    assert_eq!(env.pic.get_controllers(memo_relay), vec![env.fiduciary]);
-    assert_eq!(
-        env.pic.get_controllers(all_cycles_relay),
-        vec![env.fiduciary]
-    );
+    assert!(env.pic.get_controllers(memo_relay).is_empty());
+    assert!(env.pic.get_controllers(all_cycles_relay).is_empty());
     Ok(())
 }
 
@@ -1354,7 +1377,7 @@ fn zero_recipient_factory_child_executes_all_cycles_mode() -> Result<()> {
         vec![env.target],
         vec![],
     )?;
-    assert_eq!(env.pic.get_controllers(relay), vec![env.fiduciary]);
+    assert!(env.pic.get_controllers(relay).is_empty());
     let relay_instances: ListCanistersResponse = query_one(
         &env.pic,
         env.historian,
@@ -1533,7 +1556,7 @@ fn memo_bearing_factory_child_uses_exact_neuron_transfer_memo() -> Result<()> {
 
 #[test]
 #[ignore]
-fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgrade() -> Result<()> {
+fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrade() -> Result<()> {
     require_ignored_flag()?;
     let pic = build_pic_with_real_icp();
     let ledger = real_icp_ledger_principal();
@@ -1563,6 +1586,7 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
             let target = pic.create_canister();
             pic.add_cycles(target, 5_000_000_000_000);
             set_controllers_exact(&pic, target, vec![thirteen])?;
+            set_public_status_via_proxy(&pic, thirteen, target)?;
             Ok(target)
         })
         .collect::<Result<Vec<_>>>()?;
@@ -2033,11 +2057,18 @@ fn multi_target_setup_blackholes_one_and_twenty_target_relays_and_survives_upgra
         multi_relay,
         all_cycles_relay,
     ] {
-        assert_eq!(pic.get_controllers(relay), vec![fiduciary]);
-        let status = pic
-            .canister_status(relay, Some(fiduciary))
-            .map_err(|error| anyhow!("relay status failed: {error:?}"))?;
+        assert!(pic.get_controllers(relay).is_empty());
+        let status = management_status_via_proxy(&pic, thirteen, relay)?;
         assert!(status.module_hash.is_some());
+        assert!(status.settings.controllers.is_empty());
+        assert_eq!(
+            status.settings.log_visibility,
+            jupiter_ic_clients::management::LogVisibility::Public
+        );
+        assert_eq!(
+            status.settings.status_visibility,
+            jupiter_ic_clients::management::StatusVisibility::Public
+        );
     }
     assert_spawned_relay_fixed_splitter(&pic, ledger, index, singleton_relay)?;
 
@@ -2807,6 +2838,114 @@ fn sns_root_proxy_reads_real_application_dapp_status_cross_subnet() -> Result<()
         denied.is_err(),
         "unrelated SNS Root must not read target canister_status"
     );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn management_status_visibility_capability_smoke() -> Result<()> {
+    require_ignored_flag()?;
+    use jupiter_ic_clients::management::{
+        CanisterSettings, CanisterStatusArgs, CanisterStatusResult, LogVisibility,
+        StatusVisibility, UpdateSettingsArgs,
+    };
+
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
+    let controller = pic.create_canister();
+    let viewer = pic.create_canister();
+    for proxy in [controller, viewer] {
+        pic.add_cycles(proxy, 5_000_000_000_000);
+        pic.install_canister(proxy, status_proxy_wasm()?, vec![], None);
+    }
+    let target = pic.create_canister_with_settings(Some(controller), None);
+    let added_cycles = 5_000_000_000_000_u128;
+    pic.add_cycles(target, added_cycles);
+
+    let denied: Result<CanisterStatusResult, String> = support::calls::update_one(
+        &pic,
+        viewer,
+        viewer,
+        "debug_management_canister_status",
+        CanisterStatusArgs {
+            canister_id: target,
+        },
+    )?;
+    let denied = denied.unwrap_err();
+    assert!(
+        denied.contains("raw_reject_code: 5")
+            && denied.contains("is not allowed to read the canister status"),
+        "expected a structured status-visibility denial, got {denied:?}"
+    );
+
+    let update: Result<(), String> = support::calls::update_one(
+        &pic,
+        controller,
+        controller,
+        "debug_management_update_settings",
+        UpdateSettingsArgs {
+            canister_id: target,
+            settings: CanisterSettings {
+                controllers: None,
+                log_visibility: None,
+                status_visibility: Some(StatusVisibility::Public),
+            },
+        },
+    )?;
+    update.map_err(|err| anyhow!("controller update_settings failed: {err}"))?;
+    let public_status: Result<CanisterStatusResult, String> = support::calls::update_one(
+        &pic,
+        viewer,
+        viewer,
+        "debug_management_canister_status",
+        CanisterStatusArgs {
+            canister_id: target,
+        },
+    )?;
+    let public_status = public_status.map_err(|err| anyhow!("public status failed: {err}"))?;
+    assert_eq!(public_status.cycles, Nat::from(pic.cycle_balance(target)));
+    assert_eq!(
+        public_status.settings.status_visibility,
+        StatusVisibility::Public
+    );
+
+    let update: Result<(), String> = support::calls::update_one(
+        &pic,
+        controller,
+        controller,
+        "debug_management_update_settings",
+        UpdateSettingsArgs {
+            canister_id: target,
+            settings: CanisterSettings {
+                controllers: Some(Vec::new()),
+                log_visibility: Some(LogVisibility::Public),
+                status_visibility: Some(StatusVisibility::Public),
+            },
+        },
+    )?;
+    update.map_err(|err| anyhow!("controller removal failed: {err}"))?;
+    let controllerless: Result<CanisterStatusResult, String> = support::calls::update_one(
+        &pic,
+        viewer,
+        viewer,
+        "debug_management_canister_status",
+        CanisterStatusArgs {
+            canister_id: target,
+        },
+    )?;
+    let controllerless =
+        controllerless.map_err(|err| anyhow!("controllerless public status failed: {err}"))?;
+    assert!(controllerless.settings.controllers.is_empty());
+    assert_eq!(
+        controllerless.settings.log_visibility,
+        LogVisibility::Public
+    );
+    assert_eq!(
+        controllerless.settings.status_visibility,
+        StatusVisibility::Public
+    );
+    assert_eq!(controllerless.cycles, Nat::from(pic.cycle_balance(target)));
     Ok(())
 }
 
@@ -3720,7 +3859,7 @@ fn historian_indexes_commitments_and_blackhole_cycles() -> Result<()> {
 
 #[test]
 #[ignore]
-fn historian_discovers_sns_canisters_and_records_summary_cycles() -> Result<()> {
+fn historian_discovers_sns_membership_and_directly_samples_public_members() -> Result<()> {
     require_ignored_flag()?;
     let h = Harness::new(true)?;
     let sns_root = h.pic.create_canister();
@@ -3729,44 +3868,34 @@ fn historian_discovers_sns_canisters_and_records_summary_cycles() -> Result<()> 
         .install_canister(sns_root, sns_root_wasm()?, vec![], None);
 
     let governance = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
-    let dapp = Principal::from_text("qjdve-lqaaa-aaaaa-aaaeq-cai")?;
+    let controller_proxy = h.pic.create_canister();
+    h.pic.add_cycles(controller_proxy, 5_000_000_000_000);
+    h.pic
+        .install_canister(controller_proxy, status_proxy_wasm()?, vec![], None);
+    let dapp = h.pic.create_canister();
+    h.pic.add_cycles(dapp, 5_000_000_000_000);
+    h.pic
+        .install_canister(dapp, cycle_burner_wasm()?, vec![], None);
+    set_controllers_exact(&h.pic, dapp, vec![controller_proxy])?;
+    set_public_status_via_proxy(&h.pic, controller_proxy, dapp)?;
     let archive = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai")?;
 
-    let summary = GetSnsCanistersSummaryResponse {
-        root: Some(SnsCanisterSummary {
-            canister_id: Some(sns_root),
-            status: Some(SnsCanisterStatus {
-                cycles: Some(Nat::from(1000u64)),
-            }),
-        }),
-        governance: Some(SnsCanisterSummary {
-            canister_id: Some(governance),
-            status: Some(SnsCanisterStatus {
-                cycles: Some(Nat::from(2000u64)),
-            }),
-        }),
+    let membership = ListSnsCanistersResponse {
+        root: Some(sns_root),
+        governance: Some(governance),
         ledger: None,
         swap: None,
         index: None,
-        dapps: vec![SnsCanisterSummary {
-            canister_id: Some(dapp),
-            status: Some(SnsCanisterStatus {
-                cycles: Some(Nat::from(3000u64)),
-            }),
-        }],
-        archives: vec![SnsCanisterSummary {
-            canister_id: Some(archive),
-            status: Some(SnsCanisterStatus {
-                cycles: Some(Nat::from(4000u64)),
-            }),
-        }],
+        dapps: vec![dapp],
+        archives: vec![archive],
+        extensions: None,
     };
     let _: () = update_one(
         &h.pic,
         sns_root,
         Principal::anonymous(),
-        "debug_set_summary",
-        summary,
+        "debug_set_canisters",
+        membership,
     )?;
     let _: () = update_one(
         &h.pic,
@@ -3801,24 +3930,51 @@ fn historian_discovers_sns_canisters_and_records_summary_cycles() -> Result<()> 
     assert!(ids.contains(&dapp));
     assert!(ids.contains(&archive));
 
-    let dapp_cycles: CyclesHistoryPage = query_one(
-        &h.pic,
-        h.historian,
-        Principal::anonymous(),
-        "get_cycles_history",
-        GetCyclesHistoryArgs {
-            canister_id: dapp,
-            start_after_ts: None,
-            limit: Some(10),
-            descending: Some(false),
-        },
-    )?;
-    assert_eq!(dapp_cycles.items.len(), 1);
-    assert_eq!(dapp_cycles.items[0].cycles, 3000u128);
-    assert!(matches!(
-        dapp_cycles.items[0].source,
-        CyclesSampleSource::SnsRootSummary
-    ));
+    let mut dapp_cycles = CyclesHistoryPage {
+        items: Vec::new(),
+        next_start_after_ts: None,
+    };
+    for _ in 0..10 {
+        dapp_cycles = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "get_cycles_history",
+            GetCyclesHistoryArgs {
+                canister_id: dapp,
+                start_after_ts: None,
+                limit: Some(10),
+                descending: Some(false),
+            },
+        )?;
+        if !dapp_cycles.items.is_empty() {
+            break;
+        }
+        h.pic.advance_time(Duration::from_secs(1));
+        h.tick();
+        let _: () = update_noargs(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "debug_driver_tick",
+        )?;
+    }
+    assert!(!dapp_cycles.items.is_empty());
+    assert_eq!(dapp_cycles.items[0].cycles, h.pic.cycle_balance(dapp));
+    assert!(dapp_cycles
+        .items
+        .iter()
+        .all(|sample| sample.source == CyclesSampleSource::DirectCanisterStatus));
+    let sns_root_calls: Vec<SnsRootDebugCall> =
+        query_one(&h.pic, sns_root, Principal::anonymous(), "debug_calls", ())?;
+    assert!(sns_root_calls
+        .iter()
+        .any(|call| call.method == "list_sns_canisters"
+            && call.canister_id.is_none()
+            && call.caller == h.historian));
+    assert!(sns_root_calls
+        .iter()
+        .all(|call| call.method != "canister_status" || call.canister_id != Some(dapp)));
     Ok(())
 }
 
@@ -4381,36 +4537,22 @@ fn historian_public_counts_exclude_sns_only_canisters_from_registered_totals() -
     let governance = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
     let dapp = Principal::from_text("qjdve-lqaaa-aaaaa-aaaeq-cai")?;
 
-    let summary = GetSnsCanistersSummaryResponse {
-        root: Some(SnsCanisterSummary {
-            canister_id: Some(sns_root),
-            status: Some(SnsCanisterStatus {
-                cycles: Some(Nat::from(1000u64)),
-            }),
-        }),
-        governance: Some(SnsCanisterSummary {
-            canister_id: Some(governance),
-            status: Some(SnsCanisterStatus {
-                cycles: Some(Nat::from(2000u64)),
-            }),
-        }),
+    let membership = ListSnsCanistersResponse {
+        root: Some(sns_root),
+        governance: Some(governance),
         ledger: None,
         swap: None,
         index: None,
-        dapps: vec![SnsCanisterSummary {
-            canister_id: Some(dapp),
-            status: Some(SnsCanisterStatus {
-                cycles: Some(Nat::from(3000u64)),
-            }),
-        }],
+        dapps: vec![dapp],
         archives: vec![],
+        extensions: None,
     };
     let _: () = update_one(
         &h.pic,
         sns_root,
         Principal::anonymous(),
-        "debug_set_summary",
-        summary,
+        "debug_set_canisters",
+        membership,
     )?;
     let _: () = update_one(
         &h.pic,

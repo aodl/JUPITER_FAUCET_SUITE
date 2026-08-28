@@ -180,9 +180,9 @@ Runs the heavier PocketIC suites.
 
 These exercise real canister execution more deeply and are where the repo currently validates many of its strongest behavioral guarantees.
 
-PocketIC-backed suites use the workspace `pocket-ic` crate version. The harness requires a local PocketIC server `13.0.0` binary before starting the Rust tests. Developers and CI may set `POCKET_IC_BIN=/absolute/path/to/pocket-ic` to force a specific compatible PocketIC server binary; otherwise xtask looks in the user-local `icp-cli` network-launcher package cache and exports the matching binary for the child test process.
+PocketIC-backed suites use the exact workspace `pocket-ic` crate version. The harness requires the PocketIC server from the pinned `icp-cli` network-launcher package `v15.0.0-2026-08-20-03-30`; that dated package contains the replica support exercised by Jupiter's status-visibility capability tests. Developers and CI may set `POCKET_IC_BIN=/absolute/path/to/pocket-ic` as an explicit override; otherwise xtask resolves only that exact package in the user-local launcher cache.
 
-PocketIC server and Rust client versions must be compatible. If you set `POCKET_IC_BIN`, ensure it points to an executable binary whose `--version` output is exactly `pocket-ic-server 13.0.0`.
+PocketIC server and Rust client versions must be compatible. If you set `POCKET_IC_BIN`, it must report exactly `pocket-ic-server 15.0.0`; the real capability smoke test also rejects an older pre-feature binary with the same version string.
 
 The heavier suites live under [`tests/pocketic/`](../../tests/pocketic):
 

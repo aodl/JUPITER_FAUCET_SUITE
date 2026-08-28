@@ -1,7 +1,3 @@
-type BlackholeSettings = record { controllers : vec principal };
-type BlackholeCanisterStatus = record { cycles : nat; settings : BlackholeSettings };
-type DebugStatus = record { canister_id : principal; cycles : nat; controllers : vec principal };
-type DebugCall = record { canister_id : principal; caller : principal };
 type CanisterStatusKind = variant { running; stopping; stopped };
 type LogVisibility = variant {
   controllers;
@@ -12,6 +8,11 @@ type StatusVisibility = variant {
   controllers;
   public;
   allowed_viewers : vec principal;
+};
+type CanisterSettings = record {
+  controllers : opt vec principal;
+  log_visibility : opt LogVisibility;
+  status_visibility : opt StatusVisibility;
 };
 type DefiniteCanisterSettings = record {
   controllers : vec principal;
@@ -24,14 +25,26 @@ type ManagementCanisterStatusResult = record {
   module_hash : opt vec nat8;
   settings : DefiniteCanisterSettings;
 };
+type ProxyCanisterStatusResult = record {
+  cycles : nat;
+  settings : record { controllers : vec principal };
+  memory_size : opt nat;
+  memory_metrics : opt record {
+    wasm_memory_size : nat;
+    stable_memory_size : nat;
+  };
+};
+type DebugCall = record { canister_id : principal; caller : principal };
 service : {
-  canister_status : (record { canister_id : principal }) -> (BlackholeCanisterStatus);
+  canister_status : (record { canister_id : principal }) -> (ProxyCanisterStatusResult);
   debug_management_canister_status : (record { canister_id : principal }) -> (variant {
     Ok : ManagementCanisterStatusResult;
     Err : text;
   });
-  debug_reset : () -> ();
-  debug_set_status : (principal, opt nat, vec principal) -> ();
-  debug_statuses : () -> (vec DebugStatus) query;
+  debug_management_update_settings : (record {
+    canister_id : principal;
+    settings : CanisterSettings;
+  }) -> (variant { Ok; Err : text });
   debug_calls : () -> (vec DebugCall) query;
+  debug_reset : () -> ();
 }

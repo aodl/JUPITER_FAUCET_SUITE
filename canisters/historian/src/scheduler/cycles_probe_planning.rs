@@ -36,14 +36,9 @@ fn ordinary_cycles_sweep_eligible(
     canister_id: &candid::Principal,
     now_secs: u64,
 ) -> bool {
-    let Some(reasons) = crate::visible_tracking_reasons_for_canister(st, canister_id) else {
+    let Some(_reasons) = crate::visible_tracking_reasons_for_canister(st, canister_id) else {
         return false;
     };
-    if st.config.enable_sns_tracking
-        && reasons.contains(&crate::state::CanisterTrackingReason::SnsDiscovery)
-    {
-        return false;
-    }
     if st
         .per_canister_meta
         .get(canister_id)

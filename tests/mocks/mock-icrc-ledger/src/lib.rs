@@ -58,6 +58,17 @@ pub struct TransferRecord {
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug)]
+pub struct TransferAttemptRecord {
+    pub from_subaccount: Option<[u8; 32]>,
+    pub to: Account,
+    pub amount: Nat,
+    pub fee: Option<Nat>,
+    pub memo: Option<Vec<u8>>,
+    pub created_at_time: Option<u64>,
+    pub result: String,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug)]
 pub struct LegacyTransferArg {
     pub memo: u64,
     pub amount: Tokens,
@@ -98,9 +109,11 @@ struct LedgerState {
     fee_query_failure: bool,
     next_error: Option<DebugNextTransferError>,
     next_error_script: VecDeque<DebugNextTransferError>,
+    accept_then_trap_from_subaccount: Option<[u8; 32]>,
     balances: HashMap<AccountKey, u128>,
     next_block: u64,
     dedup: HashMap<DedupKey, u64>,
+    transfer_attempts: Vec<TransferAttemptRecord>,
     transfers: Vec<TransferRecord>,
     legacy_transfers: Vec<LegacyTransferRecord>,
     index_transactions: Vec<TransactionWithId>,
@@ -215,14 +228,41 @@ fn query_blocks(_args: GetBlocksArgs) -> QueryBlocksResponse {
 
 #[ic_cdk::update]
 async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
+    let targeted_accept_then_trap = ST.with(|s| {
+        let mut st = s.borrow_mut();
+        if st.accept_then_trap_from_subaccount.is_some()
+            && st.accept_then_trap_from_subaccount == arg.from_subaccount
+        {
+            st.accept_then_trap_from_subaccount = None;
+            true
+        } else {
+            false
+        }
+    });
     // Inject scripted error if set, otherwise a one-shot next error.
     let scripted = ST.with(|s| {
         let mut st = s.borrow_mut();
-        st.next_error_script
-            .pop_front()
-            .or_else(|| st.next_error.take())
+        if let Some(scripted) = st.next_error_script.pop_front() {
+            Some(scripted)
+        } else {
+            st.next_error.take()
+        }
     });
-    let accept_then_trap = matches!(scripted, Some(DebugNextTransferError::AcceptThenTrap));
+    let caller = ic_cdk::api::msg_caller();
+    if targeted_accept_then_trap || matches!(scripted, Some(DebugNextTransferError::AcceptThenTrap))
+    {
+        let attempt_index = start_transfer_attempt(&arg);
+        apply_icrc1_transfer(caller, arg, attempt_index, "AcceptedResponseLost")?;
+        // Yield after applying the transfer so the accepted ledger state is committed before
+        // the response is lost. The later trap then exercises transport uncertainty without
+        // depending on whether a replica drives callbacks in the initiating PocketIC tick.
+        Call::unbounded_wait(ic_cdk::api::canister_self(), "debug_noop")
+            .await
+            .unwrap_or_else(|error| ic_cdk::trap(format!("debug barrier call failed: {error:?}")));
+        ic_cdk::trap("debug accepted transfer with lost response");
+    }
+
+    let attempt_index = start_transfer_attempt(&arg);
     if let Some(err) = scripted {
         let error = match err {
             DebugNextTransferError::PassThrough | DebugNextTransferError::AcceptThenTrap => None,
@@ -241,12 +281,40 @@ async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
             }),
         };
         if let Some(error) = error {
+            set_transfer_attempt_result(attempt_index, transfer_error_name(&error));
             return Err(error);
         }
     }
 
-    // ic-cdk 0.19: caller() deprecated
-    let caller = ic_cdk::api::msg_caller();
+    apply_icrc1_transfer(caller, arg, attempt_index, "Ok")
+}
+
+#[ic_cdk::update]
+fn debug_noop() {}
+
+fn start_transfer_attempt(arg: &TransferArg) -> usize {
+    ST.with(|s| {
+        let mut st = s.borrow_mut();
+        let attempt_index = st.transfer_attempts.len();
+        st.transfer_attempts.push(TransferAttemptRecord {
+            from_subaccount: arg.from_subaccount,
+            to: arg.to,
+            amount: arg.amount.clone(),
+            fee: arg.fee.clone(),
+            memo: arg.memo.as_ref().map(|memo| memo.0.to_vec()),
+            created_at_time: arg.created_at_time,
+            result: "Started".to_string(),
+        });
+        attempt_index
+    })
+}
+
+fn apply_icrc1_transfer(
+    caller: Principal,
+    arg: TransferArg,
+    attempt_index: usize,
+    accepted_result: &str,
+) -> Result<BlockIndex, TransferError> {
     let from = Account {
         owner: caller,
         subaccount: arg.from_subaccount,
@@ -258,9 +326,11 @@ async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
     // BadFee if caller provided fee and it doesn't match expected
     if let Some(provided) = arg.fee.as_ref().map(nat_u64) {
         if provided != fee_expected {
-            return Err(TransferError::BadFee {
+            let error = TransferError::BadFee {
                 expected_fee: Nat::from(fee_expected),
-            });
+            };
+            set_transfer_attempt_result(attempt_index, transfer_error_name(&error));
+            return Err(error);
         }
     }
 
@@ -284,6 +354,7 @@ async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
         };
 
         if let Some(block) = ST.with(|s| s.borrow().dedup.get(&dkey).cloned()) {
+            set_transfer_attempt_result(attempt_index, "Duplicate");
             return Err(TransferError::Duplicate {
                 duplicate_of: Nat::from(block),
             });
@@ -295,9 +366,11 @@ async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
 
     let from_bal: u128 = ST.with(|s| *s.borrow().balances.get(&from_key).unwrap_or(&0));
     if from_bal < total_debit {
-        return Err(TransferError::InsufficientFunds {
+        let error = TransferError::InsufficientFunds {
             balance: Nat::from(from_bal),
-        });
+        };
+        set_transfer_attempt_result(attempt_index, transfer_error_name(&error));
+        return Err(error);
     }
 
     // Apply mutations and record transfer
@@ -357,20 +430,28 @@ async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
         block
     });
 
-    if accept_then_trap {
-        // Yield after committing the accepted transfer, then trap so the caller observes
-        // transport uncertainty. This models a lost response without rolling back the ledger.
-        let _ = ic_cdk::call::Call::unbounded_wait(ic_cdk::api::canister_self(), "debug_noop")
-            .with_arg(&())
-            .await;
-        ic_cdk::trap("debug accepted transfer with lost response");
-    }
-
+    set_transfer_attempt_result(attempt_index, accepted_result);
     Ok(Nat::from(block))
 }
 
-#[ic_cdk::update]
-fn debug_noop() {}
+fn set_transfer_attempt_result(attempt_index: usize, result: &str) {
+    ST.with(|s| {
+        s.borrow_mut().transfer_attempts[attempt_index].result = result.to_string();
+    });
+}
+
+fn transfer_error_name(error: &TransferError) -> &'static str {
+    match error {
+        TransferError::BadFee { .. } => "BadFee",
+        TransferError::BadBurn { .. } => "BadBurn",
+        TransferError::InsufficientFunds { .. } => "InsufficientFunds",
+        TransferError::TooOld => "TooOld",
+        TransferError::CreatedInFuture { .. } => "CreatedInFuture",
+        TransferError::Duplicate { .. } => "Duplicate",
+        TransferError::TemporarilyUnavailable => "TemporarilyUnavailable",
+        TransferError::GenericError { .. } => "GenericError",
+    }
+}
 
 #[ic_cdk::update]
 fn transfer(arg: LegacyTransferArg) -> Result<u64, LegacyTransferError> {
@@ -449,6 +530,16 @@ fn debug_set_error_script(errs: Vec<DebugNextTransferError>) {
         st.next_error = None;
         st.next_error_script = errs.into();
     });
+}
+
+#[ic_cdk::update]
+fn debug_accept_then_trap_for_subaccount(subaccount: [u8; 32]) {
+    ST.with(|s| s.borrow_mut().accept_then_trap_from_subaccount = Some(subaccount));
+}
+
+#[ic_cdk::query]
+fn debug_accept_then_trap_subaccount() -> Option<[u8; 32]> {
+    ST.with(|s| s.borrow().accept_then_trap_from_subaccount)
 }
 
 #[ic_cdk::update]
@@ -599,6 +690,11 @@ async fn get_account_transactions(
 #[ic_cdk::query]
 fn debug_transfers() -> Vec<TransferRecord> {
     ST.with(|s| s.borrow().transfers.clone())
+}
+
+#[ic_cdk::query]
+fn debug_transfer_attempts() -> Vec<TransferAttemptRecord> {
+    ST.with(|s| s.borrow().transfer_attempts.clone())
 }
 
 #[ic_cdk::query]

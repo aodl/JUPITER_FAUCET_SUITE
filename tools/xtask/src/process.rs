@@ -1,4 +1,7 @@
-use crate::constants::{DIM, LOCAL_ENVIRONMENT, LOCAL_IDENTITY, POCKET_IC_SERVER_VERSION, RESET};
+use crate::constants::{
+    DIM, LOCAL_ENVIRONMENT, LOCAL_IDENTITY, NETWORK_LAUNCHER_PACKAGE, POCKET_IC_SERVER_VERSION,
+    RESET,
+};
 use crate::workspace::repo_root;
 use anyhow::{bail, Context, Result};
 use candid::Principal;
@@ -144,12 +147,11 @@ fn validate_pocketic_binary(path: &Path) -> Result<()> {
 
 fn discover_pocketic_binary() -> Option<PathBuf> {
     let home = env::var_os("HOME")?;
-    let root = PathBuf::from(home).join(".local/share/icp-cli/pkg/network-launcher");
-    let entries = fs::read_dir(root).ok()?;
-    entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path().join("pocket-ic"))
-        .find(|path| validate_pocketic_binary(path).is_ok())
+    let path = PathBuf::from(home)
+        .join(".local/share/icp-cli/pkg/network-launcher")
+        .join(format!("v{NETWORK_LAUNCHER_PACKAGE}"))
+        .join("pocket-ic");
+    validate_pocketic_binary(&path).is_ok().then_some(path)
 }
 
 fn ensure_pocketic_bin_env() -> Result<()> {
@@ -167,9 +169,11 @@ fn ensure_pocketic_bin_env() -> Result<()> {
         return Ok(());
     }
     bail!(
-        "could not find a local PocketIC server {POCKET_IC_SERVER_VERSION} binary; \
-         install one or set POCKET_IC_BIN to an executable \
-         `pocket-ic-server {POCKET_IC_SERVER_VERSION}` binary"
+        "could not find PocketIC from network-launcher package \
+         v{NETWORK_LAUNCHER_PACKAGE}; start or update the pinned managed local network to \
+         download it, or set POCKET_IC_BIN to an explicit executable \
+         `pocket-ic-server {POCKET_IC_SERVER_VERSION}` override (the runtime capability smoke \
+         test will reject pre-feature builds)"
     );
 }
 

@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 
 use candid::{Nat, Principal};
 
-use crate::management::{self, CanisterInfoArgs};
+use crate::management::{
+    self, CanisterInfoArgs, CanisterStatusArgs, CanisterStatusResult, StatusVisibility,
+};
 use crate::sns::{
     DeployedSns, ListDeployedSnsesResponse, ListSnsCanistersResponse, SnsRootCanister,
     SnsSwapCanister, SnsWasmCanister,
@@ -21,6 +23,7 @@ use crate::{constants, ClientError};
     Ord,
 )]
 pub enum CyclesProbeRoute {
+    DirectCanisterStatus,
     Blackhole {
         canister_id: Principal,
     },
@@ -31,6 +34,19 @@ pub enum CyclesProbeRoute {
         root_canister_id: Principal,
         swap_canister_id: Principal,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CyclesProbeAudience {
+    #[default]
+    CurrentCaller,
+    AnyCanister,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirectCanisterStatusObservation {
+    pub cycles: u128,
+    pub status_visibility: StatusVisibility,
 }
 
 #[derive(candid::CandidType, serde::Deserialize, serde::Serialize, Clone, Debug, PartialEq, Eq)]
@@ -56,6 +72,10 @@ pub type CyclesProbeResult = Result<CyclesProbeSuccess, CyclesProbeFailure>;
 #[allow(async_fn_in_trait)]
 pub trait CyclesProbeClient {
     async fn self_cycles(&self, target: Principal) -> Option<u128>;
+    async fn direct_canister_status(
+        &self,
+        target: Principal,
+    ) -> Result<DirectCanisterStatusObservation, ClientError>;
     async fn blackhole_cycles(
         &self,
         probe_canister_id: Principal,
@@ -98,6 +118,18 @@ impl IcCyclesProbeClient {
 impl CyclesProbeClient for IcCyclesProbeClient {
     async fn self_cycles(&self, target: Principal) -> Option<u128> {
         (target == ic_cdk::api::canister_self()).then(ic_cdk::api::canister_cycle_balance)
+    }
+
+    async fn direct_canister_status(
+        &self,
+        target: Principal,
+    ) -> Result<DirectCanisterStatusObservation, ClientError> {
+        let status = management::canister_status(&CanisterStatusArgs {
+            canister_id: target,
+        })
+        .await
+        .map_err(|e| ClientError::Call(format!("direct canister_status failed: {e:?}")))?;
+        direct_observation_from_status(status)
     }
 
     async fn blackhole_cycles(
@@ -160,6 +192,15 @@ impl CyclesProbeClient for IcCyclesProbeClient {
     }
 }
 
+fn direct_observation_from_status(
+    status: CanisterStatusResult,
+) -> Result<DirectCanisterStatusObservation, ClientError> {
+    Ok(DirectCanisterStatusObservation {
+        cycles: nat_to_u128(&status.cycles)?,
+        status_visibility: status.settings.status_visibility,
+    })
+}
+
 #[derive(candid::CandidType, serde::Deserialize)]
 struct BlackholeCanisterStatusArgs {
     canister_id: Principal,
@@ -181,10 +222,45 @@ pub async fn probe_cycles<C: CyclesProbeClient>(
     cached_route: Option<CyclesProbeRoute>,
     client: &C,
 ) -> CyclesProbeResult {
+    probe_cycles_for_audience(
+        policy,
+        target,
+        cached_route,
+        CyclesProbeAudience::CurrentCaller,
+        client,
+    )
+    .await
+}
+
+pub async fn probe_cycles_for_audience<C: CyclesProbeClient>(
+    policy: &CyclesProbePolicy,
+    target: Principal,
+    cached_route: Option<CyclesProbeRoute>,
+    audience: CyclesProbeAudience,
+    client: &C,
+) -> CyclesProbeResult {
     let mut state = ProbeState::default();
 
-    if let Some(cycles) = client.self_cycles(target).await {
-        return Ok(state.success(cycles, None));
+    if audience == CyclesProbeAudience::CurrentCaller {
+        if let Some(cycles) = client.self_cycles(target).await {
+            return Ok(state.success(cycles, None));
+        }
+    }
+
+    if matches!(policy, CyclesProbePolicy::Auto) {
+        match execute_route(
+            &mut state,
+            client,
+            target,
+            CyclesProbeRoute::DirectCanisterStatus,
+            audience,
+        )
+        .await
+        {
+            Ok(Some(success)) => return Ok(success),
+            Ok(None) => {}
+            Err(err) => state.errors.push(format!("direct route failed: {err}")),
+        }
     }
 
     if constants::is_production_blackhole_canister_id(target) {
@@ -195,6 +271,7 @@ pub async fn probe_cycles<C: CyclesProbeClient>(
             CyclesProbeRoute::Blackhole {
                 canister_id: target,
             },
+            audience,
         )
         .await
         {
@@ -220,6 +297,7 @@ pub async fn probe_cycles<C: CyclesProbeClient>(
                 CyclesProbeRoute::Blackhole {
                     canister_id: *canister_id,
                 },
+                audience,
             )
             .await
             {
@@ -234,7 +312,7 @@ pub async fn probe_cycles<C: CyclesProbeClient>(
     }
 
     if let Some(route) = cached_route {
-        match execute_route(&mut state, client, target, route).await {
+        match execute_route(&mut state, client, target, route, audience).await {
             Ok(Some(success)) => return Ok(success),
             Ok(None) => {}
             Err(err) => {
@@ -249,6 +327,7 @@ pub async fn probe_cycles<C: CyclesProbeClient>(
             client,
             target,
             CyclesProbeRoute::Blackhole { canister_id },
+            audience,
         )
         .await
         {
@@ -261,7 +340,7 @@ pub async fn probe_cycles<C: CyclesProbeClient>(
     }
 
     match discover_sns_route(target, client).await {
-        Ok(Some(route)) => match execute_route(&mut state, client, target, route).await {
+        Ok(Some(route)) => match execute_route(&mut state, client, target, route, audience).await {
             Ok(Some(success)) => Ok(success),
             Ok(None) => state.failure("no cycles probe route could observe target".to_string()),
             Err(err) => state.failure(format!("SNS route probe failed after discovery: {err}")),
@@ -276,12 +355,26 @@ async fn execute_route<C: CyclesProbeClient>(
     client: &C,
     target: Principal,
     route: CyclesProbeRoute,
+    audience: CyclesProbeAudience,
 ) -> Result<Option<CyclesProbeSuccess>, ClientError> {
     if !state.attempted_set.insert(route.clone()) {
         return Ok(None);
     }
     state.attempted_routes.push(route.clone());
     let cycles = match route {
+        CyclesProbeRoute::DirectCanisterStatus => {
+            let observation = client.direct_canister_status(target).await?;
+            if audience == CyclesProbeAudience::AnyCanister
+                && observation.status_visibility != StatusVisibility::Public
+            {
+                state.errors.push(format!(
+                    "direct canister_status succeeded but status visibility `{}` is not reusable by any canister",
+                    status_visibility_label(&observation.status_visibility)
+                ));
+                return Ok(None);
+            }
+            observation.cycles
+        }
         CyclesProbeRoute::Blackhole { canister_id } => {
             client.blackhole_cycles(canister_id, target).await?
         }
@@ -294,6 +387,14 @@ async fn execute_route<C: CyclesProbeClient>(
         } => client.sns_swap_cycles(swap_canister_id).await?,
     };
     Ok(Some(state.success(cycles, Some(route))))
+}
+
+fn status_visibility_label(visibility: &StatusVisibility) -> &'static str {
+    match visibility {
+        StatusVisibility::Controllers => "controllers",
+        StatusVisibility::Public => "public",
+        StatusVisibility::AllowedViewers(_) => "allowed_viewers",
+    }
 }
 
 async fn discover_sns_route<C: CyclesProbeClient>(
@@ -471,6 +572,7 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum TestCall {
         SelfCycles(Principal),
+        DirectCanisterStatus(Principal),
         Blackhole { probe: Principal, target: Principal },
         ListDeployedSnses,
         CanisterInfo(Principal),
@@ -481,6 +583,8 @@ mod tests {
 
     struct RecordingClient {
         self_cycles: Option<(Principal, u128)>,
+        direct: Result<DirectCanisterStatusObservation, &'static str>,
+        direct_status: Option<CanisterStatusResult>,
         blackhole: BTreeMap<Principal, TestResponse>,
         sns_root: BTreeMap<Principal, TestResponse>,
         sns_swap: BTreeMap<Principal, TestResponse>,
@@ -494,6 +598,8 @@ mod tests {
         fn default() -> Self {
             Self {
                 self_cycles: None,
+                direct: Err("direct status denied"),
+                direct_status: None,
                 blackhole: BTreeMap::new(),
                 sns_root: BTreeMap::new(),
                 sns_swap: BTreeMap::new(),
@@ -526,6 +632,22 @@ mod tests {
             self.self_cycles
                 .filter(|(self_target, _)| *self_target == target)
                 .map(|(_, cycles)| cycles)
+        }
+
+        async fn direct_canister_status(
+            &self,
+            target: Principal,
+        ) -> Result<DirectCanisterStatusObservation, ClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(TestCall::DirectCanisterStatus(target));
+            if let Some(status) = self.direct_status.clone() {
+                return direct_observation_from_status(status);
+            }
+            self.direct
+                .clone()
+                .map_err(|err| ClientError::Call(err.to_string()))
         }
 
         async fn blackhole_cycles(
@@ -758,6 +880,7 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(thirteen, target),
             ]
         );
@@ -783,6 +906,7 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(thirteen, target),
                 blackhole_call(fiduciary, target),
             ]
@@ -790,7 +914,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_blackhole_target_uses_self_status_before_cached_route() {
+    fn auto_canonical_blackhole_orders_self_direct_then_canonical_self_status() {
         let target = constants::fiduciary_blackhole_canister_id();
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let client = RecordingClient {
@@ -810,7 +934,11 @@ mod tests {
         assert_eq!(outcome.cycles, 77);
         assert_eq!(
             client.calls(),
-            vec![TestCall::SelfCycles(target), blackhole_call(target, target),]
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+                blackhole_call(target, target),
+            ]
         );
     }
 
@@ -942,6 +1070,7 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(target, target),
                 blackhole_call(fiduciary, target),
                 TestCall::ListDeployedSnses,
@@ -985,7 +1114,38 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 root_status(cached_root, target),
+            ]
+        );
+    }
+
+    #[test]
+    fn direct_success_outranks_cached_sns_root() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let client = RecordingClient {
+            direct: Ok(direct_observation(77, StatusVisibility::Public)),
+            sns_root: BTreeMap::from([(root, TestResponse::Ok(99))]),
+            ..Default::default()
+        };
+
+        let result = probe_auto(
+            target,
+            Some(CyclesProbeRoute::SnsRoot {
+                root_canister_id: root,
+            }),
+            &client,
+        )
+        .unwrap();
+
+        assert_eq!(result.route, Some(CyclesProbeRoute::DirectCanisterStatus));
+        assert_eq!(result.cycles, 77);
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
             ]
         );
     }
@@ -1019,6 +1179,7 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(fiduciary, target),
             ]
         );
@@ -1053,6 +1214,7 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(fiduciary, target),
                 blackhole_call(thirteen, target),
             ]
@@ -1110,6 +1272,7 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(fiduciary, target),
                 blackhole_call(thirteen, target),
                 TestCall::ListDeployedSnses,
@@ -1153,7 +1316,43 @@ mod tests {
         );
         assert_eq!(
             client.calls(),
-            vec![TestCall::SelfCycles(target), TestCall::SnsSwapStatus(swap),]
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+                TestCall::SnsSwapStatus(swap),
+            ]
+        );
+    }
+
+    #[test]
+    fn direct_success_outranks_cached_sns_swap() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let swap = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let client = RecordingClient {
+            direct: Ok(direct_observation(77, StatusVisibility::Public)),
+            sns_swap: BTreeMap::from([(swap, TestResponse::Ok(99))]),
+            ..Default::default()
+        };
+
+        let result = probe_auto(
+            target,
+            Some(CyclesProbeRoute::SnsSwap {
+                root_canister_id: root,
+                swap_canister_id: swap,
+            }),
+            &client,
+        )
+        .unwrap();
+
+        assert_eq!(result.route, Some(CyclesProbeRoute::DirectCanisterStatus));
+        assert_eq!(result.cycles, 77);
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+            ]
         );
     }
 
@@ -1186,6 +1385,7 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(thirteen, target),
                 blackhole_call(fiduciary, target),
             ]
@@ -1265,6 +1465,7 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(thirteen, target),
                 blackhole_call(fiduciary, target),
                 TestCall::ListDeployedSnses,
@@ -1302,6 +1503,7 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(thirteen, target),
                 blackhole_call(fiduciary, target),
                 TestCall::ListDeployedSnses,
@@ -1333,6 +1535,7 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(thirteen, target),
                 blackhole_call(fiduciary, target),
                 TestCall::ListDeployedSnses,
@@ -1482,6 +1685,7 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(thirteen, target),
                 blackhole_call(fiduciary, target),
                 TestCall::ListDeployedSnses,
@@ -1660,6 +1864,7 @@ mod tests {
             client.calls(),
             vec![
                 TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
                 blackhole_call(thirteen, target),
                 blackhole_call(fiduciary, target),
                 TestCall::ListDeployedSnses,
@@ -1670,5 +1875,233 @@ mod tests {
         );
         assert!(err.message.contains(&root_b.to_text()));
         assert!(err.message.contains("root b rejected membership query"));
+    }
+
+    fn direct_observation(
+        cycles: u128,
+        status_visibility: StatusVisibility,
+    ) -> DirectCanisterStatusObservation {
+        DirectCanisterStatusObservation {
+            cycles,
+            status_visibility,
+        }
+    }
+
+    #[test]
+    fn auto_direct_success_outranks_cached_proxy_and_makes_one_external_call() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let cached = CyclesProbeRoute::Blackhole {
+            canister_id: constants::fiduciary_blackhole_canister_id(),
+        };
+        let client = RecordingClient {
+            direct: Ok(direct_observation(77, StatusVisibility::Public)),
+            ..Default::default()
+        };
+
+        let result = probe_auto(target, Some(cached), &client).unwrap();
+
+        assert_eq!(result.cycles, 77);
+        assert_eq!(result.route, Some(CyclesProbeRoute::DirectCanisterStatus));
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+            ]
+        );
+    }
+
+    #[test]
+    fn cached_direct_route_does_not_duplicate_mandatory_direct_attempt() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let thirteen = constants::thirteen_node_blackhole_canister_id();
+        let client = RecordingClient {
+            direct: Err("denied"),
+            blackhole: BTreeMap::from([(thirteen, TestResponse::Ok(88))]),
+            ..Default::default()
+        };
+
+        let result = probe_auto(
+            target,
+            Some(CyclesProbeRoute::DirectCanisterStatus),
+            &client,
+        )
+        .unwrap();
+        assert_eq!(result.cycles, 88);
+        assert_eq!(
+            client
+                .calls()
+                .iter()
+                .filter(|call| **call == TestCall::DirectCanisterStatus(target))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn direct_failure_then_cached_success_has_exact_order() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let cached_id = constants::fiduciary_blackhole_canister_id();
+        let client = RecordingClient {
+            direct: Err("denied"),
+            blackhole: BTreeMap::from([(cached_id, TestResponse::Ok(99))]),
+            ..Default::default()
+        };
+
+        let result = probe_auto(
+            target,
+            Some(CyclesProbeRoute::Blackhole {
+                canister_id: cached_id,
+            }),
+            &client,
+        )
+        .unwrap();
+        assert_eq!(result.cycles, 99);
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+                blackhole_call(cached_id, target),
+            ]
+        );
+    }
+
+    #[test]
+    fn current_caller_accepts_non_public_direct_visibility() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        for visibility in [
+            StatusVisibility::Controllers,
+            StatusVisibility::AllowedViewers(vec![principal("qaa6y-5yaaa-aaaaa-aaafa-cai")]),
+        ] {
+            let client = RecordingClient {
+                direct: Ok(direct_observation(123, visibility)),
+                ..Default::default()
+            };
+            assert_eq!(
+                probe_auto(target, None, &client).unwrap().route,
+                Some(CyclesProbeRoute::DirectCanisterStatus)
+            );
+        }
+    }
+
+    #[test]
+    fn any_canister_accepts_only_public_direct_visibility_without_second_call() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let client = RecordingClient {
+            self_cycles: Some((target, 5)),
+            direct: Ok(direct_observation(123, StatusVisibility::Public)),
+            ..Default::default()
+        };
+        let result = block_on(probe_cycles_for_audience(
+            &CyclesProbePolicy::Auto,
+            target,
+            None,
+            CyclesProbeAudience::AnyCanister,
+            &client,
+        ))
+        .unwrap();
+        assert_eq!(result.route, Some(CyclesProbeRoute::DirectCanisterStatus));
+        assert_eq!(client.calls(), vec![TestCall::DirectCanisterStatus(target)]);
+    }
+
+    #[test]
+    fn any_canister_non_public_direct_continues_to_reusable_fallback() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let thirteen = constants::thirteen_node_blackhole_canister_id();
+        let client = RecordingClient {
+            direct: Ok(direct_observation(123, StatusVisibility::Controllers)),
+            blackhole: BTreeMap::from([(thirteen, TestResponse::Ok(456))]),
+            ..Default::default()
+        };
+        let result = block_on(probe_cycles_for_audience(
+            &CyclesProbePolicy::Auto,
+            target,
+            None,
+            CyclesProbeAudience::AnyCanister,
+            &client,
+        ))
+        .unwrap();
+        assert_eq!(result.cycles, 456);
+        assert_eq!(
+            result.route,
+            Some(CyclesProbeRoute::Blackhole {
+                canister_id: thirteen
+            })
+        );
+        assert_eq!(
+            client
+                .calls()
+                .iter()
+                .filter(|call| **call == TestCall::DirectCanisterStatus(target))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn any_canister_non_public_direct_failure_is_diagnostic() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let client = RecordingClient {
+            direct: Ok(direct_observation(
+                123,
+                StatusVisibility::AllowedViewers(vec![principal("qaa6y-5yaaa-aaaaa-aaafa-cai")]),
+            )),
+            ..Default::default()
+        };
+        let failure = block_on(probe_cycles_for_audience(
+            &CyclesProbePolicy::Auto,
+            target,
+            None,
+            CyclesProbeAudience::AnyCanister,
+            &client,
+        ))
+        .unwrap_err();
+        assert!(failure.message.contains("not reusable by any canister"));
+        assert!(!failure.message.contains("qaa6y"));
+        assert!(failure
+            .attempted_routes
+            .contains(&CyclesProbeRoute::DirectCanisterStatus));
+    }
+
+    #[test]
+    fn direct_nat_overflow_falls_back_to_blackhole() {
+        use crate::management::{CanisterStatusKind, DefiniteCanisterSettings, LogVisibility};
+
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let thirteen = constants::thirteen_node_blackhole_canister_id();
+        let too_large = Nat::from(u128::MAX) + Nat::from(1_u8);
+        let client = RecordingClient {
+            direct_status: Some(CanisterStatusResult {
+                status: CanisterStatusKind::Running,
+                cycles: too_large,
+                module_hash: None,
+                settings: DefiniteCanisterSettings {
+                    controllers: Vec::new(),
+                    log_visibility: LogVisibility::Public,
+                    status_visibility: StatusVisibility::Public,
+                },
+            }),
+            blackhole: BTreeMap::from([(thirteen, TestResponse::Ok(88))]),
+            ..Default::default()
+        };
+
+        let result = probe_auto(target, None, &client).unwrap();
+
+        assert_eq!(result.cycles, 88);
+        assert_eq!(
+            result.route,
+            Some(CyclesProbeRoute::Blackhole {
+                canister_id: thirteen,
+            })
+        );
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+                blackhole_call(thirteen, target),
+            ]
+        );
     }
 }

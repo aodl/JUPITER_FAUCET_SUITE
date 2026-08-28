@@ -664,7 +664,13 @@
               </p>
               <ul class="nav-panel-content">
                 <li>
-                  <strong>Recognized blackhole:</strong> An ordinary target is observable when either the
+                  <strong>Direct canister status:</strong> The preferred route is the IC management canister's
+                  <code>canister_status</code> method. A target may set status visibility to <code>public</code>
+                  or name a suitable ordinary sampler in <code>allowed_viewers</code>. Public status exposes the
+                  status response, including settings and cycles, rather than only a cycles number.
+                </li>
+                <li>
+                  <strong>Recognized blackhole fallback:</strong> A target without direct access is observable when either the
                   <a href="https://dashboard.internetcomputer.org/canister/e3mmv-5qaaa-aaaah-aadma-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link">13-node blackhole</a>
                   or the
                   <a href="https://dashboard.internetcomputer.org/canister/77deu-baaaa-aaaar-qb6za-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link">Fiduciary blackhole</a>
@@ -676,15 +682,16 @@
                   read the target's cycles balance.
                 </li>
                 <li>
-                  <strong>SNS routes:</strong> Deployed SNS canisters and dapps governed by an SNS can be
-                  observed through that SNS. These targets do not need a recognized blackhole controller.
+                  <strong>SNS fallback:</strong> SNS discovery supplies membership. When direct status is unavailable,
+                  Root or Swap status can observe eligible SNS canisters without a recognized blackhole controller.
                 </li>
               </ul>
               <p class="nav-panel-content memo-builder-safety-notice">
-                <strong>TL;DR:</strong> Non-SNS target canisters require a recognized blackhole controller
-                if you want cycles history displayed in the
-                <a href="#metric-tracker" data-panel="metric-tracker" class="pane-external-link">Memo Tracker</a>;
-                cycles for SNS-governed dapps are observable by default. Newly tracked canisters may remain
+                <strong>TL;DR:</strong> Direct status is tried before every cached, blackhole, or SNS proxy route.
+                Blackhole and SNS status calls remain fallbacks. A new self-service Relay can rely on direct status
+                only when the target sets it to <code>public</code>; access granted only to Historian cannot cover the
+                child principal before it exists, though a recognized reusable proxy fallback may still qualify it.
+                Newly tracked canisters may remain
                 pending until their initial probe or the next cycles sweep completes. While
                 <a href="#how-it-works" data-page-target="0" class="pane-external-link">Jupiter Faucet</a>
                 perpetually tops up target canisters whether or not their cycles are publicly observable,
@@ -1085,7 +1092,7 @@
                 </div>
               </fieldset>
             </form>
-            <p class="pane-status-note tracker-status-note"><strong>Immutable configuration:</strong> Targets, recipient destinations, and exact memo bytes determine the setup address. Changing a memo usually changes the funding account. An empty memo sends no outgoing Ledger memo; Text and Hexadecimal modes are limited to 32 encoded bytes. All-cycles mode uses zero recipients and routes no raw ICP surplus. No IO recipient is added automatically.</p>
+            <p class="pane-status-note tracker-status-note"><strong>Immutable configuration:</strong> Targets, recipient destinations, and exact memo bytes determine the setup address. Changing a memo usually changes the funding account. An empty memo sends no outgoing Ledger memo; Text and Hexadecimal modes are limited to 32 encoded bytes. All-cycles mode uses zero recipients and routes no raw ICP surplus. No IO recipient is added automatically. Historian verifies the approved module and exact settings, then finalizes the Relay with zero controllers, public logs, and public status.</p>
             <p class="pane-status-note tracker-status-note tracker-status-note--error"><strong>Check carefully before paying:</strong> deposits sent for an incorrectly selected Relay configuration are not automatically refundable.</p>
             <p class="pane-status-note tracker-status-note tracker-status-note--error" id="relay-setup-warning" role="status" aria-live="polite" hidden></p>
             <div class="tracker-result" id="relay-setup-result">

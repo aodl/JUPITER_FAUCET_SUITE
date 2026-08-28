@@ -2,28 +2,6 @@ use candid::{CandidType, Deserialize, Nat, Principal};
 use ic_cdk::call::Call;
 use std::cell::RefCell;
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct SnsCanisterStatus {
-    cycles: Option<candid::Nat>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct SnsCanisterSummary {
-    canister_id: Option<Principal>,
-    status: Option<SnsCanisterStatus>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize, Default)]
-struct GetSnsCanistersSummaryResponse {
-    root: Option<SnsCanisterSummary>,
-    governance: Option<SnsCanisterSummary>,
-    ledger: Option<SnsCanisterSummary>,
-    swap: Option<SnsCanisterSummary>,
-    index: Option<SnsCanisterSummary>,
-    dapps: Vec<SnsCanisterSummary>,
-    archives: Vec<SnsCanisterSummary>,
-}
-
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
 struct ListSnsCanistersResponse {
     root: Option<Principal>,
@@ -62,23 +40,12 @@ struct DebugCall {
 }
 
 thread_local! {
-    static SUMMARY: RefCell<GetSnsCanistersSummaryResponse> = RefCell::new(GetSnsCanistersSummaryResponse::default());
     static CANISTERS: RefCell<ListSnsCanistersResponse> = RefCell::new(ListSnsCanistersResponse::default());
     static CALLS: RefCell<Vec<DebugCall>> = const { RefCell::new(Vec::new()) };
 }
 
 #[ic_cdk::init]
 fn init() {}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct Args {
-    update_canister_list: Option<bool>,
-}
-
-#[ic_cdk::update]
-fn get_sns_canisters_summary(_: Args) -> GetSnsCanistersSummaryResponse {
-    SUMMARY.with(|s| s.borrow().clone())
-}
 
 #[ic_cdk::update]
 fn list_sns_canisters(_: ListSnsCanistersRequest) -> ListSnsCanistersResponse {
@@ -108,11 +75,6 @@ async fn canister_status(args: CanisterStatusArgs) -> CanisterStatusResult {
         .unwrap_or_else(|err| ic_cdk::trap(format!("management canister_status failed: {err:?}")));
     resp.candid()
         .unwrap_or_else(|err| ic_cdk::trap(format!("decode canister_status failed: {err:?}")))
-}
-
-#[ic_cdk::update]
-fn debug_set_summary(summary: GetSnsCanistersSummaryResponse) {
-    SUMMARY.with(|s| *s.borrow_mut() = summary);
 }
 
 #[ic_cdk::update]

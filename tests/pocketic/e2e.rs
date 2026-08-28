@@ -965,6 +965,7 @@ struct HistorianCommitmentHistoryPage {
 enum HistorianCyclesSampleSource {
     BlackholeStatus,
     SelfCanister,
+    DirectCanisterStatus,
     SnsRootStatus,
     SnsSwapStatus,
     SnsRootSummary,

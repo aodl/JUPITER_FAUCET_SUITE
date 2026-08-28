@@ -73,6 +73,7 @@ pub(super) async fn rescue_tick() {
         settings: CanisterSettings {
             controllers: Some(desired.clone()),
             log_visibility: None,
+            status_visibility: None,
         },
     };
 

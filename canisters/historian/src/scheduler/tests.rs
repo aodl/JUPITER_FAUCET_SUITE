@@ -264,17 +264,13 @@ mod tests {
     }
 
     struct MockSnsRootClient {
-        responses:
-            Mutex<BTreeMap<Principal, crate::clients::sns_root::GetSnsCanistersSummaryResponse>>,
+        responses: Mutex<BTreeMap<Principal, jupiter_ic_clients::sns::ListSnsCanistersResponse>>,
         calls: Mutex<Vec<Principal>>,
     }
 
     impl MockSnsRootClient {
         fn new(
-            responses: BTreeMap<
-                Principal,
-                crate::clients::sns_root::GetSnsCanistersSummaryResponse,
-            >,
+            responses: BTreeMap<Principal, jupiter_ic_clients::sns::ListSnsCanistersResponse>,
         ) -> Self {
             Self {
                 responses: Mutex::new(responses),
@@ -289,13 +285,11 @@ mod tests {
 
     #[async_trait]
     impl SnsRootClient for MockSnsRootClient {
-        async fn get_sns_canisters_summary(
+        async fn list_sns_canisters(
             &self,
             root_id: Principal,
-        ) -> Result<
-            crate::clients::sns_root::GetSnsCanistersSummaryResponse,
-            crate::clients::ClientError,
-        > {
+        ) -> Result<jupiter_ic_clients::sns::ListSnsCanistersResponse, crate::clients::ClientError>
+        {
             self.calls.lock().unwrap().push(root_id);
             self.responses
                 .lock()
@@ -303,17 +297,8 @@ mod tests {
                 .get(&root_id)
                 .cloned()
                 .ok_or_else(|| {
-                    crate::clients::ClientError::Call(format!("missing summary for {}", root_id))
+                    crate::clients::ClientError::Call(format!("missing membership for {}", root_id))
                 })
-        }
-    }
-
-    fn sns_summary(canister_id: Principal, cycles: u64) -> SnsCanisterSummary {
-        SnsCanisterSummary {
-            canister_id: Some(canister_id),
-            status: Some(crate::clients::sns_root::SnsCanisterStatus {
-                cycles: Some(Nat::from(cycles)),
-            }),
         }
     }
 
@@ -403,6 +388,18 @@ mod tests {
     impl CyclesProbeClient for RecordingCyclesProbeClient {
         async fn self_cycles(&self, target: Principal) -> Option<u128> {
             self.self_cycles.lock().unwrap().get(&target).copied()
+        }
+
+        async fn direct_canister_status(
+            &self,
+            _target: Principal,
+        ) -> Result<
+            jupiter_ic_clients::cycles_probe::DirectCanisterStatusObservation,
+            jupiter_ic_clients::ClientError,
+        > {
+            Err(jupiter_ic_clients::ClientError::Call(
+                "direct canister_status unavailable in scheduler mock".to_string(),
+            ))
         }
 
         async fn blackhole_cycles(
@@ -711,38 +708,23 @@ mod tests {
         let mut summaries = BTreeMap::new();
         summaries.insert(
             root_a.clone(),
-            crate::clients::sns_root::GetSnsCanistersSummaryResponse {
-                root: Some(sns_summary(root_a.clone(), 10)),
-                governance: None,
-                ledger: None,
-                swap: None,
-                index: None,
-                dapps: Vec::new(),
-                archives: Vec::new(),
+            jupiter_ic_clients::sns::ListSnsCanistersResponse {
+                root: Some(root_a.clone()),
+                ..Default::default()
             },
         );
         summaries.insert(
             root_b.clone(),
-            crate::clients::sns_root::GetSnsCanistersSummaryResponse {
-                root: Some(sns_summary(root_b.clone(), 20)),
-                governance: None,
-                ledger: None,
-                swap: None,
-                index: None,
-                dapps: Vec::new(),
-                archives: Vec::new(),
+            jupiter_ic_clients::sns::ListSnsCanistersResponse {
+                root: Some(root_b.clone()),
+                ..Default::default()
             },
         );
         summaries.insert(
             root_c.clone(),
-            crate::clients::sns_root::GetSnsCanistersSummaryResponse {
-                root: Some(sns_summary(root_c.clone(), 30)),
-                governance: None,
-                ledger: None,
-                swap: None,
-                index: None,
-                dapps: Vec::new(),
-                archives: Vec::new(),
+            jupiter_ic_clients::sns::ListSnsCanistersResponse {
+                root: Some(root_c.clone()),
+                ..Default::default()
             },
         );
         let sns_root = MockSnsRootClient::new(summaries);
@@ -771,11 +753,13 @@ mod tests {
             assert!(st.active_sns_discovery.is_none());
             assert_eq!(st.last_sns_discovery_ts, 101);
             assert!(st.distinct_canisters.contains(&root_c));
-            let history = st
-                .cycles_history
-                .get(&root_c)
-                .expect("cycles history for final root");
-            assert_eq!(history.last().map(|sample| sample.cycles), Some(30));
+            assert!(!st.cycles_history.contains_key(&root_c));
+            assert_eq!(
+                st.per_canister_meta
+                    .get(&root_c)
+                    .and_then(|meta| meta.last_cycles_probe_result.as_ref()),
+                None
+            );
         });
         assert_eq!(
             sns_wasm.calls(),
@@ -789,7 +773,88 @@ mod tests {
     }
 
     #[test]
-    fn sns_discovery_skips_failing_root_summary_and_continues_batch() {
+    fn sns_membership_queue_and_frozen_sweep_do_not_double_probe_across_ticks() {
+        configure_state(10);
+        let root = candid::Principal::from_slice(&[1]);
+        let governance_id = candid::Principal::from_slice(&[2]);
+        let ledger_id = candid::Principal::from_slice(&[3]);
+        let swap_id = candid::Principal::from_slice(&[4]);
+        let index_id = candid::Principal::from_slice(&[5]);
+        let dapp_id = candid::Principal::from_slice(&[6]);
+        let expected_members = [root, governance_id, ledger_id, swap_id, index_id, dapp_id];
+        state::with_state_mut(|st| {
+            st.config.enable_sns_tracking = true;
+            st.config.cycles_interval_seconds = 10;
+            st.config.max_canisters_per_cycles_tick = 2;
+            st.last_sns_discovery_ts = 0;
+            st.last_completed_cycles_sweep_ts = 0;
+            st.active_cycles_sweep = Some(ActiveCyclesSweep {
+                started_at_ts_nanos: 99_000_000_000,
+                canisters: expected_members.to_vec(),
+                next_index: 0,
+            });
+        });
+        let sns_wasm = MockSnsWasmClient::new(vec![Ok(
+            crate::clients::sns_wasm::ListDeployedSnsesResponse {
+                instances: vec![crate::clients::sns_wasm::DeployedSns {
+                    root_canister_id: Some(root),
+                }],
+            },
+        )]);
+        let sns_root = MockSnsRootClient::new(BTreeMap::from([(
+            root,
+            jupiter_ic_clients::sns::ListSnsCanistersResponse {
+                root: Some(root),
+                governance: Some(governance_id),
+                ledger: Some(ledger_id),
+                swap: Some(swap_id),
+                index: Some(index_id),
+                dapps: vec![dapp_id],
+                ..Default::default()
+            },
+        )]));
+        let index = MockIndexClient::new(Vec::new());
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let governance = RecordingGovernanceClient::new();
+        let xrc = MockXrcClient::success(720_000_000, 8, 9_900);
+
+        for now_secs in 100..=102 {
+            block_on(run_main_tick_with_clients(
+                now_secs * 1_000_000_000,
+                now_secs,
+                &index,
+                &cycles_probe,
+                &sns_wasm,
+                &sns_root,
+                &governance,
+                &xrc,
+            ))
+            .unwrap();
+        }
+
+        let calls = cycles_probe.blackhole_targets();
+        state::with_state(|st| {
+            assert!(st.initial_cycles_probe_queue.is_empty());
+            assert!(st.active_cycles_sweep.is_none());
+            for member in expected_members {
+                assert_eq!(
+                    calls.iter().filter(|called| **called == member).count(),
+                    1,
+                    "SNS member {} should be probed once",
+                    member.to_text()
+                );
+                assert_eq!(
+                    st.cycles_history.get(&member).map(Vec::len),
+                    Some(1),
+                    "SNS member {} should have one history sample",
+                    member.to_text()
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn sns_discovery_skips_failing_root_membership_and_continues_batch() {
         let _staking_id = configure_state(10);
         let root_a = candid::Principal::from_slice(&[1]);
         let root_b = candid::Principal::from_slice(&[2]);
@@ -813,14 +878,9 @@ mod tests {
         let mut summaries = BTreeMap::new();
         summaries.insert(
             root_b,
-            crate::clients::sns_root::GetSnsCanistersSummaryResponse {
-                root: Some(sns_summary(root_b, 20)),
-                governance: None,
-                ledger: None,
-                swap: None,
-                index: None,
-                dapps: Vec::new(),
-                archives: Vec::new(),
+            jupiter_ic_clients::sns::ListSnsCanistersResponse {
+                root: Some(root_b),
+                ..Default::default()
             },
         );
         let sns_root = MockSnsRootClient::new(summaries);
@@ -830,7 +890,7 @@ mod tests {
         state::with_state(|st| {
             assert!(st.active_sns_discovery.is_none());
             assert_eq!(st.last_sns_discovery_ts, 100);
-            assert!(!st.distinct_canisters.contains(&root_a));
+            assert!(st.distinct_canisters.contains(&root_a));
             assert!(st.distinct_canisters.contains(&root_b));
         });
         assert_eq!(sns_root.calls(), vec![root_a, root_b]);
@@ -956,14 +1016,9 @@ mod tests {
         let mut summaries = BTreeMap::new();
         summaries.insert(
             root_b.clone(),
-            crate::clients::sns_root::GetSnsCanistersSummaryResponse {
-                root: Some(sns_summary(root_b.clone(), 44)),
-                governance: None,
-                ledger: None,
-                swap: None,
-                index: None,
-                dapps: Vec::new(),
-                archives: Vec::new(),
+            jupiter_ic_clients::sns::ListSnsCanistersResponse {
+                root: Some(root_b.clone()),
+                ..Default::default()
             },
         );
         let sns_root = MockSnsRootClient::new(summaries);
@@ -1129,6 +1184,44 @@ mod tests {
     }
 
     #[test]
+    fn initial_probe_satisfies_same_target_in_existing_frozen_sweep() {
+        configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.config.max_canisters_per_cycles_tick = 1;
+            st.distinct_canisters.insert(target);
+            st.canister_tracking_reasons.insert(
+                target,
+                std::iter::once(CanisterTrackingReason::RelayTarget).collect(),
+            );
+            st.initial_cycles_probe_queue.push(target);
+            st.active_cycles_sweep = Some(ActiveCyclesSweep {
+                started_at_ts_nanos: 123_500_000_000,
+                canisters: vec![target],
+                next_index: 0,
+            });
+        });
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let governance = RecordingGovernanceClient::new();
+
+        block_on(process_initial_cycles_probe_queue(
+            124_000_000_000,
+            124,
+            &cycles_probe,
+            &governance,
+        ))
+        .unwrap();
+        block_on(process_cycles_sweep(124_000_000_000, 124, &cycles_probe)).unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(cycles_probe.blackhole_targets(), vec![target]);
+            assert_eq!(st.cycles_history.get(&target).map(Vec::len), Some(1));
+            assert!(st.initial_cycles_probe_queue.is_empty());
+            assert!(st.active_cycles_sweep.is_none());
+        });
+    }
+
+    #[test]
     fn initial_cycles_probe_for_relay_target_does_not_refresh_staking_neuron() {
         let _staking_id = configure_state(10);
         let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
@@ -1242,7 +1335,7 @@ mod tests {
                     .get(&target_a)
                     .and_then(|meta| meta.last_cycles_probe_result.clone()),
                 Some(CyclesProbeResult::Error(
-                    "no cycles probe route could observe target; previous errors: blackhole e3mmv-5qaaa-aaaah-aadma-cai failed: inter-canister call failed: target a down; blackhole 77deu-baaaa-aaaar-qb6za-cai failed: inter-canister call failed: target a down"
+                    "no cycles probe route could observe target; previous errors: direct route failed: inter-canister call failed: direct canister_status unavailable in scheduler mock; blackhole e3mmv-5qaaa-aaaah-aadma-cai failed: inter-canister call failed: target a down; blackhole 77deu-baaaa-aaaar-qb6za-cai failed: inter-canister call failed: target a down"
                         .into()
                 ))
             );
@@ -1489,7 +1582,7 @@ mod tests {
     }
 
     #[test]
-    fn cycles_sweep_excludes_sns_discovery_when_sns_tracking_enabled() {
+    fn cycles_sweep_includes_sns_discovery_when_sns_tracking_enabled() {
         configure_state(10);
         let self_id = principal("aaaaa-aa");
         let sns_canister = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
@@ -1505,13 +1598,13 @@ mod tests {
         state::with_state(|st| {
             assert_eq!(
                 build_cycles_sweep_canisters(st, self_id, 123),
-                vec![self_id]
+                vec![self_id, sns_canister]
             );
         });
     }
 
     #[test]
-    fn cycles_sweep_excludes_sns_discovery_mixed_with_relay_target_when_sns_tracking_enabled() {
+    fn cycles_sweep_includes_sns_discovery_mixed_with_relay_target_when_sns_tracking_enabled() {
         configure_state(10);
         let self_id = principal("aaaaa-aa");
         let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
@@ -1532,7 +1625,7 @@ mod tests {
         state::with_state(|st| {
             assert_eq!(
                 build_cycles_sweep_canisters(st, self_id, 123),
-                vec![self_id]
+                vec![self_id, target]
             );
         });
     }

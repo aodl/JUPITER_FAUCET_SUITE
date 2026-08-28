@@ -9,7 +9,7 @@
 //! unbounded wait and include `sender_canister_version`, while read-style
 //! metadata calls use bounded wait.
 
-use candid::{CandidType, Deserialize, Principal};
+use candid::{CandidType, Deserialize, Nat, Principal};
 use ic_cdk::call::{Call, CallResult};
 
 const UPDATE_SETTINGS_METHOD: &str = "update_settings";
@@ -22,10 +22,21 @@ const INSTALL_CODE_METHOD: &str = "install_code";
 pub struct CanisterSettings {
     pub controllers: Option<Vec<Principal>>,
     pub log_visibility: Option<LogVisibility>,
+    pub status_visibility: Option<StatusVisibility>,
 }
 
 #[derive(CandidType, Clone, Debug, Deserialize, PartialEq, Eq)]
 pub enum LogVisibility {
+    #[serde(rename = "controllers")]
+    Controllers,
+    #[serde(rename = "public")]
+    Public,
+    #[serde(rename = "allowed_viewers")]
+    AllowedViewers(Vec<Principal>),
+}
+
+#[derive(CandidType, Clone, Debug, Deserialize, PartialEq, Eq)]
+pub enum StatusVisibility {
     #[serde(rename = "controllers")]
     Controllers,
     #[serde(rename = "public")]
@@ -104,9 +115,28 @@ pub struct CanisterStatusArgs {
 }
 
 #[derive(CandidType, Clone, Debug, Deserialize, PartialEq, Eq)]
+pub enum CanisterStatusKind {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "stopping")]
+    Stopping,
+    #[serde(rename = "stopped")]
+    Stopped,
+}
+
+#[derive(CandidType, Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct DefiniteCanisterSettings {
+    pub controllers: Vec<Principal>,
+    pub log_visibility: LogVisibility,
+    pub status_visibility: StatusVisibility,
+}
+
+#[derive(CandidType, Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct CanisterStatusResult {
+    pub status: CanisterStatusKind,
+    pub cycles: Nat,
     pub module_hash: Option<Vec<u8>>,
-    pub settings: CanisterSettings,
+    pub settings: DefiniteCanisterSettings,
 }
 
 pub async fn update_settings(arg: &UpdateSettingsArgs) -> CallResult<()> {
@@ -178,4 +208,126 @@ pub async fn canister_status(arg: &CanisterStatusArgs) -> CallResult<CanisterSta
             .await?
             .candid()?,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use candid::{decode_one, encode_one};
+
+    fn principal(byte: u8) -> Principal {
+        Principal::from_slice(&[byte])
+    }
+
+    #[derive(CandidType, Deserialize)]
+    struct SettingsWireView {
+        controllers: Option<Vec<Principal>>,
+        log_visibility: Option<LogVisibility>,
+        status_visibility: Option<StatusVisibility>,
+    }
+
+    #[derive(CandidType)]
+    struct ExtendedStatusResult {
+        status: CanisterStatusKind,
+        cycles: Nat,
+        module_hash: Option<Vec<u8>>,
+        settings: DefiniteCanisterSettings,
+        memory_size: Nat,
+        reserved_cycles: Nat,
+    }
+
+    #[test]
+    fn settings_encode_public_status_visibility_and_none_is_unchanged() {
+        let public = CanisterSettings {
+            controllers: Some(vec![principal(1)]),
+            log_visibility: Some(LogVisibility::Public),
+            status_visibility: Some(StatusVisibility::Public),
+        };
+        let decoded: SettingsWireView = decode_one(&encode_one(&public).unwrap()).unwrap();
+        assert_eq!(decoded.controllers, public.controllers);
+        assert_eq!(decoded.log_visibility, Some(LogVisibility::Public));
+        assert_eq!(decoded.status_visibility, Some(StatusVisibility::Public));
+
+        let unchanged = CanisterSettings {
+            controllers: None,
+            log_visibility: None,
+            status_visibility: None,
+        };
+        let decoded: SettingsWireView = decode_one(&encode_one(&unchanged).unwrap()).unwrap();
+        assert_eq!(decoded.controllers, None);
+        assert_eq!(decoded.log_visibility, None);
+        assert_eq!(decoded.status_visibility, None);
+    }
+
+    #[test]
+    fn status_visibility_variants_and_exact_settings_round_trip() {
+        for visibility in [
+            StatusVisibility::Controllers,
+            StatusVisibility::Public,
+            StatusVisibility::AllowedViewers(vec![principal(2), principal(3)]),
+        ] {
+            let expected = CanisterStatusResult {
+                status: CanisterStatusKind::Running,
+                cycles: Nat::from(123_u64),
+                module_hash: Some(vec![4; 32]),
+                settings: DefiniteCanisterSettings {
+                    controllers: vec![principal(1)],
+                    log_visibility: LogVisibility::AllowedViewers(vec![principal(5)]),
+                    status_visibility: visibility,
+                },
+            };
+            let decoded: CanisterStatusResult =
+                decode_one(&encode_one(&expected).unwrap()).unwrap();
+            assert_eq!(decoded, expected);
+        }
+    }
+
+    #[test]
+    fn narrow_status_result_decodes_additional_management_fields() {
+        let extended = ExtendedStatusResult {
+            status: CanisterStatusKind::Stopped,
+            cycles: Nat::from(999_u64),
+            module_hash: None,
+            settings: DefiniteCanisterSettings {
+                controllers: Vec::new(),
+                log_visibility: LogVisibility::Public,
+                status_visibility: StatusVisibility::Public,
+            },
+            memory_size: Nat::from(12_u64),
+            reserved_cycles: Nat::from(34_u64),
+        };
+        let decoded: CanisterStatusResult = decode_one(&encode_one(&extended).unwrap()).unwrap();
+        assert_eq!(decoded.status, CanisterStatusKind::Stopped);
+        assert_eq!(decoded.cycles, Nat::from(999_u64));
+        assert!(decoded.settings.controllers.is_empty());
+        assert_eq!(decoded.settings.status_visibility, StatusVisibility::Public);
+    }
+
+    #[test]
+    fn missing_required_status_visibility_fails_to_decode() {
+        #[derive(CandidType)]
+        struct OldSettings {
+            controllers: Vec<Principal>,
+            log_visibility: LogVisibility,
+        }
+        #[derive(CandidType)]
+        struct OldStatus {
+            status: CanisterStatusKind,
+            cycles: Nat,
+            module_hash: Option<Vec<u8>>,
+            settings: OldSettings,
+        }
+
+        let bytes = encode_one(&OldStatus {
+            status: CanisterStatusKind::Running,
+            cycles: Nat::from(1_u8),
+            module_hash: None,
+            settings: OldSettings {
+                controllers: vec![principal(1)],
+                log_visibility: LogVisibility::Controllers,
+            },
+        })
+        .unwrap();
+        assert!(decode_one::<CanisterStatusResult>(&bytes).is_err());
+    }
 }

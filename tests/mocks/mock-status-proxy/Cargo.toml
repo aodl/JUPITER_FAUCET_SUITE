@@ -11,3 +11,4 @@ crate-type = ["cdylib"]
 candid = { workspace = true }
 serde = { workspace = true }
 ic-cdk = { workspace = true }
+jupiter-ic-clients = { version = "0.1.0", path = "../../../crates/ic-clients" }

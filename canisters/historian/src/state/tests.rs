@@ -309,6 +309,17 @@ mod tests {
     }
 
     #[test]
+    fn current_direct_canister_status_sample_round_trips() {
+        let sample = CyclesSample {
+            timestamp_nanos: 123_456,
+            cycles: 987_654_321,
+            source: CyclesSampleSource::DirectCanisterStatus,
+        };
+        let bytes = sample.to_bytes();
+        assert_eq!(CyclesSample::from_bytes(bytes), sample);
+    }
+
+    #[test]
     fn legacy_canister_meta_with_probe_result_decodes() {
         let legacy = LegacyStableCanisterMetaV1 {
             first_seen_ts: Some(1),
