@@ -47,6 +47,7 @@ fi
 
 cargo_cdx_prefix="jupiter-faucet-suite-cargo-cdx"
 cargo_cdx_parts="$(mktemp)"
+cargo_cdx_stderr="$(mktemp)"
 cleanup_cargo_cdx_parts() {
   if [ -f "${cargo_cdx_parts}" ]; then
     while IFS= read -r part; do
@@ -54,10 +55,46 @@ cleanup_cargo_cdx_parts() {
     done < "${cargo_cdx_parts}"
     rm -f "${cargo_cdx_parts}"
   fi
+  rm -f "${cargo_cdx_stderr}"
 }
 trap cleanup_cargo_cdx_parts EXIT
 
-cargo cyclonedx --manifest-path Cargo.toml --format json --override-filename "${cargo_cdx_prefix}"
+if ! cargo cyclonedx --manifest-path Cargo.toml --format json --override-filename "${cargo_cdx_prefix}" 2>"${cargo_cdx_stderr}"; then
+  cat "${cargo_cdx_stderr}" >&2
+  exit 1
+fi
+
+# DFINITY deliberately uses Cargo's `links` field as a CDK version-conflict
+# guard. Those two values are not RFC URIs, although CycloneDX interprets the
+# field as one. Acknowledge only the exact upstream diagnostics; a new generator
+# warning remains a security-gate failure.
+cargo_cdx_acknowledged=0
+cargo_cdx_unexpected=0
+while IFS= read -r line || [ -n "${line}" ]; do
+  message="${line#* WARN  cargo_cyclonedx::generator] }"
+  message="${message%"${message##*[![:space:]]}"}"
+  case "${message}" in
+    "Package ic-cdk-executor has an invalid links URI (ic-cdk async executor, see https://github.com/dfinity/cdk-rs/blob/links-pin/TROUBLESHOOTING.md): Invalid URI: Uri does not conform to RFC 3986"|\
+    "Package ic-cdk-timers has an invalid links URI (ic-cdk-timers (canister_global_timer), see https://github.com/dfinity/cdk-rs/blob/links-pin/TROUBLESHOOTING.md): Invalid URI: Uri does not conform to RFC 3986")
+      cargo_cdx_acknowledged=1
+      ;;
+    *)
+      printf '%s\n' "${line}" >&2
+      if [[ "${line}" == *" WARN  cargo_cyclonedx::generator] "* ]]; then
+        cargo_cdx_unexpected=1
+      fi
+      ;;
+  esac
+done < "${cargo_cdx_stderr}"
+
+if [ "${cargo_cdx_unexpected}" -ne 0 ]; then
+  echo "cargo cyclonedx emitted an unacknowledged generator warning" >&2
+  exit 1
+fi
+if [ "${cargo_cdx_acknowledged}" -ne 0 ]; then
+  echo "cargo cyclonedx: acknowledged DFINITY Cargo links metadata warnings for ic-cdk-executor/ic-cdk-timers"
+fi
+
 find . -path ./target -prune -o -name "${cargo_cdx_prefix}.json" -type f -print | sort > "${cargo_cdx_parts}"
 if [ ! -s "${cargo_cdx_parts}" ]; then
   echo "cargo cyclonedx did not produce any ${cargo_cdx_prefix}.json files" >&2

@@ -9,27 +9,23 @@ all-features = false
 # Exceptions below are narrow, documented, and should be removed when upstream
 # dependencies provide a safe upgrade path.
 ignore = [
-    { id = "RUSTSEC-2025-0012", reason = "backoff 0.4.0 via pocket-ic 13.0.0 dev/test dependencies only: canisters/{disburser,faucet,historian,relay} dev-dependencies and xtask. Classification: dev-test-only. pocket-ic 14.0.0 still depends on backoff, so no safe upstream-removal upgrade is available now. Mitigation: keep PocketIC confined to dev/test dependencies. Scope enforcement: tools/scripts/security-scan verifies this package is not present in production value-moving or privileged operational runtime paths. Owner: protocol-maintainers." },
-    { id = "RUSTSEC-2024-0384", reason = "instant 0.1.13 via backoff 0.4.0 -> pocket-ic 13.0.0 dev/test dependencies only: canisters/{disburser,faucet,historian,relay} dev-dependencies and xtask. Classification: dev-test-only. pocket-ic 14.0.0 still depends on backoff/instant, so no safe upstream-removal upgrade is available now. Mitigation: keep PocketIC confined to dev/test dependencies. Scope enforcement: tools/scripts/security-scan verifies this package is not present in production value-moving or privileged operational runtime paths. Owner: protocol-maintainers." },
-    { id = "RUSTSEC-2024-0436", reason = "paste 1.0.15 via candid 0.10.29, including production Candid derive/build paths for canisters/{disburser,faucet,historian,relay,lifeline}; it appears in wasm normal/build trees as a proc-macro dependency, not runtime code. Classification: production-proc-macro-only. Latest candid 0.10.29 still depends on paste, and ic-cdk was upgraded to 0.20.1 where compatible. Mitigation: keep dependency direct and current, track candid removal. Scope enforcement: tools/scripts/security-scan verifies paste may appear only as proc-macro support, not as runtime logic or broader build-only support, in production value-moving and privileged operational trees. Owner: protocol-maintainers." },
-    { id = "RUSTSEC-2021-0127", reason = "serde_cbor 0.11.2 via ic-http-certification 3.2.0/ic-asset-certification 3.2.0 frontend production path and via pocket-ic 13.0.0 dev/test tooling. Classification: frontend-informational-only, with additional dev-test-only PocketIC paths. Acceptable only while limited to frontend informational display and/or dev/test tooling, not value-moving canister runtime paths. No newer ic-http-certification/ic-asset-certification exists, and pocket-ic 14.0.0 still depends on serde_cbor. Mitigation: confine PocketIC to dev/test, keep frontend certification dependency pinned/current. Scope enforcement: tools/scripts/security-scan verifies this package is not present in production value-moving or privileged operational runtime paths. Owner: protocol-maintainers." },
+    { id = "RUSTSEC-2025-0012", reason = "backoff 0.4.0 via pocket-ic 13.0.0 dev/test dependencies only: canisters/{disburser,faucet,historian,relay} dev-dependencies and xtask. Classification: dev-test-only. The current latest pocket-ic 15.0.0 still depends on backoff 0.4, so no safe upstream-removal upgrade is available now. Mitigation: keep PocketIC confined to dev/test dependencies. Scope enforcement: tools/scripts/security-scan verifies this package is not present in production value-moving or privileged operational runtime paths. Owner: protocol-maintainers." },
+    { id = "RUSTSEC-2024-0384", reason = "instant 0.1.13 via backoff 0.4.0 -> pocket-ic 13.0.0 dev/test dependencies only: canisters/{disburser,faucet,historian,relay} dev-dependencies and xtask. Classification: dev-test-only. The current latest pocket-ic 15.0.0 still depends on backoff 0.4, which still depends on instant 0.1, so no safe upstream-removal upgrade is available now. Mitigation: keep PocketIC confined to dev/test dependencies. Scope enforcement: tools/scripts/security-scan verifies this package is not present in production value-moving or privileged operational runtime paths. Owner: protocol-maintainers." },
+    { id = "RUSTSEC-2024-0436", reason = "paste 1.0.15 via candid 0.10.29, including production Candid derive/build paths for canisters/{disburser,faucet,historian,relay,lifeline}; it appears in wasm normal/build trees as a proc-macro dependency, not runtime code. Classification: production-proc-macro-only. The current latest candid 0.10.35 still depends on paste 1.0, so no advisory-removing Candid upgrade is available; ic-cdk is already current where compatible. Mitigation: keep dependency direct and current, track candid removal. Scope enforcement: tools/scripts/security-scan verifies paste may appear only as proc-macro support, not as runtime logic or broader build-only support, in production value-moving and privileged operational trees. Owner: protocol-maintainers." },
+    { id = "RUSTSEC-2021-0127", reason = "serde_cbor 0.11.2 via ic-http-certification 3.2.0/ic-asset-certification 3.2.0 frontend production path and via pocket-ic 13.0.0 dev/test tooling. Classification: frontend-informational-only, with additional dev-test-only PocketIC paths. Acceptable only while limited to frontend informational display and/or dev/test tooling, not value-moving canister runtime paths. The current latest ic-http-certification/ic-asset-certification releases remain 3.2.0 and the current latest pocket-ic 15.0.0 still depends on serde_cbor 0.11.2. Mitigation: confine PocketIC to dev/test, keep frontend certification dependency pinned/current. Scope enforcement: tools/scripts/security-scan verifies this package is not present in production value-moving or privileged operational runtime paths. Owner: protocol-maintainers." },
 ]
 
 [licenses]
+unused-allowed-license = "deny"
 allow = [
     "MIT",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
     "Unicode-3.0",
     "Zlib",
     # Current graph requires these permissive/public-domain style licenses.
     "BlueOak-1.0.0",
     "CC0-1.0",
-    # Used instead of LGPL for priority-queue's `LGPL-3.0 OR MPL-2.0` expression.
-    "MPL-2.0",
 ]
 confidence-threshold = 0.8
 
@@ -357,10 +353,50 @@ expression = "Apache-2.0"
 license-files = [{ path = "../../LICENSE", hash = 0xaccfe438 }]
 
 [bans]
-multiple-versions = "warn"
+multiple-versions = "deny"
 wildcards = "deny"
 highlight = "all"
 allow-workspace = true
+
+[[bans.skip]]
+name = "darling"
+version = "=0.20.11"
+reason = "derive_builder 0.20.2 via handlebars/candid_parser requires darling 0.20 while ic-cdk-macros requires darling 0.23."
+
+[[bans.skip]]
+name = "darling_core"
+version = "=0.20.11"
+reason = "derive_builder 0.20.2 via handlebars/candid_parser requires darling_core 0.20 while ic-cdk-macros requires darling_core 0.23."
+
+[[bans.skip]]
+name = "darling_macro"
+version = "=0.20.11"
+reason = "derive_builder 0.20.2 via handlebars/candid_parser requires darling_macro 0.20 while ic-cdk-macros requires darling_macro 0.23."
+
+[[bans.skip]]
+name = "syn"
+version = "=1.0.109"
+reason = "binread_derive and older Candid parser tooling require syn 1.x while current IC derive and tooling dependencies require syn 2.x."
+
+[[bans.skip]]
+name = "thiserror"
+version = "=1.0.69"
+reason = "candid 0.10.29 requires thiserror 1.x while current IC/CDK dependencies require thiserror 2.x."
+
+[[bans.skip]]
+name = "thiserror-impl"
+version = "=1.0.69"
+reason = "candid 0.10.29 requires thiserror-impl 1.x while current IC/CDK dependencies require thiserror-impl 2.x."
+
+[[bans.skip]]
+name = "unicode-width"
+version = "=0.1.14"
+reason = "codespan-reporting 0.11 via candid_parser requires unicode-width 0.1 while pretty requires unicode-width 0.2."
+
+[[bans.skip]]
+name = "windows-sys"
+version = "=0.59.0"
+reason = "stacker 0.1.23 via candid requires windows-sys 0.59 while current system and dev tooling requires windows-sys 0.61."
 
 [sources]
 unknown-registry = "deny"

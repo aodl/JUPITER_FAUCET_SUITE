@@ -55,6 +55,20 @@ The script fails non-zero if any of these steps fails:
 - `osv-scanner scan -L Cargo.lock -L package-lock.json`
 - Rust or npm SBOM generation
 
+The license allowlist is self-cleaning: `unused-allowed-license = "deny"`
+requires every globally permitted license to occur in the checked graph. The
+duplicate-version policy likewise denies new splits by default. Each accepted
+older version has an exact `[[bans.skip]]` entry in
+[`deny.toml`](../../deny.toml) that identifies the incompatible upstream path;
+broad `skip-tree` exceptions are not used.
+
+`cargo-cyclonedx 0.5.9` interprets Cargo `links` values as URIs. DFINITY uses
+non-URI `links` metadata in `ic-cdk-executor` and `ic-cdk-timers` deliberately
+as a CDK version-conflict guard. The security script collapses only those two
+exact known diagnostics into one acknowledgement. Any other
+`cargo_cyclonedx::generator` warning is printed and fails the gate, while the
+generated SBOM remains unchanged.
+
 The npm lockfile gate requires every package entry to include both an integrity
 hash and the exact `https://registry.npmjs.org/...tgz` tarball URL. This still
 trusts the npm registry when dependencies must be fetched, but it prevents a
@@ -105,6 +119,13 @@ The current allowed RustSec findings are classified as:
 | `RUSTSEC-2024-0384` | `instant 0.1.13` | `dev-test-only` | Must be absent from covered production value-moving and privileged operational wasm trees. |
 | `RUSTSEC-2024-0436` | `paste 1.0.15` | `production-proc-macro-only` | May appear only as proc-macro support, not runtime logic or broader build-only support. |
 | `RUSTSEC-2021-0127` | `serde_cbor 0.11.2` | `frontend-informational-only`, with additional `dev-test-only` PocketIC paths | Must be absent from covered production value-moving and privileged operational wasm trees. |
+
+The exception evidence was last revalidated against current upstream releases:
+PocketIC 15.0.0 still requires `backoff 0.4` and `serde_cbor 0.11.2`, and
+`backoff 0.4` still requires `instant 0.1`; Candid 0.10.35 still requires
+`paste 1.0`; and `ic-http-certification`/`ic-asset-certification` 3.2.0 remain
+the latest releases in their respective lines, with the certification path
+still requiring `serde_cbor 0.11`.
 
 `serde_cbor` is acceptable only while limited to frontend informational
 certification/display paths and/or dev/test tooling. It must not enter
