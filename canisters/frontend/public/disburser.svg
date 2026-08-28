@@ -141,4 +141,11 @@
     <text class="node-title" x="710" y="617.0">D-QUORUM neuron</text>
     <text class="node-sub" x="710" y="639.0">5% of age bonus</text>
   </g>
+  <!-- Informational voting relationship: D-QUORUM neuron -> Faucet neuron -->
+  <path class="edge data" d="M 790,665 V 678 H 240 V 465" marker-end="url(#a-data)" stroke-width="3.1"/>
+  <text class="node-sub" style="fill:#3977ba" transform="rotate(-90 188 670)" x="188" y="670">
+    <tspan x="188" dy="0">Informs the faucet neuron vote,</tspan>
+    <tspan x="188" dy="16">ensuring that maturity is earned</tspan>
+    <tspan x="188" dy="16">through diligent voting</tspan>
+  </text>
 </svg>
