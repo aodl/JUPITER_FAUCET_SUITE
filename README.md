@@ -12,8 +12,10 @@ The suite turns durable ICP and NNS maturity into durable cycles support. A cont
 
 The operational path is intentionally split across small canisters:
 
-- [`canisters/disburser`](canisters/disburser) controls one NNS neuron, disburses available maturity, and routes staged ICP into the fixed base/age-bonus recipients.
+- [`canisters/disburser`](canisters/disburser) controls one NNS neuron, disburses available maturity, and routes staged ICP into the fixed base/age-bonus recipients. 
   <img src="/canisters/frontend/public/disburser.svg">
+   - [D-QUORUM](https://dashboard.internetcomputer.org/neuron/4713806069430754115) is a special known neuron owned by the NNS governance canister itself. Jupiter Faucet's neuron follows D-QUORUM (indirectly via [αlpha-vote](https://dashboard.internetcomputer.org/neuron/2947465672511369) to maximise rewards) ensuring maturity is earned through diligent voting. Therefore a small portion of age bonus maturity is allocated to help incentivise elected NNS governance reviewers. **This partnership is foundational to Jupiter Faucet** because a prerequisite for truly unstoppable canisters is a secure and decentralized network.
+     
 - [`canisters/faucet`](canisters/faucet) receives the base ICP flow, scans the configured staking account, interprets eligible transfer memos, and performs proportional payouts as cycles top-ups, raw ICP transfers, or NNS neuron stake transfers (the target canister/neuron and top-up mode is determined by the staking account transfer memo).
   <img src="/canisters/frontend/public/faucet.svg">
 - [`canisters/relay`](canisters/relay) receives suite-funding ICP from the faucet, tops up managed suite canisters from recent cycles-burn observations plus carried recovery deficits, and routes remaining surplus only after canister recovery targets are met.
