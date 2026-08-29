@@ -2254,6 +2254,71 @@ test('Resume finalization submits the canonical configuration once and polling r
   });
 });
 
+test('Active notification suppresses resume after a stale FinalizationAttempted query', async () => {
+  await withDom(async (nodes) => {
+    const staleInProgress = {
+      InProgress: {
+        phase: { FinalizationAttempted: null },
+        relay_canister_id: [Principal.fromText(RELAY)],
+      },
+    };
+    const harness = controllerHarness({
+      view: viewFor({ account: null, state: staleInProgress }),
+      notify: { Active: { relay_canister_id: Principal.fromText(RELAY) } },
+    });
+    harness.controller.bindPane();
+    await submit(nodes, harness);
+
+    await harness.controller.createRelay();
+
+    assert.equal(harness.calls.notify, 1);
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Active');
+    assert.match(nodes.get('relay-setup-existing-relay').innerHTML, /br5f7/);
+    assert.equal(nodes.get('relay-setup-existing-relay').hidden, false);
+    assert.equal(nodes.get('relay-setup-create-panel').hidden, true);
+    assert.equal(nodes.get('relay-setup-finalization-resume-note').hidden, true);
+    assert.equal(harness.hasScheduledPoll(), false);
+
+    nodes.get('relay-setup-create').listeners.get('click')();
+    await flushMicrotasks();
+    assert.equal(harness.calls.notify, 1);
+  });
+});
+
+test('ManualRecoveryRequired notification suppresses resume after a stale RelayFunded query', async () => {
+  await withDom(async (nodes) => {
+    const staleInProgress = {
+      InProgress: {
+        phase: { RelayFunded: null },
+        relay_canister_id: [Principal.fromText(RELAY)],
+      },
+    };
+    const harness = controllerHarness({
+      view: viewFor({ account: null, state: staleInProgress }),
+      notify: {
+        ManualRecoveryRequired: {
+          phase: { RelayFunded: null },
+          relay_canister_id: [Principal.fromText(RELAY)],
+          message: 'final state mismatch',
+        },
+      },
+    });
+    await submit(nodes, harness);
+
+    await harness.controller.createRelay();
+
+    assert.equal(harness.calls.notify, 1);
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Manual recovery required');
+    assert.match(nodes.get('relay-setup-status-label').textContent, /final state mismatch/);
+    assert.equal(nodes.get('relay-setup-create-panel').hidden, true);
+    assert.equal(nodes.get('relay-setup-finalization-resume-note').hidden, true);
+    assert.equal(harness.hasScheduledPoll(), false);
+
+    await harness.controller.createRelay();
+    assert.equal(harness.calls.notify, 1);
+  });
+});
+
 test('form edits invalidate a resumable finalization before notification', async () => {
   await withDom(async (nodes) => {
     const inProgress = {

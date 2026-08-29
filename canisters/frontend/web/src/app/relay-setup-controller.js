@@ -894,6 +894,8 @@ export function createRelaySetupController({
   }
 
   function isResumableFinalization(view = state.view) {
+    const notifyKind = variantName(state.notifyResult);
+    if (notifyKind === 'Active' || notifyKind === 'ManualRecoveryRequired') return false;
     if (viewState(view) !== 'InProgress') return false;
     const phase = variantName(view?.state?.InProgress?.phase);
     return phase === 'RelayFunded' || phase === 'FinalizationAttempted';
