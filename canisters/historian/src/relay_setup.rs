@@ -24,6 +24,8 @@ use jupiter_ic_clients::management::{
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 
 pub(crate) const EXTRA_TARGET_CHARGE_E8S: u64 = 25_000_000;
 pub(crate) const MAX_CONCURRENT_FUNDED_RELAY_SETUPS: usize = 4;
@@ -36,6 +38,36 @@ pub(crate) const RELAY_SUBACCOUNT_ONE: [u8; 32] = {
 const TOP_UP_CANISTER_MEMO: u64 = 1_347_768_404;
 const MAX_DIAGNOSTIC_BYTES: usize = 1_024;
 pub(crate) const MAX_RELAY_SETUP_ENTRY_BYTES: u32 = 4_096;
+
+thread_local! {
+    static ACTIVE_FINALIZATIONS: RefCell<BTreeSet<RelaySetupKey>> = const {
+        RefCell::new(BTreeSet::new())
+    };
+}
+
+struct FinalizationGuard {
+    key: RelaySetupKey,
+}
+
+impl FinalizationGuard {
+    fn acquire(key: RelaySetupKey) -> Option<Self> {
+        ACTIVE_FINALIZATIONS.with(|active| {
+            if active.borrow_mut().insert(key) {
+                Some(Self { key })
+            } else {
+                None
+            }
+        })
+    }
+}
+
+impl Drop for FinalizationGuard {
+    fn drop(&mut self) {
+        ACTIVE_FINALIZATIONS.with(|active| {
+            active.borrow_mut().remove(&self.key);
+        });
+    }
+}
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RelayCreationPhase {
@@ -645,55 +677,64 @@ fn accepted_transfer(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ObservedRelayFinalizationState {
+    PreFinalization,
+    Finalized,
+}
+
+fn classify_relay_finalization_state(
+    status: &CanisterStatusResult,
+    expected_hash: &[u8; 32],
+    historian: Principal,
+) -> Result<ObservedRelayFinalizationState, String> {
+    if status.status != CanisterStatusKind::Running {
+        return Err("Relay is not running during finalization audit".to_string());
+    }
+    if status.module_hash.as_deref() != Some(expected_hash.as_slice()) {
+        return Err("Relay module hash does not match the approved module".to_string());
+    }
+    if status.settings.log_visibility != LogVisibility::Public {
+        return Err("Relay logs are not public during finalization audit".to_string());
+    }
+    if status.settings.status_visibility != StatusVisibility::Public {
+        return Err("Relay status is not public during finalization audit".to_string());
+    }
+    match status.settings.controllers.as_slice() {
+        [controller] if *controller == historian => {
+            Ok(ObservedRelayFinalizationState::PreFinalization)
+        }
+        [] => Ok(ObservedRelayFinalizationState::Finalized),
+        _ => Err("Relay controllers are neither exactly [Historian] nor exactly empty".to_string()),
+    }
+}
+
+#[cfg(test)]
 fn validate_pre_finalization(
     status: &CanisterStatusResult,
     expected_hash: &[u8; 32],
     historian: Principal,
 ) -> Result<(), String> {
-    if status.status != CanisterStatusKind::Running {
-        return Err("Relay is not running before finalization".to_string());
+    match classify_relay_finalization_state(status, expected_hash, historian)? {
+        ObservedRelayFinalizationState::PreFinalization => Ok(()),
+        ObservedRelayFinalizationState::Finalized => {
+            Err("Relay controllers are already empty before finalization".to_string())
+        }
     }
-    if status.module_hash.as_deref() != Some(expected_hash.as_slice()) {
-        return Err(
-            "Relay module hash does not match the approved module before finalization".to_string(),
-        );
-    }
-    if status.settings.controllers != [historian] {
-        return Err(
-            "Relay controllers are not exactly [Historian] before finalization".to_string(),
-        );
-    }
-    if status.settings.log_visibility != LogVisibility::Public {
-        return Err("Relay logs are not public before finalization".to_string());
-    }
-    if status.settings.status_visibility != StatusVisibility::Public {
-        return Err("Relay status is not public before finalization".to_string());
-    }
-    Ok(())
 }
 
+#[cfg(test)]
 fn validate_finalized_relay(
     status: &CanisterStatusResult,
     expected_hash: &[u8; 32],
+    historian: Principal,
 ) -> Result<(), String> {
-    if status.status != CanisterStatusKind::Running {
-        return Err("Relay is not running after finalization".to_string());
+    match classify_relay_finalization_state(status, expected_hash, historian)? {
+        ObservedRelayFinalizationState::Finalized => Ok(()),
+        ObservedRelayFinalizationState::PreFinalization => {
+            Err("Relay still has Historian as its controller after finalization".to_string())
+        }
     }
-    if status.module_hash.as_deref() != Some(expected_hash.as_slice()) {
-        return Err(
-            "Relay module hash does not match the approved module after finalization".to_string(),
-        );
-    }
-    if !status.settings.controllers.is_empty() {
-        return Err("Relay controllers are not empty after finalization".to_string());
-    }
-    if status.settings.log_visibility != LogVisibility::Public {
-        return Err("Relay logs are not public after finalization".to_string());
-    }
-    if status.settings.status_visibility != StatusVisibility::Public {
-        return Err("Relay status is not public after finalization".to_string());
-    }
-    Ok(())
 }
 
 fn relay_init_arg(config: &Config, setup: &CanonicalRelaySetup) -> Vec<u8> {
@@ -762,6 +803,275 @@ fn relay_init_arg(config: &Config, setup: &CanonicalRelaySetup) -> Vec<u8> {
     .expect("Relay init args should encode")
 }
 
+fn relay_id_with_complete_activation_evidence(
+    progress: &RelayCreationProgress,
+) -> Result<Principal, String> {
+    let relay_canister_id = progress.relay_canister_id.ok_or_else(|| {
+        "activation prerequisites are incomplete: Relay ID is missing".to_string()
+    })?;
+    if progress
+        .cmc_transfer
+        .as_ref()
+        .and_then(|record| record.block_index)
+        .is_none()
+    {
+        return Err(
+            "activation prerequisites are incomplete: accepted CMC transfer is missing".to_string(),
+        );
+    }
+    if progress.cycles_minted.is_none() {
+        return Err(
+            "activation prerequisites are incomplete: minted cycles evidence is missing"
+                .to_string(),
+        );
+    }
+    if progress
+        .relay_funding_transfer
+        .as_ref()
+        .and_then(|record| record.block_index)
+        .is_none()
+    {
+        return Err(
+            "activation prerequisites are incomplete: accepted Relay-funding transfer is missing"
+                .to_string(),
+        );
+    }
+    Ok(relay_canister_id)
+}
+
+fn keep_finalization_in_progress(
+    key: RelaySetupKey,
+    phase: RelayCreationPhase,
+    message: impl Into<String>,
+) -> RelaySetupNotifyResult {
+    let message = bounded_message(message.into());
+    ic_cdk::println!(
+        "RELAY_SETUP_FINALIZATION setup={} phase={phase:?} retryable_error={message}",
+        key.identifier()
+    );
+    match update_progress(key, phase, |progress| {
+        progress.last_error = Some(message);
+    }) {
+        Ok(progress) => RelaySetupNotifyResult::InProgress {
+            phase: progress.phase,
+            relay_canister_id: progress.relay_canister_id,
+        },
+        Err(result) => result,
+    }
+}
+
+fn activate_relay_setup(
+    key: RelaySetupKey,
+    expected_phase: RelayCreationPhase,
+    setup: &CanonicalRelaySetup,
+    expected_relay_canister_id: Principal,
+) -> RelaySetupNotifyResult {
+    let progress = match require_phase(key, expected_phase) {
+        Ok(progress) => progress,
+        Err(result) => return result,
+    };
+    let relay_canister_id = match relay_id_with_complete_activation_evidence(&progress) {
+        Ok(relay_canister_id) if relay_canister_id == expected_relay_canister_id => {
+            relay_canister_id
+        }
+        Ok(_) => {
+            return manual_recovery(
+                key,
+                expected_phase,
+                "activation prerequisites are inconsistent: Relay ID changed",
+            );
+        }
+        Err(message) => return manual_recovery(key, expected_phase, message),
+    };
+    insert_entry(key, RelaySetupEntry::Active { relay_canister_id });
+    state::with_state_mut_sections(state::DIRTY_ROOT | state::DIRTY_REGISTRY, |state| {
+        for target in setup.targets() {
+            mark_active_relay_tracked(state, *target, relay_canister_id, Some(now_secs()));
+        }
+    });
+    RelaySetupNotifyResult::Active { relay_canister_id }
+}
+
+async fn drive_relay_finalization(
+    key: RelaySetupKey,
+    setup: &CanonicalRelaySetup,
+    historian: Principal,
+    management: &dyn ManagementClient,
+) -> RelaySetupNotifyResult {
+    let Some(_guard) = FinalizationGuard::acquire(key) else {
+        return get_entry(key).map(notify_for_entry).unwrap_or(
+            RelaySetupNotifyResult::FailedPreSpend {
+                message: "relay setup reservation no longer exists".to_string(),
+            },
+        );
+    };
+
+    let initial_progress = match get_entry(key) {
+        Some(RelaySetupEntry::Creating(progress))
+            if matches!(
+                progress.phase,
+                RelayCreationPhase::RelayFunded | RelayCreationPhase::FinalizationAttempted
+            ) =>
+        {
+            progress
+        }
+        Some(entry) => return notify_for_entry(entry),
+        None => {
+            return RelaySetupNotifyResult::FailedPreSpend {
+                message: "relay setup reservation no longer exists".to_string(),
+            };
+        }
+    };
+    let initial_phase = initial_progress.phase;
+    let relay_canister_id = match relay_id_with_complete_activation_evidence(&initial_progress) {
+        Ok(relay_canister_id) => relay_canister_id,
+        Err(message) => return manual_recovery(key, initial_phase, message),
+    };
+    let Some(expected_hash) = approved_relay_onchain_module_hash() else {
+        return manual_recovery(
+            key,
+            initial_phase,
+            "approved Relay module hash is unavailable; finalization cannot be audited safely",
+        );
+    };
+
+    let observed = management.canister_status(relay_canister_id).await;
+    let current_progress = match require_phase(key, initial_phase) {
+        Ok(progress) => progress,
+        Err(result) => return result,
+    };
+    match relay_id_with_complete_activation_evidence(&current_progress) {
+        Ok(current_relay_canister_id) if current_relay_canister_id == relay_canister_id => {}
+        Ok(_) => {
+            return manual_recovery(
+                key,
+                initial_phase,
+                "activation prerequisites are inconsistent: Relay ID changed",
+            );
+        }
+        Err(message) => return manual_recovery(key, initial_phase, message),
+    }
+    let observed = match observed {
+        Ok(status) => status,
+        Err(error) => {
+            let audit = if initial_phase == RelayCreationPhase::RelayFunded {
+                "pre-finalization"
+            } else {
+                "finalization reconciliation"
+            };
+            return keep_finalization_in_progress(
+                key,
+                initial_phase,
+                format!(
+                    "{audit} management audit could not be completed: {error}; explicit finalization resumption is safe"
+                ),
+            );
+        }
+    };
+    match classify_relay_finalization_state(&observed, &expected_hash, historian) {
+        Ok(ObservedRelayFinalizationState::Finalized) => {
+            return activate_relay_setup(key, initial_phase, setup, relay_canister_id);
+        }
+        Ok(ObservedRelayFinalizationState::PreFinalization) => {}
+        Err(message) => return manual_recovery(key, initial_phase, message),
+    }
+
+    if initial_phase == RelayCreationPhase::RelayFunded {
+        if let Err(result) = update_progress(key, RelayCreationPhase::RelayFunded, |progress| {
+            progress.phase = RelayCreationPhase::FinalizationAttempted;
+            progress.last_error = None;
+        }) {
+            return result;
+        }
+    } else if let Err(result) =
+        update_progress(key, RelayCreationPhase::FinalizationAttempted, |progress| {
+            progress.last_error = None
+        })
+    {
+        return result;
+    }
+
+    let finalization_result = management
+        .update_settings(&jupiter_ic_clients::management::UpdateSettingsArgs {
+            canister_id: relay_canister_id,
+            settings: jupiter_ic_clients::management::CanisterSettings {
+                controllers: Some(Vec::new()),
+                log_visibility: Some(LogVisibility::Public),
+                status_visibility: Some(StatusVisibility::Public),
+            },
+        })
+        .await;
+    if let Err(result) = require_phase(key, RelayCreationPhase::FinalizationAttempted) {
+        return result;
+    }
+    let finalized_status = management.canister_status(relay_canister_id).await;
+    let current_progress = match require_phase(key, RelayCreationPhase::FinalizationAttempted) {
+        Ok(progress) => progress,
+        Err(result) => return result,
+    };
+    match relay_id_with_complete_activation_evidence(&current_progress) {
+        Ok(current_relay_canister_id) if current_relay_canister_id == relay_canister_id => {}
+        Ok(_) => {
+            return manual_recovery(
+                key,
+                RelayCreationPhase::FinalizationAttempted,
+                "activation prerequisites are inconsistent: Relay ID changed",
+            );
+        }
+        Err(message) => {
+            return manual_recovery(key, RelayCreationPhase::FinalizationAttempted, message);
+        }
+    }
+
+    let update_error = finalization_result.err();
+    let finalized_status = match finalized_status {
+        Ok(status) => status,
+        Err(audit_error) => {
+            let prefix = update_error
+                .as_ref()
+                .map(|error| format!("update_settings reported {error}; "))
+                .unwrap_or_default();
+            return keep_finalization_in_progress(
+                key,
+                RelayCreationPhase::FinalizationAttempted,
+                format!(
+                    "{prefix}post-finalization management audit could not be completed: {audit_error}; explicit finalization resumption is safe"
+                ),
+            );
+        }
+    };
+    match classify_relay_finalization_state(&finalized_status, &expected_hash, historian) {
+        Ok(ObservedRelayFinalizationState::Finalized) => activate_relay_setup(
+            key,
+            RelayCreationPhase::FinalizationAttempted,
+            setup,
+            relay_canister_id,
+        ),
+        Ok(ObservedRelayFinalizationState::PreFinalization) => {
+            let prefix = update_error
+                .map(|error| format!("update_settings reported {error}; "))
+                .unwrap_or_default();
+            keep_finalization_in_progress(
+                key,
+                RelayCreationPhase::FinalizationAttempted,
+                format!(
+                    "{prefix}Relay remains in the exact safe Historian-controlled pre-finalization state; explicit finalization resumption may retry the settings update"
+                ),
+            )
+        }
+        Err(message) => {
+            let prefix = update_error
+                .map(|error| format!("update_settings reported {error}; "))
+                .unwrap_or_default();
+            manual_recovery(
+                key,
+                RelayCreationPhase::FinalizationAttempted,
+                format!("{prefix}{message}"),
+            )
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn notify_with_clients_for_historian<C: CyclesProbeClient>(
     args: RelaySetupArgs,
@@ -827,11 +1137,17 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
         Err(message) => return RelaySetupNotifyResult::FailedPreSpend { message },
     };
     let key = setup.key();
+    if let Some(entry) = get_entry(key) {
+        return match entry {
+            RelaySetupEntry::Creating(RelayCreationProgress {
+                phase: RelayCreationPhase::RelayFunded | RelayCreationPhase::FinalizationAttempted,
+                ..
+            }) => drive_relay_finalization(key, &setup, historian, management).await,
+            entry => notify_for_entry(entry),
+        };
+    }
     if let Err(message) = reject_reserved_canonical_target_set(&config, &setup) {
         return RelaySetupNotifyResult::FailedPreSpend { message };
-    }
-    if let Some(entry) = get_entry(key) {
-        return notify_for_entry(entry);
     }
     if let Err(message) = setup.validate_for_new_setup(&config, historian) {
         return RelaySetupNotifyResult::FailedPreSpend { message };
@@ -1205,98 +1521,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     {
         return result;
     }
-    let pre_finalization = management.canister_status(relay_canister_id).await;
-    if let Err(result) = require_phase(key, RelayCreationPhase::RelayFunded) {
-        return result;
-    }
-    match pre_finalization {
-        Ok(status) => {
-            if let Err(message) = validate_pre_finalization(&status, &expected_hash, historian) {
-                return manual_recovery(key, RelayCreationPhase::RelayFunded, message);
-            }
-        }
-        Err(error) => {
-            return manual_recovery(
-                key,
-                RelayCreationPhase::RelayFunded,
-                format!("pre-finalization management audit failed: {error}"),
-            );
-        }
-    }
-    if let Err(result) = update_progress(key, RelayCreationPhase::RelayFunded, |progress| {
-        progress.phase = RelayCreationPhase::FinalizationAttempted;
-    }) {
-        return result;
-    }
-    let finalization_result = management
-        .update_settings(&jupiter_ic_clients::management::UpdateSettingsArgs {
-            canister_id: relay_canister_id,
-            settings: jupiter_ic_clients::management::CanisterSettings {
-                controllers: Some(Vec::new()),
-                log_visibility: Some(LogVisibility::Public),
-                status_visibility: Some(StatusVisibility::Public),
-            },
-        })
-        .await;
-    if let Err(result) = require_phase(key, RelayCreationPhase::FinalizationAttempted) {
-        return result;
-    }
-    let finalized_status = management.canister_status(relay_canister_id).await;
-    if let Err(result) = require_phase(key, RelayCreationPhase::FinalizationAttempted) {
-        return result;
-    }
-    match finalized_status {
-        Ok(status) => {
-            if let Err(message) = validate_finalized_relay(&status, &expected_hash) {
-                let prefix = finalization_result
-                    .err()
-                    .map(|error| format!("update_settings reported {error}; "))
-                    .unwrap_or_default();
-                return manual_recovery(
-                    key,
-                    RelayCreationPhase::FinalizationAttempted,
-                    format!("{prefix}{message}"),
-                );
-            }
-        }
-        Err(error) => {
-            return manual_recovery(
-                key,
-                RelayCreationPhase::FinalizationAttempted,
-                format!("post-finalization direct management audit failed: {error}"),
-            );
-        }
-    }
-    let final_progress = match require_phase(key, RelayCreationPhase::FinalizationAttempted) {
-        Ok(progress) => progress,
-        Err(result) => return result,
-    };
-    let ready = final_progress.relay_canister_id == Some(relay_canister_id)
-        && final_progress
-            .cmc_transfer
-            .as_ref()
-            .and_then(|record| record.block_index)
-            .is_some()
-        && final_progress.cycles_minted.is_some()
-        && final_progress
-            .relay_funding_transfer
-            .as_ref()
-            .and_then(|record| record.block_index)
-            .is_some();
-    if !ready {
-        return manual_recovery(
-            key,
-            RelayCreationPhase::FinalizationAttempted,
-            "activation prerequisites are incomplete",
-        );
-    }
-    insert_entry(key, RelaySetupEntry::Active { relay_canister_id });
-    state::with_state_mut_sections(state::DIRTY_ROOT | state::DIRTY_REGISTRY, |state| {
-        for target in setup.targets() {
-            mark_active_relay_tracked(state, *target, relay_canister_id, Some(now_secs()));
-        }
-    });
-    RelaySetupNotifyResult::Active { relay_canister_id }
+    drive_relay_finalization(key, &setup, historian, management).await
 }
 
 pub(crate) async fn notify_relay_configuration(args: RelaySetupArgs) -> RelaySetupNotifyResult {
@@ -1368,7 +1593,7 @@ mod tests {
     use jupiter_ic_clients::sns::{
         DeployedSns, ListDeployedSnsesResponse, ListSnsCanistersResponse,
     };
-    use std::collections::VecDeque;
+    use std::collections::{BTreeMap, VecDeque};
     use std::future::Future;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -1657,6 +1882,7 @@ mod tests {
 
     struct MockCyclesProbe {
         succeeds: bool,
+        calls: AtomicUsize,
         blackhole_calls: AtomicUsize,
     }
 
@@ -1855,6 +2081,7 @@ mod tests {
     #[allow(async_fn_in_trait)]
     impl CyclesProbeClient for MockCyclesProbe {
         async fn self_cycles(&self, _target: Principal) -> Option<u128> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             None
         }
 
@@ -1865,6 +2092,7 @@ mod tests {
             jupiter_ic_clients::cycles_probe::DirectCanisterStatusObservation,
             jupiter_ic_clients::ClientError,
         > {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             Err(jupiter_ic_clients::ClientError::Call(
                 "direct canister_status unavailable in relay setup mock".to_string(),
             ))
@@ -1875,6 +2103,7 @@ mod tests {
             _probe_canister_id: Principal,
             _target_canister_id: Principal,
         ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             self.blackhole_calls.fetch_add(1, Ordering::SeqCst);
             self.succeeds
                 .then_some(1_000_000)
@@ -1884,6 +2113,7 @@ mod tests {
         async fn list_deployed_snses(
             &self,
         ) -> Result<ListDeployedSnsesResponse, jupiter_ic_clients::ClientError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(ListDeployedSnsesResponse::default())
         }
 
@@ -1891,6 +2121,7 @@ mod tests {
             &self,
             _target: Principal,
         ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(Vec::new())
         }
 
@@ -1898,6 +2129,7 @@ mod tests {
             &self,
             _root_canister_id: Principal,
         ) -> Result<ListSnsCanistersResponse, jupiter_ic_clients::ClientError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(ListSnsCanistersResponse::default())
         }
 
@@ -1906,6 +2138,7 @@ mod tests {
             _root_canister_id: Principal,
             _target_canister_id: Principal,
         ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             Err(jupiter_ic_clients::ClientError::Call(
                 "unexpected SNS root call".to_string(),
             ))
@@ -1915,9 +2148,43 @@ mod tests {
             &self,
             _swap_canister_id: Principal,
         ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             Err(jupiter_ic_clients::ClientError::Call(
                 "unexpected SNS swap call".to_string(),
             ))
+        }
+    }
+
+    enum StatusCallSideEffect {
+        RemoveCyclesMinted {
+            key: RelaySetupKey,
+        },
+        ReplaceRelayCanisterId {
+            key: RelaySetupKey,
+            relay_canister_id: Principal,
+        },
+    }
+
+    impl StatusCallSideEffect {
+        fn apply(self) {
+            let (key, relay_canister_id) = match self {
+                Self::RemoveCyclesMinted { key } => (key, None),
+                Self::ReplaceRelayCanisterId {
+                    key,
+                    relay_canister_id,
+                } => (key, Some(relay_canister_id)),
+            };
+            state::with_relay_setup_entries_map(|map| {
+                let Some(RelaySetupEntry::Creating(mut progress)) = map.get(&key) else {
+                    panic!("status side effect requires an existing Creating entry");
+                };
+                if let Some(relay_canister_id) = relay_canister_id {
+                    progress.relay_canister_id = Some(relay_canister_id);
+                } else {
+                    progress.cycles_minted = None;
+                }
+                map.insert(key, RelaySetupEntry::Creating(progress));
+            });
         }
     }
 
@@ -1929,12 +2196,17 @@ mod tests {
         create_calls: AtomicUsize,
         status_calls: AtomicUsize,
         update_calls: AtomicUsize,
-        clear_cycles_minted_on_final_status: bool,
         creates: Mutex<Vec<jupiter_ic_clients::management::CreateCanisterArgs>>,
         updates: Mutex<Vec<jupiter_ic_clients::management::UpdateSettingsArgs>>,
         finalization_phase_observed_at_update: AtomicBool,
         installs: Mutex<Vec<jupiter_ic_clients::management::InstallCodeArgs>>,
         status_results: Mutex<VecDeque<Result<AuditedCanisterStatus, String>>>,
+        status_side_effects: Mutex<BTreeMap<usize, StatusCallSideEffect>>,
+    }
+
+    struct BlockingStatusManagement {
+        inner: MockManagement,
+        first_status_waiter: Mutex<Option<oneshot::Receiver<()>>>,
     }
 
     struct MockNeuronResolver {
@@ -2083,17 +2355,9 @@ mod tests {
             _canister_id: Principal,
         ) -> Result<AuditedCanisterStatus, String> {
             let call_index = self.status_calls.fetch_add(1, Ordering::SeqCst);
-            if call_index == 1 && self.clear_cycles_minted_on_final_status {
-                state::with_relay_setup_entries_map(|map| {
-                    let Some(entry) = map.iter().next() else {
-                        return;
-                    };
-                    let (key, value) = entry.into_pair();
-                    if let RelaySetupEntry::Creating(mut progress) = value {
-                        progress.cycles_minted = None;
-                        map.insert(key, RelaySetupEntry::Creating(progress));
-                    }
-                });
+            let side_effect = self.status_side_effects.lock().unwrap().remove(&call_index);
+            if let Some(side_effect) = side_effect {
+                side_effect.apply();
             }
             if let Some(result) = self.status_results.lock().unwrap().pop_front() {
                 return result;
@@ -2138,6 +2402,42 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
+    impl ManagementClient for BlockingStatusManagement {
+        async fn create_canister(
+            &self,
+            args: &jupiter_ic_clients::management::CreateCanisterArgs,
+            cycles: u128,
+        ) -> Result<jupiter_ic_clients::management::CreateCanisterResult, String> {
+            self.inner.create_canister(args, cycles).await
+        }
+
+        async fn install_code(
+            &self,
+            args: &jupiter_ic_clients::management::InstallCodeArgs,
+        ) -> Result<(), String> {
+            self.inner.install_code(args).await
+        }
+
+        async fn canister_status(
+            &self,
+            canister_id: Principal,
+        ) -> Result<CanisterStatusResult, String> {
+            let waiter = self.first_status_waiter.lock().unwrap().take();
+            if let Some(waiter) = waiter {
+                let _ = waiter.await;
+            }
+            self.inner.canister_status(canister_id).await
+        }
+
+        async fn update_settings(
+            &self,
+            args: &jupiter_ic_clients::management::UpdateSettingsArgs,
+        ) -> Result<(), String> {
+            self.inner.update_settings(args).await
+        }
+    }
+
     fn mocks(
         ledger: MockLedger,
         probe_succeeds: bool,
@@ -2147,6 +2447,7 @@ mod tests {
             ledger,
             MockCyclesProbe {
                 succeeds: probe_succeeds,
+                calls: AtomicUsize::new(0),
                 blackhole_calls: AtomicUsize::new(0),
             },
             MockCmc {
@@ -2164,12 +2465,12 @@ mod tests {
                 create_calls: AtomicUsize::new(0),
                 status_calls: AtomicUsize::new(0),
                 update_calls: AtomicUsize::new(0),
-                clear_cycles_minted_on_final_status: false,
                 creates: Mutex::new(Vec::new()),
                 updates: Mutex::new(Vec::new()),
                 finalization_phase_observed_at_update: AtomicBool::new(false),
                 installs: Mutex::new(Vec::new()),
                 status_results: Mutex::new(VecDeque::new()),
+                status_side_effects: Mutex::new(BTreeMap::new()),
             },
         )
     }
@@ -2185,6 +2486,41 @@ mod tests {
                 status_visibility: StatusVisibility::Public,
             },
         }
+    }
+
+    fn insert_resumable_setup(
+        args: &RelaySetupArgs,
+        phase: RelayCreationPhase,
+        relay_canister_id: Principal,
+    ) -> RelaySetupKey {
+        let key = CanonicalRelaySetup::canonicalize(
+            args.target_canister_ids.clone(),
+            args.surplus_recipients.clone(),
+        )
+        .unwrap()
+        .key();
+        let mut progress = progress_for_phase(phase);
+        progress.relay_canister_id = Some(relay_canister_id);
+        progress.last_error = None;
+        insert_entry(key, RelaySetupEntry::Creating(progress));
+        key
+    }
+
+    fn assert_no_pre_finalization_replay(
+        ledger: &MockLedger,
+        probe: &MockCyclesProbe,
+        cmc: &MockCmc,
+        management: &MockManagement,
+    ) {
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(ledger.fee_calls.load(Ordering::SeqCst), 0);
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(probe.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+        assert!(management.installs.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -2540,6 +2876,59 @@ mod tests {
             reserve(key_for_targets(&[principal(6)])),
             Err(RelaySetupNotifyResult::Busy)
         );
+    }
+
+    #[test]
+    fn finalization_tail_entries_consume_total_capacity_until_activation() {
+        reset();
+        let setups = [1, 2, 3, 5].map(|byte| setup_args(vec![principal(byte)]));
+        let relay_canister_ids = [80, 81, 82, 83].map(principal);
+        for (index, (args, relay_canister_id)) in setups.iter().zip(relay_canister_ids).enumerate()
+        {
+            let phase = if index % 2 == 0 {
+                RelayCreationPhase::RelayFunded
+            } else {
+                RelayCreationPhase::FinalizationAttempted
+            };
+            insert_resumable_setup(args, phase, relay_canister_id);
+        }
+
+        let fifth_key = key_for_targets(&[principal(6)]);
+        assert_eq!(reserve(fifth_key), Err(RelaySetupNotifyResult::Busy));
+
+        let resumed_key = key_for_targets(&[principal(1)]);
+        let resumed_relay_canister_id = principal(80);
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+        management
+            .status_results
+            .lock()
+            .unwrap()
+            .push_back(Ok(audited_relay_status(Vec::new())));
+        let activated = block_on(notify_with_clients_for_historian(
+            setups[0].clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+
+        assert_eq!(
+            activated,
+            RelaySetupNotifyResult::Active {
+                relay_canister_id: resumed_relay_canister_id,
+            }
+        );
+        assert_eq!(
+            get_entry(resumed_key),
+            Some(RelaySetupEntry::Active {
+                relay_canister_id: resumed_relay_canister_id,
+            })
+        );
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+        assert_no_pre_finalization_replay(&ledger, &probe, &cmc, &management);
+        assert!(reserve(fifth_key).is_ok());
     }
 
     #[test]
@@ -3085,7 +3474,6 @@ mod tests {
             minted_cycles: 2_000_000_000_000,
         };
         let management = MockManagement {
-            clear_cycles_minted_on_final_status: false,
             creates: Mutex::new(Vec::new()),
             updates: Mutex::new(Vec::new()),
             finalization_phase_observed_at_update: AtomicBool::new(false),
@@ -3098,6 +3486,7 @@ mod tests {
             update_calls: AtomicUsize::new(0),
             installs: Mutex::new(Vec::new()),
             status_results: Mutex::new(VecDeque::new()),
+            status_side_effects: Mutex::new(BTreeMap::new()),
         };
         let result = block_on(notify_with_clients_for_historian(
             setup_args(vec![sns_swap_target, direct_target]),
@@ -3241,7 +3630,6 @@ mod tests {
             minted_cycles: 2_000_000_000_000,
         };
         let management = MockManagement {
-            clear_cycles_minted_on_final_status: false,
             creates: Mutex::new(Vec::new()),
             updates: Mutex::new(Vec::new()),
             finalization_phase_observed_at_update: AtomicBool::new(false),
@@ -3254,6 +3642,7 @@ mod tests {
             update_calls: AtomicUsize::new(0),
             installs: Mutex::new(Vec::new()),
             status_results: Mutex::new(VecDeque::new()),
+            status_side_effects: Mutex::new(BTreeMap::new()),
         };
         let result = block_on(notify_with_clients_for_historian(
             setup_args(vec![direct_target, unobservable_target]),
@@ -3295,7 +3684,6 @@ mod tests {
         };
         let cmc = ReadBarrierCmc::new();
         let management = MockManagement {
-            clear_cycles_minted_on_final_status: false,
             creates: Mutex::new(Vec::new()),
             updates: Mutex::new(Vec::new()),
             finalization_phase_observed_at_update: AtomicBool::new(false),
@@ -3308,6 +3696,7 @@ mod tests {
             update_calls: AtomicUsize::new(0),
             installs: Mutex::new(Vec::new()),
             status_results: Mutex::new(VecDeque::new()),
+            status_side_effects: Mutex::new(BTreeMap::new()),
         };
 
         let first = notify_with_clients_for_historian(
@@ -4381,21 +4770,21 @@ mod tests {
                 status_visibility: StatusVisibility::Public,
             },
         };
-        assert!(validate_finalized_relay(&post_status, &expected_hash).is_ok());
+        assert!(validate_finalized_relay(&post_status, &expected_hash, historian).is_ok());
         post_status.status = CanisterStatusKind::Stopped;
-        assert!(validate_finalized_relay(&post_status, &expected_hash).is_err());
+        assert!(validate_finalized_relay(&post_status, &expected_hash, historian).is_err());
         post_status.status = CanisterStatusKind::Running;
         post_status.module_hash = Some(vec![0; 32]);
-        assert!(validate_finalized_relay(&post_status, &expected_hash).is_err());
+        assert!(validate_finalized_relay(&post_status, &expected_hash, historian).is_err());
         post_status.module_hash = Some(expected_hash.to_vec());
         post_status.settings.controllers.push(principal(90));
-        assert!(validate_finalized_relay(&post_status, &expected_hash).is_err());
+        assert!(validate_finalized_relay(&post_status, &expected_hash, historian).is_err());
         post_status.settings.controllers.clear();
         post_status.settings.log_visibility = LogVisibility::Controllers;
-        assert!(validate_finalized_relay(&post_status, &expected_hash).is_err());
+        assert!(validate_finalized_relay(&post_status, &expected_hash, historian).is_err());
         post_status.settings.log_visibility = LogVisibility::Public;
         post_status.settings.status_visibility = StatusVisibility::AllowedViewers(Vec::new());
-        assert!(validate_finalized_relay(&post_status, &expected_hash).is_err());
+        assert!(validate_finalized_relay(&post_status, &expected_hash, historian).is_err());
     }
 
     #[test]
@@ -4445,19 +4834,105 @@ mod tests {
     }
 
     #[test]
-    fn finalization_errors_are_reconciled_and_activation_requires_complete_progress() {
+    fn relay_funded_status_failure_is_retryable_without_replaying_irreversible_work() {
+        reset();
         let args = setup_args(vec![principal(1)]);
-        let successful_ledger = || {
-            MockLedger::new(
-                [300_000_000, 297_990_000],
-                [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
-            )
+        let relay_canister_id = principal(80);
+        let key = insert_resumable_setup(&args, RelayCreationPhase::RelayFunded, relay_canister_id);
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+        management
+            .status_results
+            .lock()
+            .unwrap()
+            .push_back(Err("status transport unavailable".to_string()));
+
+        let first = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+        assert_eq!(
+            first,
+            RelaySetupNotifyResult::InProgress {
+                phase: RelayCreationPhase::RelayFunded,
+                relay_canister_id: Some(relay_canister_id),
+            }
+        );
+        let Some(RelaySetupEntry::Creating(progress)) = get_entry(key) else {
+            panic!("RelayFunded entry must remain resumable")
         };
+        assert_eq!(progress.phase, RelayCreationPhase::RelayFunded);
+        assert!(progress
+            .last_error
+            .as_deref()
+            .unwrap()
+            .contains("explicit finalization resumption is safe"));
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+        assert_no_pre_finalization_replay(&ledger, &probe, &cmc, &management);
+
+        state::with_root_state_mut(|state| state.config.relay_factory_enabled = false);
+        let (resume_ledger, resume_probe, resume_cmc, resume_management) =
+            mocks(MockLedger::new([], []), true, None);
+        resume_management.status_results.lock().unwrap().extend([
+            Ok(audited_relay_status(vec![principal(42)])),
+            Ok(audited_relay_status(Vec::new())),
+        ]);
+        let resumed = block_on(notify_with_clients_for_historian(
+            args,
+            principal(42),
+            &resume_ledger,
+            &resume_probe,
+            &resume_cmc,
+            &resume_management,
+        ));
+        assert_eq!(
+            resumed,
+            RelaySetupNotifyResult::Active { relay_canister_id }
+        );
+        assert_eq!(resume_management.update_calls.load(Ordering::SeqCst), 1);
+        assert!(resume_management
+            .finalization_phase_observed_at_update
+            .load(Ordering::SeqCst));
+        let updates = resume_management.updates.lock().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(
+            updates[0].settings,
+            jupiter_ic_clients::management::CanisterSettings {
+                controllers: Some(Vec::new()),
+                log_visibility: Some(LogVisibility::Public),
+                status_visibility: Some(StatusVisibility::Public),
+            }
+        );
+        drop(updates);
+        assert_no_pre_finalization_replay(
+            &resume_ledger,
+            &resume_probe,
+            &resume_cmc,
+            &resume_management,
+        );
+    }
+
+    #[test]
+    fn finalization_attempted_reconciles_status_before_any_settings_retry() {
+        let args = setup_args(vec![principal(1)]);
+        let relay_canister_id = principal(80);
 
         reset();
-        let (ledger, probe, cmc, mut management) = mocks(successful_ledger(), true, None);
-        management.update_error = Some("update_settings callback failed".to_string());
-        let observed_success = block_on(notify_with_clients_for_historian(
+        insert_resumable_setup(
+            &args,
+            RelayCreationPhase::FinalizationAttempted,
+            relay_canister_id,
+        );
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+        management
+            .status_results
+            .lock()
+            .unwrap()
+            .push_back(Err("status response lost".to_string()));
+        let unreadable = block_on(notify_with_clients_for_historian(
             args.clone(),
             principal(42),
             &ledger,
@@ -4466,61 +4941,382 @@ mod tests {
             &management,
         ));
         assert!(matches!(
-            observed_success,
-            RelaySetupNotifyResult::Active { .. }
+            unreadable,
+            RelaySetupNotifyResult::InProgress {
+                phase: RelayCreationPhase::FinalizationAttempted,
+                ..
+            }
+        ));
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+        assert_no_pre_finalization_replay(&ledger, &probe, &cmc, &management);
+
+        reset();
+        insert_resumable_setup(
+            &args,
+            RelayCreationPhase::FinalizationAttempted,
+            relay_canister_id,
+        );
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+        management
+            .status_results
+            .lock()
+            .unwrap()
+            .push_back(Ok(audited_relay_status(Vec::new())));
+        let already_finalized = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+        assert_eq!(
+            already_finalized,
+            RelaySetupNotifyResult::Active { relay_canister_id }
+        );
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+
+        reset();
+        insert_resumable_setup(
+            &args,
+            RelayCreationPhase::FinalizationAttempted,
+            relay_canister_id,
+        );
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+        management.status_results.lock().unwrap().extend([
+            Ok(audited_relay_status(vec![principal(42)])),
+            Ok(audited_relay_status(Vec::new())),
+        ]);
+        let retried = block_on(notify_with_clients_for_historian(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+        assert_eq!(
+            retried,
+            RelaySetupNotifyResult::Active { relay_canister_id }
+        );
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn initial_finalization_status_await_rechecks_persisted_activation_evidence() {
+        reset();
+        let args = setup_args(vec![principal(1)]);
+        let relay_canister_id = principal(80);
+        let key = insert_resumable_setup(&args, RelayCreationPhase::RelayFunded, relay_canister_id);
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+        management
+            .status_side_effects
+            .lock()
+            .unwrap()
+            .insert(0, StatusCallSideEffect::RemoveCyclesMinted { key });
+        management
+            .status_results
+            .lock()
+            .unwrap()
+            .push_back(Ok(audited_relay_status(Vec::new())));
+
+        let result = block_on(notify_with_clients_for_historian(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::RelayFunded,
+                message,
+                ..
+            } if message.contains("minted cycles evidence is missing")
+        ));
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+        assert_no_pre_finalization_replay(&ledger, &probe, &cmc, &management);
+        state::with_state(|state| {
+            assert!(!state
+                .canister_tracking_reasons
+                .get(&principal(1))
+                .map(|reasons| reasons.contains(&CanisterTrackingReason::RelayTarget))
+                .unwrap_or(false));
+            assert!(!state
+                .canister_tracking_reasons
+                .get(&relay_canister_id)
+                .map(|reasons| reasons.contains(&CanisterTrackingReason::RelayInstance))
+                .unwrap_or(false));
+        });
+    }
+
+    #[test]
+    fn post_update_status_await_rechecks_persisted_activation_evidence() {
+        reset();
+        let args = setup_args(vec![principal(1)]);
+        let relay_canister_id = principal(80);
+        let changed_relay_canister_id = principal(81);
+        let key = insert_resumable_setup(
+            &args,
+            RelayCreationPhase::FinalizationAttempted,
+            relay_canister_id,
+        );
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+        management.status_side_effects.lock().unwrap().insert(
+            1,
+            StatusCallSideEffect::ReplaceRelayCanisterId {
+                key,
+                relay_canister_id: changed_relay_canister_id,
+            },
+        );
+        management.status_results.lock().unwrap().extend([
+            Ok(audited_relay_status(vec![principal(42)])),
+            Ok(audited_relay_status(Vec::new())),
+        ]);
+
+        let result = block_on(notify_with_clients_for_historian(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+
+        assert!(matches!(
+            result,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::FinalizationAttempted,
+                relay_canister_id: Some(observed_relay_canister_id),
+                message,
+            } if observed_relay_canister_id == changed_relay_canister_id
+                && message.contains("Relay ID changed")
+        ));
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            management.updates.lock().unwrap()[0].canister_id,
+            relay_canister_id
+        );
+        assert_no_pre_finalization_replay(&ledger, &probe, &cmc, &management);
+        state::with_state(|state| {
+            assert!(!state
+                .canister_tracking_reasons
+                .get(&principal(1))
+                .map(|reasons| reasons.contains(&CanisterTrackingReason::RelayTarget))
+                .unwrap_or(false));
+            for canister_id in [relay_canister_id, changed_relay_canister_id] {
+                assert!(!state
+                    .canister_tracking_reasons
+                    .get(&canister_id)
+                    .map(|reasons| reasons.contains(&CanisterTrackingReason::RelayInstance))
+                    .unwrap_or(false));
+            }
+        });
+    }
+
+    #[test]
+    fn finalization_update_and_audit_uncertainty_remain_explicitly_resumable() {
+        let args = setup_args(vec![principal(1)]);
+        let relay_canister_id = principal(80);
+
+        reset();
+        insert_resumable_setup(&args, RelayCreationPhase::RelayFunded, relay_canister_id);
+        let (ledger, probe, cmc, mut management) = mocks(MockLedger::new([], []), true, None);
+        management.update_error = Some("update response lost".to_string());
+        management.status_results.lock().unwrap().extend([
+            Ok(audited_relay_status(vec![principal(42)])),
+            Ok(audited_relay_status(Vec::new())),
+        ]);
+        let applied = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+        assert_eq!(
+            applied,
+            RelaySetupNotifyResult::Active { relay_canister_id }
+        );
+
+        reset();
+        let key = insert_resumable_setup(
+            &args,
+            RelayCreationPhase::FinalizationAttempted,
+            relay_canister_id,
+        );
+        let (ledger, probe, cmc, mut management) = mocks(MockLedger::new([], []), true, None);
+        management.update_error = Some("update response lost".to_string());
+        management.status_results.lock().unwrap().extend([
+            Ok(audited_relay_status(vec![principal(42)])),
+            Ok(audited_relay_status(vec![principal(42)])),
+        ]);
+        let unchanged = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+        assert!(matches!(
+            unchanged,
+            RelaySetupNotifyResult::InProgress {
+                phase: RelayCreationPhase::FinalizationAttempted,
+                ..
+            }
+        ));
+        assert!(matches!(get_entry(key), Some(RelaySetupEntry::Creating(_))));
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 1);
+
+        let (resume_ledger, resume_probe, resume_cmc, resume_management) =
+            mocks(MockLedger::new([], []), true, None);
+        resume_management.status_results.lock().unwrap().extend([
+            Ok(audited_relay_status(vec![principal(42)])),
+            Ok(audited_relay_status(Vec::new())),
+        ]);
+        let resumed = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &resume_ledger,
+            &resume_probe,
+            &resume_cmc,
+            &resume_management,
+        ));
+        assert_eq!(
+            resumed,
+            RelaySetupNotifyResult::Active { relay_canister_id }
+        );
+        assert_eq!(resume_management.update_calls.load(Ordering::SeqCst), 1);
+
+        reset();
+        insert_resumable_setup(
+            &args,
+            RelayCreationPhase::FinalizationAttempted,
+            relay_canister_id,
+        );
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+        management.status_results.lock().unwrap().extend([
+            Ok(audited_relay_status(vec![principal(42)])),
+            Err("post-update status response lost".to_string()),
+        ]);
+        let audit_lost = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+        assert!(matches!(
+            audit_lost,
+            RelaySetupNotifyResult::InProgress {
+                phase: RelayCreationPhase::FinalizationAttempted,
+                ..
+            }
         ));
         assert_eq!(management.update_calls.load(Ordering::SeqCst), 1);
 
-        reset();
-        let (ledger, probe, cmc, mut management) = mocks(successful_ledger(), true, None);
-        management.update_error = Some("update_settings callback failed".to_string());
-        management.status_results = Mutex::new(VecDeque::from([
-            Ok(audited_relay_status(vec![principal(42)])),
-            Ok(audited_relay_status(vec![principal(90)])),
-        ]));
-        let observed_incorrect = block_on(notify_with_clients_for_historian(
-            args.clone(),
-            principal(42),
-            &ledger,
-            &probe,
-            &cmc,
-            &management,
-        ));
-        assert!(matches!(
-            observed_incorrect,
-            RelaySetupNotifyResult::ManualRecoveryRequired {
-                phase: RelayCreationPhase::FinalizationAttempted,
-                ..
-            }
-        ));
-
-        reset();
-        let (ledger, probe, cmc, mut management) = mocks(successful_ledger(), true, None);
-        management.status_results = Mutex::new(VecDeque::from([
-            Ok(audited_relay_status(vec![principal(42)])),
-            Err("direct status unavailable".to_string()),
-        ]));
-        let status_error = block_on(notify_with_clients_for_historian(
-            args.clone(),
-            principal(42),
-            &ledger,
-            &probe,
-            &cmc,
-            &management,
-        ));
-        assert!(matches!(
-            status_error,
-            RelaySetupNotifyResult::ManualRecoveryRequired {
-                phase: RelayCreationPhase::FinalizationAttempted,
-                ..
-            }
-        ));
-
-        reset();
-        let (ledger, probe, cmc, mut management) = mocks(successful_ledger(), true, None);
-        management.clear_cycles_minted_on_final_status = true;
-        let incomplete = block_on(notify_with_clients_for_historian(
+        let (resume_ledger, resume_probe, resume_cmc, resume_management) =
+            mocks(MockLedger::new([], []), true, None);
+        resume_management
+            .status_results
+            .lock()
+            .unwrap()
+            .push_back(Ok(audited_relay_status(Vec::new())));
+        let reconciled = block_on(notify_with_clients_for_historian(
             args,
+            principal(42),
+            &resume_ledger,
+            &resume_probe,
+            &resume_cmc,
+            &resume_management,
+        ));
+        assert_eq!(
+            reconciled,
+            RelaySetupNotifyResult::Active { relay_canister_id }
+        );
+        assert_eq!(resume_management.update_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn invalid_live_finalization_states_fail_closed_without_settings_mutation() {
+        let args = setup_args(vec![principal(1)]);
+        let relay_canister_id = principal(80);
+        let historian = principal(42);
+        let mut cases = Vec::new();
+
+        let mut stopped = audited_relay_status(vec![historian]);
+        stopped.status = CanisterStatusKind::Stopped;
+        cases.push(stopped);
+        let mut stopping = audited_relay_status(vec![historian]);
+        stopping.status = CanisterStatusKind::Stopping;
+        cases.push(stopping);
+        let mut wrong_hash = audited_relay_status(vec![historian]);
+        wrong_hash.module_hash = Some(vec![0; 32]);
+        cases.push(wrong_hash);
+        let mut missing_hash = audited_relay_status(vec![historian]);
+        missing_hash.module_hash = None;
+        cases.push(missing_hash);
+        cases.push(audited_relay_status(vec![historian, principal(90)]));
+        cases.push(audited_relay_status(vec![historian, historian]));
+        let mut private_logs = audited_relay_status(vec![historian]);
+        private_logs.settings.log_visibility = LogVisibility::Controllers;
+        cases.push(private_logs);
+        let mut private_status = audited_relay_status(vec![historian]);
+        private_status.settings.status_visibility = StatusVisibility::Controllers;
+        cases.push(private_status);
+
+        for status in cases {
+            reset();
+            insert_resumable_setup(&args, RelayCreationPhase::RelayFunded, relay_canister_id);
+            let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+            management
+                .status_results
+                .lock()
+                .unwrap()
+                .push_back(Ok(status));
+            let result = block_on(notify_with_clients_for_historian(
+                args.clone(),
+                historian,
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            ));
+            assert!(matches!(
+                result,
+                RelaySetupNotifyResult::ManualRecoveryRequired {
+                    phase: RelayCreationPhase::RelayFunded,
+                    ..
+                }
+            ));
+            assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[test]
+    fn incomplete_or_nonresumable_entries_never_enter_the_finalization_tail() {
+        let args = setup_args(vec![principal(1)]);
+        let relay_canister_id = principal(80);
+
+        reset();
+        let key = insert_resumable_setup(&args, RelayCreationPhase::RelayFunded, relay_canister_id);
+        let Some(RelaySetupEntry::Creating(mut progress)) = get_entry(key) else {
+            unreachable!()
+        };
+        progress.cycles_minted = None;
+        insert_entry(key, RelaySetupEntry::Creating(progress));
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+        let incomplete = block_on(notify_with_clients_for_historian(
+            args.clone(),
             principal(42),
             &ledger,
             &probe,
@@ -4529,14 +5325,192 @@ mod tests {
         ));
         assert!(matches!(
             incomplete,
-            RelaySetupNotifyResult::ManualRecoveryRequired {
-                phase: RelayCreationPhase::FinalizationAttempted,
-                ..
+            RelaySetupNotifyResult::ManualRecoveryRequired { .. }
+        ));
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
+
+        for phase in [
+            RelayCreationPhase::Reserved,
+            RelayCreationPhase::ProbingTargets,
+            RelayCreationPhase::CmcTransferPrepared,
+            RelayCreationPhase::CmcTransferAccepted,
+            RelayCreationPhase::CmcNotifySucceeded,
+            RelayCreationPhase::CreateDispatched,
+            RelayCreationPhase::ChildCreated,
+            RelayCreationPhase::CodeInstalled,
+            RelayCreationPhase::RelayFundingPrepared,
+        ] {
+            reset();
+            insert_resumable_setup(&args, phase, relay_canister_id);
+            let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+            let result = block_on(notify_with_clients_for_historian(
+                args.clone(),
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            ));
+            assert!(matches!(
+                result,
+                RelaySetupNotifyResult::InProgress {
+                    phase: observed,
+                    ..
+                } if observed == phase
+            ));
+            assert_eq!(management.status_calls.load(Ordering::SeqCst), 0);
+            assert_no_pre_finalization_replay(&ledger, &probe, &cmc, &management);
+        }
+
+        for entry in [
+            RelaySetupEntry::Active { relay_canister_id },
+            RelaySetupEntry::ManualRecoveryRequired(progress_for_phase(
+                RelayCreationPhase::RelayFunded,
+            )),
+        ] {
+            reset();
+            let key = key_for_targets(&[principal(1)]);
+            insert_entry(key, entry);
+            let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+            let _ = block_on(notify_with_clients_for_historian(
+                args.clone(),
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            ));
+            assert_eq!(management.status_calls.load(Ordering::SeqCst), 0);
+            assert_no_pre_finalization_replay(&ledger, &probe, &cmc, &management);
+        }
+    }
+
+    #[test]
+    fn resumed_activation_tracks_each_target_and_relay_exactly_once() {
+        reset();
+        let args = setup_args(vec![principal(1), principal(2)]);
+        let relay_canister_id = principal(80);
+        insert_resumable_setup(&args, RelayCreationPhase::RelayFunded, relay_canister_id);
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+        management
+            .status_results
+            .lock()
+            .unwrap()
+            .push_back(Ok(audited_relay_status(Vec::new())));
+        let activated = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+        assert_eq!(
+            activated,
+            RelaySetupNotifyResult::Active { relay_canister_id }
+        );
+
+        let (ledger, probe, cmc, repeated_management) = mocks(MockLedger::new([], []), true, None);
+        let repeated = block_on(notify_with_clients_for_historian(
+            args,
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &repeated_management,
+        ));
+        assert_eq!(repeated, activated);
+        assert_eq!(repeated_management.status_calls.load(Ordering::SeqCst), 0);
+        state::with_state(|state| {
+            for target in [principal(1), principal(2)] {
+                let reasons = state.canister_tracking_reasons.get(&target).unwrap();
+                assert_eq!(reasons.len(), 1);
+                assert!(reasons.contains(&CanisterTrackingReason::RelayTarget));
             }
+            let reasons = state
+                .canister_tracking_reasons
+                .get(&relay_canister_id)
+                .unwrap();
+            assert_eq!(reasons.len(), 1);
+            assert!(reasons.contains(&CanisterTrackingReason::RelayInstance));
+        });
+    }
+
+    #[test]
+    fn same_key_finalization_guard_blocks_only_the_parallel_continuation() {
+        reset();
+        let args = setup_args(vec![principal(1)]);
+        let relay_canister_id = principal(80);
+        insert_resumable_setup(&args, RelayCreationPhase::RelayFunded, relay_canister_id);
+        let (release, waiter) = oneshot::channel();
+        let (ledger, probe, cmc, inner) = mocks(MockLedger::new([], []), true, None);
+        let management = BlockingStatusManagement {
+            inner,
+            first_status_waiter: Mutex::new(Some(waiter)),
+        };
+        let mut first = Box::pin(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
         ));
-        assert!(matches!(
-            get_entry(key_for_targets(&[principal(1)])),
-            Some(RelaySetupEntry::ManualRecoveryRequired(_))
+        let waker = futures::task::noop_waker();
+        let mut context = Context::from_waker(&waker);
+        assert!(matches!(first.as_mut().poll(&mut context), Poll::Pending));
+
+        let same_key = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
         ));
+        assert_eq!(
+            same_key,
+            RelaySetupNotifyResult::InProgress {
+                phase: RelayCreationPhase::RelayFunded,
+                relay_canister_id: Some(relay_canister_id),
+            }
+        );
+        assert_eq!(management.inner.status_calls.load(Ordering::SeqCst), 0);
+
+        let unrelated_args = setup_args(vec![principal(2)]);
+        insert_resumable_setup(
+            &unrelated_args,
+            RelayCreationPhase::RelayFunded,
+            relay_canister_id,
+        );
+        let (other_ledger, other_probe, other_cmc, other_management) =
+            mocks(MockLedger::new([], []), true, None);
+        other_management
+            .status_results
+            .lock()
+            .unwrap()
+            .push_back(Ok(audited_relay_status(Vec::new())));
+        let unrelated = block_on(notify_with_clients_for_historian(
+            unrelated_args,
+            principal(42),
+            &other_ledger,
+            &other_probe,
+            &other_cmc,
+            &other_management,
+        ));
+        assert_eq!(
+            unrelated,
+            RelaySetupNotifyResult::Active { relay_canister_id }
+        );
+
+        release.send(()).unwrap();
+        let completed = block_on(first);
+        assert_eq!(
+            completed,
+            RelaySetupNotifyResult::Active { relay_canister_id }
+        );
+        assert_eq!(management.inner.status_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(management.inner.update_calls.load(Ordering::SeqCst), 1);
     }
 }

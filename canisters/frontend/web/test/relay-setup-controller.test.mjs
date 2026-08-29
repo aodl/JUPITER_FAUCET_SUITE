@@ -113,6 +113,7 @@ const DOM_IDS = [
   'relay-setup-extra-total', 'relay-setup-minimum', 'relay-setup-requirement',
   'relay-setup-balance', 'relay-setup-icrc-account', 'relay-setup-account-identifier',
   'relay-setup-payment-details', 'relay-setup-create-panel', 'relay-setup-create',
+  'relay-setup-finalization-resume-note',
   'relay-setup-existing-relay', 'copy-relay-setup-icrc-account',
   'copy-relay-setup-account-identifier', 'relay-setup-icrc-account-link',
   'relay-setup-account-identifier-link',
@@ -299,6 +300,7 @@ function controllerHarness({
     intervals: 0,
     clears: 0,
     copied: [],
+    notifyArgs: [],
   };
   let currentView = view;
   let currentBalance = balance;
@@ -313,6 +315,7 @@ function controllerHarness({
     },
     notify_relay_configuration(args) {
       calls.notify += 1;
+      calls.notifyArgs.push(args);
       return notifyRelay ? notifyRelay(args, calls.notify) : Promise.resolve(notify);
     },
   };
@@ -2150,6 +2153,129 @@ test('InProgress notify result begins polling and displays its phase', async () 
     assert.notEqual(harness.controller.state.checkedConfigurationFingerprint, '');
     assert.ok(harness.calls.intervals >= 1);
     assert.match(nodes.get('relay-setup-status-label').textContent, /CreateDispatched/);
+  });
+});
+
+test('funded finalization phases expose an explicit resume action without funding or factory availability', async () => {
+  for (const phase of ['RelayFunded', 'FinalizationAttempted']) {
+    await withDom(async (nodes) => {
+      const inProgress = {
+        InProgress: {
+          phase: { [phase]: null },
+          relay_canister_id: [Principal.fromText(RELAY)],
+        },
+      };
+      const harness = controllerHarness({
+        view: viewFor({ account: null, factoryAvailable: false, state: inProgress }),
+      });
+      await submit(nodes, harness);
+      assert.equal(nodes.get('relay-setup-create-panel').hidden, false);
+      assert.equal(nodes.get('relay-setup-create').textContent, 'Resume finalization');
+      assert.equal(nodes.get('relay-setup-create').disabled, false);
+      assert.equal(nodes.get('relay-setup-finalization-resume-note').hidden, false);
+      assert.match(
+        nodes.get('relay-setup-finalization-resume-note').textContent,
+        /does not repeat ICP, CMC, creation, installation, or Relay-funding operations/i,
+      );
+      assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+      assert.equal(harness.calls.balance, 0);
+      assert.ok(harness.hasScheduledPoll());
+    });
+  }
+});
+
+test('earlier in-progress phases never expose the finalization resume action', async () => {
+  for (const phase of [
+    'Reserved',
+    'ProbingTargets',
+    'CmcTransferPrepared',
+    'CmcTransferAccepted',
+    'CmcNotifySucceeded',
+    'CreateDispatched',
+    'ChildCreated',
+    'CodeInstalled',
+    'RelayFundingPrepared',
+  ]) {
+    await withDom(async (nodes) => {
+      const inProgress = {
+        InProgress: { phase: { [phase]: null }, relay_canister_id: [] },
+      };
+      const harness = controllerHarness({
+        view: viewFor({ account: null, state: inProgress }),
+      });
+      await submit(nodes, harness);
+      assert.equal(nodes.get('relay-setup-create-panel').hidden, true, phase);
+      assert.equal(nodes.get('relay-setup-finalization-resume-note').hidden, true, phase);
+      assert.equal(nodes.get('relay-setup-create').textContent, 'Create Relay', phase);
+    });
+  }
+});
+
+test('Resume finalization submits the canonical configuration once and polling remains query-only', async () => {
+  await withDom(async (nodes) => {
+    const inProgress = {
+      InProgress: {
+        phase: { FinalizationAttempted: null },
+        relay_canister_id: [Principal.fromText(RELAY)],
+      },
+    };
+    const pending = deferred();
+    const harness = controllerHarness({
+      view: viewFor({ account: null, factoryAvailable: false, state: inProgress }),
+      notifyRelay: async () => pending.promise,
+    });
+    harness.controller.bindPane();
+    await submit(nodes, harness);
+
+    nodes.get('relay-setup-create').listeners.get('click')();
+    while (harness.calls.notify === 0) await Promise.resolve();
+    assert.equal(nodes.get('relay-setup-create').disabled, true);
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Resuming finalization…');
+    assert.deepEqual(harness.calls.notifyArgs, [{
+      target_canister_ids: [Principal.fromText(TARGET_A)],
+      surplus_recipients: [{
+        Principal: { principal: Principal.fromText(RECIPIENT_A), memo: [] },
+      }],
+    }]);
+
+    pending.resolve(inProgress);
+    while (harness.calls.view < 2) await Promise.resolve();
+    await flushMicrotasks();
+    assert.equal(harness.calls.notify, 1);
+    assert.equal(nodes.get('relay-setup-create').textContent, 'Resume finalization');
+    assert.equal(nodes.get('relay-setup-create').disabled, false);
+    assert.ok(harness.hasScheduledPoll());
+
+    harness.runPoll();
+    while (harness.calls.view < 3) await Promise.resolve();
+    await flushMicrotasks();
+    assert.equal(harness.calls.notify, 1);
+    assert.ok(harness.calls.view >= 3);
+  });
+});
+
+test('form edits invalidate a resumable finalization before notification', async () => {
+  await withDom(async (nodes) => {
+    const inProgress = {
+      InProgress: {
+        phase: { RelayFunded: null },
+        relay_canister_id: [Principal.fromText(RELAY)],
+      },
+    };
+    const harness = controllerHarness({
+      view: viewFor({ account: null, state: inProgress }),
+    });
+    harness.controller.bindPane();
+    await submit(nodes, harness);
+    const recipient = nodes.get('relay-setup-recipient-list')
+      .querySelectorAll('[data-relay-recipient-input]')[0];
+    recipient.value = RECIPIENT_B;
+    nodes.get('relay-setup-recipient-list').listeners.get('input')({ target: recipient });
+    nodes.get('relay-setup-create').listeners.get('click')();
+    await flushMicrotasks();
+    assert.equal(harness.calls.notify, 0);
+    assert.equal(harness.controller.state.checkedConfigurationFingerprint, '');
+    assert.equal(nodes.get('relay-setup-create-panel').hidden, true);
   });
 });
 

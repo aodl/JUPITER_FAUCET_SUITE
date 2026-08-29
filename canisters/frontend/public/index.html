@@ -1136,6 +1136,7 @@
               <p class="pane-status-note tracker-status-note">Setup funding is an aggregate deposit to this full Relay configuration’s deterministic Historian subaccount. Targets and recipients jointly determine this address. Deposits are not attributed to individual payers and are not automatically refundable.</p>
             </section>
             <section class="pane-inline-block" id="relay-setup-create-panel" hidden>
+              <p class="pane-status-note tracker-status-note" id="relay-setup-finalization-resume-note" hidden>Funding is complete. Resume performs only authoritative Relay status checks and, when the Relay is still in the exact Historian-controlled state, may retry the controller-removal settings update. It does not repeat ICP, CMC, creation, installation, or Relay-funding operations.</p>
               <button class="pane-page-button" id="relay-setup-create" type="button" disabled>Create Relay</button>
             </section>
             <section id="relay-setup-existing-relay" hidden></section>

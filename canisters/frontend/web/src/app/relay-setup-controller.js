@@ -893,6 +893,12 @@ export function createRelaySetupController({
       || (kind === 'NotFunded' && Boolean(readOptional(view?.setup_account)));
   }
 
+  function isResumableFinalization(view = state.view) {
+    if (viewState(view) !== 'InProgress') return false;
+    const phase = variantName(view?.state?.InProgress?.phase);
+    return phase === 'RelayFunded' || phase === 'FinalizationAttempted';
+  }
+
   function configurationStillCurrent(expected, requestGeneration) {
     return generation === requestGeneration
       && (state.requestFingerprint === expected
@@ -1022,6 +1028,7 @@ export function createRelaySetupController({
     const displayedRelayId = relayId || notifiedRelayId;
     const activeOrBlocked = ['Active', 'InProgress', 'ManualRecoveryRequired'].includes(kind)
       || ['Active', 'InProgress', 'ManualRecoveryRequired'].includes(notifyKind);
+    const resumableFinalization = isResumableFinalization(view);
     const createButton = document.getElementById('relay-setup-create');
     const balance = state.balanceE8s === null ? 0n : state.balanceE8s;
     const effectiveRequirement = requiredBalance(view, state.requiredBalanceOverride);
@@ -1030,7 +1037,7 @@ export function createRelaySetupController({
 
     setHidden('relay-setup-result', Boolean(view || state.error || state.loading));
     setHidden('relay-setup-summary', !view && !state.error && !state.loading);
-    setText('relay-setup-status', state.error || (state.loading ? 'Checking Relay configuration…' : (state.creating ? 'Creating Relay…' : (notification?.status || kind || DASH))));
+    setText('relay-setup-status', state.error || (state.loading ? 'Checking Relay configuration…' : (state.creating ? (resumableFinalization ? 'Resuming finalization…' : 'Creating Relay…') : (notification?.status || kind || DASH))));
     setText('relay-setup-status-label', notification?.message || recoveryMessage || phase || DASH);
     setText('relay-setup-factory', view?.factory_available ? 'Available' : 'Unavailable');
     setText('relay-setup-target-count', view ? String(view.target_count) : DASH);
@@ -1066,8 +1073,16 @@ export function createRelaySetupController({
     setAccountLink('relay-setup-icrc-account-link', accountText, identifier);
     setAccountLink('relay-setup-account-identifier-link', identifier, identifier);
     setHidden('relay-setup-payment-details', !account || activeOrBlocked);
-    setHidden('relay-setup-create-panel', !account || activeOrBlocked);
-    if (createButton) createButton.disabled = !canCreate;
+    setHidden('relay-setup-create-panel', resumableFinalization ? false : (!account || activeOrBlocked));
+    setText(
+      'relay-setup-finalization-resume-note',
+      'Funding is complete. Resume performs only authoritative Relay status checks and, when the Relay is still in the exact Historian-controlled state, may retry the controller-removal settings update. It does not repeat ICP, CMC, creation, installation, or Relay-funding operations.',
+    );
+    setHidden('relay-setup-finalization-resume-note', !resumableFinalization);
+    if (createButton) {
+      createButton.textContent = resumableFinalization ? 'Resume finalization' : 'Create Relay';
+      createButton.disabled = resumableFinalization ? state.creating : !canCreate;
+    }
     setHtml('relay-setup-existing-relay', displayedRelayId ? `<p>Relay: ${renderCanisterTrackerLink(displayedRelayId)}</p>` : '');
     setHidden('relay-setup-existing-relay', !displayedRelayId);
   }
@@ -1226,6 +1241,10 @@ export function createRelaySetupController({
 
   async function createRelay() {
     if (state.creating) return;
+    const resumableFinalization = isResumableFinalization();
+    const currentKind = viewState(state.view);
+    if (['Active', 'ManualRecoveryRequired'].includes(currentKind)
+      || (currentKind === 'InProgress' && !resumableFinalization)) return;
     const expectedConfiguration = state.checkedConfigurationFingerprint;
     const requestGeneration = generation;
     if (!state.targets.length || !checkedConfigurationStillMatchesVisibleForm(expectedConfiguration)) {
