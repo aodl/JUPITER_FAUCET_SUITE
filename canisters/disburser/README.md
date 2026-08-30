@@ -6,7 +6,9 @@ It controls one NNS neuron, periodically disburses maturity as ICP, and routes t
 
 - the **age-neutral base** payout goes to [`jupiter-faucet`](../faucet)
 - **95% of the age bonus** goes to [`jupiter-sns-rewards`](../sns-rewards)
-- **5% of the age bonus** goes to the D-QUORUM neuron staking account
+- **5% of the age bonus** goes to the [D-QUORUM](https://dashboard.internetcomputer.org/neuron/4713806069430754115) neuron staking account
+
+D-QUORUM is a special known neuron owned by the NNS Governance canister itself. The Jupiter Faucet neuron follows D-QUORUM indirectly through [αlpha-vote](https://dashboard.internetcomputer.org/neuron/2947465672511369) to maximise voting rewards, ensuring its maturity is earned through diligent voting. Routing a small portion of the age bonus to D-QUORUM helps incentivise elected NNS governance reviewers who perform decentralized due diligence on proposals. This partnership is foundational to Jupiter Faucet because truly unstoppable canisters depend on a secure and decentralized network.
 
 <img src="../frontend/public/disburser.svg">
 

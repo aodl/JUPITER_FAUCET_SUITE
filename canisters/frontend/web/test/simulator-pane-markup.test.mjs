@@ -395,7 +395,11 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /newly minted <strong>IO<\/strong> \(a liquid staking protocol that will be launched alongside Jupiter Faucet\)/);
   assert.match(howItWorks, /<strong>0%–19%<\/strong> distributed to <strong>SNS jUP stakers<\/strong>/);
   assert.match(howItWorks, /<strong>0%–1%<\/strong> restaked into/);
-  assert.match(howItWorks, /prerequisite for truly unstoppable canisters is a secure and decentralized network/);
+  assert.match(howItWorks, /D-QUORUM is a special known neuron owned by the NNS Governance canister itself/);
+  assert.match(howItWorks, /dashboard\.internetcomputer\.org\/neuron\/2947465672511369[^>]*>\s*αlpha-vote<\/a\s*>/);
+  assert.match(howItWorks, /follows D-QUORUM indirectly through[\s\S]*to maximise voting rewards/);
+  assert.match(howItWorks, /helps incentivise elected NNS governance reviewers who perform decentralized due diligence on proposals/);
+  assert.match(howItWorks, /partnership is foundational to Jupiter Faucet because truly unstoppable canisters depend on a secure and decentralized network/);
   assert.match(howItWorks, /memo-builder-safety-notice[\s\S]*<strong>Rewards:<\/strong>[\s\S]*jUP SNS tokens will be minted/);
   assert.match(howItWorks, /jUP SNS tokens will be minted[\s\S]*While the Jupiter Faucet SNS rewards components are still being finalized/);
   assert.match(howItWorks, /data-panel="metric-commitments"[^>]*>committed ICP<\/a>/);
