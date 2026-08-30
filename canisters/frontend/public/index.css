@@ -356,6 +356,15 @@ body.background-orbit-enhanced {
   }
 }
 
+.how-it-works-age-bonus-list {
+  margin: 8px 0 16px;
+  padding-left: 28px;
+}
+
+.how-it-works-age-bonus-list li + li {
+  margin-top: 4px;
+}
+
 .how-it-works-guide {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -556,31 +556,20 @@ test('navbar hash navigation opens panels without reopening dropdowns', () => {
   assert.equal(env.backdrop.classList.contains('is-open'), false);
 });
 
-test('Relay route keeps Actions ownership through direct load and history', () => {
+test('How it works Relay route does not claim Actions ownership', () => {
   const env = setupNavbar(1440, '#how-it-works:3');
 
   assert.equal(activeSection(env.document).getAttribute('data-panel'), 'how-it-works');
   assert.equal(activePage(activeSection(env.document)).getAttribute('data-page'), '3');
   assert.equal(env.actionsMenu.hidden, true);
-  assert.equal(env.actionsButton.classList.contains('nav-item--active'), true);
+  assert.equal(env.actionsButton.classList.contains('nav-item--active'), false);
+  assert.equal(env.howLink.classList.contains('nav-item--active'), true);
 
   click(env.actionsButton);
   assert.equal(env.backdrop.classList.contains('is-open'), false);
   assert.equal(env.window.location.hash, '');
-
-  click(env.actionsButton);
-  click(env.actionsMenu.querySelector('a[href="#simulator"]'));
-  click(env.actionsButton);
-  click(env.actionsButton);
-  click(env.actionsMenu.querySelector('a[href="#memo-builder"]'));
-  assert.equal(env.window.location.hash, '#memo-builder');
-  env.window.history.back();
-  assert.equal(env.window.location.hash, '');
-  assert.equal(env.backdrop.classList.contains('is-open'), false);
-  env.window.history.forward();
-  assert.equal(env.window.location.hash, '#memo-builder');
   assert.equal(env.actionsButton.classList.contains('nav-item--active'), true);
-  assert.equal(env.actionsMenu.hidden, true);
+  assert.equal(env.actionsMenu.hidden, false);
 });
 
 test('opening transient disclosures clears stale panel hashes', () => {
@@ -633,7 +622,8 @@ test('direct panel triggers toggle closed but same-section page links navigate',
   assert.equal(env.window.location.hash, '#how-it-works:3');
   assert.equal(env.backdrop.classList.contains('is-open'), true);
   assert.equal(activePage(activeSection(env.document)).getAttribute('data-page'), '3');
-  assert.equal(env.actionsButton.classList.contains('nav-item--active'), true);
+  assert.equal(env.actionsButton.classList.contains('nav-item--active'), false);
+  assert.equal(env.howLink.classList.contains('nav-item--active'), true);
 });
 
 test('panel links preserve memo builder prefill query parameters', () => {

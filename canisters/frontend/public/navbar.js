@@ -54,8 +54,7 @@
       if (
         key === "simulator" ||
         key === "relay-setup" ||
-        key === "memo-builder" ||
-        (key === "how-it-works" && page === 3)
+        key === "memo-builder"
       ) {
         return "actions";
       }

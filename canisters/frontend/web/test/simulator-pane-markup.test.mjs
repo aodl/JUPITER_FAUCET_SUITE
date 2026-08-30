@@ -393,8 +393,11 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /data-panel="metric-tracker"[^>]*>memo tracker<\/a>/);
   assert.match(howItWorks, /data-panel="simulator"[^>]*>simulator<\/a>/);
   assert.match(howItWorks, /newly minted <strong>IO<\/strong> \(a liquid staking protocol that will be launched alongside Jupiter Faucet\)/);
+  assert.match(howItWorks, /<ul class="nav-panel-content how-it-works-age-bonus-list">[\s\S]*<li><strong>0%–19%<\/strong>[\s\S]*<li>[\s\S]*<strong>0%–1%<\/strong>[\s\S]*<\/ul>/);
+  assert.match(indexCss, /\.how-it-works-age-bonus-list \{[\s\S]*padding-left: 28px;/);
   assert.match(howItWorks, /<strong>0%–19%<\/strong> distributed to <strong>SNS jUP stakers<\/strong>/);
   assert.match(howItWorks, /<strong>0%–1%<\/strong> restaked into/);
+  assert.match(howItWorks, /neuron\.\s*<\/li>\s*<\/ul>\s*<div class="nav-panel-content memo-builder-example-list">\s*<p>\s*D-QUORUM is a special known neuron/);
   assert.match(howItWorks, /D-QUORUM is a special known neuron owned by the NNS Governance canister itself/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/neuron\/2947465672511369[^>]*>\s*αlpha-vote<\/a\s*>/);
   assert.match(howItWorks, /follows D-QUORUM indirectly through[\s\S]*to maximise voting rewards/);
@@ -858,7 +861,7 @@ test('Actions nav button exposes Plan Commit and Optimize pane links', () => {
   assert.match(navbarJs, /function renderNavState/);
   assert.match(navbarJs, /const actionsToggle = document\.getElementById\("actions-menu-toggle"\);/);
   assert.match(navbarJs, /function groupForPanelRoute\(key, page = 0, trigger = null\)/);
-  assert.match(navbarJs, /\(key === "how-it-works" && page === 3\)/);
+  assert.doesNotMatch(navbarJs, /key === "how-it-works"/);
   assert.match(navbarJs, /document\.body\.classList\.toggle\("metrics-menu-open", metricsDisclosureVisible\);/);
   assert.match(navbarJs, /if \(navState\.openPanel\) clearPanelHash\(\);[\s\S]*openMenu: group/);
   assert.doesNotMatch(navbarJs, /positionMenuRails|getBoundingClientRect|let actionsMenuOpen|let metricsMenuOpen|activePanelKey|metric-rail--visible/);
