@@ -75,6 +75,16 @@ icp canister status jupiter_historian --environment ic --json
 CMD
 echo
 echo "Local icp 0.2.6 testing showed the stopped-canister upgrade leaves the canister stopped; the explicit start command is required."
+echo "The route-roll-up rollout uses an automatic in-place backfill that clears/rebuilds only stable memory 29."
+echo "Normal service and forward commitment indexing continue while complete_from_genesis is false."
+echo "After restart, query get_commitment_route_summaries anonymously and do not use lifetime totals as authoritative until complete_from_genesis is true and commitment_index_fault is null."
+cat <<'CMD'
+icp canister call jupiter_historian get_commitment_route_summaries \
+  '(record { routes = vec {} })' \
+  --environment ic \
+  --identity anonymous \
+  --query
+CMD
 echo
 echo "Rollback from the recorded snapshot ID:"
 cat <<'CMD'

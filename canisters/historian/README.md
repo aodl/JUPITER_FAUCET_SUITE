@@ -251,7 +251,11 @@ That keeps sweep work bounded even when the tracked set grows.
 
 ### Initial route-roll-up rollout
 
-This repository is pre-launch. The initial production rollout that introduces commitment-route roll-ups must reinstall/reset Historian so the new stable map starts empty with a feature-era completeness marker and the existing staking-account indexer rebuilds it from genesis. Do not preserve disposable pre-launch Historian indexing state through an ordinary pre-feature upgrade: old root state decodes the marker as absent and is intentionally never advertised as complete, even if its older staking backfill was complete. No legacy reconstruction worker or projection-specific cursor exists. After the feature has launched from a fresh state, ordinary upgrades preserve both route totals and completeness.
+Existing production Historian is upgraded in place. Ordinary stable state, retained histories, index cursors, aggregates, and Relay setup/recovery state are preserved. A pre-feature route projection is detected automatically after a successful normal commitment-index run. Historian then clears and rebuilds only the commitment-route roll-up map in stable memory 29 through a bounded, resumable automatic in-place backfill.
+
+The migration captures an immutable staking transaction boundary. The projection-only historical scan owns transactions at or below that boundary, while the unchanged normal commitment indexer continues handling later transactions. This prevents overlap without resetting the normal staking cursor or adding permanent per-transaction deduplication state. If an earlier route-summary binary accumulated partial totals while its completeness marker was absent, those partial memory-29 totals are discarded once at activation and reconstructed through the captured boundary.
+
+Integrations must treat route totals as non-authoritative while `complete_from_genesis == false`, or whenever `commitment_index_fault` is present. Once the automatic backfill completes, all qualifying commitments through the current staking cursor are represented, the completeness marker becomes true, and the migration becomes permanently dormant. Subsequent ordinary upgrades preserve the completed map and perform no migration work. Reinstalling or resetting the existing production Historian is neither necessary nor permitted.
 
 ### Init args
 

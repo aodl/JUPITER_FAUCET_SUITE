@@ -228,6 +228,13 @@ pub(crate) struct ActiveRouteSweep {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ActiveCommitmentRouteRollupBackfill {
+    pub boundary_tx_id: u64,
+    pub cursor_tx_id: Option<u64>,
+    pub descending: bool,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StableConfig {
     pub staking_account: Account,
     #[serde(default)]
@@ -297,6 +304,8 @@ pub(crate) struct StableRootState {
     pub staking_backfill_complete: Option<bool>,
     #[serde(default)]
     pub commitment_route_rollups_complete_from_genesis: Option<bool>,
+    #[serde(default)]
+    pub active_commitment_route_rollup_backfill: Option<ActiveCommitmentRouteRollupBackfill>,
     #[serde(default)]
     pub last_indexed_output_tx_id: Option<u64>,
     #[serde(default)]
@@ -950,6 +959,8 @@ pub(crate) struct State {
     pub staking_backfill_complete: Option<bool>,
     #[serde(default)]
     pub commitment_route_rollups_complete_from_genesis: Option<bool>,
+    #[serde(default)]
+    pub active_commitment_route_rollup_backfill: Option<ActiveCommitmentRouteRollupBackfill>,
     pub last_indexed_output_tx_id: Option<u64>,
     #[serde(default)]
     pub oldest_indexed_output_tx_id: Option<u64>,
@@ -1022,6 +1033,7 @@ impl State {
             staking_index_descending: None,
             staking_backfill_complete: Some(false),
             commitment_route_rollups_complete_from_genesis: Some(false),
+            active_commitment_route_rollup_backfill: None,
             last_indexed_output_tx_id: None,
             oldest_indexed_output_tx_id: None,
             output_route_index_descending: None,

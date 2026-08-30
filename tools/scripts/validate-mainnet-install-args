@@ -643,6 +643,10 @@ def historian_destructive_history_wording(text: str) -> bool:
     return any(phrase in text for phrase in forbidden_phrases)
 
 
+def historian_route_rollup_reinstall_wording(text: str) -> bool:
+    return "must reinstall/reset Historian" in text
+
+
 def historian_snapshot_runbook_errors(text: str) -> list[str]:
     errors: list[str] = []
     stop_pos = text.find("icp canister stop jupiter_historian --environment ic")
@@ -693,6 +697,8 @@ def validate_historian_upgrade_only_docs() -> None:
             fail(f"{path} pairs Historian --mode upgrade with mainnet-install-args.did; use no args or temporary UpgradeArgs")
         if historian_destructive_history_wording(text):
             fail(f"{path} contains obsolete Historian history-discard wording")
+        if historian_route_rollup_reinstall_wording(text):
+            fail(f"{path} recommends destructive reinstall/reset for Historian route roll-ups")
         snapshot_errors = historian_snapshot_runbook_errors(text)
         if path.name in {"deployment.md", "preflight-historian-production-upgrade"} and snapshot_errors:
             fail(f"{path} has incomplete Historian snapshot/rollback runbook: {', '.join(snapshot_errors)}")
@@ -707,9 +713,22 @@ def validate_historian_upgrade_only_docs() -> None:
         "Stopping `jupiter_historian` is the executable self-service factory pause",
         "SNAPSHOT_ID=\"$(icp canister snapshot create jupiter_historian --environment ic --quiet)\"",
         "Record pre-upgrade query results",
+        "automatic in-place backfill",
+        "complete_from_genesis == true",
+        "commitment_index_fault == null",
+        "--identity anonymous",
     ]:
         if phrase not in deployment_text:
             fail(f"docs/operations/deployment.md must document Historian upgrade-only requirement: {phrase}")
+
+    historian_readme_text = (REPO_ROOT / "canisters" / "historian" / "README.md").read_text()
+    for phrase in [
+        "Existing production Historian is upgraded in place",
+        "automatic in-place backfill",
+        "clears and rebuilds only the commitment-route roll-up map in stable memory 29",
+    ]:
+        if phrase not in historian_readme_text:
+            fail(f"canisters/historian/README.md must document in-place route-roll-up backfill: {phrase}")
 
     preflight_text = (REPO_ROOT / "tools" / "scripts" / "preflight-historian-production-upgrade").read_text()
     for phrase in [
@@ -719,6 +738,10 @@ def validate_historian_upgrade_only_docs() -> None:
         "Complete tested maintenance sequence",
         "--mode upgrade",
         "Rollback from the recorded snapshot ID",
+        "automatic in-place backfill",
+        "get_commitment_route_summaries",
+        "complete_from_genesis is true and commitment_index_fault is null",
+        "--identity anonymous",
     ]:
         if phrase not in preflight_text:
             fail(f"tools/scripts/preflight-historian-production-upgrade must print Historian upgrade-only guidance: {phrase}")
@@ -1379,6 +1402,14 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \\
     )
     if not historian_destructive_history_wording(destructive_history_text):
         fail("self-test failed to reject destructive Historian history wording")
+    if not historian_route_rollup_reinstall_wording(
+        "The initial route-roll-up rollout must reinstall/reset Historian."
+    ):
+        fail("self-test failed to reject route-roll-up reinstall/reset wording")
+    if historian_route_rollup_reinstall_wording(
+        "Existing production Historian is upgraded in place with an automatic in-place backfill."
+    ):
+        fail("self-test unexpectedly rejected in-place route-roll-up backfill wording")
     historian_good_upgrade_text = """
     Existing production Historian must be upgraded in place:
     JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \\

@@ -8,6 +8,7 @@ pub(super) fn build_root_snapshot(st: &State) -> StableRootState {
         staking_backfill_complete: st.staking_backfill_complete,
         commitment_route_rollups_complete_from_genesis: st
             .commitment_route_rollups_complete_from_genesis,
+        active_commitment_route_rollup_backfill: st.active_commitment_route_rollup_backfill.clone(),
         last_indexed_output_tx_id: st.last_indexed_output_tx_id,
         oldest_indexed_output_tx_id: st.oldest_indexed_output_tx_id,
         output_route_index_descending: st.output_route_index_descending,

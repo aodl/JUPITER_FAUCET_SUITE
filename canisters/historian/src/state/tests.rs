@@ -9,6 +9,102 @@ mod tests {
     use std::borrow::Cow;
     use std::collections::{BTreeMap, BTreeSet};
 
+    #[allow(dead_code, clippy::large_enum_variant)]
+    #[derive(CandidType, Serialize)]
+    enum VersionedStableStateBeforeRouteBackfill {
+        Uninitialized,
+        Current(StableRootStateBeforeRouteBackfill),
+    }
+
+    #[derive(CandidType, Serialize)]
+    struct StableRootStateBeforeRouteBackfill {
+        config: StableConfig,
+        last_indexed_staking_tx_id: Option<u64>,
+        oldest_indexed_staking_tx_id: Option<u64>,
+        staking_index_descending: Option<bool>,
+        staking_backfill_complete: Option<bool>,
+        commitment_route_rollups_complete_from_genesis: Option<bool>,
+        last_indexed_output_tx_id: Option<u64>,
+        oldest_indexed_output_tx_id: Option<u64>,
+        output_route_index_descending: Option<bool>,
+        output_route_backfill_complete: Option<bool>,
+        last_indexed_rewards_tx_id: Option<u64>,
+        oldest_indexed_rewards_tx_id: Option<u64>,
+        rewards_route_index_descending: Option<bool>,
+        rewards_route_backfill_complete: Option<bool>,
+        last_sns_discovery_ts: u64,
+        last_completed_cycles_sweep_ts: u64,
+        last_completed_route_sweep_ts: Option<u64>,
+        active_cycles_sweep: Option<ActiveCyclesSweep>,
+        initial_cycles_probe_queue: Vec<Principal>,
+        active_route_sweep: Option<ActiveRouteSweep>,
+        active_sns_discovery: Option<ActiveSnsDiscovery>,
+        main_lock_state_ts: Option<u64>,
+        last_main_run_ts: u64,
+        qualifying_commitment_count: Option<u64>,
+        total_output_e8s: Option<u64>,
+        total_rewards_e8s: Option<u64>,
+        icp_burned_e8s: Option<u64>,
+        recent_commitments: Option<Vec<RecentCommitment>>,
+        recent_under_threshold_commitments: Option<Vec<RecentCommitment>>,
+        recent_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
+        recent_under_threshold_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
+        recent_invalid_commitments: Option<Vec<InvalidCommitment>>,
+        recent_burns: Option<Vec<RecentBurn>>,
+        last_index_run_ts: Option<u64>,
+        commitment_index_fault: Option<CommitmentIndexFault>,
+        icp_xdr_rate: Option<IcpXdrRateSnapshot>,
+        last_icp_xdr_rate_attempt_ts: Option<u64>,
+        last_icp_xdr_rate_error: Option<String>,
+    }
+
+    impl From<StableRootState> for StableRootStateBeforeRouteBackfill {
+        fn from(value: StableRootState) -> Self {
+            Self {
+                config: value.config,
+                last_indexed_staking_tx_id: value.last_indexed_staking_tx_id,
+                oldest_indexed_staking_tx_id: value.oldest_indexed_staking_tx_id,
+                staking_index_descending: value.staking_index_descending,
+                staking_backfill_complete: value.staking_backfill_complete,
+                commitment_route_rollups_complete_from_genesis: value
+                    .commitment_route_rollups_complete_from_genesis,
+                last_indexed_output_tx_id: value.last_indexed_output_tx_id,
+                oldest_indexed_output_tx_id: value.oldest_indexed_output_tx_id,
+                output_route_index_descending: value.output_route_index_descending,
+                output_route_backfill_complete: value.output_route_backfill_complete,
+                last_indexed_rewards_tx_id: value.last_indexed_rewards_tx_id,
+                oldest_indexed_rewards_tx_id: value.oldest_indexed_rewards_tx_id,
+                rewards_route_index_descending: value.rewards_route_index_descending,
+                rewards_route_backfill_complete: value.rewards_route_backfill_complete,
+                last_sns_discovery_ts: value.last_sns_discovery_ts,
+                last_completed_cycles_sweep_ts: value.last_completed_cycles_sweep_ts,
+                last_completed_route_sweep_ts: value.last_completed_route_sweep_ts,
+                active_cycles_sweep: value.active_cycles_sweep,
+                initial_cycles_probe_queue: value.initial_cycles_probe_queue,
+                active_route_sweep: value.active_route_sweep,
+                active_sns_discovery: value.active_sns_discovery,
+                main_lock_state_ts: value.main_lock_state_ts,
+                last_main_run_ts: value.last_main_run_ts,
+                qualifying_commitment_count: value.qualifying_commitment_count,
+                total_output_e8s: value.total_output_e8s,
+                total_rewards_e8s: value.total_rewards_e8s,
+                icp_burned_e8s: value.icp_burned_e8s,
+                recent_commitments: value.recent_commitments,
+                recent_under_threshold_commitments: value.recent_under_threshold_commitments,
+                recent_neuron_commitments: value.recent_neuron_commitments,
+                recent_under_threshold_neuron_commitments: value
+                    .recent_under_threshold_neuron_commitments,
+                recent_invalid_commitments: value.recent_invalid_commitments,
+                recent_burns: value.recent_burns,
+                last_index_run_ts: value.last_index_run_ts,
+                commitment_index_fault: value.commitment_index_fault,
+                icp_xdr_rate: value.icp_xdr_rate,
+                last_icp_xdr_rate_attempt_ts: value.last_icp_xdr_rate_attempt_ts,
+                last_icp_xdr_rate_error: value.last_icp_xdr_rate_error,
+            }
+        }
+    }
+
     fn reset_test_storage() {
         with_root_stable_cell(|cell| {
             cell.set(VersionedStableState::Uninitialized);
@@ -266,6 +362,72 @@ mod tests {
         assert_eq!(commitment_route_rollup_entry_count(), 0);
     }
 
+    #[test]
+    fn commitment_route_rollup_backfill_state_survives_snapshot_restore() {
+        reset_test_storage();
+        let mut fresh = State::new(sample_config(), 100);
+        assert_eq!(
+            fresh.commitment_route_rollups_complete_from_genesis,
+            Some(false)
+        );
+        assert!(fresh.active_commitment_route_rollup_backfill.is_none());
+        fresh.active_commitment_route_rollup_backfill = Some(ActiveCommitmentRouteRollupBackfill {
+            boundary_tx_id: 900,
+            cursor_tx_id: Some(450),
+            descending: true,
+        });
+        set_state(fresh);
+
+        let restored = restore_state_from_stable().expect("active backfill should restore");
+        assert_eq!(
+            restored.active_commitment_route_rollup_backfill,
+            Some(ActiveCommitmentRouteRollupBackfill {
+                boundary_tx_id: 900,
+                cursor_tx_id: Some(450),
+                descending: true,
+            })
+        );
+        assert_eq!(
+            restored.commitment_route_rollups_complete_from_genesis,
+            Some(false)
+        );
+
+        let mut completed = restored;
+        completed.commitment_route_rollups_complete_from_genesis = Some(true);
+        completed.active_commitment_route_rollup_backfill = None;
+        set_state(completed);
+        let restored_completed =
+            restore_state_from_stable().expect("completed backfill should restore");
+        assert_eq!(
+            restored_completed.commitment_route_rollups_complete_from_genesis,
+            Some(true)
+        );
+        assert!(restored_completed
+            .active_commitment_route_rollup_backfill
+            .is_none());
+    }
+
+    #[test]
+    fn current_root_from_before_route_backfill_decodes_active_state_as_none() {
+        reset_test_storage();
+        let mut state = State::new(sample_config(), 100);
+        state.commitment_route_rollups_complete_from_genesis = Some(true);
+        state.last_indexed_staking_tx_id = Some(44);
+        let old_root = StableRootStateBeforeRouteBackfill::from(build_root_snapshot(&state));
+        let bytes = candid::encode_one(VersionedStableStateBeforeRouteBackfill::Current(old_root))
+            .expect("encode prior current root");
+        let decoded = VersionedStableState::from_bytes(Cow::Owned(bytes));
+        let VersionedStableState::Current(root) = decoded else {
+            panic!("expected current root");
+        };
+        assert_eq!(root.last_indexed_staking_tx_id, Some(44));
+        assert_eq!(
+            root.commitment_route_rollups_complete_from_genesis,
+            Some(true)
+        );
+        assert!(root.active_commitment_route_rollup_backfill.is_none());
+    }
+
     fn sample_config() -> Config {
         Config {
             staking_account: Account {
@@ -485,6 +647,7 @@ mod tests {
         assert_eq!(cfg.xrc_canister_id, principal(&[8]));
         assert_eq!(root.last_indexed_staking_tx_id, Some(1));
         assert_eq!(root.commitment_route_rollups_complete_from_genesis, None);
+        assert!(root.active_commitment_route_rollup_backfill.is_none());
         assert_eq!(root.last_icp_xdr_rate_error.as_deref(), Some("xrc down"));
         let rewritten = VersionedStableState::Current(root).into_bytes();
         assert!(candid::decode_one::<VersionedStableState>(&rewritten).is_ok());

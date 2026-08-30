@@ -270,6 +270,7 @@ impl From<LegacyStableRootStateV1> for StableRootState {
             staking_index_descending: value.staking_index_descending,
             staking_backfill_complete: value.staking_backfill_complete,
             commitment_route_rollups_complete_from_genesis: None,
+            active_commitment_route_rollup_backfill: None,
             last_indexed_output_tx_id: value.last_indexed_output_tx_id,
             oldest_indexed_output_tx_id: value.oldest_indexed_output_tx_id,
             output_route_index_descending: value.output_route_index_descending,

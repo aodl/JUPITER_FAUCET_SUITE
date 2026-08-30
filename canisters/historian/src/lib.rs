@@ -14,7 +14,7 @@ pub(crate) use lifecycle::*;
 mod read_model;
 #[cfg(test)]
 pub(crate) use read_model::*;
-#[cfg(feature = "debug_api")]
+#[cfg(any(test, feature = "debug_api"))]
 mod debug;
 #[cfg(feature = "debug_api")]
 pub use debug::*;

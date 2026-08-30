@@ -204,6 +204,37 @@ mod tests {
         }
     }
 
+    fn index_page(
+        transactions: Vec<IndexTransactionWithId>,
+    ) -> GetAccountIdentifierTransactionsResponse {
+        GetAccountIdentifierTransactionsResponse {
+            balance: 0,
+            oldest_tx_id: transactions.iter().map(|tx| tx.id).min(),
+            transactions,
+        }
+    }
+
+    fn route_rollup(route: crate::CommitmentRoute) -> state::CommitmentRouteRollup {
+        let key = state::CommitmentRouteKey::from_public(&route).expect("valid route");
+        state::get_commitment_route_rollup(&key)
+    }
+
+    fn configure_pre_feature_projection(
+        latest_cursor: Option<u64>,
+        descending: Option<bool>,
+        staking_backfill_complete: Option<bool>,
+    ) {
+        state::with_state_mut(|st| {
+            st.last_indexed_staking_tx_id = latest_cursor;
+            st.oldest_indexed_staking_tx_id = latest_cursor;
+            st.staking_index_descending = descending;
+            st.staking_backfill_complete = staking_backfill_complete;
+            st.commitment_route_rollups_complete_from_genesis = None;
+            st.active_commitment_route_rollup_backfill = None;
+            st.commitment_index_fault = None;
+        });
+    }
+
     #[async_trait]
     impl IndexClient for MockIndexClient {
         async fn get_account_identifier_transactions(
@@ -2125,6 +2156,664 @@ mod tests {
             state::get_commitment_route_rollup(&key).qualifying_commitment_count,
             1
         );
+    }
+
+    #[test]
+    fn migration_activation_waits_for_safe_state_and_clears_only_when_activated() {
+        configure_state(1);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let route = crate::CommitmentRoute::CyclesTopUp {
+            canister_id: target,
+        };
+        let key = state::CommitmentRouteKey::from_public(&route).unwrap();
+        state::increment_commitment_route_rollup(key.clone(), 777);
+
+        configure_pre_feature_projection(Some(10), Some(true), Some(false));
+        activate_commitment_route_rollup_backfill_if_eligible().unwrap();
+        assert_eq!(
+            route_rollup(route.clone()).total_qualifying_committed_e8s,
+            777
+        );
+        assert!(state::with_state(|st| st
+            .active_commitment_route_rollup_backfill
+            .is_none()));
+        assert_eq!(
+            state::with_state(|st| st.commitment_route_rollups_complete_from_genesis),
+            None
+        );
+
+        state::with_state_mut(|st| {
+            st.staking_backfill_complete = Some(true);
+            st.commitment_index_fault = Some(CommitmentIndexFault {
+                observed_at_ts: 1,
+                last_cursor_tx_id: Some(10),
+                offending_tx_id: 9,
+                message: "fault".into(),
+            });
+        });
+        activate_commitment_route_rollup_backfill_if_eligible().unwrap();
+        assert_eq!(
+            route_rollup(route.clone()).total_qualifying_committed_e8s,
+            777
+        );
+        assert!(state::with_state(|st| st
+            .active_commitment_route_rollup_backfill
+            .is_none()));
+
+        state::with_state_mut(|st| {
+            st.commitment_index_fault = None;
+            st.staking_index_descending = None;
+        });
+        let err = activate_commitment_route_rollup_backfill_if_eligible().unwrap_err();
+        assert!(err.contains("order is unknown"));
+        assert_eq!(
+            route_rollup(route.clone()).total_qualifying_committed_e8s,
+            777
+        );
+
+        state::with_state_mut(|st| st.staking_index_descending = Some(true));
+        activate_commitment_route_rollup_backfill_if_eligible().unwrap();
+        state::with_state(|st| {
+            assert_eq!(
+                st.commitment_route_rollups_complete_from_genesis,
+                Some(false)
+            );
+            assert_eq!(
+                st.active_commitment_route_rollup_backfill,
+                Some(state::ActiveCommitmentRouteRollupBackfill {
+                    boundary_tx_id: 10,
+                    cursor_tx_id: None,
+                    descending: true,
+                })
+            );
+            assert_eq!(st.last_indexed_staking_tx_id, Some(10));
+        });
+        assert_eq!(state::get_commitment_route_rollup(&key), Default::default());
+    }
+
+    #[test]
+    fn failed_normal_commitment_indexing_does_not_activate_or_advance_projection() {
+        configure_state(1);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let route = crate::CommitmentRoute::CyclesTopUp {
+            canister_id: target,
+        };
+        let key = state::CommitmentRouteKey::from_public(&route).unwrap();
+        state::increment_commitment_route_rollup(key, 777);
+        configure_pre_feature_projection(Some(10), Some(false), Some(true));
+        state::with_state_mut(|st| {
+            st.last_completed_cycles_sweep_ts = 1_000;
+            st.last_icp_xdr_rate_attempt_ts = Some(1_000);
+        });
+
+        let index = MockIndexClient::scripted(vec![
+            Err(crate::clients::ClientError::Call(
+                "index unavailable".into(),
+            )),
+            Ok(index_page(Vec::new())),
+            Ok(index_page(Vec::new())),
+        ]);
+        block_on(run_main_tick_with_clients(
+            1_000_000_000_000,
+            1_000,
+            &index,
+            &RecordingCyclesProbeClient::blackhole(0),
+            &MockSnsWasmClient::new(Vec::new()),
+            &MockSnsRootClient::new(BTreeMap::new()),
+            &RecordingGovernanceClient::new(),
+            &MockXrcClient::success(720_000_000, 8, 1_000),
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(st.commitment_route_rollups_complete_from_genesis, None);
+            assert!(st.active_commitment_route_rollup_backfill.is_none());
+            assert_eq!(st.last_indexed_staking_tx_id, Some(10));
+        });
+        assert_eq!(route_rollup(route).total_qualifying_committed_e8s, 777);
+    }
+
+    #[test]
+    fn migration_activation_handles_ascending_empty_fresh_and_complete_states() {
+        configure_state(1);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let route = crate::CommitmentRoute::CyclesTopUp {
+            canister_id: target,
+        };
+        let key = state::CommitmentRouteKey::from_public(&route).unwrap();
+        state::increment_commitment_route_rollup(key.clone(), 111);
+
+        configure_pre_feature_projection(Some(8), Some(false), Some(true));
+        activate_commitment_route_rollup_backfill_if_eligible().unwrap();
+        state::with_state(|st| {
+            assert_eq!(
+                st.active_commitment_route_rollup_backfill,
+                Some(state::ActiveCommitmentRouteRollupBackfill {
+                    boundary_tx_id: 8,
+                    cursor_tx_id: None,
+                    descending: false,
+                })
+            );
+            assert_eq!(st.last_indexed_staking_tx_id, Some(8));
+        });
+        assert_eq!(state::get_commitment_route_rollup(&key), Default::default());
+
+        configure_state(1);
+        state::increment_commitment_route_rollup(key.clone(), 222);
+        configure_pre_feature_projection(None, Some(false), Some(true));
+        activate_commitment_route_rollup_backfill_if_eligible().unwrap();
+        state::with_state(|st| {
+            assert_eq!(
+                st.commitment_route_rollups_complete_from_genesis,
+                Some(true)
+            );
+            assert!(st.active_commitment_route_rollup_backfill.is_none());
+        });
+        assert_eq!(state::get_commitment_route_rollup(&key), Default::default());
+
+        configure_state(1);
+        state::increment_commitment_route_rollup(key.clone(), 333);
+        activate_commitment_route_rollup_backfill_if_eligible().unwrap();
+        assert_eq!(
+            route_rollup(route.clone()).total_qualifying_committed_e8s,
+            333
+        );
+        assert_eq!(
+            state::with_state(|st| st.commitment_route_rollups_complete_from_genesis),
+            Some(false)
+        );
+
+        state::with_state_mut(|st| st.commitment_route_rollups_complete_from_genesis = Some(true));
+        let no_op = MockIndexClient::new(Vec::new());
+        block_on(process_commitment_route_rollup_backfill_if_needed(&no_op)).unwrap();
+        assert!(no_op.calls().is_empty());
+        assert_eq!(route_rollup(route).total_qualifying_committed_e8s, 333);
+    }
+
+    #[test]
+    fn debug_derived_state_reset_clears_route_rollups_before_genesis_reindex() {
+        let staking_id = configure_state(1);
+        let canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let route = crate::CommitmentRoute::CyclesTopUp {
+            canister_id: canister,
+        };
+        let history = index_page(vec![transfer_to_staking_tx(
+            1,
+            &staking_id,
+            canister,
+            125,
+            1,
+        )]);
+
+        block_on(process_commitment_indexing(
+            &MockIndexClient::new(vec![history.clone()]),
+            100,
+        ))
+        .unwrap();
+        assert_eq!(
+            route_rollup(route.clone()),
+            state::CommitmentRouteRollup {
+                qualifying_commitment_count: 1,
+                total_qualifying_committed_e8s: 125,
+            }
+        );
+
+        crate::debug::reset_derived_state_for_debug();
+        assert_eq!(route_rollup(route.clone()), Default::default());
+        state::with_state(|st| {
+            assert_eq!(st.last_indexed_staking_tx_id, None);
+            assert_eq!(
+                st.commitment_route_rollups_complete_from_genesis,
+                Some(false)
+            );
+            assert!(st.active_commitment_route_rollup_backfill.is_none());
+        });
+
+        block_on(process_commitment_indexing(
+            &MockIndexClient::new(vec![history]),
+            200,
+        ))
+        .unwrap();
+        assert_eq!(
+            route_rollup(route),
+            state::CommitmentRouteRollup {
+                qualifying_commitment_count: 1,
+                total_qualifying_committed_e8s: 125,
+            }
+        );
+    }
+
+    #[test]
+    fn projection_rebuilds_exact_routes_without_mutating_existing_historian_state() {
+        let staking_id = configure_state(10);
+        let canister_a = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let canister_b = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
+        apply_indexed_commitment_tx(
+            &transfer_to_staking_tx(90, &staking_id, canister_a, 150, 90),
+            &staking_id,
+            100,
+            90,
+        );
+        state::with_state_mut(|st| {
+            st.cycles_history.insert(
+                canister_a,
+                vec![state::CyclesSample {
+                    timestamp_nanos: 91,
+                    cycles: 123,
+                    source: CyclesSampleSource::SelfCanister,
+                }],
+            );
+            st.total_output_e8s = Some(456);
+            st.total_rewards_e8s = Some(789);
+            st.last_indexed_output_tx_id = Some(70);
+            st.last_indexed_rewards_tx_id = Some(80);
+        });
+        configure_pre_feature_projection(Some(12), Some(false), Some(true));
+        activate_commitment_route_rollup_backfill_if_eligible().unwrap();
+        let before = state::get_state();
+
+        let mut transfer_from = transfer_to_staking_memo_tx(
+            12,
+            &staking_id,
+            canister_a.to_text().into_bytes(),
+            200,
+            12,
+        );
+        transfer_from.transaction.operation = IndexOperation::TransferFrom {
+            to: staking_id.clone(),
+            fee: Tokens::new(10_000),
+            from: "sender".into(),
+            amount: Tokens::new(200),
+            spender: "spender".into(),
+        };
+        let page = index_page(vec![
+            transfer_to_staking_tx(1, &staking_id, canister_a, 101, 1),
+            transfer_to_staking_memo_tx(
+                2,
+                &staking_id,
+                format!("{}.", canister_a.to_text()).into_bytes(),
+                102,
+                2,
+            ),
+            transfer_to_staking_memo_tx(
+                3,
+                &staking_id,
+                format!("{}.x", canister_a.to_text()).into_bytes(),
+                103,
+                3,
+            ),
+            transfer_to_staking_memo_tx(
+                4,
+                &staking_id,
+                format!("{}.x", canister_b.to_text()).into_bytes(),
+                104,
+                4,
+            ),
+            transfer_to_staking_memo_tx(5, &staking_id, b"100".to_vec(), 105, 5),
+            transfer_to_staking_memo_tx(6, &staking_id, b"100.".to_vec(), 106, 6),
+            transfer_to_staking_memo_tx(7, &staking_id, b"100.target-1".to_vec(), 107, 7),
+            transfer_to_staking_memo_tx(8, &staking_id, b"101.target-1".to_vec(), 108, 8),
+            transfer_to_staking_memo_tx(
+                9,
+                &staking_id,
+                format!("{}.", canister_a.to_text()).into_bytes(),
+                99,
+                9,
+            ),
+            transfer_to_staking_memo_tx(10, &staking_id, b"invalid".to_vec(), 200, 10),
+            transfer_to_staking_memo_tx(
+                11,
+                "another-account",
+                format!("{}.", canister_a.to_text()).into_bytes(),
+                200,
+                11,
+            ),
+            transfer_from,
+        ]);
+        block_on(process_commitment_route_rollup_backfill_if_needed(
+            &MockIndexClient::new(vec![page]),
+        ))
+        .unwrap();
+
+        let mut after = state::get_state();
+        after.commitment_route_rollups_complete_from_genesis =
+            before.commitment_route_rollups_complete_from_genesis;
+        after.active_commitment_route_rollup_backfill =
+            before.active_commitment_route_rollup_backfill.clone();
+        assert_eq!(
+            candid::encode_one(&after).unwrap(),
+            candid::encode_one(&before).unwrap(),
+            "projection must not mutate existing Historian state"
+        );
+        assert_eq!(
+            route_rollup(crate::CommitmentRoute::CyclesTopUp {
+                canister_id: canister_a,
+            }),
+            state::CommitmentRouteRollup {
+                qualifying_commitment_count: 1,
+                total_qualifying_committed_e8s: 101,
+            }
+        );
+        for (route, amount) in [
+            (
+                crate::CommitmentRoute::RawIcp {
+                    destination_canister_id: canister_a,
+                    memo: Vec::new(),
+                },
+                102,
+            ),
+            (
+                crate::CommitmentRoute::RawIcp {
+                    destination_canister_id: canister_a,
+                    memo: b"x".to_vec(),
+                },
+                103,
+            ),
+            (
+                crate::CommitmentRoute::RawIcp {
+                    destination_canister_id: canister_b,
+                    memo: b"x".to_vec(),
+                },
+                104,
+            ),
+            (
+                crate::CommitmentRoute::NeuronStake {
+                    neuron_id: 100,
+                    memo: None,
+                },
+                105,
+            ),
+            (
+                crate::CommitmentRoute::NeuronStake {
+                    neuron_id: 100,
+                    memo: Some(Vec::new()),
+                },
+                106,
+            ),
+            (
+                crate::CommitmentRoute::NeuronStake {
+                    neuron_id: 100,
+                    memo: Some(b"target-1".to_vec()),
+                },
+                107,
+            ),
+            (
+                crate::CommitmentRoute::NeuronStake {
+                    neuron_id: 101,
+                    memo: Some(b"target-1".to_vec()),
+                },
+                108,
+            ),
+        ] {
+            assert_eq!(
+                route_rollup(route),
+                state::CommitmentRouteRollup {
+                    qualifying_commitment_count: 1,
+                    total_qualifying_committed_e8s: amount,
+                }
+            );
+        }
+        assert_eq!(state::commitment_route_rollup_entry_count(), 8);
+        assert_eq!(
+            state::with_state(|st| st.commitment_route_rollups_complete_from_genesis),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn ascending_projection_resumes_across_upgrade_and_fetch_failure() {
+        let staking_id = configure_state(1);
+        let canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        configure_pre_feature_projection(Some(1_000), Some(false), Some(true));
+        activate_commitment_route_rollup_backfill_if_eligible().unwrap();
+
+        let first_page = index_page(
+            (1..=PAGE_SIZE)
+                .map(|id| transfer_to_staking_tx(id, &staking_id, canister, 101, id))
+                .collect(),
+        );
+        let first_projection = MockIndexClient::new(vec![first_page]);
+        block_on(process_commitment_route_rollup_backfill_if_needed(
+            &first_projection,
+        ))
+        .unwrap();
+        assert_eq!(first_projection.calls()[0].1, None);
+        assert_eq!(
+            state::with_state(|st| st.active_commitment_route_rollup_backfill.clone()),
+            Some(state::ActiveCommitmentRouteRollupBackfill {
+                boundary_tx_id: 1_000,
+                cursor_tx_id: Some(500),
+                descending: false,
+            })
+        );
+
+        let restored = state::restore_state_from_stable().expect("active migration persisted");
+        state::set_state_root_only(restored);
+        let failing = MockIndexClient::scripted(vec![Err(crate::clients::ClientError::Call(
+            "temporary outage".into(),
+        ))]);
+        assert!(block_on(process_commitment_route_rollup_backfill_if_needed(&failing)).is_err());
+        assert_eq!(
+            state::with_state(|st| st
+                .active_commitment_route_rollup_backfill
+                .as_ref()
+                .and_then(|active| active.cursor_tx_id)),
+            Some(500)
+        );
+        assert_eq!(
+            route_rollup(crate::CommitmentRoute::CyclesTopUp {
+                canister_id: canister,
+            })
+            .qualifying_commitment_count,
+            500
+        );
+
+        let second_page = index_page(
+            (500..1_000)
+                .map(|id| transfer_to_staking_tx(id, &staking_id, canister, 101, id))
+                .collect(),
+        );
+        block_on(process_commitment_route_rollup_backfill_if_needed(
+            &MockIndexClient::new(vec![second_page]),
+        ))
+        .unwrap();
+        let final_page = index_page(vec![
+            transfer_to_staking_tx(999, &staking_id, canister, 101, 999),
+            transfer_to_staking_tx(1_000, &staking_id, canister, 101, 1_000),
+        ]);
+        block_on(process_commitment_route_rollup_backfill_if_needed(
+            &MockIndexClient::new(vec![final_page]),
+        ))
+        .unwrap();
+        assert_eq!(
+            route_rollup(crate::CommitmentRoute::CyclesTopUp {
+                canister_id: canister,
+            }),
+            state::CommitmentRouteRollup {
+                qualifying_commitment_count: 1_000,
+                total_qualifying_committed_e8s: 101_000,
+            }
+        );
+        state::with_state(|st| {
+            assert_eq!(
+                st.commitment_route_rollups_complete_from_genesis,
+                Some(true)
+            );
+            assert!(st.active_commitment_route_rollup_backfill.is_none());
+            assert_eq!(st.last_indexed_staking_tx_id, Some(1_000));
+        });
+    }
+
+    #[test]
+    fn descending_projection_counts_forward_activity_once_and_blocks_premature_completion() {
+        let staking_id = configure_state(1);
+        let historical_route = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let new_route = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
+        configure_pre_feature_projection(Some(1_000), Some(true), Some(true));
+        state::with_state_mut(|st| st.oldest_indexed_staking_tx_id = Some(1));
+        state::increment_commitment_route_rollup(
+            state::CommitmentRouteKey::from_public(&crate::CommitmentRoute::CyclesTopUp {
+                canister_id: historical_route,
+            })
+            .unwrap(),
+            999,
+        );
+        activate_commitment_route_rollup_backfill_if_eligible().unwrap();
+
+        let first_page = index_page(
+            (501..=1_000)
+                .rev()
+                .map(|id| transfer_to_staking_tx(id, &staking_id, historical_route, 101, id))
+                .collect(),
+        );
+        let first_projection = MockIndexClient::new(vec![first_page]);
+        block_on(process_commitment_route_rollup_backfill_if_needed(
+            &first_projection,
+        ))
+        .unwrap();
+        assert_eq!(first_projection.calls()[0].1, Some(1_001));
+        assert_eq!(
+            route_rollup(crate::CommitmentRoute::CyclesTopUp {
+                canister_id: historical_route,
+            })
+            .qualifying_commitment_count,
+            500
+        );
+
+        let forward = MockIndexClient::new(vec![index_page(vec![
+            transfer_to_staking_tx(1_002, &staking_id, new_route, 303, 1_002),
+            transfer_to_staking_tx(1_001, &staking_id, historical_route, 202, 1_001),
+            transfer_to_staking_tx(1_000, &staking_id, historical_route, 101, 1_000),
+        ])]);
+        block_on(process_commitment_indexing(&forward, 300)).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.last_indexed_staking_tx_id, Some(1_002));
+            assert_eq!(
+                st.commitment_route_rollups_complete_from_genesis,
+                Some(false)
+            );
+            assert!(st.active_commitment_route_rollup_backfill.is_some());
+        });
+
+        let restored = state::restore_state_from_stable().expect("active migration persisted");
+        state::set_state_root_only(restored);
+        let second_page = index_page(
+            (1..=500)
+                .rev()
+                .map(|id| transfer_to_staking_tx(id, &staking_id, historical_route, 101, id))
+                .collect(),
+        );
+        let second_projection = MockIndexClient::new(vec![second_page]);
+        block_on(process_commitment_route_rollup_backfill_if_needed(
+            &second_projection,
+        ))
+        .unwrap();
+        assert_eq!(second_projection.calls()[0].1, Some(501));
+        let final_page = index_page(Vec::new());
+        block_on(process_commitment_route_rollup_backfill_if_needed(
+            &MockIndexClient::new(vec![final_page]),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            route_rollup(crate::CommitmentRoute::CyclesTopUp {
+                canister_id: historical_route,
+            }),
+            state::CommitmentRouteRollup {
+                qualifying_commitment_count: 1_001,
+                total_qualifying_committed_e8s: 101_202,
+            }
+        );
+        assert_eq!(
+            route_rollup(crate::CommitmentRoute::CyclesTopUp {
+                canister_id: new_route,
+            }),
+            state::CommitmentRouteRollup {
+                qualifying_commitment_count: 1,
+                total_qualifying_committed_e8s: 303,
+            }
+        );
+        let complete_no_op = MockIndexClient::new(Vec::new());
+        block_on(process_commitment_route_rollup_backfill_if_needed(
+            &complete_no_op,
+        ))
+        .unwrap();
+        assert!(complete_no_op.calls().is_empty());
+    }
+
+    #[test]
+    fn projection_rejects_invalid_page_before_mutating_totals_or_cursor() {
+        let staking_id = configure_state(1);
+        let canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        configure_pre_feature_projection(Some(3), Some(true), Some(true));
+        activate_commitment_route_rollup_backfill_if_eligible().unwrap();
+        let invalid = index_page(vec![
+            transfer_to_staking_tx(3, &staking_id, canister, 101, 3),
+            transfer_to_staking_tx(1, &staking_id, canister, 101, 1),
+            transfer_to_staking_tx(2, &staking_id, canister, 101, 2),
+        ]);
+        let err = block_on(process_commitment_route_rollup_backfill_if_needed(
+            &MockIndexClient::new(vec![invalid]),
+        ))
+        .unwrap_err();
+        assert!(err.contains("non-descending"));
+        assert_eq!(
+            route_rollup(crate::CommitmentRoute::CyclesTopUp {
+                canister_id: canister,
+            }),
+            Default::default()
+        );
+        state::with_state(|st| {
+            assert_eq!(
+                st.commitment_route_rollups_complete_from_genesis,
+                Some(false)
+            );
+            assert_eq!(
+                st.active_commitment_route_rollup_backfill
+                    .as_ref()
+                    .and_then(|active| active.cursor_tx_id),
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn active_projection_prevents_normal_ascending_indexer_from_marking_complete() {
+        let staking_id = configure_state(1);
+        let canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.commitment_route_rollups_complete_from_genesis = Some(false);
+            st.active_commitment_route_rollup_backfill =
+                Some(state::ActiveCommitmentRouteRollupBackfill {
+                    boundary_tx_id: 10,
+                    cursor_tx_id: Some(5),
+                    descending: false,
+                });
+        });
+        let page = index_page(vec![transfer_to_staking_tx(
+            1,
+            &staking_id,
+            canister,
+            101,
+            1,
+        )]);
+        block_on(process_commitment_indexing_ascending(
+            &MockIndexClient::new(Vec::new()),
+            200,
+            &state::with_state(|st| st.config.clone()),
+            false,
+            &staking_id,
+            None,
+            Some(page),
+        ))
+        .unwrap();
+        state::with_state(|st| {
+            assert_eq!(
+                st.commitment_route_rollups_complete_from_genesis,
+                Some(false)
+            );
+            assert!(st.active_commitment_route_rollup_backfill.is_some());
+        });
     }
 
     #[test]

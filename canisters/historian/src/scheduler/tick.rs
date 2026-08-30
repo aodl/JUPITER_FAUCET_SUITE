@@ -197,8 +197,17 @@ pub(super) async fn run_main_tick_with_clients<
     if let Err(err) = refresh_icp_xdr_rate_if_due(now_secs, xrc).await {
         log_error(&format!("historian ICP/XDR rate refresh degraded: {err}"));
     }
-    if let Err(err) = process_commitment_indexing(index, now_secs).await {
-        log_error(&format!("historian commitment indexing degraded: {err}"));
+    match process_commitment_indexing(index, now_secs).await {
+        Ok(()) => {
+            if let Err(err) = process_commitment_route_rollup_backfill_if_needed(index).await {
+                log_error(&format!(
+                    "historian commitment-route roll-up backfill degraded: {err}"
+                ));
+            }
+        }
+        Err(err) => {
+            log_error(&format!("historian commitment indexing degraded: {err}"));
+        }
     }
     process_route_indexing(now_nanos, now_secs, index).await?;
 

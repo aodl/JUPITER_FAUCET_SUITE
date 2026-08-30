@@ -170,6 +170,7 @@ mod tests {
             staking_index_descending: None,
             staking_backfill_complete: Some(false),
             commitment_route_rollups_complete_from_genesis: Some(false),
+            active_commitment_route_rollup_backfill: None,
             last_indexed_output_tx_id: None,
             oldest_indexed_output_tx_id: None,
             output_route_index_descending: None,

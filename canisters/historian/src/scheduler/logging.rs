@@ -32,6 +32,17 @@ pub(super) fn log_error(message: &str) {
     }
 }
 
+pub(super) fn log_info(message: &str) {
+    #[cfg(test)]
+    {
+        let _ = message;
+    }
+    #[cfg(not(test))]
+    {
+        ic_cdk::println!("{}", message);
+    }
+}
+
 pub(super) fn latch_commitment_index_fault(
     now_secs: u64,
     last_cursor_tx_id: Option<u64>,

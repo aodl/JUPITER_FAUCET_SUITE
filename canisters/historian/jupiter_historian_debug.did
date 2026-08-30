@@ -322,6 +322,11 @@ type DebugState = record {
   oldest_indexed_staking_tx_id : opt nat64;
   staking_index_descending : opt bool;
   staking_backfill_complete : opt bool;
+  commitment_route_rollups_complete_from_genesis : opt bool;
+  commitment_route_rollup_backfill_active : bool;
+  commitment_route_rollup_backfill_boundary_tx_id : opt nat64;
+  commitment_route_rollup_backfill_cursor_tx_id : opt nat64;
+  commitment_route_rollup_backfill_descending : opt bool;
   oldest_indexed_output_tx_id : opt nat64;
   output_route_index_descending : opt bool;
   output_route_backfill_complete : opt bool;
@@ -391,6 +396,7 @@ service : (InitArgs) -> {
   debug_set_icp_xdr_rate_fetched_at_ts : (opt nat64) -> ();
   debug_set_blackhole_cycles_probe_route : (principal, principal) -> ();
   debug_reset_runtime_state : () -> ();
+  debug_reset_commitment_route_projection_to_pre_feature_state : () -> ();
   debug_reset_derived_state : () -> ();
   debug_list_relay_setup_entries : () -> (vec RelaySetupDebugEntry) query;
   debug_clear_relay_registry : () -> ();

@@ -339,7 +339,9 @@ pub(super) fn apply_commitment_transactions_in_chronological_order(
 
 fn mark_commitment_route_rollups_complete_from_genesis() {
     state::with_root_state_mut(|st| {
-        if st.commitment_route_rollups_complete_from_genesis == Some(false) {
+        if st.active_commitment_route_rollup_backfill.is_none()
+            && st.commitment_route_rollups_complete_from_genesis == Some(false)
+        {
             st.commitment_route_rollups_complete_from_genesis = Some(true);
         }
     });
@@ -565,7 +567,10 @@ pub(super) async fn process_commitment_indexing_descending_seeded<I: IndexClient
         st.oldest_indexed_staking_tx_id = oldest_cursor;
         st.staking_index_descending = Some(true);
         st.staking_backfill_complete = Some(backfill_complete);
-        if backfill_complete && st.commitment_route_rollups_complete_from_genesis == Some(false) {
+        if backfill_complete
+            && st.active_commitment_route_rollup_backfill.is_none()
+            && st.commitment_route_rollups_complete_from_genesis == Some(false)
+        {
             st.commitment_route_rollups_complete_from_genesis = Some(true);
         }
         st.last_index_run_ts = Some(now_secs);

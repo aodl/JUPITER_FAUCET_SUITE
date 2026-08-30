@@ -135,6 +135,22 @@ After upgrade, verify:
 - New cycles samples append to existing histories.
 - Any setup interrupted after an irreversible spend is `ManualRecoveryRequired`; interrupted `Reserved`/`ProbingTargets` entries are removed, while existing `Active` and `ManualRecoveryRequired` entries are preserved.
 
+### Commitment-route roll-up upgrade verification
+
+The commitment-route roll-up rollout uses an automatic in-place backfill. After restarting Historian, query `get_commitment_route_summaries` anonymously; an empty `routes` vector is sufficient when only the projection metadata is needed:
+
+```bash
+icp canister call jupiter_historian get_commitment_route_summaries \
+  '(record { routes = vec {} })' \
+  --environment ic \
+  --identity anonymous \
+  --query
+```
+
+An existing pre-feature Historian preserves its ordinary stable state and normal staking cursor. After a successful normal index scan, it clears and rebuilds only the commitment-route roll-up map in stable memory 29. A fixed staking transaction boundary partitions the projection-only historical backfill from new forward indexing, so normal service and new commitment indexing continue while the bounded, resumable rebuild runs.
+
+`complete_from_genesis` may initially be false. Leave Historian running so its normal scan timer can advance the backfill, and query the metadata periodically. Do not publish or use lifetime route totals as authoritative until both `complete_from_genesis == true` and `commitment_index_fault == null`. After completion all prior qualifying commitments are included, and subsequent upgrades perform no migration work.
+
 Deploy the matching frontend while Historian remains stopped after its successful upgrade. Start Historian only after both deployments succeed.
 
 The maintenance sequence is:
@@ -146,9 +162,10 @@ The maintenance sequence is:
 5. While Historian remains stopped, deploy the matching frontend.
 6. Start Historian only after both deployments succeed.
 7. Verify preserved public state and the current setup API with both canonical vectors.
-8. Verify order independence and that the same targets with a recipient change use a different account and Relay.
-9. Verify each child module hash, running status, empty controller set, public logs/status, and independent tracking counts.
-10. Retain the snapshot until acceptance is complete.
+8. Monitor the automatic in-place commitment-route backfill until its completeness and fault metadata are authoritative.
+9. Verify order independence and that the same targets with a recipient change use a different account and Relay.
+10. Verify each child module hash, running status, empty controller set, public logs/status, and independent tracking counts.
+11. Retain the snapshot until acceptance is complete.
 
 For later Historian upgrades:
 
