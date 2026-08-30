@@ -115,6 +115,43 @@ pub struct CommitmentHistoryPage {
     pub next_start_after_tx_id: Option<u64>,
 }
 
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
+pub enum CommitmentRoute {
+    CyclesTopUp {
+        canister_id: Principal,
+    },
+    RawIcp {
+        destination_canister_id: Principal,
+        memo: Vec<u8>,
+    },
+    NeuronStake {
+        neuron_id: u64,
+        memo: Option<Vec<u8>>,
+    },
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct GetCommitmentRouteSummariesArgs {
+    pub routes: Vec<CommitmentRoute>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
+pub struct CommitmentRouteSummary {
+    pub route: CommitmentRoute,
+    pub qualifying_commitment_count: u64,
+    pub total_qualifying_committed_e8s: u64,
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
+pub struct GetCommitmentRouteSummariesResponse {
+    pub items: Vec<CommitmentRouteSummary>,
+    pub truncated: bool,
+    pub complete_from_genesis: bool,
+    pub indexed_through_staking_tx_id: Option<u64>,
+    pub last_index_run_ts: Option<u64>,
+    pub commitment_index_fault: Option<CommitmentIndexFault>,
+}
+
 #[derive(CandidType, Deserialize, Clone, Serialize)]
 pub struct CanisterOverview {
     pub canister_id: Principal,

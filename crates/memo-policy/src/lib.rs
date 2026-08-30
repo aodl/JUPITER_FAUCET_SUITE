@@ -394,6 +394,63 @@ mod tests {
     }
 
     #[test]
+    fn parser_preserves_all_exact_commitment_route_forms() {
+        let canister = target_canister();
+        let canister_text = canister.to_text();
+        let top_up = parse_memo_directive(canister_text.as_bytes()).unwrap();
+        let raw_empty = parse_memo_directive(format!("{canister_text}.").as_bytes()).unwrap();
+        let raw_non_empty =
+            parse_memo_directive(format!("{canister_text}.abc").as_bytes()).unwrap();
+        let neuron_none = parse_memo_directive(b"12345").unwrap();
+        let neuron_empty = parse_memo_directive(b"12345.").unwrap();
+        let neuron_non_empty = parse_memo_directive(b"12345.abc").unwrap();
+
+        assert_eq!(
+            top_up,
+            MemoDirective::TopUp {
+                canister_id: canister
+            }
+        );
+        assert_eq!(
+            raw_empty,
+            MemoDirective::RawIcp {
+                canister_id: canister,
+                memo: Vec::new(),
+            }
+        );
+        assert_eq!(
+            raw_non_empty,
+            MemoDirective::RawIcp {
+                canister_id: canister,
+                memo: b"abc".to_vec(),
+            }
+        );
+        assert_eq!(
+            neuron_none,
+            MemoDirective::NeuronStake {
+                neuron_id: 12_345,
+                memo: None,
+            }
+        );
+        assert_eq!(
+            neuron_empty,
+            MemoDirective::NeuronStake {
+                neuron_id: 12_345,
+                memo: Some(Vec::new()),
+            }
+        );
+        assert_eq!(
+            neuron_non_empty,
+            MemoDirective::NeuronStake {
+                neuron_id: 12_345,
+                memo: Some(b"abc".to_vec()),
+            }
+        );
+        assert_ne!(top_up, raw_empty);
+        assert_ne!(neuron_none, neuron_empty);
+    }
+
+    #[test]
     fn parser_rejects_zero_or_oversize_numeric_neuron_id_directive() {
         assert_eq!(parse_memo_directive(b"0"), None);
         assert_eq!(parse_memo_directive(b"0000"), None);

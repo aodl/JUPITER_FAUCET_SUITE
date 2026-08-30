@@ -6,6 +6,8 @@ pub(super) fn build_root_snapshot(st: &State) -> StableRootState {
         oldest_indexed_staking_tx_id: st.oldest_indexed_staking_tx_id,
         staking_index_descending: st.staking_index_descending,
         staking_backfill_complete: st.staking_backfill_complete,
+        commitment_route_rollups_complete_from_genesis: st
+            .commitment_route_rollups_complete_from_genesis,
         last_indexed_output_tx_id: st.last_indexed_output_tx_id,
         oldest_indexed_output_tx_id: st.oldest_indexed_output_tx_id,
         output_route_index_descending: st.output_route_index_descending,

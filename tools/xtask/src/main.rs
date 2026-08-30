@@ -335,6 +335,31 @@ where
     Ok(decode_one(&bytes)?)
 }
 
+fn call_raw_anonymous<T>(canister: &str, method: &str, args: &str) -> Result<T>
+where
+    T: for<'de> Deserialize<'de> + CandidType,
+{
+    let encoded_args = encode_call_args(canister, method, args)?;
+    let out = run_icp(&[
+        "canister",
+        "call",
+        "--environment",
+        LOCAL_ENVIRONMENT,
+        canister,
+        method,
+        &encoded_args,
+        "--args-format",
+        "hex",
+        "--output",
+        "hex",
+        "--query",
+        "--identity",
+        "anonymous",
+    ])?;
+    let bytes = hex::decode(out.trim().trim_start_matches("0x"))?;
+    Ok(decode_one(&bytes)?)
+}
+
 fn encode_call_args(canister: &str, method: &str, args: &str) -> Result<String> {
     let candid = candid_path_for_canister(canister)
         .with_context(|| format!("no Candid file configured for {canister}"))?;
@@ -645,6 +670,46 @@ struct HistorianPublicStatus {
     cycles_interval_seconds: u64,
     icp_xdr_rate: Option<HistorianIcpXdrRateSnapshot>,
     last_icp_xdr_rate_error: Option<String>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum HistorianCommitmentRoute {
+    CyclesTopUp {
+        canister_id: Principal,
+    },
+    RawIcp {
+        destination_canister_id: Principal,
+        memo: Vec<u8>,
+    },
+    NeuronStake {
+        neuron_id: u64,
+        memo: Option<Vec<u8>>,
+    },
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct HistorianCommitmentRouteSummary {
+    route: HistorianCommitmentRoute,
+    qualifying_commitment_count: u64,
+    total_qualifying_committed_e8s: u64,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct HistorianCommitmentIndexFault {
+    observed_at_ts: u64,
+    last_cursor_tx_id: Option<u64>,
+    offending_tx_id: u64,
+    message: String,
+}
+
+#[derive(Debug, CandidType, Deserialize)]
+struct HistorianCommitmentRouteSummariesResponse {
+    items: Vec<HistorianCommitmentRouteSummary>,
+    truncated: bool,
+    complete_from_genesis: bool,
+    indexed_through_staking_tx_id: Option<u64>,
+    last_index_run_ts: Option<u64>,
+    commitment_index_fault: Option<HistorianCommitmentIndexFault>,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
@@ -4354,6 +4419,13 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             let raw_blob = opt_blob_to_candid(Some(raw_memo.as_bytes()));
             let neuron_memo = format!("{neuron_id}.local.memo");
             let neuron_blob = opt_blob_to_candid(Some(neuron_memo.as_bytes()));
+            let route_canister = Principal::from_slice(&[91, 7]);
+            let normal_route_memo = route_canister.to_text();
+            let raw_empty_route_memo = format!("{}.", route_canister.to_text());
+            let neuron_none_id = 421_u64;
+            let neuron_empty_id = 422_u64;
+            let neuron_none_route_memo = neuron_none_id.to_string();
+            let neuron_empty_route_memo = format!("{neuron_empty_id}.");
 
             let _: u64 = call_raw(
                 "mock_icp_index",
@@ -4365,17 +4437,88 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 "debug_append_transfer",
                 &format!(r#"("{}", 100000000:nat64, {})"#, staking_id, neuron_blob),
             )?;
+            for memo in [
+                normal_route_memo.as_bytes(),
+                raw_empty_route_memo.as_bytes(),
+                neuron_none_route_memo.as_bytes(),
+                neuron_empty_route_memo.as_bytes(),
+            ] {
+                let _: u64 = call_raw(
+                    "mock_icp_index",
+                    "debug_append_transfer",
+                    &format!(
+                        r#"("{}", 100000000:nat64, {})"#,
+                        staking_id,
+                        opt_blob_to_candid(Some(memo))
+                    ),
+                )?;
+            }
 
             let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
 
             let counts: HistorianPublicCounts =
                 call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
-            if counts.tracked_canister_count != 0 || counts.qualifying_commitment_count != 2 {
+            if counts.tracked_canister_count != 1 || counts.qualifying_commitment_count != 6 {
                 bail!(
                     "unexpected raw/neuron commitment counts: registered={} qualifying={}",
                     counts.tracked_canister_count,
                     counts.qualifying_commitment_count,
                 );
+            }
+
+            let route_args = format!(
+                r#"(record {{ routes = vec {{
+                    variant {{ CyclesTopUp = record {{ canister_id = principal "{}" }} }};
+                    variant {{ RawIcp = record {{ destination_canister_id = principal "{}"; memo = blob "" }} }};
+                    variant {{ NeuronStake = record {{ neuron_id = {} : nat64; memo = null }} }};
+                    variant {{ NeuronStake = record {{ neuron_id = {} : nat64; memo = opt blob "" }} }}
+                }} }})"#,
+                route_canister.to_text(),
+                route_canister.to_text(),
+                neuron_none_id,
+                neuron_empty_id,
+            );
+            let route_summaries: HistorianCommitmentRouteSummariesResponse = call_raw_anonymous(
+                "jupiter_historian_dbg",
+                "get_commitment_route_summaries",
+                &route_args,
+            )?;
+            let expected_routes = vec![
+                HistorianCommitmentRoute::CyclesTopUp {
+                    canister_id: route_canister,
+                },
+                HistorianCommitmentRoute::RawIcp {
+                    destination_canister_id: route_canister,
+                    memo: Vec::new(),
+                },
+                HistorianCommitmentRoute::NeuronStake {
+                    neuron_id: neuron_none_id,
+                    memo: None,
+                },
+                HistorianCommitmentRoute::NeuronStake {
+                    neuron_id: neuron_empty_id,
+                    memo: Some(Vec::new()),
+                },
+            ];
+            if route_summaries.items.len() != expected_routes.len()
+                || route_summaries.truncated
+                || !route_summaries.complete_from_genesis
+                || route_summaries.indexed_through_staking_tx_id.is_none()
+                || route_summaries.last_index_run_ts.is_none()
+                || route_summaries.commitment_index_fault.is_some()
+            {
+                bail!(
+                    "unexpected commitment route summary metadata: {:?}",
+                    route_summaries
+                );
+            }
+            for (item, expected_route) in route_summaries.items.iter().zip(expected_routes) {
+                if item.route != expected_route
+                    || item.qualifying_commitment_count != 1
+                    || item.total_qualifying_committed_e8s != 100_000_000
+                {
+                    bail!("unexpected commitment route summary item: {:?}", item);
+                }
             }
 
             let recent: ListRecentCommitmentsResponse = call_raw(

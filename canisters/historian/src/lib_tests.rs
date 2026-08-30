@@ -169,6 +169,7 @@ mod tests {
             oldest_indexed_staking_tx_id: None,
             staking_index_descending: None,
             staking_backfill_complete: Some(false),
+            commitment_route_rollups_complete_from_genesis: Some(false),
             last_indexed_output_tx_id: None,
             oldest_indexed_output_tx_id: None,
             output_route_index_descending: None,
@@ -2210,5 +2211,143 @@ mod tests {
         assert_eq!(item.total_qualifying_committed_e8s, 350);
         assert_eq!(item.last_commitment_ts, Some(3));
         assert_eq!(item.latest_cycles, Some(8));
+    }
+
+    #[test]
+    fn commitment_route_summary_query_is_bounded_ordered_and_fault_tolerant() {
+        state::clear_commitment_route_rollups();
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let cycles = CommitmentRoute::CyclesTopUp {
+            canister_id: canister,
+        };
+        let raw_empty = CommitmentRoute::RawIcp {
+            destination_canister_id: canister,
+            memo: Vec::new(),
+        };
+        let neuron_none = CommitmentRoute::NeuronStake {
+            neuron_id: 100,
+            memo: None,
+        };
+        let neuron_empty = CommitmentRoute::NeuronStake {
+            neuron_id: 100,
+            memo: Some(Vec::new()),
+        };
+        for (route, amount) in [
+            (cycles.clone(), 11),
+            (raw_empty.clone(), 22),
+            (neuron_none.clone(), 33),
+            (neuron_empty.clone(), 44),
+        ] {
+            state::increment_commitment_route_rollup(
+                state::CommitmentRouteKey::from_public(&route).unwrap(),
+                amount,
+            );
+        }
+        let fault = CommitmentIndexFault {
+            observed_at_ts: 700,
+            last_cursor_tx_id: Some(88),
+            offending_tx_id: 87,
+            message: "test fault".to_string(),
+        };
+        let mut st = base_state();
+        st.last_indexed_staking_tx_id = Some(99);
+        st.last_index_run_ts = Some(777);
+        st.commitment_index_fault = Some(fault.clone());
+        st.commitment_route_rollups_complete_from_genesis = Some(true);
+        state::set_state(st);
+
+        let oversized_raw = CommitmentRoute::RawIcp {
+            destination_canister_id: canister,
+            memo: vec![0; 33],
+        };
+        let oversized_neuron = CommitmentRoute::NeuronStake {
+            neuron_id: 1,
+            memo: Some(vec![0; 33]),
+        };
+        let zero_neuron = CommitmentRoute::NeuronStake {
+            neuron_id: 0,
+            memo: None,
+        };
+        let unknown = CommitmentRoute::NeuronStake {
+            neuron_id: 999,
+            memo: Some(b"unknown".to_vec()),
+        };
+        let routes = vec![
+            neuron_empty.clone(),
+            cycles.clone(),
+            raw_empty.clone(),
+            neuron_none.clone(),
+            cycles.clone(),
+            unknown,
+            oversized_raw,
+            oversized_neuron,
+            zero_neuron,
+        ];
+        let response = get_commitment_route_summaries(GetCommitmentRouteSummariesArgs {
+            routes: routes.clone(),
+        });
+        assert_eq!(
+            response
+                .items
+                .iter()
+                .map(|item| item.route.clone())
+                .collect::<Vec<_>>(),
+            routes
+        );
+        assert_eq!(
+            response
+                .items
+                .iter()
+                .map(|item| (
+                    item.qualifying_commitment_count,
+                    item.total_qualifying_committed_e8s
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, 44),
+                (1, 11),
+                (1, 22),
+                (1, 33),
+                (1, 11),
+                (0, 0),
+                (0, 0),
+                (0, 0),
+                (0, 0)
+            ]
+        );
+        assert!(!response.truncated);
+        assert!(response.complete_from_genesis);
+        assert_eq!(response.indexed_through_staking_tx_id, Some(99));
+        assert_eq!(response.last_index_run_ts, Some(777));
+        assert_eq!(response.commitment_index_fault, Some(fault));
+
+        let empty =
+            get_commitment_route_summaries(GetCommitmentRouteSummariesArgs { routes: Vec::new() });
+        assert!(empty.items.is_empty());
+        assert!(!empty.truncated);
+
+        let exact_limit = get_commitment_route_summaries(GetCommitmentRouteSummariesArgs {
+            routes: vec![cycles.clone(); MAX_PUBLIC_QUERY_LIMIT as usize],
+        });
+        assert_eq!(exact_limit.items.len(), MAX_PUBLIC_QUERY_LIMIT as usize);
+        assert!(!exact_limit.truncated);
+        let over_limit = get_commitment_route_summaries(GetCommitmentRouteSummariesArgs {
+            routes: vec![cycles; MAX_PUBLIC_QUERY_LIMIT as usize + 1],
+        });
+        assert_eq!(over_limit.items.len(), MAX_PUBLIC_QUERY_LIMIT as usize);
+        assert!(over_limit.truncated);
+
+        state::with_root_state_mut(|st| {
+            st.commitment_route_rollups_complete_from_genesis = Some(false)
+        });
+        assert!(
+            !get_commitment_route_summaries(GetCommitmentRouteSummariesArgs { routes: Vec::new() })
+                .complete_from_genesis
+        );
+        state::with_root_state_mut(|st| st.commitment_route_rollups_complete_from_genesis = None);
+        assert!(
+            !get_commitment_route_summaries(GetCommitmentRouteSummariesArgs { routes: Vec::new() })
+                .complete_from_genesis
+        );
     }
 }

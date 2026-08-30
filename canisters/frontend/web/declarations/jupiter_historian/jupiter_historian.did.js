@@ -105,6 +105,39 @@ export const idlFactory = ({ IDL }) => {
     'next_start_after_tx_id' : IDL.Opt(IDL.Nat64),
     'items' : IDL.Vec(CommitmentSample),
   });
+  const CommitmentRoute = IDL.Variant({
+    'NeuronStake' : IDL.Record({
+      'memo' : IDL.Opt(IDL.Vec(IDL.Nat8)),
+      'neuron_id' : IDL.Nat64,
+    }),
+    'CyclesTopUp' : IDL.Record({ 'canister_id' : IDL.Principal }),
+    'RawIcp' : IDL.Record({
+      'memo' : IDL.Vec(IDL.Nat8),
+      'destination_canister_id' : IDL.Principal,
+    }),
+  });
+  const GetCommitmentRouteSummariesArgs = IDL.Record({
+    'routes' : IDL.Vec(CommitmentRoute),
+  });
+  const CommitmentIndexFault = IDL.Record({
+    'offending_tx_id' : IDL.Nat64,
+    'observed_at_ts' : IDL.Nat64,
+    'message' : IDL.Text,
+    'last_cursor_tx_id' : IDL.Opt(IDL.Nat64),
+  });
+  const CommitmentRouteSummary = IDL.Record({
+    'total_qualifying_committed_e8s' : IDL.Nat64,
+    'qualifying_commitment_count' : IDL.Nat64,
+    'route' : CommitmentRoute,
+  });
+  const GetCommitmentRouteSummariesResponse = IDL.Record({
+    'indexed_through_staking_tx_id' : IDL.Opt(IDL.Nat64),
+    'truncated' : IDL.Bool,
+    'complete_from_genesis' : IDL.Bool,
+    'commitment_index_fault' : IDL.Opt(CommitmentIndexFault),
+    'items' : IDL.Vec(CommitmentRouteSummary),
+    'last_index_run_ts' : IDL.Opt(IDL.Nat64),
+  });
   const GetCyclesHistoryArgs = IDL.Record({
     'descending' : IDL.Opt(IDL.Bool),
     'canister_id' : IDL.Principal,
@@ -138,12 +171,6 @@ export const idlFactory = ({ IDL }) => {
     'total_output_e8s' : IDL.Nat64,
     'raw_icp_declared_canister_count' : IDL.Opt(IDL.Nat64),
   });
-  const CommitmentIndexFault = IDL.Record({
-    'offending_tx_id' : IDL.Nat64,
-    'observed_at_ts' : IDL.Nat64,
-    'message' : IDL.Text,
-    'last_cursor_tx_id' : IDL.Opt(IDL.Nat64),
-  });
   const IcpXdrRateSnapshot = IDL.Record({
     'decimals' : IDL.Nat32,
     'fetched_at_ts' : IDL.Nat64,
@@ -173,26 +200,26 @@ export const idlFactory = ({ IDL }) => {
     'last_index_run_ts' : IDL.Opt(IDL.Nat64),
   });
   const RelaySurplusRecipient = IDL.Variant({
+    'Neuron' : IDL.Record({
+      'memo' : IDL.Vec(IDL.Nat8),
+      'neuron_id' : IDL.Nat64,
+    }),
     'Principal' : IDL.Record({
       'principal' : IDL.Principal,
       'memo' : IDL.Vec(IDL.Nat8),
     }),
-    'Neuron' : IDL.Record({
-      'neuron_id' : IDL.Nat64,
-      'memo' : IDL.Vec(IDL.Nat8),
-    }),
   });
   const RelaySetupArgs = IDL.Record({
-    'surplus_recipients' : IDL.Vec(RelaySurplusRecipient),
     'target_canister_ids' : IDL.Vec(IDL.Principal),
+    'surplus_recipients' : IDL.Vec(RelaySurplusRecipient),
   });
   const RelayCreationPhase = IDL.Variant({
     'RelayFunded' : IDL.Null,
     'Reserved' : IDL.Null,
+    'FinalizationAttempted' : IDL.Null,
     'CmcTransferPrepared' : IDL.Null,
     'CmcTransferAccepted' : IDL.Null,
     'RelayFundingPrepared' : IDL.Null,
-    'FinalizationAttempted' : IDL.Null,
     'ProbingTargets' : IDL.Null,
     'ChildCreated' : IDL.Null,
     'CreateDispatched' : IDL.Null,
@@ -215,7 +242,7 @@ export const idlFactory = ({ IDL }) => {
   const RelaySetupView = IDL.Record({
     'setup_key_identifier' : IDL.Text,
     'canonical_target_canister_ids' : IDL.Vec(IDL.Principal),
-    'canonical_surplus_recipients' : IDL.Vec(RelaySurplusRecipient),
+    'surplus_recipient_count' : IDL.Nat32,
     'state' : RelaySetupState,
     'nominal_minimum_e8s' : IDL.Nat64,
     'singleton_nominal_minimum_e8s' : IDL.Nat64,
@@ -224,9 +251,9 @@ export const idlFactory = ({ IDL }) => {
     'extra_target_count' : IDL.Nat64,
     'factory_available' : IDL.Bool,
     'target_count' : IDL.Nat32,
-    'surplus_recipient_count' : IDL.Nat32,
     'setup_account_identifier' : IDL.Opt(IDL.Text),
     'extra_target_unit_charge_e8s' : IDL.Nat64,
+    'canonical_surplus_recipients' : IDL.Vec(RelaySurplusRecipient),
   });
   const RelaySetupViewResult = IDL.Variant({
     'Ok' : RelaySetupView,
@@ -331,6 +358,11 @@ export const idlFactory = ({ IDL }) => {
     'get_commitment_history' : IDL.Func(
         [GetCommitmentHistoryArgs],
         [CommitmentHistoryPage],
+        ['query'],
+      ),
+    'get_commitment_route_summaries' : IDL.Func(
+        [GetCommitmentRouteSummariesArgs],
+        [GetCommitmentRouteSummariesResponse],
         ['query'],
       ),
     'get_cycles_history' : IDL.Func(

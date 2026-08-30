@@ -10,14 +10,15 @@ Unless otherwise noted, command examples in this README are run from the reposit
 
 ## Role in the suite
 
-`jupiter-historian` owns five things:
+`jupiter-historian` owns seven things:
 
 1. incrementally indexing the faucet staking account without reprocessing the same transfer twice
 2. keeping distinct canister sets discovered from transfer memos and optional SNS discovery
 3. recording capped per-canister commitment history so frontends can graph participation over time
-4. recording protocol-routed ICP output and rewards totals for the dashboard
-5. recording capped cycles history so frontends can show what happened after commitment
-6. exposing the public read model consumed by the production frontend
+4. recording authoritative lifetime qualifying commitment totals for exact commitment routes
+5. recording protocol-routed ICP output and rewards totals for the dashboard
+6. recording capped cycles history so frontends can show what happened after commitment
+7. exposing the public read model consumed by the production frontend
 
 This canister is **read-oriented**. It does not move value, control the NNS neuron, or perform top-ups.
 
@@ -50,6 +51,22 @@ Operationally, this means historian treats **non-empty ASCII `icrc1_memo` text t
 Memo encoding uses `icrc1_memo` text only. Historian intentionally ignores the legacy numeric memo path because the supported declarations require text, and the 64-bit numeric memo field is not a reliable way to carry those declarations. Historian also deliberately does not hard-code a `-cai` suffix check, so future textual canister-ID conventions are not baked into durable indexing logic. This mirrors the faucet’s policy-only memo validation: accepted short principal text is not itself a proof that the target is an installed canister, and short non-canister principal text would be parser behavior rather than a supported user-facing target.
 
 If the memo is valid text but does **not** parse as a supported declaration under that policy, the historian keeps a capped recent-invalid-commitment marker instead of dropping the attempt completely. The feed records that an invalid memo attempt happened without echoing attacker-provided text back through the public dashboard/API.
+
+### Lifetime commitment-route totals
+
+`get_commitment_route_summaries` is the authoritative batch query for cumulative qualifying ICP committed through Jupiter Faucet to exact memo-declared routes. It reports committed/staked ICP only. It does not report payouts, delivered cycles, balances, conversion rates, fees, burn coverage, maturity, Relay support, or estimated future results.
+
+The three route variants preserve the memo parser's exact distinctions:
+
+- `CyclesTopUp { canister_id }` represents a plain `<canister>` memo.
+- `RawIcp { destination_canister_id; memo }` represents `<canister>.<suffix>`. `<canister>.` has an empty memo blob and is distinct from the plain `<canister>` cycles-top-up route. Empty and non-empty suffixes, and equal suffixes for different destination canisters, remain separate routes.
+- `NeuronStake { neuron_id; memo }` represents a decimal NNS neuron ID with its optional outgoing memo. `<neuron_id>` uses `memo = null`, while `<neuron_id>.` uses an explicitly present empty blob; those routes are distinct. Equal suffixes for different neuron IDs also remain separate.
+
+Canister route identity uses parsed Principal bytes, so compact and hyphenated text that parses to the same Principal addresses one route. Raw and neuron suffix bytes are preserved exactly, including empty bytes; they are not trimmed, lowercased, or normalized. Neuron routes are keyed by the declared neuron ID rather than a principal or derived staking account. NNS neuron staking accounts share Governance as owner and are distinguished by neuron-derived subaccounts, while Jupiter's declaration already provides the stable neuron ID; this query therefore neither derives an account nor calls Governance.
+
+Each exact route has one stable cumulative roll-up containing its qualifying commitment count and total qualifying committed e8s. Multiple transactions update that one entry. The total is independent of the bounded normal-canister, destination-wide raw-ICP, and neuron-wide retained histories and does not decrease when those histories prune old samples.
+
+The response is an as-of view. `indexed_through_staking_tx_id` is the existing staking-account index cursor, `last_index_run_ts` reports freshness, and `commitment_index_fault` carries any durable index-order fault. `complete_from_genesis` is true only after this projection has covered staking-account history from genesis through the returned cursor. A zero count and total are authoritative only when `complete_from_genesis = true` and `commitment_index_fault = null`; otherwise zero may mean the projection is incomplete or indexing is degraded. The query preserves request order and duplicates, processes at most 100 routes, and sets `truncated = true` when additional inputs were supplied.
 
 ### Output and rewards accounting
 
@@ -132,6 +149,8 @@ Production methods:
   - paged bounded history of qualifying destination-canister-wide raw ICP commitments only for one canister principal
 - `get_neuron_commitment_history`
   - paged bounded history of qualifying neuron-wide commitments only for one neuron ID
+- `get_commitment_route_summaries`
+  - authoritative lifetime count and qualifying committed-e8s total for each of up to 100 exact cycles-top-up, raw-ICP, or neuron-stake routes
 - `get_canister_overview`
   - one-canister overview including source set, metadata, and point counts
 - `get_public_counts`
@@ -174,6 +193,7 @@ The main public queries use these code-backed defaults:
 - `get_commitment_history`: default `limit = 100`, clamped to `1..=100`
 - `get_raw_icp_commitment_history`: default `limit = 100`, clamped to `1..=100`
 - `get_neuron_commitment_history`: default `limit = 100`, clamped to `1..=100`
+- `get_commitment_route_summaries`: processes the first 100 input routes and reports truncation for larger batches
 - `list_memo_registered_canister_summaries`: default `page_size = 25`, clamped to `1..=100`
 - `list_recent_commitments`: default `limit = 20`, clamped to `1..=100`
 
@@ -185,6 +205,8 @@ samples are target-wide:
 they do not retain the optional outgoing memo suffix used by raw ICP payout
 memos, so the raw and neuron history APIs cannot provide suffix-specific
 commitment attribution.
+
+`list_memo_registered_canister_summaries` and the three history methods retain their existing bounded-view semantics. In particular, `MemoRegisteredCanisterSummary.total_qualifying_committed_e8s` is still derived from retained normal-canister history; it is not redefined as an all-time route total. Use `get_commitment_route_summaries` for lifetime exact-route attribution.
 
 ## Timers and driver model
 
@@ -226,6 +248,10 @@ The cycles sweep is resumable:
 That keeps sweep work bounded even when the tracked set grows.
 
 ## Install-time and upgrade-time configuration
+
+### Initial route-roll-up rollout
+
+This repository is pre-launch. The initial production rollout that introduces commitment-route roll-ups must reinstall/reset Historian so the new stable map starts empty with a feature-era completeness marker and the existing staking-account indexer rebuilds it from genesis. Do not preserve disposable pre-launch Historian indexing state through an ordinary pre-feature upgrade: old root state decodes the marker as absent and is intentionally never advertised as complete, even if its older staking backfill was complete. No legacy reconstruction worker or projection-specific cursor exists. After the feature has launched from a fresh state, ordinary upgrades preserve both route totals and completeness.
 
 ### Init args
 

@@ -158,6 +158,36 @@ pub(super) fn get_neuron_commitment_history(
 }
 
 #[ic_cdk::query]
+pub(super) fn get_commitment_route_summaries(
+    args: GetCommitmentRouteSummariesArgs,
+) -> GetCommitmentRouteSummariesResponse {
+    let truncated = args.routes.len() > MAX_PUBLIC_QUERY_LIMIT as usize;
+    let items = args
+        .routes
+        .into_iter()
+        .take(MAX_PUBLIC_QUERY_LIMIT as usize)
+        .map(|route| {
+            let rollup = state::CommitmentRouteKey::from_public(&route)
+                .map(|key| state::get_commitment_route_rollup(&key))
+                .unwrap_or_default();
+            CommitmentRouteSummary {
+                route,
+                qualifying_commitment_count: rollup.qualifying_commitment_count,
+                total_qualifying_committed_e8s: rollup.total_qualifying_committed_e8s,
+            }
+        })
+        .collect();
+    state::with_state(|st| GetCommitmentRouteSummariesResponse {
+        items,
+        truncated,
+        complete_from_genesis: st.commitment_route_rollups_complete_from_genesis == Some(true),
+        indexed_through_staking_tx_id: st.last_indexed_staking_tx_id,
+        last_index_run_ts: st.last_index_run_ts,
+        commitment_index_fault: st.commitment_index_fault.clone(),
+    })
+}
+
+#[ic_cdk::query]
 pub(super) fn get_canister_overview(canister_id: Principal) -> Option<CanisterOverview> {
     state::with_state(|st| {
         let tracking_reasons = visible_tracking_reasons_for_canister(st, &canister_id)?

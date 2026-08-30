@@ -23,6 +23,7 @@ mod tests {
         with_raw_icp_commitment_entry_map(|map| map.clear_new());
         with_neuron_commitment_history_index_map(|map| map.clear_new());
         with_neuron_commitment_entry_map(|map| map.clear_new());
+        clear_commitment_route_rollups();
         with_relay_setup_entries_map(|map| map.clear_new());
         PERSISTENCE_BATCH_DEPTH.with(|depth| depth.set(0));
         clear_persistence_dirty();
@@ -37,6 +38,232 @@ mod tests {
     fn fresh_relay_setup_map_is_empty() {
         reset_test_storage();
         with_relay_setup_entries_map(|map| assert!(map.is_empty()));
+    }
+
+    fn route_key(route: crate::CommitmentRoute) -> CommitmentRouteKey {
+        CommitmentRouteKey::from_public(&route).expect("valid commitment route")
+    }
+
+    #[test]
+    fn commitment_route_key_round_trips_and_keeps_exact_routes_isolated() {
+        let short = principal(&[1]);
+        let other = principal(&[2]);
+        let maximum = principal(&[7; 29]);
+        let max_memo = vec![b'x'; jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES];
+        let routes = vec![
+            crate::CommitmentRoute::CyclesTopUp { canister_id: short },
+            crate::CommitmentRoute::CyclesTopUp {
+                canister_id: maximum,
+            },
+            crate::CommitmentRoute::RawIcp {
+                destination_canister_id: short,
+                memo: Vec::new(),
+            },
+            crate::CommitmentRoute::RawIcp {
+                destination_canister_id: short,
+                memo: b"target-1".to_vec(),
+            },
+            crate::CommitmentRoute::RawIcp {
+                destination_canister_id: short,
+                memo: max_memo.clone(),
+            },
+            crate::CommitmentRoute::NeuronStake {
+                neuron_id: 1,
+                memo: None,
+            },
+            crate::CommitmentRoute::NeuronStake {
+                neuron_id: 1,
+                memo: Some(Vec::new()),
+            },
+            crate::CommitmentRoute::NeuronStake {
+                neuron_id: 1,
+                memo: Some(b"target-1".to_vec()),
+            },
+            crate::CommitmentRoute::NeuronStake {
+                neuron_id: 1,
+                memo: Some(max_memo),
+            },
+        ];
+        for route in routes {
+            let key = route_key(route);
+            let encoded = key.to_bytes();
+            assert!(encoded.len() <= 64);
+            assert_eq!(CommitmentRouteKey::from_bytes(encoded), key);
+        }
+
+        let distinct = BTreeSet::from([
+            route_key(crate::CommitmentRoute::CyclesTopUp { canister_id: short }),
+            route_key(crate::CommitmentRoute::RawIcp {
+                destination_canister_id: short,
+                memo: Vec::new(),
+            }),
+            route_key(crate::CommitmentRoute::RawIcp {
+                destination_canister_id: short,
+                memo: b"x".to_vec(),
+            }),
+            route_key(crate::CommitmentRoute::RawIcp {
+                destination_canister_id: other,
+                memo: Vec::new(),
+            }),
+            route_key(crate::CommitmentRoute::NeuronStake {
+                neuron_id: 1,
+                memo: None,
+            }),
+            route_key(crate::CommitmentRoute::NeuronStake {
+                neuron_id: 1,
+                memo: Some(Vec::new()),
+            }),
+            route_key(crate::CommitmentRoute::NeuronStake {
+                neuron_id: 1,
+                memo: Some(b"x".to_vec()),
+            }),
+            route_key(crate::CommitmentRoute::NeuronStake {
+                neuron_id: 2,
+                memo: Some(b"x".to_vec()),
+            }),
+        ]);
+        assert_eq!(distinct.len(), 8);
+    }
+
+    #[test]
+    fn commitment_route_key_rejects_malformed_stable_encodings() {
+        let malformed = [
+            vec![9],
+            vec![0, 2, 1],
+            vec![1, 1, 1, 2, 7],
+            {
+                let mut bytes = vec![2];
+                bytes.extend_from_slice(&1u64.to_be_bytes());
+                bytes.push(2);
+                bytes
+            },
+            vec![0, 1, 1, 0],
+        ];
+        for bytes in malformed {
+            assert!(std::panic::catch_unwind(|| {
+                CommitmentRouteKey::from_bytes(Cow::Owned(bytes))
+            })
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn public_commitment_route_conversion_is_bounded_and_policy_safe() {
+        assert!(
+            CommitmentRouteKey::from_public(&crate::CommitmentRoute::RawIcp {
+                destination_canister_id: principal(&[1]),
+                memo: vec![0; 33],
+            })
+            .is_none()
+        );
+        assert!(
+            CommitmentRouteKey::from_public(&crate::CommitmentRoute::NeuronStake {
+                neuron_id: 1,
+                memo: Some(vec![0; 33]),
+            })
+            .is_none()
+        );
+        assert!(
+            CommitmentRouteKey::from_public(&crate::CommitmentRoute::NeuronStake {
+                neuron_id: 0,
+                memo: None,
+            })
+            .is_none()
+        );
+        for invalid in [Principal::anonymous(), Principal::management_canister()] {
+            assert!(
+                CommitmentRouteKey::from_public(&crate::CommitmentRoute::CyclesTopUp {
+                    canister_id: invalid,
+                })
+                .is_none()
+            );
+        }
+        assert!(
+            CommitmentRouteKey::from_public(&crate::CommitmentRoute::RawIcp {
+                destination_canister_id: principal(&[1]),
+                memo: Vec::new(),
+            })
+            .is_some()
+        );
+        assert_ne!(
+            route_key(crate::CommitmentRoute::NeuronStake {
+                neuron_id: 1,
+                memo: None,
+            }),
+            route_key(crate::CommitmentRoute::NeuronStake {
+                neuron_id: 1,
+                memo: Some(Vec::new()),
+            })
+        );
+    }
+
+    #[test]
+    fn commitment_route_rollup_encoding_and_increment_saturate() {
+        reset_test_storage();
+        for rollup in [
+            CommitmentRouteRollup::default(),
+            CommitmentRouteRollup {
+                qualifying_commitment_count: 7,
+                total_qualifying_committed_e8s: 99,
+            },
+            CommitmentRouteRollup {
+                qualifying_commitment_count: u64::MAX,
+                total_qualifying_committed_e8s: u64::MAX,
+            },
+        ] {
+            let bytes = rollup.to_bytes();
+            assert_eq!(bytes.len(), 16);
+            assert_eq!(CommitmentRouteRollup::from_bytes(bytes), rollup);
+        }
+
+        let key = route_key(crate::CommitmentRoute::NeuronStake {
+            neuron_id: 9,
+            memo: Some(Vec::new()),
+        });
+        with_commitment_route_rollup_map(|map| {
+            map.insert(
+                key.clone(),
+                CommitmentRouteRollup {
+                    qualifying_commitment_count: u64::MAX,
+                    total_qualifying_committed_e8s: u64::MAX - 1,
+                },
+            );
+        });
+        increment_commitment_route_rollup(key.clone(), 10);
+        assert_eq!(
+            get_commitment_route_rollup(&key),
+            CommitmentRouteRollup {
+                qualifying_commitment_count: u64::MAX,
+                total_qualifying_committed_e8s: u64::MAX,
+            }
+        );
+    }
+
+    #[test]
+    fn commitment_route_rollups_survive_root_saves_and_test_reset_clears_them() {
+        reset_test_storage();
+        let key = route_key(crate::CommitmentRoute::CyclesTopUp {
+            canister_id: principal(&[1]),
+        });
+        increment_commitment_route_rollup(key.clone(), 123);
+        set_state(State::new(sample_config(), 100));
+        with_root_state_mut(|st| st.last_index_run_ts = Some(456));
+        assert_eq!(
+            get_commitment_route_rollup(&key),
+            CommitmentRouteRollup {
+                qualifying_commitment_count: 1,
+                total_qualifying_committed_e8s: 123,
+            }
+        );
+        STATE.with(|state| *state.borrow_mut() = None);
+        let restored = restore_state_from_stable().expect("root state should restore");
+        assert_eq!(restored.last_index_run_ts, Some(456));
+        assert_eq!(
+            get_commitment_route_rollup(&key).qualifying_commitment_count,
+            1
+        );
+        reset_test_storage();
+        assert_eq!(commitment_route_rollup_entry_count(), 0);
     }
 
     fn sample_config() -> Config {
@@ -257,6 +484,7 @@ mod tests {
         assert_eq!(cfg.sns_wasm_canister_id, principal(&[7]));
         assert_eq!(cfg.xrc_canister_id, principal(&[8]));
         assert_eq!(root.last_indexed_staking_tx_id, Some(1));
+        assert_eq!(root.commitment_route_rollups_complete_from_genesis, None);
         assert_eq!(root.last_icp_xdr_rate_error.as_deref(), Some("xrc down"));
         let rewritten = VersionedStableState::Current(root).into_bytes();
         assert!(candid::decode_one::<VersionedStableState>(&rewritten).is_ok());

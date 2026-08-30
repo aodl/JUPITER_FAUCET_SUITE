@@ -146,6 +146,25 @@ type CommitmentHistoryPage = record {
   items : vec CommitmentSample;
   next_start_after_tx_id : opt nat64;
 };
+type CommitmentRoute = variant {
+  CyclesTopUp : record { canister_id : principal };
+  RawIcp : record { destination_canister_id : principal; memo : blob };
+  NeuronStake : record { neuron_id : nat64; memo : opt blob };
+};
+type CommitmentRouteSummary = record {
+  route : CommitmentRoute;
+  qualifying_commitment_count : nat64;
+  total_qualifying_committed_e8s : nat64;
+};
+type GetCommitmentRouteSummariesArgs = record { routes : vec CommitmentRoute };
+type GetCommitmentRouteSummariesResponse = record {
+  items : vec CommitmentRouteSummary;
+  truncated : bool;
+  complete_from_genesis : bool;
+  indexed_through_staking_tx_id : opt nat64;
+  last_index_run_ts : opt nat64;
+  commitment_index_fault : opt CommitmentIndexFault;
+};
 type CanisterOverview = record {
   canister_id : principal;
   tracking_reasons : vec CanisterTrackingReason;
@@ -313,6 +332,7 @@ service : (InitArgs) -> {
   get_commitment_history : (GetCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
   get_raw_icp_commitment_history : (GetCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
   get_neuron_commitment_history : (GetNeuronCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
+  get_commitment_route_summaries : (GetCommitmentRouteSummariesArgs) -> (GetCommitmentRouteSummariesResponse) query;
   get_canister_overview : (principal) -> (opt CanisterOverview) query;
   get_public_counts : () -> (PublicCounts) query;
   get_public_status : () -> (PublicStatus) query;

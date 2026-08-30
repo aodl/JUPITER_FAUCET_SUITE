@@ -4,6 +4,7 @@ pub(super) fn apply_verified_qualifying_commitment(
     commitment: crate::logic::IndexedCommitment,
     now_secs: u64,
 ) {
+    let route_key = crate::state::CommitmentRouteKey::from_indexed(&commitment.target);
     let crate::logic::IndexedCommitmentTarget::CyclesTopUp { canister_id } = commitment.target
     else {
         return;
@@ -37,6 +38,9 @@ pub(super) fn apply_verified_qualifying_commitment(
         st.config.max_commitment_entries_per_canister,
     );
     if inserted {
+        if let Some(route_key) = route_key {
+            crate::state::increment_commitment_route_rollup(route_key, commitment.amount_e8s);
+        }
         let meta = st.per_canister_meta.entry(canister_id).or_default();
         let needs_initial_cycles_probe = meta.last_cycles_probe_ts.is_none();
         logic::apply_commitment_seen(meta, commitment.timestamp_nanos, now_secs);
@@ -61,6 +65,7 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
     commitment: crate::logic::IndexedCommitment,
     max_entries: usize,
 ) {
+    let route_key = crate::state::CommitmentRouteKey::from_indexed(&commitment.target);
     match commitment.target {
         crate::logic::IndexedCommitmentTarget::RawIcp {
             canister_id,
@@ -83,6 +88,12 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                     st.config.max_commitment_entries_per_canister,
                 );
                 if inserted {
+                    if let Some(route_key) = route_key {
+                        crate::state::increment_commitment_route_rollup(
+                            route_key,
+                            commitment.amount_e8s,
+                        );
+                    }
                     let recent = st.recent_commitments.get_or_insert_with(Vec::new);
                     push_recent_commitment(
                         recent,
@@ -135,6 +146,12 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                     st.config.max_commitment_entries_per_canister,
                 );
                 if inserted {
+                    if let Some(route_key) = route_key {
+                        crate::state::increment_commitment_route_rollup(
+                            route_key,
+                            commitment.amount_e8s,
+                        );
+                    }
                     let recent = st.recent_neuron_commitments.get_or_insert_with(Vec::new);
                     push_recent_neuron_commitment(
                         recent,
@@ -320,6 +337,14 @@ pub(super) fn apply_commitment_transactions_in_chronological_order(
     }
 }
 
+fn mark_commitment_route_rollups_complete_from_genesis() {
+    state::with_root_state_mut(|st| {
+        if st.commitment_route_rollups_complete_from_genesis == Some(false) {
+            st.commitment_route_rollups_complete_from_genesis = Some(true);
+        }
+    });
+}
+
 pub(super) async fn process_commitment_indexing_ascending<I: IndexClient>(
     index: &I,
     now_secs: u64,
@@ -329,6 +354,7 @@ pub(super) async fn process_commitment_indexing_ascending<I: IndexClient>(
     mut cursor: Option<u64>,
     mut first_page: Option<crate::clients::index::GetAccountIdentifierTransactionsResponse>,
 ) -> Result<(), String> {
+    let began_at_genesis = cursor.is_none();
     for _ in 0..cfg.max_index_pages_per_tick.max(1) {
         let page = match first_page.take() {
             Some(page) => page,
@@ -338,6 +364,9 @@ pub(super) async fn process_commitment_indexing_ascending<I: IndexClient>(
                 .map_err(|e| format!("index call failed: {e}"))?,
         };
         if page.transactions.is_empty() {
+            if began_at_genesis {
+                mark_commitment_route_rollups_complete_from_genesis();
+            }
             break;
         }
         {
@@ -368,6 +397,9 @@ pub(super) async fn process_commitment_indexing_ascending<I: IndexClient>(
                     st.staking_backfill_complete = Some(true);
                 });
             }
+        }
+        if began_at_genesis {
+            mark_commitment_route_rollups_complete_from_genesis();
         }
         if page.transactions.len() < PAGE_SIZE as usize {
             break;
@@ -533,6 +565,9 @@ pub(super) async fn process_commitment_indexing_descending_seeded<I: IndexClient
         st.oldest_indexed_staking_tx_id = oldest_cursor;
         st.staking_index_descending = Some(true);
         st.staking_backfill_complete = Some(backfill_complete);
+        if backfill_complete && st.commitment_route_rollups_complete_from_genesis == Some(false) {
+            st.commitment_route_rollups_complete_from_genesis = Some(true);
+        }
         st.last_index_run_ts = Some(now_secs);
         if had_fault {
             st.commitment_index_fault = None;

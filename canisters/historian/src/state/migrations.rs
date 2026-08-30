@@ -37,6 +37,8 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
         oldest_indexed_staking_tx_id: root.oldest_indexed_staking_tx_id,
         staking_index_descending: root.staking_index_descending,
         staking_backfill_complete: root.staking_backfill_complete.or(Some(false)),
+        commitment_route_rollups_complete_from_genesis: root
+            .commitment_route_rollups_complete_from_genesis,
         last_indexed_output_tx_id: root.last_indexed_output_tx_id,
         oldest_indexed_output_tx_id: root.oldest_indexed_output_tx_id,
         output_route_index_descending: root.output_route_index_descending,

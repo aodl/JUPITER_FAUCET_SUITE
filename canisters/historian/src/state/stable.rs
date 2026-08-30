@@ -1,6 +1,7 @@
 use super::*;
 pub(super) type Memory = VirtualMemory<DefaultMemoryImpl>;
-const RELAY_SETUP_ENTRIES_MEMORY_ID: MemoryId = MemoryId::new(26);
+const RELAY_SETUP_ENTRIES_MEMORY_ID: u8 = 26;
+const COMMITMENT_ROUTE_ROLLUPS_MEMORY_ID: u8 = 29;
 
 // Historian stable memory IDs:
 // 0: root state
@@ -14,7 +15,14 @@ const RELAY_SETUP_ENTRIES_MEMORY_ID: MemoryId = MemoryId::new(26);
 // 19: raw ICP commitment entries
 // 20: neuron commitment history index
 // 21: neuron commitment entries
-// 26: Relay setup entries by canonical configuration hash
+// 22: retired legacy target-keyed Relay registry -- DO NOT REUSE
+// 23: retired/reserved legacy Relay memory -- DO NOT REUSE
+// 24: retired legacy target-keyed Relay setup jobs -- DO NOT REUSE
+// 25: retired target-set Relay setup entries -- DO NOT REUSE
+// 26: definitive Relay setup entries by full canonical configuration hash
+// 27: retired Relay factory/schema experiment from repository history -- DO NOT REUSE
+// 28: retired Relay payment-claims experiment from repository history -- DO NOT REUSE
+// 29: exact commitment-route cumulative roll-ups
 thread_local! {
     pub(super) static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
@@ -40,6 +48,8 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     pub(super) static STABLE_NEURON_COMMITMENT_ENTRY_MAP: std::cell::RefCell<Option<StableBTreeMap<NeuronCommitmentEntryKey, CommitmentSample, Memory>>> =
         const { std::cell::RefCell::new(None) };
+    pub(super) static STABLE_COMMITMENT_ROUTE_ROLLUP_MAP: std::cell::RefCell<Option<StableBTreeMap<CommitmentRouteKey, CommitmentRouteRollup, Memory>>> =
+        const { std::cell::RefCell::new(None) };
     pub(super) static STABLE_RELAY_SETUP_ENTRIES_MAP: std::cell::RefCell<Option<StableBTreeMap<crate::relay_setup::RelaySetupKey, crate::relay_setup::RelaySetupEntry, Memory>>> =
         const { std::cell::RefCell::new(None) };
     pub(super) static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
@@ -50,6 +60,25 @@ thread_local! {
     pub(super) static DIRTY_CYCLES_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = const { std::cell::RefCell::new(BTreeSet::new()) };
     pub(super) static DIRTY_RAW_ICP_COMMITMENT_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = const { std::cell::RefCell::new(BTreeSet::new()) };
     pub(super) static DIRTY_NEURON_COMMITMENT_IDS: std::cell::RefCell<BTreeSet<u64>> = const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+
+pub(super) fn with_commitment_route_rollup_map<R>(
+    f: impl FnOnce(&mut StableBTreeMap<CommitmentRouteKey, CommitmentRouteRollup, Memory>) -> R,
+) -> R {
+    STABLE_COMMITMENT_ROUTE_ROLLUP_MAP.with(|map| {
+        if map.borrow().is_none() {
+            MEMORY_MANAGER.with(|manager| {
+                let memory = manager
+                    .borrow()
+                    .get(MemoryId::new(COMMITMENT_ROUTE_ROLLUPS_MEMORY_ID));
+                *map.borrow_mut() = Some(StableBTreeMap::init(memory));
+            });
+        }
+        let mut borrow = map.borrow_mut();
+        f(borrow
+            .as_mut()
+            .expect("historian commitment route rollup map not initialized"))
+    })
 }
 
 pub(crate) const DIRTY_ROOT: u8 = 1 << 0;
@@ -275,7 +304,9 @@ pub(crate) fn with_relay_setup_entries_map<R>(
     STABLE_RELAY_SETUP_ENTRIES_MAP.with(|map| {
         if map.borrow().is_none() {
             MEMORY_MANAGER.with(|manager| {
-                let memory = manager.borrow().get(RELAY_SETUP_ENTRIES_MEMORY_ID);
+                let memory = manager
+                    .borrow()
+                    .get(MemoryId::new(RELAY_SETUP_ENTRIES_MEMORY_ID));
                 let stable_map = StableBTreeMap::init(memory);
                 *map.borrow_mut() = Some(stable_map);
             });
@@ -285,4 +316,18 @@ pub(crate) fn with_relay_setup_entries_map<R>(
             .as_mut()
             .expect("historian relay setup entries stable map not initialized"))
     })
+}
+
+#[cfg(test)]
+mod stable_memory_id_tests {
+    use super::*;
+
+    #[test]
+    fn commitment_route_rollups_do_not_reuse_historical_relay_memories() {
+        const RETIRED_RELAY_MEMORY_IDS: [u8; 7] = [22, 23, 24, 25, 26, 27, 28];
+
+        assert_eq!(COMMITMENT_ROUTE_ROLLUPS_MEMORY_ID, 29);
+        assert!(!RETIRED_RELAY_MEMORY_IDS.contains(&COMMITMENT_ROUTE_ROLLUPS_MEMORY_ID));
+        assert_eq!(RELAY_SETUP_ENTRIES_MEMORY_ID, 26);
+    }
 }

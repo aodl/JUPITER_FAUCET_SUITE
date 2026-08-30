@@ -296,6 +296,8 @@ pub(crate) struct StableRootState {
     #[serde(default)]
     pub staking_backfill_complete: Option<bool>,
     #[serde(default)]
+    pub commitment_route_rollups_complete_from_genesis: Option<bool>,
+    #[serde(default)]
     pub last_indexed_output_tx_id: Option<u64>,
     #[serde(default)]
     pub oldest_indexed_output_tx_id: Option<u64>,
@@ -357,7 +359,7 @@ pub(crate) struct StableRootState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct PrincipalKey(Vec<u8>);
+pub(crate) struct PrincipalKey(Vec<u8>);
 
 impl From<&Principal> for PrincipalKey {
     fn from(value: &Principal) -> Self {
@@ -393,6 +395,285 @@ impl Storable for PrincipalKey {
     const BOUND: Bound = Bound::Bounded {
         max_size: 29,
         is_fixed_size: false,
+    };
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum CommitmentRouteKey {
+    CyclesTopUp {
+        canister: PrincipalKey,
+    },
+    RawIcp {
+        destination_canister: PrincipalKey,
+        memo: Vec<u8>,
+    },
+    NeuronStake {
+        neuron_id: u64,
+        memo: Option<Vec<u8>>,
+    },
+}
+
+impl CommitmentRouteKey {
+    pub(crate) fn from_public(route: &crate::CommitmentRoute) -> Option<Self> {
+        match route {
+            crate::CommitmentRoute::CyclesTopUp { canister_id } => {
+                valid_route_principal(canister_id).then(|| Self::CyclesTopUp {
+                    canister: PrincipalKey::from(canister_id),
+                })
+            }
+            crate::CommitmentRoute::RawIcp {
+                destination_canister_id,
+                memo,
+            } => (valid_route_principal(destination_canister_id)
+                && memo.len() <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES)
+                .then(|| Self::RawIcp {
+                    destination_canister: PrincipalKey::from(destination_canister_id),
+                    memo: memo.clone(),
+                }),
+            crate::CommitmentRoute::NeuronStake { neuron_id, memo } => (*neuron_id != 0
+                && memo.as_ref().map(Vec::len).unwrap_or(0)
+                    <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES)
+                .then(|| Self::NeuronStake {
+                    neuron_id: *neuron_id,
+                    memo: memo.clone(),
+                }),
+        }
+    }
+
+    pub(crate) fn from_indexed(target: &crate::logic::IndexedCommitmentTarget) -> Option<Self> {
+        match target {
+            crate::logic::IndexedCommitmentTarget::CyclesTopUp { canister_id } => {
+                valid_route_principal(canister_id).then(|| Self::CyclesTopUp {
+                    canister: PrincipalKey::from(canister_id),
+                })
+            }
+            crate::logic::IndexedCommitmentTarget::RawIcp {
+                canister_id,
+                memo_text,
+            } => (valid_route_principal(canister_id)
+                && memo_text.len() <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES)
+                .then(|| Self::RawIcp {
+                    destination_canister: PrincipalKey::from(canister_id),
+                    memo: memo_text.as_bytes().to_vec(),
+                }),
+            crate::logic::IndexedCommitmentTarget::NeuronStake {
+                neuron_id,
+                memo_text,
+            } => (*neuron_id != 0
+                && memo_text.as_ref().map(String::len).unwrap_or(0)
+                    <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES)
+                .then(|| Self::NeuronStake {
+                    neuron_id: *neuron_id,
+                    memo: memo_text.as_ref().map(|memo| memo.as_bytes().to_vec()),
+                }),
+        }
+    }
+}
+
+fn valid_route_principal(principal: &Principal) -> bool {
+    *principal != Principal::anonymous()
+        && *principal != Principal::management_canister()
+        && principal.as_slice().len() <= 29
+}
+
+impl Storable for CommitmentRouteKey {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Owned(self.clone().into_bytes())
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        match self {
+            Self::CyclesTopUp { canister } => {
+                assert!(
+                    canister.0.len() <= 29,
+                    "historian route principal exceeds 29 bytes"
+                );
+                let mut out = Vec::with_capacity(2 + canister.0.len());
+                out.push(0);
+                out.push(canister.0.len() as u8);
+                out.extend_from_slice(&canister.0);
+                out
+            }
+            Self::RawIcp {
+                destination_canister,
+                memo,
+            } => {
+                assert!(
+                    destination_canister.0.len() <= 29,
+                    "historian route principal exceeds 29 bytes"
+                );
+                assert!(
+                    memo.len() <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES,
+                    "historian route memo exceeds policy bound"
+                );
+                let mut out = Vec::with_capacity(3 + destination_canister.0.len() + memo.len());
+                out.push(1);
+                out.push(destination_canister.0.len() as u8);
+                out.extend_from_slice(&destination_canister.0);
+                out.push(memo.len() as u8);
+                out.extend_from_slice(&memo);
+                out
+            }
+            Self::NeuronStake { neuron_id, memo } => {
+                assert!(neuron_id != 0, "historian route neuron id must be non-zero");
+                let mut out = Vec::with_capacity(11 + memo.as_ref().map(Vec::len).unwrap_or(0));
+                out.push(2);
+                out.extend_from_slice(&neuron_id.to_be_bytes());
+                match memo {
+                    None => out.push(0),
+                    Some(memo) => {
+                        assert!(
+                            memo.len() <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES,
+                            "historian route memo exceeds policy bound"
+                        );
+                        out.push(1);
+                        out.push(memo.len() as u8);
+                        out.extend_from_slice(&memo);
+                    }
+                }
+                out
+            }
+        }
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        let bytes = bytes.as_ref();
+        let tag = *bytes
+            .first()
+            .expect("missing historian commitment route tag");
+        match tag {
+            0 | 1 => {
+                let principal_len = *bytes
+                    .get(1)
+                    .expect("missing historian route principal length")
+                    as usize;
+                assert!(
+                    principal_len <= 29,
+                    "invalid historian route principal length"
+                );
+                let principal_end = 2 + principal_len;
+                assert!(
+                    bytes.len() >= principal_end,
+                    "truncated historian route principal"
+                );
+                let principal = PrincipalKey(bytes[2..principal_end].to_vec());
+                assert!(
+                    valid_route_principal(&principal.to_principal()),
+                    "invalid historian route principal"
+                );
+                if tag == 0 {
+                    assert_eq!(
+                        bytes.len(),
+                        principal_end,
+                        "trailing bytes in historian cycles route key"
+                    );
+                    Self::CyclesTopUp {
+                        canister: principal,
+                    }
+                } else {
+                    let memo_len = *bytes
+                        .get(principal_end)
+                        .expect("missing historian raw route memo length")
+                        as usize;
+                    assert!(
+                        memo_len <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES,
+                        "invalid historian raw route memo length"
+                    );
+                    let memo_start = principal_end + 1;
+                    assert_eq!(
+                        bytes.len(),
+                        memo_start + memo_len,
+                        "invalid historian raw route key length"
+                    );
+                    Self::RawIcp {
+                        destination_canister: principal,
+                        memo: bytes[memo_start..].to_vec(),
+                    }
+                }
+            }
+            2 => {
+                assert!(bytes.len() >= 10, "truncated historian neuron route key");
+                let mut neuron_id = [0; 8];
+                neuron_id.copy_from_slice(&bytes[1..9]);
+                let neuron_id = u64::from_be_bytes(neuron_id);
+                assert!(neuron_id != 0, "invalid historian route neuron id");
+                let memo = match bytes[9] {
+                    0 => {
+                        assert_eq!(
+                            bytes.len(),
+                            10,
+                            "trailing bytes in historian neuron route key"
+                        );
+                        None
+                    }
+                    1 => {
+                        let memo_len = *bytes
+                            .get(10)
+                            .expect("missing historian neuron route memo length")
+                            as usize;
+                        assert!(
+                            memo_len <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES,
+                            "invalid historian neuron route memo length"
+                        );
+                        assert_eq!(
+                            bytes.len(),
+                            11 + memo_len,
+                            "invalid historian neuron route key length"
+                        );
+                        Some(bytes[11..].to_vec())
+                    }
+                    _ => panic!("invalid historian neuron route memo presence tag"),
+                };
+                Self::NeuronStake { neuron_id, memo }
+            }
+            _ => panic!("unknown historian commitment route tag"),
+        }
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: 64,
+        is_fixed_size: false,
+    };
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CommitmentRouteRollup {
+    pub qualifying_commitment_count: u64,
+    pub total_qualifying_committed_e8s: u64,
+}
+
+impl Storable for CommitmentRouteRollup {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        let mut out = Vec::with_capacity(16);
+        out.extend_from_slice(&self.qualifying_commitment_count.to_be_bytes());
+        out.extend_from_slice(&self.total_qualifying_committed_e8s.to_be_bytes());
+        Cow::Owned(out)
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.to_bytes().into_owned()
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        let bytes = bytes.as_ref();
+        assert_eq!(
+            bytes.len(),
+            16,
+            "invalid historian commitment route rollup length"
+        );
+        let mut count = [0; 8];
+        count.copy_from_slice(&bytes[..8]);
+        let mut total = [0; 8];
+        total.copy_from_slice(&bytes[8..]);
+        Self {
+            qualifying_commitment_count: u64::from_be_bytes(count),
+            total_qualifying_committed_e8s: u64::from_be_bytes(total),
+        }
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: 16,
+        is_fixed_size: true,
     };
 }
 
@@ -667,6 +948,8 @@ pub(crate) struct State {
     pub staking_index_descending: Option<bool>,
     #[serde(default)]
     pub staking_backfill_complete: Option<bool>,
+    #[serde(default)]
+    pub commitment_route_rollups_complete_from_genesis: Option<bool>,
     pub last_indexed_output_tx_id: Option<u64>,
     #[serde(default)]
     pub oldest_indexed_output_tx_id: Option<u64>,
@@ -738,6 +1021,7 @@ impl State {
             oldest_indexed_staking_tx_id: None,
             staking_index_descending: None,
             staking_backfill_complete: Some(false),
+            commitment_route_rollups_complete_from_genesis: Some(false),
             last_indexed_output_tx_id: None,
             oldest_indexed_output_tx_id: None,
             output_route_index_descending: None,

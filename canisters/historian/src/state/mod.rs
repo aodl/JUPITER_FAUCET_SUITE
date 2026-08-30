@@ -7,6 +7,8 @@ use stable::*;
 pub(crate) use stable::{with_relay_setup_entries_map, DIRTY_REGISTRY, DIRTY_ROOT};
 mod commitments;
 use commitments::*;
+mod commitment_route_rollups;
+pub(crate) use commitment_route_rollups::*;
 mod routes;
 use routes::*;
 mod cycles;
