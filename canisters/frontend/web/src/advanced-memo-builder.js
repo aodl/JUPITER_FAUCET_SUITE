@@ -92,7 +92,7 @@ export function advancedMemoValidationMessages(result, { lockedTargetText = '', 
   const warnings = result?.warnings || [];
   const mappedErrors = lockedTargetType === 'canister' && lockedTargetText
     ? errors.map((error) => (
-      error === 'Enter a valid non-anonymous declared canister ID.'
+      error === 'Enter a valid declared canister ID.'
         ? `'${lockedTargetText}' is not a valid declared canister ID.`
         : error
     ))
@@ -179,7 +179,7 @@ export function buildAdvancedMemo({
   if (!parseDeclaredPrincipalText(principal)) {
     return emptyResult({
       truncatedOptionalMemo: optional,
-      errors: ['Enter a valid non-anonymous declared canister ID.'],
+      errors: ['Enter a valid declared canister ID.'],
     });
   }
 

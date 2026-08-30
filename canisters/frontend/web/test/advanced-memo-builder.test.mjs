@@ -110,7 +110,19 @@ test('malformed canister text is invalid and not copyable', () => {
 
   assert.equal(result.ok, false);
   assert.equal(result.output, '');
-  assert.match(result.errors.join(' '), /valid non-anonymous declared canister ID/);
+  assert.match(result.errors.join(' '), /valid declared canister ID/);
+  assert.doesNotMatch(result.errors.join(' '), /non-anonymous/);
+});
+
+test('anonymous principal is rejected without describing it as an anonymous canister', () => {
+  const result = buildAdvancedMemo({
+    mode: 'cycles',
+    canisterText: '2vxsx-fae',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.output, '');
+  assert.deepEqual(result.errors, ['Enter a valid declared canister ID.']);
 });
 
 test('cycles top-up memo rejects declared canister ID text over the 32-byte limit', () => {
@@ -175,7 +187,7 @@ test('validation messages name invalid locked URL canister targets', () => {
       lockedTargetText: '',
       lockedTargetType: '',
     }),
-    ['Enter a valid non-anonymous declared canister ID.'],
+    ['Enter a valid declared canister ID.'],
   );
 });
 
