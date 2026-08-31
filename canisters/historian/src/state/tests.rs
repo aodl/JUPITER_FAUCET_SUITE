@@ -4,26 +4,34 @@ use super::*;
 #[allow(clippy::module_inception, clippy::unnecessary_get_then_check)]
 mod tests {
     use super::*;
-    use crate::state::legacy_v1::*;
     use crate::MemoRegisteredCanisterSummary;
     use std::borrow::Cow;
     use std::collections::{BTreeMap, BTreeSet};
 
     #[allow(dead_code, clippy::large_enum_variant)]
     #[derive(CandidType, Serialize)]
-    enum VersionedStableStateBeforeRouteBackfill {
+    enum DeployedVersionedStableState {
         Uninitialized,
-        Current(StableRootStateBeforeRouteBackfill),
+        Current(DeployedStableRootState),
     }
 
     #[derive(CandidType, Serialize)]
-    struct StableRootStateBeforeRouteBackfill {
+    struct DeployedActiveCommitmentRouteRollupBackfill {
+        boundary_tx_id: u64,
+        cursor_tx_id: Option<u64>,
+        descending: bool,
+    }
+
+    #[derive(CandidType, Serialize)]
+    struct DeployedStableRootState {
         config: StableConfig,
         last_indexed_staking_tx_id: Option<u64>,
         oldest_indexed_staking_tx_id: Option<u64>,
         staking_index_descending: Option<bool>,
         staking_backfill_complete: Option<bool>,
         commitment_route_rollups_complete_from_genesis: Option<bool>,
+        active_commitment_route_rollup_backfill:
+            Option<DeployedActiveCommitmentRouteRollupBackfill>,
         last_indexed_output_tx_id: Option<u64>,
         oldest_indexed_output_tx_id: Option<u64>,
         output_route_index_descending: Option<bool>,
@@ -58,7 +66,51 @@ mod tests {
         last_icp_xdr_rate_error: Option<String>,
     }
 
-    impl From<StableRootState> for StableRootStateBeforeRouteBackfill {
+    // Frozen test-only shapes for values that may remain independently persisted in
+    // stable maps across ordinary upgrades. These are not root migration decoders.
+    #[derive(CandidType, Serialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    enum FrozenMapCanisterSource {
+        MemoCommitment,
+        SnsDiscovery,
+    }
+
+    #[derive(CandidType, Serialize, Clone, Debug, PartialEq, Eq)]
+    enum FrozenMapCyclesSampleSource {
+        BlackholeStatus,
+        SelfCanister,
+        SnsRootSummary,
+    }
+
+    #[allow(dead_code)]
+    #[derive(CandidType, Serialize)]
+    enum FrozenMapCyclesProbeResult {
+        Ok(FrozenMapCyclesSampleSource),
+        NotAvailable,
+        Error(String),
+    }
+
+    #[derive(CandidType, Serialize)]
+    struct FrozenMapCyclesSample {
+        timestamp_nanos: u64,
+        cycles: u128,
+        source: FrozenMapCyclesSampleSource,
+    }
+
+    #[derive(CandidType, Serialize)]
+    struct FrozenMapTrackingReasonSet(BTreeSet<FrozenMapCanisterSource>);
+
+    #[derive(CandidType, Serialize)]
+    struct FrozenMapCanisterMeta {
+        first_seen_ts: Option<u64>,
+        last_commitment_ts: Option<u64>,
+        last_cycles_probe_ts: Option<u64>,
+        last_cycles_probe_result: Option<FrozenMapCyclesProbeResult>,
+        last_burn_tx_id: Option<u64>,
+        last_burn_scan_tx_id: Option<u64>,
+        burned_e8s: Option<u64>,
+    }
+
+    impl From<StableRootState> for DeployedStableRootState {
         fn from(value: StableRootState) -> Self {
             Self {
                 config: value.config,
@@ -68,6 +120,7 @@ mod tests {
                 staking_backfill_complete: value.staking_backfill_complete,
                 commitment_route_rollups_complete_from_genesis: value
                     .commitment_route_rollups_complete_from_genesis,
+                active_commitment_route_rollup_backfill: None,
                 last_indexed_output_tx_id: value.last_indexed_output_tx_id,
                 oldest_indexed_output_tx_id: value.oldest_indexed_output_tx_id,
                 output_route_index_descending: value.output_route_index_descending,
@@ -363,69 +416,115 @@ mod tests {
     }
 
     #[test]
-    fn commitment_route_rollup_backfill_state_survives_snapshot_restore() {
+    fn deployed_feature_era_root_decodes_after_retiring_backfill_field() {
         reset_test_storage();
-        let mut fresh = State::new(sample_config(), 100);
-        assert_eq!(
-            fresh.commitment_route_rollups_complete_from_genesis,
-            Some(false)
-        );
-        assert!(fresh.active_commitment_route_rollup_backfill.is_none());
-        fresh.active_commitment_route_rollup_backfill = Some(ActiveCommitmentRouteRollupBackfill {
-            boundary_tx_id: 900,
-            cursor_tx_id: Some(450),
-            descending: true,
+        let cycles_key = route_key(crate::CommitmentRoute::CyclesTopUp {
+            canister_id: principal(&[21]),
         });
-        set_state(fresh);
+        let raw_key = route_key(crate::CommitmentRoute::RawIcp {
+            destination_canister_id: principal(&[22]),
+            memo: b"exact".to_vec(),
+        });
+        increment_commitment_route_rollup(cycles_key.clone(), 123_000_000);
+        increment_commitment_route_rollup(raw_key.clone(), 456_000_000);
 
-        let restored = restore_state_from_stable().expect("active backfill should restore");
-        assert_eq!(
-            restored.active_commitment_route_rollup_backfill,
-            Some(ActiveCommitmentRouteRollupBackfill {
-                boundary_tx_id: 900,
-                cursor_tx_id: Some(450),
-                descending: true,
-            })
-        );
-        assert_eq!(
-            restored.commitment_route_rollups_complete_from_genesis,
-            Some(false)
-        );
-
-        let mut completed = restored;
-        completed.commitment_route_rollups_complete_from_genesis = Some(true);
-        completed.active_commitment_route_rollup_backfill = None;
-        set_state(completed);
-        let restored_completed =
-            restore_state_from_stable().expect("completed backfill should restore");
-        assert_eq!(
-            restored_completed.commitment_route_rollups_complete_from_genesis,
-            Some(true)
-        );
-        assert!(restored_completed
+        let mut state = State::new(sample_config(), 100);
+        state.config.relay_factory_enabled = true;
+        state.commitment_route_rollups_complete_from_genesis = Some(true);
+        state.last_indexed_staking_tx_id = Some(38_079_042);
+        state.oldest_indexed_staking_tx_id = Some(1);
+        state.staking_index_descending = Some(true);
+        state.staking_backfill_complete = Some(true);
+        state.last_indexed_output_tx_id = Some(900);
+        state.oldest_indexed_output_tx_id = Some(10);
+        state.output_route_index_descending = Some(true);
+        state.output_route_backfill_complete = Some(true);
+        state.last_indexed_rewards_tx_id = Some(800);
+        state.oldest_indexed_rewards_tx_id = Some(20);
+        state.rewards_route_index_descending = Some(true);
+        state.rewards_route_backfill_complete = Some(true);
+        state.qualifying_commitment_count = Some(77);
+        state.total_output_e8s = Some(88);
+        state.total_rewards_e8s = Some(99);
+        state.last_index_run_ts = Some(123_456);
+        state.commitment_index_fault = Some(CommitmentIndexFault {
+            observed_at_ts: 123_400,
+            last_cursor_tx_id: Some(38_079_041),
+            offending_tx_id: 38_079_042,
+            message: "representative deployed fault".to_string(),
+        });
+        state.initial_cycles_probe_queue = vec![principal(&[31])];
+        let expected = build_root_snapshot(&state);
+        let expected_config = expected.config.clone();
+        let deployed_root = DeployedStableRootState::from(expected.clone());
+        assert!(deployed_root
             .active_commitment_route_rollup_backfill
             .is_none());
-    }
-
-    #[test]
-    fn current_root_from_before_route_backfill_decodes_active_state_as_none() {
-        reset_test_storage();
-        let mut state = State::new(sample_config(), 100);
-        state.commitment_route_rollups_complete_from_genesis = Some(true);
-        state.last_indexed_staking_tx_id = Some(44);
-        let old_root = StableRootStateBeforeRouteBackfill::from(build_root_snapshot(&state));
-        let bytes = candid::encode_one(VersionedStableStateBeforeRouteBackfill::Current(old_root))
-            .expect("encode prior current root");
+        let bytes = candid::encode_one(DeployedVersionedStableState::Current(deployed_root))
+            .expect("encode deployed feature-era root");
         let decoded = VersionedStableState::from_bytes(Cow::Owned(bytes));
         let VersionedStableState::Current(root) = decoded else {
             panic!("expected current root");
         };
-        assert_eq!(root.last_indexed_staking_tx_id, Some(44));
+        assert_eq!(
+            candid::encode_one(&root).unwrap(),
+            candid::encode_one(&expected).unwrap(),
+            "every surviving deployed root field must decode without alteration"
+        );
+        assert_eq!(root.config, expected_config);
+        assert_eq!(root.last_indexed_staking_tx_id, Some(38_079_042));
+        assert_eq!(root.oldest_indexed_staking_tx_id, Some(1));
+        assert_eq!(root.staking_index_descending, Some(true));
+        assert_eq!(root.staking_backfill_complete, Some(true));
         assert_eq!(
             root.commitment_route_rollups_complete_from_genesis,
             Some(true)
         );
-        assert!(root.active_commitment_route_rollup_backfill.is_none());
+        assert_eq!(root.last_indexed_output_tx_id, Some(900));
+        assert_eq!(root.oldest_indexed_output_tx_id, Some(10));
+        assert_eq!(root.output_route_index_descending, Some(true));
+        assert_eq!(root.output_route_backfill_complete, Some(true));
+        assert_eq!(root.last_indexed_rewards_tx_id, Some(800));
+        assert_eq!(root.oldest_indexed_rewards_tx_id, Some(20));
+        assert_eq!(root.rewards_route_index_descending, Some(true));
+        assert_eq!(root.rewards_route_backfill_complete, Some(true));
+        assert_eq!(root.qualifying_commitment_count, Some(77));
+        assert_eq!(root.total_output_e8s, Some(88));
+        assert_eq!(root.total_rewards_e8s, Some(99));
+        assert_eq!(root.last_index_run_ts, Some(123_456));
+        assert_eq!(root.commitment_index_fault, expected.commitment_index_fault);
+        assert_eq!(root.initial_cycles_probe_queue, vec![principal(&[31])]);
+        assert_eq!(root.config.relay_factory_enabled, Some(true));
+        assert_eq!(
+            root.config.canonical_relay_canister_id,
+            Some(sample_config().canonical_relay_canister_id)
+        );
+        assert_eq!(
+            get_commitment_route_rollup(&cycles_key),
+            CommitmentRouteRollup {
+                qualifying_commitment_count: 1,
+                total_qualifying_committed_e8s: 123_000_000,
+            }
+        );
+        assert_eq!(
+            get_commitment_route_rollup(&raw_key),
+            CommitmentRouteRollup {
+                qualifying_commitment_count: 1,
+                total_qualifying_committed_e8s: 456_000_000,
+            }
+        );
+    }
+
+    #[test]
+    fn current_root_round_trips_current_schema() {
+        let expected =
+            VersionedStableState::Current(build_root_snapshot(&State::new(sample_config(), 100)));
+        let bytes = expected.clone().into_bytes();
+        let decoded = VersionedStableState::from_bytes(Cow::Owned(bytes));
+        assert_eq!(
+            candid::encode_one(decoded).unwrap(),
+            candid::encode_one(expected).unwrap()
+        );
     }
 
     fn sample_config() -> Config {
@@ -553,152 +652,6 @@ mod tests {
         assert_eq!(decoded, expected);
     }
 
-    fn legacy_stable_config() -> LegacyStableConfigV1 {
-        let cfg = sample_config();
-        LegacyStableConfigV1 {
-            staking_account: cfg.staking_account,
-            output_source_account: Some(cfg.output_source_account),
-            output_account: Some(cfg.output_account),
-            rewards_account: Some(cfg.rewards_account),
-            ledger_canister_id: cfg.ledger_canister_id,
-            index_canister_id: cfg.index_canister_id,
-            cmc_canister_id: cfg.cmc_canister_id,
-            faucet_canister_id: cfg.faucet_canister_id,
-            blackhole_canister_id: principal(&[99]),
-            sns_wasm_canister_id: cfg.sns_wasm_canister_id,
-            xrc_canister_id: Some(cfg.xrc_canister_id),
-            enable_sns_tracking: cfg.enable_sns_tracking,
-            scan_interval_seconds: cfg.scan_interval_seconds,
-            cycles_interval_seconds: cfg.cycles_interval_seconds,
-            min_tx_e8s: cfg.min_tx_e8s,
-            max_cycles_entries_per_canister: cfg.max_cycles_entries_per_canister,
-            max_commitment_entries_per_canister: cfg.max_commitment_entries_per_canister,
-            max_index_pages_per_tick: cfg.max_index_pages_per_tick,
-            max_canisters_per_cycles_tick: cfg.max_canisters_per_cycles_tick,
-            relay_factory_enabled: Some(cfg.relay_factory_enabled),
-            relay_setup_min_e8s: Some(cfg.relay_setup_min_e8s),
-            relay_initial_cycles: Some(cfg.relay_initial_cycles),
-            relay_cycle_safety_margin_e8s: Some(cfg.relay_cycle_safety_margin_e8s),
-            relay_min_subaccount_one_seed_e8s: Some(cfg.relay_min_subaccount_one_seed_e8s),
-            self_service_relay_interval_seconds: Some(cfg.self_service_relay_interval_seconds),
-            canonical_relay_canister_id: Some(cfg.canonical_relay_canister_id),
-            canonical_relay_targets: Some(cfg.canonical_relay_targets),
-        }
-    }
-
-    #[test]
-    fn legacy_revision_fixture_is_pinned() {
-        assert_eq!(
-            LEGACY_HISTORIAN_V1_REVISION,
-            "98c871a85af91320a5dfc59b5b040727e21aa094"
-        );
-    }
-
-    #[test]
-    fn legacy_root_restore_preserves_unrelated_historian_state() {
-        let legacy = LegacyVersionedStableStateV1::Current(LegacyStableRootStateV1 {
-            config: legacy_stable_config(),
-            last_indexed_staking_tx_id: Some(1),
-            oldest_indexed_staking_tx_id: Some(2),
-            staking_index_descending: Some(true),
-            staking_backfill_complete: Some(false),
-            last_indexed_output_tx_id: Some(3),
-            oldest_indexed_output_tx_id: Some(4),
-            output_route_index_descending: Some(true),
-            output_route_backfill_complete: Some(false),
-            last_indexed_rewards_tx_id: Some(5),
-            oldest_indexed_rewards_tx_id: Some(6),
-            rewards_route_index_descending: Some(true),
-            rewards_route_backfill_complete: Some(false),
-            last_sns_discovery_ts: 7,
-            last_completed_cycles_sweep_ts: 8,
-            last_completed_route_sweep_ts: Some(9),
-            active_cycles_sweep: None,
-            initial_cycles_probe_queue: vec![principal(&[10])],
-            active_route_sweep: None,
-            active_sns_discovery: None,
-            main_lock_state_ts: Some(12),
-            last_main_run_ts: 13,
-            qualifying_commitment_count: Some(14),
-            total_output_e8s: Some(15),
-            total_rewards_e8s: Some(16),
-            icp_burned_e8s: Some(17),
-            recent_commitments: Some(Vec::new()),
-            recent_under_threshold_commitments: Some(Vec::new()),
-            recent_neuron_commitments: Some(Vec::new()),
-            recent_under_threshold_neuron_commitments: Some(Vec::new()),
-            recent_invalid_commitments: Some(Vec::new()),
-            recent_burns: Some(Vec::new()),
-            last_index_run_ts: Some(18),
-            commitment_index_fault: None,
-            icp_xdr_rate: None,
-            last_icp_xdr_rate_attempt_ts: Some(19),
-            last_icp_xdr_rate_error: Some("xrc down".to_string()),
-        });
-        let bytes = candid::encode_one(legacy).unwrap();
-        let decoded = VersionedStableState::from_bytes(Cow::Owned(bytes));
-        let VersionedStableState::Current(root) = decoded else {
-            panic!("expected current root");
-        };
-        let cfg: Config = root.config.clone().into();
-        assert_eq!(cfg.staking_account.owner, principal(&[1]));
-        assert_eq!(cfg.output_source_account.owner, principal(&[11]));
-        assert_eq!(cfg.sns_wasm_canister_id, principal(&[7]));
-        assert_eq!(cfg.xrc_canister_id, principal(&[8]));
-        assert_eq!(root.last_indexed_staking_tx_id, Some(1));
-        assert_eq!(root.commitment_route_rollups_complete_from_genesis, None);
-        assert!(root.active_commitment_route_rollup_backfill.is_none());
-        assert_eq!(root.last_icp_xdr_rate_error.as_deref(), Some("xrc down"));
-        let rewritten = VersionedStableState::Current(root).into_bytes();
-        assert!(candid::decode_one::<VersionedStableState>(&rewritten).is_ok());
-    }
-
-    #[test]
-    fn legacy_source_set_decodes_as_tracking_reasons() {
-        let legacy = LegacyStableSourceSetV1(BTreeSet::from([
-            LegacyCanisterSourceV1::MemoCommitment,
-            LegacyCanisterSourceV1::SnsDiscovery,
-        ]));
-        let bytes = candid::encode_one(legacy).unwrap();
-        let decoded = StableTrackingReasonSet::from_bytes(Cow::Owned(bytes));
-        assert_eq!(
-            decoded.0,
-            BTreeSet::from([
-                CanisterTrackingReason::MemoCommitment,
-                CanisterTrackingReason::SnsDiscovery
-            ])
-        );
-    }
-
-    #[test]
-    fn every_legacy_cycles_sample_source_decodes_without_value_loss() {
-        for (legacy_source, current_source) in [
-            (
-                LegacyCyclesSampleSourceV1::BlackholeStatus,
-                CyclesSampleSource::BlackholeStatus,
-            ),
-            (
-                LegacyCyclesSampleSourceV1::SelfCanister,
-                CyclesSampleSource::SelfCanister,
-            ),
-            (
-                LegacyCyclesSampleSourceV1::SnsRootSummary,
-                CyclesSampleSource::SnsRootSummary,
-            ),
-        ] {
-            let legacy = LegacyCyclesSampleV1 {
-                timestamp_nanos: 123_456,
-                cycles: 987_654_321,
-                source: legacy_source,
-            };
-            let bytes = candid::encode_one(legacy).unwrap();
-            let decoded = CyclesSample::from_bytes(Cow::Owned(bytes));
-            assert_eq!(decoded.timestamp_nanos, 123_456);
-            assert_eq!(decoded.cycles, 987_654_321);
-            assert_eq!(decoded.source, current_source);
-        }
-    }
-
     #[test]
     fn current_direct_canister_status_sample_round_trips() {
         let sample = CyclesSample {
@@ -711,25 +664,75 @@ mod tests {
     }
 
     #[test]
+    fn legacy_source_set_decodes_as_tracking_reasons() {
+        let frozen = FrozenMapTrackingReasonSet(BTreeSet::from([
+            FrozenMapCanisterSource::MemoCommitment,
+            FrozenMapCanisterSource::SnsDiscovery,
+        ]));
+        let bytes = candid::encode_one(frozen).unwrap();
+        let decoded = StableTrackingReasonSet::from_bytes(Cow::Owned(bytes));
+        assert_eq!(
+            decoded.0,
+            BTreeSet::from([
+                CanisterTrackingReason::MemoCommitment,
+                CanisterTrackingReason::SnsDiscovery,
+            ])
+        );
+    }
+
+    #[test]
+    fn every_legacy_cycles_sample_source_decodes_without_value_loss() {
+        for (frozen_source, current_source) in [
+            (
+                FrozenMapCyclesSampleSource::BlackholeStatus,
+                CyclesSampleSource::BlackholeStatus,
+            ),
+            (
+                FrozenMapCyclesSampleSource::SelfCanister,
+                CyclesSampleSource::SelfCanister,
+            ),
+            (
+                FrozenMapCyclesSampleSource::SnsRootSummary,
+                CyclesSampleSource::SnsRootSummary,
+            ),
+        ] {
+            let frozen = FrozenMapCyclesSample {
+                timestamp_nanos: 123_456,
+                cycles: 987_654_321,
+                source: frozen_source,
+            };
+            let bytes = candid::encode_one(frozen).unwrap();
+            let decoded = CyclesSample::from_bytes(Cow::Owned(bytes));
+            assert_eq!(decoded.timestamp_nanos, 123_456);
+            assert_eq!(decoded.cycles, 987_654_321);
+            assert_eq!(decoded.source, current_source);
+        }
+    }
+
+    #[test]
     fn legacy_canister_meta_with_probe_result_decodes() {
-        let legacy = LegacyStableCanisterMetaV1 {
+        let frozen = FrozenMapCanisterMeta {
             first_seen_ts: Some(1),
             last_commitment_ts: Some(2),
             last_cycles_probe_ts: Some(3),
-            last_cycles_probe_result: Some(LegacyCyclesProbeResultV1::Ok(
-                LegacyCyclesSampleSourceV1::SnsRootSummary,
+            last_cycles_probe_result: Some(FrozenMapCyclesProbeResult::Ok(
+                FrozenMapCyclesSampleSource::SnsRootSummary,
             )),
             last_burn_tx_id: Some(4),
             last_burn_scan_tx_id: Some(5),
             burned_e8s: Some(6),
         };
-        let bytes = candid::encode_one(legacy).unwrap();
+        let bytes = candid::encode_one(frozen).unwrap();
         let decoded = StableCanisterMeta::from_bytes(Cow::Owned(bytes));
         assert_eq!(decoded.first_seen_ts, Some(1));
+        assert_eq!(decoded.last_commitment_ts, Some(2));
+        assert_eq!(decoded.last_cycles_probe_ts, Some(3));
         assert_eq!(
             decoded.last_cycles_probe_result,
             Some(CyclesProbeResult::Ok(CyclesSampleSource::SnsRootSummary))
         );
+        assert_eq!(decoded.last_burn_tx_id, Some(4));
+        assert_eq!(decoded.last_burn_scan_tx_id, Some(5));
         assert_eq!(decoded.burned_e8s, Some(6));
     }
 
@@ -745,7 +748,6 @@ mod tests {
             .or_else(|| panic.downcast_ref::<&str>().copied())
             .unwrap_or("");
         assert!(message.contains("failed to decode historian root stable state"));
-        assert!(message.contains(LEGACY_HISTORIAN_V1_REVISION));
     }
 
     #[test]

@@ -228,13 +228,6 @@ pub(crate) struct ActiveRouteSweep {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ActiveCommitmentRouteRollupBackfill {
-    pub boundary_tx_id: u64,
-    pub cursor_tx_id: Option<u64>,
-    pub descending: bool,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StableConfig {
     pub staking_account: Account,
     #[serde(default)]
@@ -304,8 +297,6 @@ pub(crate) struct StableRootState {
     pub staking_backfill_complete: Option<bool>,
     #[serde(default)]
     pub commitment_route_rollups_complete_from_genesis: Option<bool>,
-    #[serde(default)]
-    pub active_commitment_route_rollup_backfill: Option<ActiveCommitmentRouteRollupBackfill>,
     #[serde(default)]
     pub last_indexed_output_tx_id: Option<u64>,
     #[serde(default)]
@@ -959,8 +950,6 @@ pub(crate) struct State {
     pub staking_backfill_complete: Option<bool>,
     #[serde(default)]
     pub commitment_route_rollups_complete_from_genesis: Option<bool>,
-    #[serde(default)]
-    pub active_commitment_route_rollup_backfill: Option<ActiveCommitmentRouteRollupBackfill>,
     pub last_indexed_output_tx_id: Option<u64>,
     #[serde(default)]
     pub oldest_indexed_output_tx_id: Option<u64>,
@@ -1033,7 +1022,6 @@ impl State {
             staking_index_descending: None,
             staking_backfill_complete: Some(false),
             commitment_route_rollups_complete_from_genesis: Some(false),
-            active_commitment_route_rollup_backfill: None,
             last_indexed_output_tx_id: None,
             oldest_indexed_output_tx_id: None,
             output_route_index_descending: None,
@@ -1093,15 +1081,8 @@ impl Storable for VersionedStableState {
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        let raw = bytes.as_ref();
-        candid::decode_one(raw).unwrap_or_else(|current_err| {
-            crate::state::legacy_v1::decode_legacy_root(raw).unwrap_or_else(|legacy_err| {
-                panic!(
-                    "failed to decode historian root stable state as current schema ({current_err}) or legacy V1 schema from {} ({legacy_err})",
-                    crate::state::legacy_v1::LEGACY_HISTORIAN_V1_REVISION
-                )
-            })
-        })
+        candid::decode_one(bytes.as_ref())
+            .expect("failed to decode historian root stable state as current schema")
     }
 
     const BOUND: Bound = Bound::Unbounded;

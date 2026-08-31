@@ -63,9 +63,6 @@ echo "Before stopping Historian, record pre-upgrade query results. Stopping jupi
 echo "Complete tested maintenance sequence after release signoff:"
 cat <<'CMD'
 icp canister stop jupiter_historian --environment ic
-SNAPSHOT_ID="$(icp canister snapshot create jupiter_historian --environment ic --quiet)"
-icp canister snapshot list jupiter_historian --environment ic --json
-icp canister snapshot download jupiter_historian "$SNAPSHOT_ID" --environment ic --output /tmp/jupiter-historian-snapshot-"$SNAPSHOT_ID"
 JUPITER_USE_CANONICAL_ARTIFACTS=1 \
 icp deploy jupiter_historian \
   --environment ic \
@@ -75,9 +72,8 @@ icp canister status jupiter_historian --environment ic --json
 CMD
 echo
 echo "Local icp 0.2.6 testing showed the stopped-canister upgrade leaves the canister stopped; the explicit start command is required."
-echo "The route-roll-up rollout uses an automatic in-place backfill that clears/rebuilds only stable memory 29."
-echo "Normal service and forward commitment indexing continue while complete_from_genesis is false."
-echo "After restart, query get_commitment_route_summaries anonymously and do not use lifetime totals as authoritative until complete_from_genesis is true and commitment_index_fault is null."
+echo "Stable memory 29 is authoritative Historian state and must be preserved by the in-place upgrade."
+echo "Query get_commitment_route_summaries anonymously before and after upgrade; normal production should report complete_from_genesis=true and commitment_index_fault=null."
 cat <<'CMD'
 icp canister call jupiter_historian get_commitment_route_summaries \
   '(record { routes = vec {} })' \
@@ -86,13 +82,8 @@ icp canister call jupiter_historian get_commitment_route_summaries \
   --query
 CMD
 echo
-echo "Rollback from the recorded snapshot ID:"
-cat <<'CMD'
-icp canister stop jupiter_historian --environment ic
-icp canister snapshot restore jupiter_historian "$SNAPSHOT_ID" --environment ic
-icp canister start jupiter_historian --environment ic
-icp canister status jupiter_historian --environment ic --json
-CMD
+echo "Preserve memory-26 setup entries, exact active configuration mappings, and RelayTarget/RelayInstance tracking; record representative known configurations before upgrade and verify them afterwards."
+echo "Snapshots are risk-based. Strongly recommend or require one for stable-schema, stable-memory-layout, migration, authoritative-history, or other rollback-sensitive changes; see docs/operations/deployment.md."
 echo
 echo "The command above resolves jupiter_historian through icp.yaml, which must build/copy:"
 echo "$artifact"

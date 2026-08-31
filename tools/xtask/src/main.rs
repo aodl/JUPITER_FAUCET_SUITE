@@ -713,16 +713,6 @@ struct HistorianCommitmentRouteSummariesResponse {
 }
 
 #[derive(Debug, CandidType, Deserialize)]
-struct HistorianCommitmentRouteBackfillDebugState {
-    last_indexed_staking_tx_id: Option<u64>,
-    commitment_route_rollups_complete_from_genesis: Option<bool>,
-    commitment_route_rollup_backfill_active: bool,
-    commitment_route_rollup_backfill_boundary_tx_id: Option<u64>,
-    commitment_route_rollup_backfill_cursor_tx_id: Option<u64>,
-    commitment_route_rollup_backfill_descending: Option<bool>,
-}
-
-#[derive(Debug, CandidType, Deserialize)]
 struct HistorianDebugConfig {
     staking_account: Account,
     ledger_canister_id: Principal,
@@ -4531,44 +4521,6 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 }
             }
 
-            let _: () = call_raw_noargs::<()>(
-                "jupiter_historian_dbg",
-                "debug_reset_commitment_route_projection_to_pre_feature_state",
-            )?;
-            let _: () = call_raw(
-                "mock_icp_index",
-                "debug_set_get_script",
-                r#"(vec { variant { Ok }; variant { Err = "pause projection" } })"#,
-            )?;
-            let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
-
-            let partial_state: HistorianCommitmentRouteBackfillDebugState =
-                call_raw_noargs("jupiter_historian_dbg", "debug_state")?;
-            if partial_state.last_indexed_staking_tx_id != Some(6)
-                || partial_state.commitment_route_rollups_complete_from_genesis != Some(false)
-                || !partial_state.commitment_route_rollup_backfill_active
-                || partial_state.commitment_route_rollup_backfill_boundary_tx_id != Some(6)
-                || partial_state
-                    .commitment_route_rollup_backfill_cursor_tx_id
-                    .is_some()
-                || partial_state.commitment_route_rollup_backfill_descending != Some(false)
-            {
-                bail!("unexpected partial route backfill state: {partial_state:?}");
-            }
-            let partial: HistorianCommitmentRouteSummariesResponse = call_raw_anonymous(
-                "jupiter_historian_dbg",
-                "get_commitment_route_summaries",
-                &route_args,
-            )?;
-            if partial.complete_from_genesis
-                || partial
-                    .items
-                    .iter()
-                    .any(|item| item.qualifying_commitment_count != 0)
-            {
-                bail!("partial route projection was unexpectedly authoritative: {partial:?}");
-            }
-
             let _: u64 = call_raw(
                 "mock_icp_index",
                 "debug_append_transfer",
@@ -4579,69 +4531,39 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 ),
             )?;
             let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
-
-            let completed: HistorianCommitmentRouteSummariesResponse = call_raw_anonymous(
+            let updated: HistorianCommitmentRouteSummariesResponse = call_raw_anonymous(
                 "jupiter_historian_dbg",
                 "get_commitment_route_summaries",
                 &route_args,
             )?;
-            let expected_after_backfill = [
+            let expected_updated = [
                 (1, 100_000_000),
                 (2, 300_000_000),
                 (1, 100_000_000),
                 (1, 100_000_000),
             ];
-            if !completed.complete_from_genesis
-                || completed.commitment_index_fault.is_some()
-                || completed.items.len() != expected_after_backfill.len()
+            if !updated.complete_from_genesis
+                || updated.commitment_index_fault.is_some()
+                || updated.items.len() != expected_updated.len()
             {
-                bail!("route projection did not complete cleanly: {completed:?}");
+                bail!("route roll-ups did not remain authoritative: {updated:?}");
             }
             for (item, (expected_count, expected_total)) in
-                completed.items.iter().zip(expected_after_backfill)
+                updated.items.iter().zip(expected_updated)
             {
                 if item.qualifying_commitment_count != expected_count
                     || item.total_qualifying_committed_e8s != expected_total
                 {
-                    bail!("unexpected rebuilt route summary: {item:?}");
+                    bail!("unexpected updated route summary: {item:?}");
                 }
             }
-            let completed_counts: HistorianPublicCounts =
+            let updated_counts: HistorianPublicCounts =
                 call_raw("jupiter_historian_dbg", "get_public_counts", "()")?;
-            if completed_counts.qualifying_commitment_count != 7 {
+            if updated_counts.qualifying_commitment_count != 7 {
                 bail!(
-                    "projection backfill mutated ordinary qualifying counts: {:?}",
-                    completed_counts
+                    "normal route indexing mutated qualifying counts incorrectly: {:?}",
+                    updated_counts
                 );
-            }
-            let completed_state: HistorianCommitmentRouteBackfillDebugState =
-                call_raw_noargs("jupiter_historian_dbg", "debug_state")?;
-            if completed_state.commitment_route_rollup_backfill_active
-                || completed_state.commitment_route_rollups_complete_from_genesis != Some(true)
-                || completed_state.last_indexed_staking_tx_id != Some(7)
-            {
-                bail!("unexpected completed route backfill state: {completed_state:?}");
-            }
-
-            let _: () = call_raw_noargs::<()>("jupiter_historian_dbg", "debug_driver_tick")?;
-            let dormant: HistorianCommitmentRouteSummariesResponse = call_raw_anonymous(
-                "jupiter_historian_dbg",
-                "get_commitment_route_summaries",
-                &route_args,
-            )?;
-            if dormant.items.len() != completed.items.len()
-                || dormant
-                    .items
-                    .iter()
-                    .zip(&completed.items)
-                    .any(|(left, right)| {
-                        left.route != right.route
-                            || left.qualifying_commitment_count != right.qualifying_commitment_count
-                            || left.total_qualifying_committed_e8s
-                                != right.total_qualifying_committed_e8s
-                    })
-            {
-                bail!("completed route projection changed on a dormant tick: {dormant:?}");
             }
 
             let recent: ListRecentCommitmentsResponse = call_raw(

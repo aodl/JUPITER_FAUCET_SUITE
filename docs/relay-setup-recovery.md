@@ -101,13 +101,12 @@ Mainnet install args enable `relay_factory_enabled = opt true`. Because `notify_
 
 Deploy matching Historian and frontend builds in the same maintenance window because their current Candid declarations must agree.
 
-1. Confirm the clean-slate release precondition from public counts, every `RelayInstance` and `RelayTarget` page, known operational records, frontend launch status, and an offline snapshot inspection when tooling permits.
+1. Record public state, every relevant `RelayInstance` and `RelayTarget` page, and representative known exact configuration mappings.
 2. Stop Historian and wait for `Stopped` so factory calls drain.
-3. Create and download a snapshot.
+3. For a rollback-sensitive release, create and record a snapshot according to the risk-based policy in [`operations/deployment.md`](operations/deployment.md).
 4. Upgrade Historian in place; do not reinstall.
-5. While Historian remains stopped, deploy the matching frontend.
-6. Start Historian only after both upgrades succeed.
-7. Verify public state, canonical hashes/accounts, exact recipient memo behavior, zero-recipient all-cycles behavior, approved module hash, empty controllers, public logs/status, and tracking counts.
-8. Retain the snapshot until acceptance is complete.
+5. While Historian remains stopped, deploy a matching frontend when its Candid declaration changes with Historian.
+6. Start Historian after the required upgrades succeed.
+7. Verify memory-26 setup state, known active mappings, `RelayTarget`/`RelayInstance` tracking, public state, canonical hashes/accounts, and any interrupted setup state.
 
-If any precondition or audit fails, restore the maintenance-window snapshot and prove the restored canister is queryable before rescheduling.
+Future upgrades may begin with active, recoverable, and tracked self-service Relay state. That state is expected and must be preserved.

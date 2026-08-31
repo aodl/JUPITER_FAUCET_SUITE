@@ -135,42 +135,44 @@ Deduplication rules are:
 - recent commitments and invalid commitments are deduped by transaction ID
 - cycles samples are not appended twice for the same canister and timestamp
 
-## Public query interface
+## Check a Jupiter Faucet commitment
 
-Production methods:
+External consumers can call the production Historian at `j5gs6-uiaaa-aaaar-qb5cq-cai` using the anonymous `get_commitment_route_summaries` query to ask whether one or more exact Jupiter Faucet routes have qualifying commitments and how much ICP has been committed over their lifetime.
 
-- `list_canisters`
-  - paged list of tracked canisters, optionally filtered by `MemoCommitment` vs `SnsDiscovery`
-- `get_cycles_history`
-  - paged cycles history for one canister
-- `get_commitment_history`
-  - paged bounded history of qualifying cycles-top-up canister commitments only for one canister principal
-- `get_raw_icp_commitment_history`
-  - paged bounded history of qualifying destination-canister-wide raw ICP commitments only for one canister principal
-- `get_neuron_commitment_history`
-  - paged bounded history of qualifying neuron-wide commitments only for one neuron ID
-- `get_commitment_route_summaries`
-  - authoritative lifetime count and qualifying committed-e8s total for each of up to 100 exact cycles-top-up, raw-ICP, or neuron-stake routes
-- `get_canister_overview`
-  - one-canister overview including source set, metadata, and point counts
-- `get_public_counts`
-  - top-level dashboard counts
-- `get_public_status`
-  - dashboard status, including staking account and configured ledger canister ID
-- `list_memo_registered_canister_summaries`
-  - paged summary list used by the frontend registry table
-  - always ordered by total qualifying committed ICP descending, with canister id as the stable tie-breaker
-- `list_recent_commitments`
-  - recent valid and invalid commitment feed used by the frontend
-  - invalid rows are not exposed through a separate method; they appear in the same feed with `canister_id = null` and a generic placeholder memo label rather than the original attacker-provided text
-- `get_relay_configuration_view`
-  - canonicalizes submitted 1–20 target and zero or 1–5 surplus-recipient vectors and returns exact-configuration state, target-based pricing, and a deterministic setup account only for a new available configuration
-- `notify_relay_configuration`
-  - explicitly starts a sufficiently funded exact configuration using both submitted vectors
+The two canister-route forms are:
 
-The public read model is intentionally richer than the raw history methods because the production frontend should not need to reconstruct aggregate dashboard state in the browser.
+- Jupiter memo `<canister>` → `CyclesTopUp { canister_id = <canister> }`
+- Jupiter memo `<canister>.<memo>` → `RawIcp { destination_canister_id = <canister>; memo = <exact suffix bytes> }`
 
-### Self-service Relay configurations
+`<canister>` is **not** the same route as `<canister>.`. The trailing-dot form is `RawIcp` with an empty memo blob. Principal text is normalized by parsing it into Principal bytes, while suffix bytes are exact.
+
+For example, Jupiter memo `vpa37giaaaaaaamqdxeqcai.5suig-4y` declares destination principal `vpa37-giaaa-aaaam-qdxeq-cai` and exact raw-ICP suffix bytes `5suig-4y`:
+
+```bash
+icp canister call j5gs6-uiaaa-aaaar-qb5cq-cai get_commitment_route_summaries \
+  '(record {
+    routes = vec {
+      variant {
+        RawIcp = record {
+          destination_canister_id =
+            principal "vpa37-giaaa-aaaam-qdxeq-cai";
+          memo = blob "5suig-4y";
+        }
+      }
+    };
+  })' \
+  --environment ic \
+  --identity anonymous \
+  --query
+```
+
+`total_qualifying_committed_e8s` is the lifetime qualifying ICP committed to that exact route; divide it by `100_000_000` for ICP. `qualifying_commitment_count` is the number of qualifying commitments included in that total. The response is authoritative through `indexed_through_staking_tx_id`.
+
+**A zero total is authoritative only when `complete_from_genesis == true` and `commitment_index_fault == null`.** If either condition is not satisfied, treat the amount as unavailable or incomplete, not as zero.
+
+Up to 100 exact routes can be queried in one call, so consumers can batch the records they display. The complete machine-readable public interface is [`jupiter_historian.did`](jupiter_historian.did).
+
+## Self-service Relay configurations
 
 Self-service setup accepts 1–20 external target canisters and either zero or 1–5 typed surplus recipients. Each recipient carries an exact 0–32-byte memo; empty means no outgoing Ledger memo. Targets are sorted by raw principal bytes. Recipients are ordered with Principals first in raw-byte order, followed by nonzero `u64` neuron IDs in numeric order, without sorting by memo. Duplicate destinations are rejected even when their memos differ, while one principal may still be both a target and a surplus Principal recipient. Principal recipients may be arbitrary non-anonymous, non-management principals. Recipient destinations do not receive target-only protected-dependency or probe checks. The two canonical vectors jointly determine identity, so input order does not matter and changing a recipient type, destination, or memo forms a different immutable configuration. The canonical production Relay target set remains reserved as an explicit policy preventing a self-service duplicate, regardless of supplied recipients.
 
@@ -183,30 +185,6 @@ Child install arguments split canonical typed recipients into Relay's existing f
 Creation is an explicit user action. A narrow same-key reservation prevents duplicate execution, all targets are probed before spend, transfer records are persisted before dispatch with fixed timestamps, and create dispatch is fail-closed. For a future child, direct status is reusable only when visibility is exactly `public`; Historian-only controller or `allowed_viewers` access is insufficient, although a recognized reusable blackhole/SNS fallback may qualify the target. Final activation requires exact pre-finalization and post-controller-removal audits of the approved module, running state, controller set, public logs, and public status. A transient direct-status failure after accepted Relay funding leaves `RelayFunded` or `FinalizationAttempted` in progress. Submitting the same canonical configuration can explicitly resume only this safe tail: it never repeats a Ledger transfer, CMC notification, child creation, installation, or Relay-funding transfer. Exact finalized live state activates without another settings update; exact `[Historian]` state permits one idempotent controller-removal attempt per explicit submission, while any unexpected live state remains terminal manual recovery. Frontend polling stays query-only. See [`../../docs/relay-setup-recovery.md`](../../docs/relay-setup-recovery.md) for the state and operational procedure.
 
 On Historian upgrade, interrupted `Reserved` and `ProbingTargets` entries are removed. Every later `Creating` phase becomes terminal manual recovery with `HistorianUpgradeInterrupted`; active mappings and existing manual-recovery entries are preserved without calling any child.
-
-### Default paging / limit behavior
-
-The main public queries use these code-backed defaults:
-
-- `list_canisters`: default `limit = 50`, clamped to `1..=100`
-- `get_cycles_history`: default `limit = 100`, clamped to `1..=100`
-- `get_commitment_history`: default `limit = 100`, clamped to `1..=100`
-- `get_raw_icp_commitment_history`: default `limit = 100`, clamped to `1..=100`
-- `get_neuron_commitment_history`: default `limit = 100`, clamped to `1..=100`
-- `get_commitment_route_summaries`: processes the first 100 input routes and reports truncation for larger batches
-- `list_memo_registered_canister_summaries`: default `page_size = 25`, clamped to `1..=100`
-- `list_recent_commitments`: default `limit = 20`, clamped to `1..=100`
-
-The three commitment-history methods all page over bounded retained samples using
-the same cursor semantics and the same configured history cap. Retention remains
-bounded by `max_commitment_entries_per_canister`, which defaults to 100 samples
-per target and is hard-clamped to 250. Raw canister and neuron durable commitment
-samples are target-wide:
-they do not retain the optional outgoing memo suffix used by raw ICP payout
-memos, so the raw and neuron history APIs cannot provide suffix-specific
-commitment attribution.
-
-`list_memo_registered_canister_summaries` and the three history methods retain their existing bounded-view semantics. In particular, `MemoRegisteredCanisterSummary.total_qualifying_committed_e8s` is still derived from retained normal-canister history; it is not redefined as an all-time route total. Use `get_commitment_route_summaries` for lifetime exact-route attribution.
 
 ## Timers and driver model
 
@@ -249,13 +227,11 @@ That keeps sweep work bounded even when the tracked set grows.
 
 ## Install-time and upgrade-time configuration
 
-### Initial route-roll-up rollout
+### Stable route-roll-up state
 
-Existing production Historian is upgraded in place. Ordinary stable state, retained histories, index cursors, aggregates, and Relay setup/recovery state are preserved. A pre-feature route projection is detected automatically after a successful normal commitment-index run. Historian then clears and rebuilds only the commitment-route roll-up map in stable memory 29 through a bounded, resumable automatic in-place backfill.
+Stable memory 29 is the authoritative lifetime commitment-route map and is preserved directly by normal in-place upgrades. The normal staking-account indexer is its only writer: a fresh Historian starts with `commitment_route_rollups_complete_from_genesis = Some(false)`, builds the map while indexing from genesis, and changes the marker to `Some(true)` only after genesis coverage is established.
 
-The migration captures an immutable staking transaction boundary. The projection-only historical scan owns transactions at or below that boundary, while the unchanged normal commitment indexer continues handling later transactions. This prevents overlap without resetting the normal staking cursor or adding permanent per-transaction deduplication state. If an earlier route-summary binary accumulated partial totals while its completeness marker was absent, those partial memory-29 totals are discarded once at activation and reconstructed through the captured boundary.
-
-Integrations must treat route totals as non-authoritative while `complete_from_genesis == false`, or whenever `commitment_index_fault` is present. Once the automatic backfill completes, all qualifying commitments through the current staking cursor are represented, the completeness marker becomes true, and the migration becomes permanently dormant. Subsequent ordinary upgrades preserve the completed map and perform no migration work. Reinstalling or resetting the existing production Historian is neither necessary nor permitted.
+Production is expected to report `complete_from_genesis = true` and `commitment_index_fault = null` before and after a routine upgrade. If completeness unexpectedly becomes false or an index fault is present, investigate the invariant violation rather than initiating a historical rebuild. Existing production Historian must be upgraded in place and must not be reinstalled.
 
 ### Init args
 
@@ -443,35 +419,7 @@ After upgrade, verify the runtime config from public logs:
 icp canister logs j5gs6-uiaaa-aaaar-qb5cq-cai -n ic
 ```
 
-Deploy a maintenance frontend that prevents ordinary UI submissions, then record all public query evidence before stopping the canister. The maintenance frontend is not a security boundary. Stopping `jupiter_historian` and waiting until it is `Stopped` is the authoritative self-service factory pause and call drain for this deployment. There is no runtime factory-disable update method.
-
-Before this release, verify the clean-slate self-service premise from public counts, every `RelayInstance` and `RelayTarget` page, operational records, frontend launch status, and an offline snapshot inspection when tooling permits. The sole current Relay setup map is memory 26. If a deployment precondition or audit fails, do not proceed; restore the snapshot using the rehearsed rollback procedure.
-
-Tested `icp 0.2.6` maintenance sequence:
-
-```bash
-icp canister stop jupiter_historian --environment ic
-icp canister status jupiter_historian --environment ic --json
-SNAPSHOT_ID="$(icp canister snapshot create jupiter_historian --environment ic --quiet)"
-icp canister snapshot list jupiter_historian --environment ic --json
-icp canister snapshot download jupiter_historian "$SNAPSHOT_ID" --environment ic --output /tmp/jupiter-historian-snapshot-"$SNAPSHOT_ID"
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic --mode upgrade
-icp canister start jupiter_historian --environment ic
-icp canister status jupiter_historian --environment ic --json
-```
-
-Local testing showed the stopped-canister upgrade succeeds but leaves the canister stopped, so the explicit start command is required. Rollback uses the recorded snapshot ID:
-
-```bash
-icp canister stop jupiter_historian --environment ic
-icp canister snapshot restore jupiter_historian "$SNAPSHOT_ID" --environment ic
-icp canister start jupiter_historian --environment ic
-icp canister status jupiter_historian --environment ic --json
-```
-
-Historian and frontend must be upgraded together while Historian is stopped because their current Candid declarations must agree. After the upgrade, verify public state and both canonical vectors, perform controlled singleton and overlapping multi-target acceptance configurations, and retain the snapshot until acceptance is complete.
-
-For later upgrades, record public state and known exact configuration mappings, stop and snapshot Historian, upgrade in place, start it, then verify the known mappings and `RelayTarget`/`RelayInstance` counts before restoring normal UI access. Verify any interrupted post-spend setup is `ManualRecoveryRequired`: `Reserved`/`ProbingTargets` entries are removed, every later `Creating` phase becomes `ManualRecoveryRequired`, and existing `Active`/`ManualRecoveryRequired` entries are preserved. Production cannot enumerate every configuration hash.
+For the production maintenance and risk-based snapshot procedure, follow [`../../docs/operations/deployment.md`](../../docs/operations/deployment.md). Preserve memory-26 setup entries, exact active configuration mappings, `RelayTarget`/`RelayInstance` tracking, and memory-29 route roll-ups across every in-place upgrade. Record representative known configurations before upgrading and verify them afterwards.
 
 ## Debug interface
 

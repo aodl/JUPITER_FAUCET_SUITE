@@ -236,7 +236,7 @@ struct CommitmentSample {
     counts_toward_faucet: bool,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct CommitmentHistoryPage {
     items: Vec<CommitmentSample>,
     next_start_after_tx_id: Option<u64>,
@@ -277,12 +277,6 @@ struct GetCommitmentRouteSummariesResponse {
     indexed_through_staking_tx_id: Option<u64>,
     last_index_run_ts: Option<u64>,
     commitment_index_fault: Option<CommitmentIndexFault>,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum DebugIndexGetBehavior {
-    Ok,
-    Err(String),
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -387,10 +381,6 @@ struct DebugState {
     staking_index_descending: Option<bool>,
     staking_backfill_complete: Option<bool>,
     commitment_route_rollups_complete_from_genesis: Option<bool>,
-    commitment_route_rollup_backfill_active: bool,
-    commitment_route_rollup_backfill_boundary_tx_id: Option<u64>,
-    commitment_route_rollup_backfill_cursor_tx_id: Option<u64>,
-    commitment_route_rollup_backfill_descending: Option<bool>,
     oldest_indexed_output_tx_id: Option<u64>,
     output_route_index_descending: Option<bool>,
     output_route_backfill_complete: Option<bool>,
@@ -3337,16 +3327,17 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
             },
         ],
     };
-    let before_rebuild: GetCommitmentRouteSummariesResponse = query_one(
+    let route_summaries: GetCommitmentRouteSummariesResponse = query_one(
         &pic,
         historian,
         Principal::anonymous(),
         "get_commitment_route_summaries",
         route_args.clone(),
     )?;
-    assert!(before_rebuild.complete_from_genesis);
+    assert!(route_summaries.complete_from_genesis);
+    assert!(route_summaries.commitment_index_fault.is_none());
     assert_eq!(
-        before_rebuild
+        route_summaries
             .items
             .iter()
             .map(|item| (
@@ -3357,23 +3348,6 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
         vec![(1, 110_000_000), (1, 120_000_000), (1, 130_000_000)]
     );
 
-    let _: () = update_noargs(
-        &pic,
-        historian,
-        Principal::anonymous(),
-        "debug_reset_commitment_route_projection_to_pre_feature_state",
-    )?;
-    let _: () = update_noargs(&pic, historian, Principal::anonymous(), "debug_driver_tick")?;
-    let after_rebuild: GetCommitmentRouteSummariesResponse = query_one(
-        &pic,
-        historian,
-        Principal::anonymous(),
-        "get_commitment_route_summaries",
-        route_args,
-    )?;
-    assert!(after_rebuild.complete_from_genesis);
-    assert!(after_rebuild.commitment_index_fault.is_none());
-    assert_eq!(after_rebuild.items, before_rebuild.items);
     Ok(())
 }
 
@@ -4472,115 +4446,26 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
     assert!(before.last_index_run_ts.is_some());
     assert!(before.commitment_index_fault.is_none());
 
-    let counts_before_migration: PublicCounts = query_one(
+    let counts_before: PublicCounts = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
         "get_public_counts",
         (),
     )?;
-    let _: () = update_noargs(
+    let history_before: CommitmentHistoryPage = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
-        "debug_reset_commitment_route_projection_to_pre_feature_state",
+        "get_commitment_history",
+        GetCommitmentHistoryArgs {
+            canister_id: canister_a,
+            start_after_tx_id: None,
+            limit: Some(100),
+            descending: Some(false),
+        },
     )?;
-    let partial_boundary_tx_id = append(&staking_id, 250_000_000, normal_a.as_bytes())?;
-    let _: () = update_bytes(
-        &h.pic,
-        h.index,
-        Principal::anonymous(),
-        "debug_set_get_script",
-        encode_one(vec![
-            DebugIndexGetBehavior::Ok,
-            DebugIndexGetBehavior::Ok,
-            DebugIndexGetBehavior::Err("pause route projection".to_string()),
-        ])?,
-    )?;
-    let _: () = update_noargs(
-        &h.pic,
-        h.historian,
-        Principal::anonymous(),
-        "debug_driver_tick",
-    )?;
-
-    let partial_state: DebugState = query_one(
-        &h.pic,
-        h.historian,
-        Principal::anonymous(),
-        "debug_state",
-        (),
-    )?;
-    assert_eq!(
-        partial_state.last_indexed_staking_tx_id,
-        Some(partial_boundary_tx_id)
-    );
-    assert_eq!(
-        partial_state.commitment_route_rollups_complete_from_genesis,
-        Some(false)
-    );
-    assert!(partial_state.commitment_route_rollup_backfill_active);
-    assert_eq!(
-        partial_state.commitment_route_rollup_backfill_boundary_tx_id,
-        Some(partial_boundary_tx_id)
-    );
-    assert_eq!(
-        partial_state.commitment_route_rollup_backfill_cursor_tx_id,
-        Some(501)
-    );
-    assert_eq!(
-        partial_state.commitment_route_rollup_backfill_descending,
-        Some(false)
-    );
-    let partial: GetCommitmentRouteSummariesResponse = query_one(
-        &h.pic,
-        h.historian,
-        Principal::anonymous(),
-        "get_commitment_route_summaries",
-        args.clone(),
-    )?;
-    assert!(!partial.complete_from_genesis);
-    assert!(partial.commitment_index_fault.is_none());
-    assert_eq!(
-        partial.items[1],
-        CommitmentRouteSummary {
-            route: CommitmentRoute::CyclesTopUp {
-                canister_id: canister_a,
-            },
-            qualifying_commitment_count: 2,
-            total_qualifying_committed_e8s: 300_000_000,
-        }
-    );
-    let counts_after_projection_page: PublicCounts = query_one(
-        &h.pic,
-        h.historian,
-        Principal::anonymous(),
-        "get_public_counts",
-        (),
-    )?;
-    assert_eq!(
-        counts_after_projection_page.qualifying_commitment_count,
-        counts_before_migration.qualifying_commitment_count + 1
-    );
-
     upgrade_historian_without_config_changes(&h.pic, h.historian)?;
-    let restored_partial: GetCommitmentRouteSummariesResponse = query_one(
-        &h.pic,
-        h.historian,
-        Principal::anonymous(),
-        "get_commitment_route_summaries",
-        args.clone(),
-    )?;
-    assert_eq!(restored_partial.items, partial.items);
-    assert!(!restored_partial.complete_from_genesis);
-    assert_eq!(
-        restored_partial.indexed_through_staking_tx_id,
-        Some(partial_boundary_tx_id)
-    );
-    append(&staking_id, 260_000_000, normal_a.as_bytes())?;
-    append(&staking_id, 270_000_000, canister_c.to_text().as_bytes())?;
-    h.pic.advance_time(Duration::from_secs(61));
-    tick_n(&h.pic, 10);
 
     let after_upgrade: GetCommitmentRouteSummariesResponse = query_one(
         &h.pic,
@@ -4589,8 +4474,62 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
         "get_commitment_route_summaries",
         args.clone(),
     )?;
+    let counts_after_upgrade: PublicCounts = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    let history_after_upgrade: CommitmentHistoryPage = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_commitment_history",
+        GetCommitmentHistoryArgs {
+            canister_id: canister_a,
+            start_after_tx_id: None,
+            limit: Some(100),
+            descending: Some(false),
+        },
+    )?;
+    assert_eq!(after_upgrade.items, before.items);
+    assert!(after_upgrade.complete_from_genesis);
     assert_eq!(
-        after_upgrade
+        after_upgrade.indexed_through_staking_tx_id,
+        before.indexed_through_staking_tx_id
+    );
+    assert_eq!(
+        after_upgrade.commitment_index_fault,
+        before.commitment_index_fault
+    );
+    assert_eq!(counts_after_upgrade, counts_before);
+    assert_eq!(history_after_upgrade, history_before);
+    append(&staking_id, 250_000_000, normal_a.as_bytes())?;
+    append(&staking_id, 270_000_000, canister_c.to_text().as_bytes())?;
+    let calls_before: Vec<DebugIndexGetCall> = query_one(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_get_calls",
+        (),
+    )?;
+    let staking_calls_before = calls_before
+        .iter()
+        .filter(|call| call.account_identifier == staking_id)
+        .count();
+    h.pic.advance_time(Duration::from_secs(61));
+    tick_n(&h.pic, 10);
+
+    let after_new_commitments: GetCommitmentRouteSummariesResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_commitment_route_summaries",
+        args.clone(),
+    )?;
+    assert_eq!(
+        after_new_commitments
             .items
             .iter()
             .map(|item| (
@@ -4600,7 +4539,7 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
             .collect::<Vec<_>>(),
         vec![
             (2, 230_000_000),
-            (4, 810_000_000),
+            (3, 550_000_000),
             (2, 270_000_000),
             (1, 150_000_000),
             (1, 300_000_000),
@@ -4613,10 +4552,9 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
             (1, 270_000_000),
         ]
     );
-    assert!(after_upgrade.complete_from_genesis);
-    assert!(after_upgrade.commitment_index_fault.is_none());
-
-    let final_counts: PublicCounts = query_one(
+    assert!(after_new_commitments.complete_from_genesis);
+    assert!(after_new_commitments.commitment_index_fault.is_none());
+    let counts_after_new_commitments: PublicCounts = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
@@ -4624,27 +4562,29 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
         (),
     )?;
     assert_eq!(
-        final_counts.qualifying_commitment_count,
-        counts_before_migration.qualifying_commitment_count + 3
+        counts_after_new_commitments.qualifying_commitment_count,
+        counts_before.qualifying_commitment_count + 2
     );
-    assert!(
-        after_upgrade
-            .indexed_through_staking_tx_id
-            .unwrap_or_default()
-            > partial_boundary_tx_id
-    );
-
-    let calls_before_dormant_tick: Vec<DebugIndexGetCall> = query_one(
+    let calls_after: Vec<DebugIndexGetCall> = query_one(
         &h.pic,
         h.index,
         Principal::anonymous(),
         "debug_get_calls",
         (),
     )?;
-    let staking_calls_before = calls_before_dormant_tick
+    let staking_calls_after = calls_after
         .iter()
         .filter(|call| call.account_identifier == staking_id)
         .count();
+    assert_eq!(staking_calls_after, staking_calls_before + 1);
+    let steady_state_call = calls_after
+        .iter()
+        .filter(|call| call.account_identifier == staking_id)
+        .nth(staking_calls_before)
+        .expect("missing steady-state staking Index call");
+    assert!(steady_state_call.start.is_some());
+    assert!(steady_state_call.max_results > 0);
+    assert!(steady_state_call.returned_count <= steady_state_call.max_results);
 
     h.pic.advance_time(Duration::from_secs(61));
     tick_n(&h.pic, 10);
@@ -4655,23 +4595,30 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
         "get_commitment_route_summaries",
         args,
     )?;
-    assert_eq!(after_overlap.items, after_upgrade.items);
-    assert!(after_overlap.complete_from_genesis);
-    let calls_after_dormant_tick: Vec<DebugIndexGetCall> = query_one(
+    assert_eq!(after_overlap.items, after_new_commitments.items);
+    let calls_after_overlap: Vec<DebugIndexGetCall> = query_one(
         &h.pic,
         h.index,
         Principal::anonymous(),
         "debug_get_calls",
         (),
     )?;
-    let staking_calls_after = calls_after_dormant_tick
+    assert_eq!(
+        calls_after_overlap
+            .iter()
+            .filter(|call| call.account_identifier == staking_id)
+            .count(),
+        staking_calls_after + 1,
+        "each steady-state tick must make only the normal staking Index call"
+    );
+    let overlap_call = calls_after_overlap
         .iter()
         .filter(|call| call.account_identifier == staking_id)
-        .count();
-    assert_eq!(staking_calls_after, staking_calls_before + 1);
-    assert!(calls_after_dormant_tick
-        .iter()
-        .all(|call| { call.max_results > 0 && call.returned_count <= call.max_results }));
+        .nth(staking_calls_after)
+        .expect("missing overlap staking Index call");
+    assert!(overlap_call.start.is_some());
+    assert!(overlap_call.max_results > 0);
+    assert!(overlap_call.returned_count <= overlap_call.max_results);
     Ok(())
 }
 

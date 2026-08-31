@@ -78,66 +78,40 @@ Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
 
 ## Historian upgrade audit checklist
 
-Stopping `jupiter_historian` is the executable self-service factory pause and authoritative call drain. Record public evidence, stop it, and wait for `Stopped` before snapshot and in-place upgrade. Keep it stopped while deploying the matching frontend because the current Historian and frontend Candid declarations must agree. Start Historian only after both upgrades succeed. There is no runtime factory-disable update method. Although `RelayFunded` and `FinalizationAttempted` can be resumed explicitly after transient status failures within one Historian version, upgrades still terminalize those interrupted entries because setup progress does not persist the installed Relay hash; drain all factory calls before upgrading.
+Stopping `jupiter_historian` is the executable self-service factory pause and authoritative call drain. Record public evidence, stop it, and wait for `Stopped` before an in-place upgrade. Keep it stopped while deploying a matching frontend when the two Candid declarations change together, then explicitly start Historian after both upgrades succeed. There is no runtime factory-disable update method.
 
-This release has a clean-slate precondition: public counts, every `RelayInstance` and `RelayTarget` page, known operational records, known frontend launch status, and an offline inspection of the downloaded Historian snapshot when tooling permits must show no self-service Relay, in-progress setup, manual-recovery entry, or known funded setup account. The configured canonical Relay and its configured targets are expected and must be distinguished from self-service tracking. If contrary evidence appears, stop the release and investigate; do not reinstall Historian or add an ad hoc compatibility path.
+Self-service Relay state is legitimate durable production state. An upgrade must preserve memory-26 setup entries, exact active configuration mappings, and `RelayTarget`/`RelayInstance` tracking. Before upgrading, record representative known full configurations and their returned Relay mappings; production cannot enumerate every configuration hash. Verify the same configurations and tracking counts after upgrade. Never reinstall Historian to resolve an audit discrepancy.
 
-Memory 26 is the sole current self-service Relay setup map. All unrelated Historian stable state is preserved, so upgrade in place remains mandatory. If a precondition or audit fails, restore the maintenance-window snapshot.
-
-After canonical artifacts exist, run `./tools/scripts/preflight-historian-production-upgrade` for a read-only artifact and upgrade-path preflight before the maintenance window.
-
-Record pre-upgrade query results before upgrading `jupiter_historian`:
+After canonical artifacts exist, run `./tools/scripts/preflight-historian-production-upgrade` for a read-only artifact and upgrade-path preflight. Record:
 
 - Historian module hash, controllers, and stable memory size from `icp canister status j5gs6-uiaaa-aaaar-qb5cq-cai -n ic`.
-- `get_public_counts` and `get_public_status`.
+- `get_public_counts`, `get_public_status`, and the empty-route commitment health query below.
 - All `list_canisters` pages needed to cover tracked targets, canonical Relay, and self-service Relays.
-- Representative commitment histories and cycles histories for known targets.
-- Indexing cursors, fault state, aggregate output/reward/burn totals, and factory enabled state.
+- Representative commitment/cycles histories, known exact Relay configuration mappings, indexing cursors, fault state, and aggregate totals.
 
-The production Historian does not expose `debug_api`, so debug setup-entry listing is not a production preflight mechanism. Before later upgrades, record active mappings through known exact full configurations with `get_relay_configuration_view`; production cannot enumerate every configuration hash.
-
-Before the maintenance window, confirm the live production Historian is on the repository's supported direct-upgrade path. Rollback procedures must use the snapshot created during that same maintenance window.
-
-Maintenance sequence tested with `icp 0.2.6`:
+Routine maintenance sequence tested with `icp 0.2.6`:
 
 ```bash
 icp canister stop jupiter_historian --environment ic
 icp canister status jupiter_historian --environment ic --json
-SNAPSHOT_ID="$(icp canister snapshot create jupiter_historian --environment ic --quiet)"
-icp canister snapshot list jupiter_historian --environment ic --json
-icp canister snapshot download jupiter_historian "$SNAPSHOT_ID" --environment ic --output /tmp/jupiter-historian-snapshot-"$SNAPSHOT_ID"
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic --mode upgrade
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet_frontend --environment ic --mode upgrade
 icp canister start jupiter_historian --environment ic
 icp canister status jupiter_historian --environment ic --json
 ```
 
-The stopped-canister upgrade behavior above is intentional: local testing showed `icp deploy <name> --environment local --mode upgrade` succeeds while the canister is stopped and leaves it `Stopped`, so the explicit `icp canister start` is required after the upgrade.
-
-Rollback from the recorded snapshot ID:
-
-```bash
-icp canister stop jupiter_historian --environment ic
-icp canister snapshot restore jupiter_historian "$SNAPSHOT_ID" --environment ic
-icp canister start jupiter_historian --environment ic
-icp canister status jupiter_historian --environment ic --json
-```
+Local testing showed that upgrading a stopped canister leaves it stopped, so the explicit start command is required.
 
 After upgrade, verify:
 
-- Module hash matches the canonical `release-artifacts/jupiter_historian.wasm.gz` package hash.
-- Controllers are unchanged.
-- Counts, cursors, totals, recent feeds, and historical commitment/cycles samples are preserved.
-- Current entries in the memory-26 Relay setup map preserve their exact keys and states.
-- Known exact full configurations still return their original active Relay mappings.
-- Automatic cycles probing is active.
-- `RelayTarget` and `RelayInstance` tracking reasons and counts are preserved independently.
-- New cycles samples append to existing histories.
+- The module hash matches the canonical `release-artifacts/jupiter_historian.wasm.gz` package hash and controllers are unchanged.
+- Counts, cursors, totals, recent feeds, and representative historical samples are preserved.
+- Memory-26 entries, known exact active configuration mappings, and `RelayTarget`/`RelayInstance` tracking are preserved.
+- Automatic cycles probing and normal staking indexing continue, and new samples/commitments append exactly once.
 - Any setup interrupted after an irreversible spend is `ManualRecoveryRequired`; interrupted `Reserved`/`ProbingTargets` entries are removed, while existing `Active` and `ManualRecoveryRequired` entries are preserved.
 
-### Commitment-route roll-up upgrade verification
+### Commitment-route health
 
-The commitment-route roll-up rollout uses an automatic in-place backfill. After restarting Historian, query `get_commitment_route_summaries` anonymously; an empty `routes` vector is sufficient when only the projection metadata is needed:
+Memory 29 is ordinary authoritative Historian state and is preserved directly by normal in-place upgrades. Query route metadata anonymously before and after an upgrade; an empty route vector is sufficient:
 
 ```bash
 icp canister call jupiter_historian get_commitment_route_summaries \
@@ -147,38 +121,29 @@ icp canister call jupiter_historian get_commitment_route_summaries \
   --query
 ```
 
-An existing pre-feature Historian preserves its ordinary stable state and normal staking cursor. After a successful normal index scan, it clears and rebuilds only the commitment-route roll-up map in stable memory 29. A fixed staking transaction boundary partitions the projection-only historical backfill from new forward indexing, so normal service and new commitment indexing continue while the bounded, resumable rebuild runs.
+Normal production is expected to report `complete_from_genesis = true` and `commitment_index_fault = null` before and after a routine upgrade. If completeness unexpectedly becomes false or a fault is present, investigate the invariant violation rather than initiating a historical rebuild.
 
-`complete_from_genesis` may initially be false. Leave Historian running so its normal scan timer can advance the backfill, and query the metadata periodically. Do not publish or use lifetime route totals as authoritative until both `complete_from_genesis == true` and `commitment_index_fault == null`. After completion all prior qualifying commitments are included, and subsequent upgrades perform no migration work.
+### High-risk upgrade and rollback
 
-Deploy the matching frontend while Historian remains stopped after its successful upgrade. Start Historian only after both deployments succeed.
+Snapshots are risk-based. A snapshot is strongly recommended, and may be made a release requirement, when an upgrade materially changes the stable schema, stable-memory layout, migration logic, authoritative historical state, or another rollback-sensitive area. Routine low-risk upgrades that preserve those contracts and have strong upgrade/PocketIC coverage do not require a snapshot as a universal repository invariant.
 
-The maintenance sequence is:
+For a high-risk maintenance window, create and record the snapshot before the upgrade:
 
-1. Record all pre-upgrade public query evidence while Historian is still running.
-2. Stop Historian and wait until its status is `Stopped`.
-3. Create and download a snapshot.
-4. Upgrade Historian in place; do not reinstall it.
-5. While Historian remains stopped, deploy the matching frontend.
-6. Start Historian only after both deployments succeed.
-7. Verify preserved public state and the current setup API with both canonical vectors.
-8. Monitor the automatic in-place commitment-route backfill until its completeness and fault metadata are authoritative.
-9. Verify order independence and that the same targets with a recipient change use a different account and Relay.
-10. Verify each child module hash, running status, empty controller set, public logs/status, and independent tracking counts.
-11. Retain the snapshot until acceptance is complete.
+```bash
+icp canister stop jupiter_historian --environment ic
+SNAPSHOT_ID="$(icp canister snapshot create jupiter_historian --environment ic --quiet)"
+icp canister snapshot list jupiter_historian --environment ic --json
+icp canister snapshot download jupiter_historian "$SNAPSHOT_ID" --environment ic --output /tmp/jupiter-historian-snapshot-"$SNAPSHOT_ID"
+```
 
-For later Historian upgrades:
+Rollback from that recorded snapshot ID only after reviewing why the candidate failed:
 
-1. Record public state and known exact full-configuration mappings.
-2. Stop Historian and wait until its status is `Stopped`.
-3. Create and download a snapshot.
-4. Upgrade Historian in place.
-5. Start Historian.
-6. Verify active mappings through the known exact configurations.
-7. Verify `RelayTarget` and `RelayInstance` counts.
-8. Verify any interrupted post-spend setup is `ManualRecoveryRequired`.
-
-Self-service children are finalized with zero controllers and public log/status visibility. They cannot be upgraded and are never reconstructed by Historian.
+```bash
+icp canister stop jupiter_historian --environment ic
+icp canister snapshot restore jupiter_historian "$SNAPSHOT_ID" --environment ic
+icp canister start jupiter_historian --environment ic
+icp canister status jupiter_historian --environment ic --json
+```
 
 ## Production canister IDs
 

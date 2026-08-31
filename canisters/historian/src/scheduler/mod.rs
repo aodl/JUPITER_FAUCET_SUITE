@@ -14,8 +14,6 @@ mod commitment_indexer_apply;
 use commitment_indexer_apply::*;
 mod commitment_indexer;
 use commitment_indexer::*;
-mod commitment_route_rollup_backfill;
-use commitment_route_rollup_backfill::*;
 mod route_transfer_indexer;
 use route_transfer_indexer::*;
 mod sns_discovery;

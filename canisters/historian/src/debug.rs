@@ -19,10 +19,6 @@ pub struct DebugState {
     pub staking_index_descending: Option<bool>,
     pub staking_backfill_complete: Option<bool>,
     pub commitment_route_rollups_complete_from_genesis: Option<bool>,
-    pub commitment_route_rollup_backfill_active: bool,
-    pub commitment_route_rollup_backfill_boundary_tx_id: Option<u64>,
-    pub commitment_route_rollup_backfill_cursor_tx_id: Option<u64>,
-    pub commitment_route_rollup_backfill_descending: Option<bool>,
     pub oldest_indexed_output_tx_id: Option<u64>,
     pub output_route_index_descending: Option<bool>,
     pub output_route_backfill_complete: Option<bool>,
@@ -98,21 +94,6 @@ pub(super) fn debug_state() -> DebugState {
         staking_backfill_complete: st.staking_backfill_complete,
         commitment_route_rollups_complete_from_genesis: st
             .commitment_route_rollups_complete_from_genesis,
-        commitment_route_rollup_backfill_active: st
-            .active_commitment_route_rollup_backfill
-            .is_some(),
-        commitment_route_rollup_backfill_boundary_tx_id: st
-            .active_commitment_route_rollup_backfill
-            .as_ref()
-            .map(|active| active.boundary_tx_id),
-        commitment_route_rollup_backfill_cursor_tx_id: st
-            .active_commitment_route_rollup_backfill
-            .as_ref()
-            .and_then(|active| active.cursor_tx_id),
-        commitment_route_rollup_backfill_descending: st
-            .active_commitment_route_rollup_backfill
-            .as_ref()
-            .map(|active| active.descending),
         oldest_indexed_output_tx_id: st.oldest_indexed_output_tx_id,
         output_route_index_descending: st.output_route_index_descending,
         output_route_backfill_complete: st.output_route_backfill_complete,
@@ -255,17 +236,6 @@ pub(super) fn debug_reset_runtime_state() {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
-pub(super) fn debug_reset_commitment_route_projection_to_pre_feature_state() {
-    guard_debug_api_not_production();
-    state::clear_commitment_route_rollups();
-    state::with_root_state_mut(|st| {
-        st.commitment_route_rollups_complete_from_genesis = None;
-        st.active_commitment_route_rollup_backfill = None;
-    });
-}
-
-#[cfg(feature = "debug_api")]
-#[ic_cdk::update]
 pub(super) fn debug_set_main_lock_expires_at_ts(ts: Option<u64>) {
     guard_debug_api_not_production();
     state::with_root_state_mut(|st| st.main_lock_state_ts = Some(ts.unwrap_or(0)));
@@ -291,7 +261,6 @@ pub(crate) fn reset_derived_state_for_debug() {
         st.staking_index_descending = None;
         st.staking_backfill_complete = Some(false);
         st.commitment_route_rollups_complete_from_genesis = Some(false);
-        st.active_commitment_route_rollup_backfill = None;
         st.last_indexed_output_tx_id = None;
         st.oldest_indexed_output_tx_id = None;
         st.output_route_index_descending = None;

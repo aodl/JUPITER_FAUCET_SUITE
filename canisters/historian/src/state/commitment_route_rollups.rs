@@ -15,6 +15,7 @@ pub(crate) fn increment_commitment_route_rollup(key: CommitmentRouteKey, amount_
     });
 }
 
+#[cfg(any(test, feature = "debug_api"))]
 pub(crate) fn clear_commitment_route_rollups() {
     with_commitment_route_rollup_map(|map| map.clear_new());
 }

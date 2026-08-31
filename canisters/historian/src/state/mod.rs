@@ -1,7 +1,6 @@
 mod types;
 use types::*;
 pub(crate) use types::*;
-mod legacy_v1;
 mod stable;
 use stable::*;
 pub(crate) use stable::{with_relay_setup_entries_map, DIRTY_REGISTRY, DIRTY_ROOT};
@@ -15,8 +14,8 @@ mod cycles;
 use cycles::*;
 mod snapshots;
 use snapshots::*;
-mod migrations;
-pub(crate) use migrations::*;
+mod restore;
+pub(crate) use restore::*;
 mod access;
 pub(crate) use access::*;
 mod conversions;
