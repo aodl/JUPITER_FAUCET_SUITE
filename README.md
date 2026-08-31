@@ -1,14 +1,41 @@
 # Jupiter Faucet Suite
 
-[Jupiter Faucet](https://jupiter-faucet.com/#intro) is a perpetual cycles top-up protocol for the Internet Computer, built to help canister smart contracts keep running. This repository contains the production canisters, certified frontend, shared crates, tests, and release tooling that implement and verify the Jupiter Faucet suite.
+[Jupiter Faucet](https://www.jupiter-faucet.com/#intro) is a perpetual cycles top-up protocol and shared infrastructure layer for long-lived Internet Computer projects. It turns committed ICP and recurring NNS maturity into reusable funding routes so applications do not each need to build and operate their own neuron-management, maturity-routing, and cycles-management stack.
+
+Applications remain responsible for their own business and incentive logic: which behaviour deserves rewards, how value should be weighted, how abuse is constrained, and which governance or product policies apply. Jupiter provides generic infrastructure beneath those decisions; it does not make them for the application.
+
+The primary integration model is to use **the canonical Jupiter Faucet deployed on IC mainnet**. Projects can make commitments through the established productive-stake and maturity flow, share its public observability and review surface, and create a dedicated immutable Relay through the deployed frontend and Historian when they need managed multi-canister funding.
+
+This repository contains the production canisters, certified frontend, shared crates, tests, and release tooling that implement and verify the suite. The implementation is split into narrow value-moving, allocation, observation, and support roles so each authority boundary can be reviewed independently.
 
 ![Jupiter Faucet](canisters/frontend/public/og/preview-20260520.jpg)
 
 <img src="/canisters/frontend/public/perpetual-canister-topups.svg">
 
-The suite turns durable ICP and NNS maturity into durable cycles support. A controlled NNS neuron produces recurring maturity, the disburser stages that maturity as ICP, the faucet allocates the base ICP flow to memo-declared targets, and the relay helps keep the suite's own canisters funded before routing surplus ICP to configured neuron recipients. Historian and frontend canisters provide public observability, while small recovery/support canisters keep the value-moving path narrow and auditable.
+## Shared infrastructure for IC projects
+
+Keeping an application running introduces generic work beyond its product logic: maintaining cycles buffers, managing an ICP reserve, harvesting and routing maturity, avoiding chronic overfunding, handling surplus, and making long-lived value-moving automation reviewable. Jupiter makes those concerns composable rather than requiring each project to engineer them from scratch.
+
+- **Your project keeps:** application-specific reward eligibility, anti-sybil rules, business economics, product revenue policy, and project governance.
+- **Jupiter can handle:** long-term commitment routes, NNS maturity routing, direct or managed cycles funding, raw ICP and supported neuron routes, observed-demand allocation, surplus execution, and public operational history.
+
+The [shared-infrastructure architecture guide](docs/architecture/shared-infrastructure.md) explains this boundary, common composition patterns, the separate pre-launch IO relationship, and the concrete trust properties relevant to adopting shared infrastructure.
+
+The suite overview shows what can be composed: one long-term commitment can produce recurring output, route directly to a target, or supply a Relay that allocates cycles according to measured demand. It also depicts the intended relationship with the separate IO project. IO is not yet release-ready or live.
+
+<img src="/canisters/frontend/public/jupiter-faucet-overview.svg">
+
+| If your project needs... | Start with... |
+| --- | --- |
+| Long-term cycles funding for one canister | A direct Faucet commitment |
+| Funding for several canisters with changing demand | A Relay created through the mainnet self-service factory |
+| A blend of immediately spendable and future funding | Relay splitter funding plus Faucet |
+| Surplus returned to a treasury account or public NNS neuron | Relay surplus recipients |
+| A liquid-staking or reward asset | The [IO relationship](docs/architecture/shared-infrastructure.md#relationship-with-io), a separate pre-launch layer |
 
 ## Protocol Overview
+
+The suite turns durable ICP and NNS maturity into durable cycles support. A controlled NNS neuron produces recurring maturity, the disburser stages that maturity as ICP, the faucet allocates the base ICP flow to memo-declared targets, and Relay can keep configured canisters funded before routing safely distributable surplus ICP to configured recipients. Historian and frontend canisters provide public observability, while small recovery/support canisters keep the value-moving path narrow and auditable.
 
 The operational path is intentionally split across small canisters:
 
@@ -24,8 +51,6 @@ The operational path is intentionally split across small canisters:
 - [`canisters/lifeline`](canisters/lifeline) provides minimal recovery support.
 - [`canisters/sns-rewards`](canisters/sns-rewards) maintains SNS owner snapshots and supplies snapshot-scoped reward context and account-owner lookups to Relay.
 
-<img src="/canisters/frontend/public/jupiter-faucet-overview.svg">
-
 At a high level, a participant declares a faucet target by transferring ICP to the configured staking account and placing a supported ASCII directive in `icrc1_memo`. Plain declared canister ID text is the primary cycles top-up form. The faucet also supports `canister_id.memo` for raw ICP routing and decimal NNS neuron IDs, optionally with `.memo`, for neuron staking-account top-ups. The exact eligibility, memo, fee, retry, and rescue rules live in the component READMEs:
 
 - [`canisters/disburser/README.md`](canisters/disburser/README.md)
@@ -36,7 +61,7 @@ The value-moving canisters expose little or no public production API. Public ver
 
 Through Historian, users can create an immutable Relay to keep 1–20 canisters funded. Surplus ICP can be sent to as many as five principal or public NNS neuron recipients, each with an optional memo, or kept entirely in the cycles-funding loop by choosing no recipients. See [Relay setup and recovery](docs/relay-setup-recovery.md).
 
-Users can also fund a Relay through fixed 10–90% splitter accounts, dividing a deposit between immediate Relay funding and Faucet staging. See the [Relay README](canisters/relay/README.md#workflow-4-fixed-splitter-subaccounts-1090).
+Users can also fund a Relay through fixed 10–90% splitter accounts, dividing a deposit between immediate Relay funding and Faucet staging. See the [Relay README](canisters/relay/README.md#splitter-subaccounts-1090).
 
 ## Source Verification and Reproducible Builds
 
@@ -107,6 +132,7 @@ npm run verify:reproducible-artifacts
 
 ## Documentation
 
+- [Shared infrastructure / why Jupiter Faucet exists](docs/architecture/shared-infrastructure.md)
 - [Canister roles](docs/architecture/canister-roles.md)
 - [Testing](docs/development/testing.md)
 - [Dependency scanning](docs/security/dependency-scanning.md)

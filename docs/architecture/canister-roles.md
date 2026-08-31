@@ -1,6 +1,8 @@
 # Canister Roles
 
-Jupiter Faucet is organized as a suite of narrow Internet Computer canisters instead of one broad service. The value-moving code is split from the public read model and certified frontend so each component has a small operational surface and a clear verification target.
+Jupiter Faucet's purpose is to provide a reusable infrastructure layer for long-term ICP funding, maturity routing, cycles allocation, and related observability while applications retain their own business and incentive logic. Integrating with the canonical mainnet deployment gives applications the established stake and maturity flow, shared observability, and self-service Relay factory described in [Jupiter Faucet as shared infrastructure](shared-infrastructure.md).
+
+The narrow-canister decomposition implements that model; it is not the purpose by itself. Value-moving code is split from the public read model and certified frontend so each component has a small operational surface and a clear verification target.
 
 ## Operational Path
 

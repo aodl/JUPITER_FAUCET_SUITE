@@ -6,6 +6,10 @@ A Relay gives a project **one ICP funding destination** and uses that funding to
 
 Relay can use ordinary direct ICP funding, but it also integrates with [Jupiter Faucet](../faucet/README.md): a Faucet commitment can perpetually produce raw ICP for a Relay, while Relay decides how that ICP should be allocated as downstream needs change.
 
+Relay is the allocation primitive in Jupiter's broader [shared-infrastructure model](../../docs/architecture/shared-infrastructure.md). It handles generic infrastructure allocation; it does not decide the application's business-level allocation of rewards or value.
+
+Projects can use the canonical Jupiter Faucet deployment on mainnet and create a dedicated Relay through its self-service factory. The resulting Relay is immutable and specific to the project's chosen targets and surplus recipients while benefiting from the shared protocol's reviewed factory, funding routes, and observability.
+
 <img src="../frontend/public/relay.svg" alt="Jupiter Relay funding and allocation flows">
 
 > **Diagram scope:** the diagram shows the common Relay flows. Its “up to 5” surplus-recipient annotation is a limit of the current **Historian self-service factory**, not of the Relay runtime itself.
@@ -26,7 +30,7 @@ For example, a project with a low-burn frontend and a high-burn storage canister
 
 ## Create a self-service Relay
 
-The frontend route [`#relay-setup`](https://jupiter-faucet.com/#relay-setup) uses [Jupiter Historian](../historian/README.md) as a factory for dedicated immutable Relay instances.
+The frontend route [`#relay-setup`](https://www.jupiter-faucet.com/#relay-setup) uses [Jupiter Historian](../historian/README.md) as a factory for dedicated immutable Relay instances.
 
 The current self-service configuration is:
 
