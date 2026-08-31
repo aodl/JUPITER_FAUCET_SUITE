@@ -782,7 +782,7 @@ mod tests {
             .expect("index.html should be embedded in frontend assets");
         let index_html =
             std::str::from_utf8(index_html.contents()).expect("index.html should be valid utf-8");
-        let preview_url = "https://jupiter-faucet.com/og/preview-20260520.jpg";
+        let preview_url = "https://www.jupiter-faucet.com/og/preview-20260520.jpg";
 
         assert!(index_html.contains(&format!(
             r#"<meta property="og:image" content="{preview_url}" />"#
