@@ -57,7 +57,8 @@
     <circle cx="100" cy="220" fill="#eef4ff" r="42" stroke="#2f6ee5" stroke-width="2.4"/>
     <circle cx="100" cy="214" fill="none" r="7.5" stroke="#2f6ee5" stroke-width="2.3"/>
     <path d="M85,236 C90,222 110,222 115,236" fill="none" stroke="#2f6ee5" stroke-linecap="round" stroke-width="2.3"/>
-    <text class="node-title" text-anchor="middle" x="100" y="290">User</text>
+    <text class="node-title" text-anchor="middle" x="100" y="290">User / Third</text>
+    <text class="node-title" text-anchor="middle" x="100" y="310">Party Protocol</text>
   </g>
 
   <g class="entity neuron">
