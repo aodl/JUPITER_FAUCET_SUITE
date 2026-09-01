@@ -27,10 +27,10 @@ The suite overview shows what can be composed: one long-term commitment can prod
 
 | If your project needs... | Start with... |
 | --- | --- |
-| Long-term cycles funding for one canister | A direct Faucet commitment |
-| Funding for several canisters with changing demand | A Relay created through the mainnet self-service factory |
-| A blend of immediately spendable and future funding | Relay splitter funding plus Faucet |
-| Surplus returned to a treasury account or public NNS neuron | Relay surplus recipients |
+| Long-term cycles funding for one canister | A [direct Faucet commitment](https://www.jupiter-faucet.com/#how-it-works) |
+| Funding for several canisters with changing demand | A Relay created through the [mainnet self-service factory](https://www.jupiter-faucet.com/#relay-setup) |
+| A blend of immediately spendable and future funding | [Relay splitter funding](https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/canisters/relay#funding-a-relay) plus Faucet |
+| Surplus returned to a treasury account or public NNS neuron | [Relay surplus recipients](https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/canisters/relay#surplus-recipients-and-reward-attribution) |
 | A liquid-staking or reward asset | The [IO relationship](docs/architecture/shared-infrastructure.md#relationship-with-io), a separate pre-launch layer |
 
 ## Protocol Overview
