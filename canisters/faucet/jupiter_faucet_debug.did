@@ -11,8 +11,7 @@ type InitArgs = record {
   funding_source_account : Account;
 
   rescue_controller : principal;
-  blackhole_controller : opt principal;
-  blackhole_armed : opt bool;
+  autonomous_rescue_armed : opt bool;
   expected_first_staking_tx_id : opt nat64;
 
   main_interval_seconds : opt nat64;
@@ -46,8 +45,7 @@ type DebugConfig = record {
   governance_canister_id : principal;
   funding_source_account : Account;
   rescue_controller : principal;
-  blackhole_controller : opt principal;
-  blackhole_armed : opt bool;
+  autonomous_rescue_armed : opt bool;
   expected_first_staking_tx_id : opt nat64;
   main_interval_seconds : nat64;
   rescue_interval_seconds : nat64;
@@ -65,8 +63,7 @@ type DebugState = record {
   rescue_triggered : bool;
   active_payout_job_present : bool;
   last_summary_present : bool;
-  blackhole_controller : opt principal;
-  blackhole_armed_since_ts : opt nat64;
+  autonomous_rescue_armed_since_ts : opt nat64;
   forced_rescue_reason : opt ForcedRescueReason;
   skip_range_invariant_fault : bool;
   consecutive_index_anchor_failures : nat8;
@@ -113,8 +110,8 @@ service : (InitArgs) -> {
   debug_footprint : () -> (DebugFootprint) query;
   debug_last_summary : () -> (opt Summary) query;
   debug_reset_runtime_state : () -> ();
-  debug_set_blackhole_armed : (opt bool) -> ();
-  debug_set_blackhole_armed_since_ts : (opt nat64) -> ();
+  debug_set_autonomous_rescue_armed : (opt bool) -> ();
+  debug_set_autonomous_rescue_armed_since_ts : (opt nat64) -> ();
   debug_set_expected_first_staking_tx_id : (opt nat64) -> ();
   debug_set_main_lock_expires_at_ts : (opt nat64) -> ();
   debug_clear_forced_rescue : () -> ();

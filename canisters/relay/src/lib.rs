@@ -566,12 +566,8 @@ mod tests {
             b"10292412127977304661"
         );
         let cfg = config_from_init_args(args.clone());
-        assert_eq!(
-            cfg.cycles_probe_policy,
-            CyclesProbePolicy::FixedBlackhole {
-                canister_id: principal("77deu-baaaa-aaaar-qb6za-cai")
-            }
-        );
+        assert_eq!(args.blackhole_canister_id, None);
+        assert_eq!(cfg.cycles_probe_policy, CyclesProbePolicy::Auto);
 
         let roundtrip = encode_args((args,)).expect("decoded Rust InitArgs should re-encode");
         let (_decoded_again,): (InitArgs,) =

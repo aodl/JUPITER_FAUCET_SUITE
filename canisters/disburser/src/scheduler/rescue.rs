@@ -2,8 +2,8 @@ use super::*;
 /// RESCUE TICK:
 /// - errors-only logs
 /// - policy-driven decision:
-///   * healthy => controllers=[blackhole,self]
-///   * broken  => controllers=[blackhole,rescue,self]
+///   * healthy => the controller set contains only self
+///   * broken  => the controller set contains exactly self and the rescue controller
 ///
 /// This path is intentionally driven by persisted local state plus a management-canister
 /// controller update. It does not require fresh ledger, governance, or canister-status
@@ -15,7 +15,7 @@ pub(super) async fn rescue_tick() {
         if st.forced_rescue_reason.is_none()
             && policy::bootstrap_rescue_due(
                 now_secs,
-                st.blackhole_armed_since_ts,
+                st.autonomous_rescue_armed_since_ts,
                 st.last_successful_transfer_ts,
             )
         {
@@ -24,16 +24,14 @@ pub(super) async fn rescue_tick() {
     });
 
     let (
-        blackhole_armed,
-        blackhole_controller,
+        autonomous_rescue_armed,
         last_xfer_opt,
         rescue_controller,
         forced_rescue_reason,
         rescue_triggered,
     ) = state::with_state(|st| {
         (
-            st.config.blackhole_armed.unwrap_or(false),
-            st.config.blackhole_controller,
+            st.config.autonomous_rescue_armed.unwrap_or(false),
             st.last_successful_transfer_ts,
             st.config.rescue_controller,
             st.forced_rescue_reason.clone(),
@@ -41,21 +39,15 @@ pub(super) async fn rescue_tick() {
         )
     });
 
-    if !blackhole_armed {
+    if !autonomous_rescue_armed {
         return;
     }
-
-    let Some(blackhole_controller) = blackhole_controller else {
-        log_error(2003);
-        return;
-    };
 
     let self_id = self_canister_principal();
     let Some(mut desired) = desired_controllers_for_rescue_state(
         now_secs,
         last_xfer_opt,
         self_id,
-        blackhole_controller,
         rescue_controller,
         forced_rescue_reason.as_ref(),
         rescue_triggered,
@@ -68,14 +60,7 @@ pub(super) async fn rescue_tick() {
 
     let rescue_active = desired.contains(&rescue_controller);
 
-    let arg = UpdateSettingsArgs {
-        canister_id: self_id,
-        settings: CanisterSettings {
-            controllers: Some(desired.clone()),
-            log_visibility: None,
-            status_visibility: None,
-        },
-    };
+    let arg = controller_update_settings(self_id, desired.clone());
 
     if update_settings(&arg).await.is_err() {
         log_error(2002);
@@ -88,28 +73,35 @@ pub(super) async fn rescue_tick() {
     });
 }
 
+fn controller_update_settings(
+    self_id: Principal,
+    controllers: Vec<Principal>,
+) -> UpdateSettingsArgs {
+    UpdateSettingsArgs {
+        canister_id: self_id,
+        settings: CanisterSettings {
+            controllers: Some(controllers),
+            log_visibility: Some(LogVisibility::Public),
+            status_visibility: Some(StatusVisibility::Public),
+        },
+    }
+}
+
 fn desired_controllers_for_rescue_state(
     now_secs: u64,
     last_xfer_opt: Option<u64>,
     self_id: Principal,
-    blackhole_controller: Principal,
     rescue_controller: Principal,
     forced_rescue_reason: Option<&state::ForcedRescueReason>,
     rescue_triggered: bool,
 ) -> Option<Vec<Principal>> {
     if forced_rescue_reason.is_some() {
-        return Some(vec![blackhole_controller, rescue_controller, self_id]);
+        return Some(vec![rescue_controller, self_id]);
     }
     if rescue_triggered && last_xfer_opt.is_none() {
-        return Some(vec![blackhole_controller, self_id]);
+        return Some(vec![self_id]);
     }
-    policy::desired_controllers(
-        now_secs,
-        last_xfer_opt,
-        self_id,
-        Some(blackhole_controller),
-        rescue_controller,
-    )
+    policy::desired_controllers(now_secs, last_xfer_opt, self_id, rescue_controller)
 }
 
 #[cfg(test)]
@@ -124,8 +116,18 @@ mod tests {
         Principal::anonymous()
     }
 
-    fn blackhole_id() -> Principal {
-        Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").unwrap()
+    #[test]
+    fn autonomous_controller_settings_preserve_public_observability() {
+        for controllers in [vec![self_id()], vec![self_id(), rescue_id()]] {
+            let arg = controller_update_settings(self_id(), controllers.clone());
+            assert_eq!(arg.canister_id, self_id());
+            assert_eq!(arg.settings.controllers, Some(controllers));
+            assert_eq!(
+                arg.settings.status_visibility,
+                Some(StatusVisibility::Public)
+            );
+            assert_eq!(arg.settings.log_visibility, Some(LogVisibility::Public));
+        }
     }
 
     #[test]
@@ -135,28 +137,19 @@ mod tests {
                 1_000,
                 None,
                 self_id(),
-                blackhole_id(),
                 rescue_id(),
                 Some(&state::ForcedRescueReason::BootstrapNoSuccess),
                 false,
             ),
-            Some(vec![blackhole_id(), rescue_id(), self_id()])
+            Some(vec![rescue_id(), self_id()])
         );
     }
 
     #[test]
     fn cleared_pending_rescue_narrows_without_transfer_prerequisite() {
         assert_eq!(
-            desired_controllers_for_rescue_state(
-                1_000,
-                None,
-                self_id(),
-                blackhole_id(),
-                rescue_id(),
-                None,
-                true,
-            ),
-            Some(vec![blackhole_id(), self_id()])
+            desired_controllers_for_rescue_state(1_000, None, self_id(), rescue_id(), None, true,),
+            Some(vec![self_id()])
         );
     }
 
@@ -168,12 +161,11 @@ mod tests {
                 now,
                 Some(now - (15 * 86_400)),
                 self_id(),
-                blackhole_id(),
                 rescue_id(),
                 None,
                 true,
             ),
-            Some(vec![blackhole_id(), rescue_id(), self_id()])
+            Some(vec![rescue_id(), self_id()])
         );
     }
 
@@ -185,7 +177,6 @@ mod tests {
                 now,
                 Some(now - (10 * 86_400)),
                 self_id(),
-                blackhole_id(),
                 rescue_id(),
                 None,
                 true,
@@ -202,12 +193,11 @@ mod tests {
                 now,
                 Some(now - 1),
                 self_id(),
-                blackhole_id(),
                 rescue_id(),
                 None,
                 true,
             ),
-            Some(vec![blackhole_id(), self_id()])
+            Some(vec![self_id()])
         );
     }
 
@@ -219,23 +209,14 @@ mod tests {
                 now,
                 Some(now - 1),
                 self_id(),
-                blackhole_id(),
                 rescue_id(),
                 None,
                 false,
             ),
-            Some(vec![blackhole_id(), self_id()])
+            Some(vec![self_id()])
         );
         assert_eq!(
-            desired_controllers_for_rescue_state(
-                now,
-                None,
-                self_id(),
-                blackhole_id(),
-                rescue_id(),
-                None,
-                false,
-            ),
+            desired_controllers_for_rescue_state(now, None, self_id(), rescue_id(), None, false,),
             None
         );
     }

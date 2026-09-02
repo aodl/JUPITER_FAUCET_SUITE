@@ -114,6 +114,34 @@ def require_contains(text: str, needle: str, context: str) -> None:
         fail(f"{context} is missing `{needle}`")
 
 
+def null_field_error(text: str, field: str, path: Path) -> str | None:
+    match = re.search(rf"\b{re.escape(field)}\s*=\s*([^;]+);", text)
+    if not match:
+        return f"{path} is missing `{field}`"
+    value = match.group(1).strip()
+    if value != "null":
+        return f"{path} must configure `{field} = null` (got `{value}`)"
+    return None
+
+
+def require_null_field(text: str, field: str, path: Path) -> None:
+    error = null_field_error(text, field, path)
+    if error:
+        fail(error)
+
+
+def obsolete_field_error(text: str, field: str, path: Path) -> str | None:
+    if re.search(rf"\b{re.escape(field)}\b", text):
+        return f"{path} must not contain obsolete field `{field}`"
+    return None
+
+
+def reject_field(text: str, field: str, path: Path) -> None:
+    error = obsolete_field_error(text, field, path)
+    if error:
+        fail(error)
+
+
 def non_comment_command_lines(text: str) -> list[str]:
     lines = []
     for line in text.splitlines():
@@ -499,7 +527,10 @@ def validate_disburser() -> None:
     require_contains(text, f'ledger_canister_id = opt principal "{MAINNET["ledger"]}";', str(path))
     require_contains(text, f'governance_canister_id = opt principal "{MAINNET["governance"]}";', str(path))
     require_contains(text, f'rescue_controller = principal "{PROD["jupiter_lifeline"]}";', str(path))
-    require_contains(text, f'blackhole_controller = opt principal "{MAINNET["blackhole"]}";', str(path))
+    reject_field(text, "blackhole_controller", path)
+    reject_field(text, "blackhole_armed", path)
+    if extract_opt_bool(text, "autonomous_rescue_armed", path):
+        fail(f"{path} must leave autonomous rescue explicitly unarmed")
     require_interval(text, "main_interval_seconds", 86400, path)
     require_interval(text, "rescue_interval_seconds", 86400, path)
 
@@ -513,7 +544,10 @@ def validate_faucet() -> int:
     require_contains(text, f'index_canister_id = opt principal "{MAINNET["index"]}";', str(path))
     require_contains(text, f'cmc_canister_id = opt principal "{MAINNET["cmc"]}";', str(path))
     require_contains(text, f'rescue_controller = principal "{PROD["jupiter_lifeline"]}";', str(path))
-    require_contains(text, f'blackhole_controller = opt principal "{MAINNET["blackhole"]}";', str(path))
+    reject_field(text, "blackhole_controller", path)
+    reject_field(text, "blackhole_armed", path)
+    if extract_opt_bool(text, "autonomous_rescue_armed", path):
+        fail(f"{path} must leave autonomous rescue explicitly unarmed")
     require_contains(text, f'funding_source_account = record {{', str(path))
     require_contains(text, f'owner = principal "{PROD["jupiter_disburser"]}";', str(path))
     require_interval(text, "main_interval_seconds", 86400, path)
@@ -1169,7 +1203,7 @@ def validate_relay() -> None:
     require_opt_principal(text, "ledger_canister_id", MAINNET["ledger"], path)
     require_opt_principal(text, "cmc_canister_id", MAINNET["cmc"], path)
     require_opt_principal(text, "governance_canister_id", MAINNET["governance"], path)
-    require_opt_principal(text, "blackhole_canister_id", MAINNET["blackhole"], path)
+    require_null_field(text, "blackhole_canister_id", path)
     require_opt_principal(text, "sns_rewards_canister_id", PROD["jupiter_sns_rewards"], path)
     require_opt_principal(text, "icp_index_canister_id", MAINNET["index"], path)
     require_interval(text, "main_interval_seconds", 86400, path)
@@ -1210,6 +1244,27 @@ def validate_relay() -> None:
 
 def run_self_tests() -> None:
     path = Path("relay-test.did")
+    if null_field_error("blackhole_canister_id = null;", "blackhole_canister_id", path):
+        fail("self-test unexpectedly rejected canonical Relay Auto configuration")
+    if null_field_error(
+        'blackhole_canister_id = opt principal "77deu-baaaa-aaaar-qb6za-cai";',
+        "blackhole_canister_id",
+        path,
+    ) is None:
+        fail("self-test failed to reject canonical Relay fixed-blackhole configuration")
+
+    controller_path = Path("controller-policy-test.did")
+    clean_controller_config = "autonomous_rescue_armed = opt false;"
+    for obsolete_field in ("blackhole_controller", "blackhole_armed"):
+        if obsolete_field_error(clean_controller_config, obsolete_field, controller_path):
+            fail(f"self-test unexpectedly rejected controller config without `{obsolete_field}`")
+        if obsolete_field_error(
+            clean_controller_config + f"\n{obsolete_field} = null;",
+            obsolete_field,
+            controller_path,
+        ) is None:
+            fail(f"self-test failed to reject obsolete controller field `{obsolete_field}`")
+
     valid = f'''
     surplus_canister_recipients = null;
     surplus_neuron_recipients = vec {{
@@ -1539,6 +1594,16 @@ def main() -> None:
 
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "canisters" / "faucet" / "jupiter_faucet.did")
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "canisters" / "disburser" / "jupiter_disburser.did")
+    for relative_path in [
+        "canisters/faucet/jupiter_faucet.did",
+        "canisters/faucet/jupiter_faucet_debug.did",
+        "canisters/disburser/jupiter_disburser.did",
+        "canisters/disburser/jupiter_disburser_debug.did",
+    ]:
+        did_path = REPO_ROOT / relative_path
+        did_text = did_path.read_text()
+        reject_field(did_text, "blackhole_controller", did_path)
+        reject_field(did_text, "blackhole_armed", did_path)
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "canisters" / "historian" / "jupiter_historian.did")
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "canisters" / "relay" / "jupiter_relay.did")
     validate_no_debug_methods_in_prod_did(REPO_ROOT / "canisters" / "sns-rewards" / "jupiter_sns_rewards.did")

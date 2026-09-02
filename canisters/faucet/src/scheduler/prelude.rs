@@ -2,7 +2,7 @@ pub(super) use candid::{Nat, Principal};
 pub(super) use icrc_ledger_types::icrc1::account::Account;
 pub(super) use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 pub(super) use jupiter_ic_clients::management::{
-    update_settings, CanisterSettings, UpdateSettingsArgs,
+    update_settings, CanisterSettings, LogVisibility, StatusVisibility, UpdateSettingsArgs,
 };
 pub(super) use std::time::Duration;
 

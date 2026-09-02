@@ -330,7 +330,7 @@ pub(super) fn maybe_latch_bootstrap_rescue(now_secs: u64) {
         if st.forced_rescue_reason.is_none()
             && policy::bootstrap_rescue_due(
                 now_secs,
-                st.blackhole_armed_since_ts,
+                st.autonomous_rescue_armed_since_ts,
                 st.last_successful_transfer_ts,
             )
         {

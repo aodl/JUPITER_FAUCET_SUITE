@@ -21,6 +21,9 @@ pocket-ic = { workspace = true }
 slog = { workspace = true }
 tokio = { workspace = true }
 
+[build-dependencies]
+jupiter-build-support = { version = "0.1.0", path = "../../crates/build-support" }
+
 [[test]]
 name = "jupiter_faucet_integration"
 path = "../../tests/pocketic/jupiter_faucet_integration.rs"

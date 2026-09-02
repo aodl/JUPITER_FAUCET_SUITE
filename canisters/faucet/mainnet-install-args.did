@@ -14,8 +14,7 @@
       subaccount = null;
     };
     rescue_controller = principal "afisn-gqaaa-aaaar-qb4qa-cai";
-    blackhole_controller = opt principal "77deu-baaaa-aaaar-qb6za-cai";
-    blackhole_armed = null;
+    autonomous_rescue_armed = opt false;
     expected_first_staking_tx_id = opt (31118741 : nat64);
     main_interval_seconds = opt 86400;
     rescue_interval_seconds = opt 86400;

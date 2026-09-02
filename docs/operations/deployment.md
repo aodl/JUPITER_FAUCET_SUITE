@@ -8,6 +8,97 @@ Historian production deploys are factory-enabled. The checked-in mainnet histori
 
 Existing production Historian must be upgraded in place. Reinstall destroys all Historian stable history and is prohibited for the existing production canister because it clears commitment histories, cycles histories, tracking metadata, active self-service hash mappings, setup progress, index cursors, aggregates, and other durable state. mainnet-install-args.did is for a brand-new Historian installation only; `canisters/historian/mainnet-install-args.did` must not be passed to an existing Historian upgrade.
 
+## Fiduciary-controller retirement migration
+
+This section separates repository preparation from live settings mutations. Repository changes and release artifacts may be prepared, reviewed, and staged without changing mainnet. Every live command below is an operator action requiring the appropriate controller identity and an independently reviewed maintenance window; automation and Codex must not execute it merely because the repository is ready.
+
+Migration record (2026-09-01): the operator reported that every Jupiter protocol canister already has `status_visibility = public`. Treat that as a completed prerequisite for this rollout, not as permission to repeat the mutation. Reverify the live value before removing any controller.
+
+The repository-supported `icp 1.2.0` settings-update command supports `--remove-controller` but does not expose a `status_visibility` setter. Consequently `icp.yaml` does not declare that setting. Use compatible management-canister tooling to establish or inspect public status, retain the evidence, and keep normal builds/deployments on the repository-supported CLI path.
+
+### Step A — record controllers and verify public status
+
+For every production canister, first record controller-authorized settings and the original pre-migration module hash. Separately call management-canister `canister_status` through a non-controller/anonymous identity and require the returned setting to be exactly `Public`, not merely caller-specific `AllowedViewers`. A public state-tree status lookup alone is not equivalent to this capability check. Record the exact controller vector before any mutation. The Step A hash remains the controller-removal baseline only for canisters that are not upgraded during this migration.
+
+Before Step C deploys the new Faucet and Disburser Wasm, inspect the recurring `CONFIG` logs emitted by the currently deployed pre-refactor version. Require `blackhole_armed=false` (or its exact equivalent old-schema unarmed value) and the reviewed Lifeline/rescue principal. In that old schema, this proves that no autonomous controller reconciliation is authorized. Stop if the old live state is armed, if status is not Public, or if the controller set differs from the recorded migration plan.
+
+### Step B — deploy canonical Relay with Auto probing
+
+Before removing the Fiduciary controller from any canister whose cycles canonical Relay must observe, upgrade canonical Relay using its reviewed full replacement `InitArgs`:
+
+```bash
+JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
+  --environment ic \
+  --mode upgrade \
+  --args-file canisters/relay/mainnet-install-args.did
+```
+
+The checked-in argument must contain `blackhole_canister_id = null`, which selects `CyclesProbePolicy::Auto`. Relay replacement semantics still apply: the full `InitArgs` is mandatory, heap configuration and ordinary operational state reset, and the first successful post-upgrade tick establishes a `BaselineOnly` cycles sample without ordinary demand-derived spend. The durable reward/splitter journals retain only the state documented in the lifecycle matrix below.
+
+Verify that the live Relay module hash exactly matches the reviewed canonical `release-artifacts/jupiter_relay.wasm.gz` install-package hash, then record that live post-upgrade hash as Relay's controller-removal baseline. The original Step A Relay hash is pre-migration evidence, not the baseline for its later settings-only controller removal.
+
+Before proceeding, verify the Relay `CONFIG` log says `cycles_probe_policy=Auto` and independently verify each Jupiter target's `status_visibility=Public` through a non-controller. After the expected baseline tick, require subsequent Relay/Historian cycles observations for every Jupiter target to succeed. Successful ordinary observations do not emit a public per-target route identity, so do not claim to distinguish `DirectCanisterStatus` from a fallback using runtime logs alone. The shared cycles-probe implementation and regression tests are the evidence that Auto attempts direct management-canister status before compatibility fallbacks and stops after a successful public direct result. The two community blackholes remain managed funding targets; that funding policy is independent of the retired controller relationship.
+
+### Step C — upgrade Faucet and Disburser while rescue is unarmed
+
+Because this migration changes stable-state decoding and migration logic, treat each Faucet and Disburser upgrade as a separate rollback-sensitive, high-risk operation. This snapshot requirement is specific to this migration; it does not make snapshots mandatory for routine low-risk upgrades that preserve stable-state contracts.
+
+For each canister in turn:
+
+1. Satisfy the application-level quiescence requirement first. For Faucet, recurring `STATE` logs must show `active_payout_job_present=false`. For Disburser, satisfy the applicable in-flight maturity-disbursement and payout constraints documented in its README.
+2. Stop the target canister and use controller-authorized status calls to verify that it reaches `Stopped`. Do not treat acceptance of the stop request as sufficient; reaching `Stopped` is the evidence that outstanding callbacks have drained.
+3. Create an immediately pre-upgrade canister snapshot using the high-risk procedure below. Record the target, snapshot ID, creation time, current module hash, and controller set. Preferably download the snapshot to durable offline storage as independent rollback evidence.
+4. Recheck the target's cycles balance, freezing threshold, reserved/storage usage, and snapshot inventory after snapshot creation. Require enough headroom for snapshot retention, the upgrade, restart, verification, and a possible restore; do not proceed if creating the snapshot introduced cycle or freeze risk.
+5. Perform the reviewed canonical `.wasm.gz` upgrade using the repository's existing upgrade procedure, without passing the fresh-install argument file and without arming autonomous rescue.
+6. Query controller-authorized status after the upgrade. If the canister remains stopped, explicitly start it, then require `Running` before continuing with post-upgrade verification.
+
+After each upgraded canister is running, verify that the live module hash exactly matches that canister's reviewed canonical `.wasm.gz` install-package hash, then record the live post-upgrade hash as that Faucet or Disburser canister's controller-removal baseline. Also verify stable monetary summaries, funding cursors or payout plans, failure counters/latches, and normal value flow. Recurring `CONFIG` logs from the new Wasm must use the new terminology and report `autonomous_rescue_armed=false` or `autonomous_rescue_armed=none` when stable restoration represents the unarmed state as absent. Either new-schema value means that no autonomous controller reconciliation is authorized, just as the old-schema unarmed evidence did before Step C. Recheck public status and confirm no autonomous controller reconciliation occurred. An old unarmed or armed blackhole-policy state intentionally restores the new autonomous rescue mode as unarmed; the upgrade does not infer permission to narrow the current developer-controlled set. Do not arm the new mode during this migration.
+
+Retain each pre-upgrade snapshot until that canister has passed both the post-upgrade checks above and its Step E post-controller-removal checks, and the operator has deliberately closed the rollback window. If the candidate upgrade fails verification, stop the canister, deliberately restore the recorded pre-upgrade snapshot, start the canister, and verify the restored module hash and durable state before deciding how to proceed. A snapshot restore does not rewind Ledger, NNS, or other external-canister effects, so reconcile any effects accepted after the snapshot before authorizing a restore; never use rollback as an automatic retry. Do not continue to controller removal while candidate-upgrade verification is unresolved.
+
+### Step D — remove only the Fiduciary controller, one canister at a time
+
+Use the supported remove-only operation against the explicit reviewed canister principal:
+
+```bash
+icp canister settings update <canister-principal> \
+  --remove-controller 77deu-baaaa-aaaar-qb6za-cai \
+  --environment ic
+```
+
+Do not replace the complete controller vector with a hard-coded list. Do not add self, remove the developer principal, or arm Faucet/Disburser autonomous rescue in this migration. During the development stage, the intended post-removal state is the existing developer principal alone with public status.
+
+Use this low-to-high monetary-criticality order, advancing only after the per-canister checks below pass:
+
+1. frontend — `jufzc-caaaa-aaaar-qb5da-cai`
+2. historian — `j5gs6-uiaaa-aaaar-qb5cq-cai`
+3. SNS rewards — `alk7f-5aaaa-aaaar-qb4ra-cai`
+4. canonical Relay — `u2qkp-aqaaa-aaaar-qb7ea-cai`
+5. Lifeline — `afisn-gqaaa-aaaar-qb4qa-cai`
+6. Faucet — `acjuz-liaaa-aaaar-qb4qq-cai`
+7. Disburser — `uccpi-cqaaa-aaaar-qby3q-cai`
+
+### Step E — verify after every individual removal
+
+After each one-canister mutation, compare the new evidence with the immediately applicable pre-removal baseline: the recorded post-upgrade baseline from Step B for Relay, the corresponding post-upgrade baseline from Step C for Faucet or Disburser, and the Step A hash for every canister not upgraded during this migration. Require all of the following before continuing:
+
+1. non-controller/anonymous management `canister_status` still succeeds;
+2. `status_visibility` is exactly `Public`;
+3. `77deu-baaaa-aaaar-qb6za-cai` is absent from controllers;
+4. the existing developer controller remains present;
+5. the module hash exactly matches that immediately applicable pre-removal baseline—controller removal itself must not alter the module hash;
+6. the canister is `Running`;
+7. public logs remain available where expected; and
+8. Historian and canonical Relay cycles observations continue.
+
+Stop the rollout immediately on any unexpected result. Do not batch controller removals into one opaque command.
+
+### Eventual autonomous handoff is a separate operation
+
+The intermediate posture from this migration has the developer principal as the controller and public status enabled. In the future autonomous posture, a healthy Faucet or Disburser controller set contains only self; during recovery, the controller set contains exactly self and Lifeline. Public status remains enabled in both states.
+
+Before a later governance-approved handoff, verify that the canister itself is already a controller, public status works for a non-controller, Lifeline identity/governance has been reviewed, and real health/value flow has succeeded. Only then deliberately arm autonomous rescue, acknowledging that reconciliation may narrow controllers to self only. This migration does not perform that handoff and must not remove the developer principal.
+
 ## Production release flow
 
 Generic release sequence for routine production upgrades:

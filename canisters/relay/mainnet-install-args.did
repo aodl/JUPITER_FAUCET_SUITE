@@ -14,7 +14,7 @@
     ledger_canister_id = opt principal "ryjl3-tyaaa-aaaaa-aaaba-cai";
     cmc_canister_id = opt principal "rkp4c-7iaaa-aaaaa-aaaca-cai";
     governance_canister_id = opt principal "rrkah-fqaaa-aaaaa-aaaaq-cai";
-    blackhole_canister_id = opt principal "77deu-baaaa-aaaar-qb6za-cai";
+    blackhole_canister_id = null;
     sns_rewards_canister_id = opt principal "alk7f-5aaaa-aaaar-qb4ra-cai";
     icp_index_canister_id = opt principal "qhbym-qaaaa-aaaaa-aaafq-cai";
 

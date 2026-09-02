@@ -57,8 +57,7 @@ struct FaucetInitArg {
     index_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
     rescue_controller: Principal,
-    blackhole_controller: Option<Principal>,
-    blackhole_armed: Option<bool>,
+    autonomous_rescue_armed: Option<bool>,
     expected_first_staking_tx_id: Option<u64>,
     main_interval_seconds: Option<u64>,
     rescue_interval_seconds: Option<u64>,
@@ -75,8 +74,7 @@ struct DisburserInitArg {
     ledger_canister_id: Option<Principal>,
     governance_canister_id: Option<Principal>,
     rescue_controller: Principal,
-    blackhole_controller: Option<Principal>,
-    blackhole_armed: Option<bool>,
+    autonomous_rescue_armed: Option<bool>,
     main_interval_seconds: Option<u64>,
     rescue_interval_seconds: Option<u64>,
 }
@@ -106,7 +104,7 @@ struct DebugState {
     last_successful_transfer_ts: Option<u64>,
     last_rescue_check_ts: u64,
     rescue_triggered: bool,
-    blackhole_armed_since_ts: Option<u64>,
+    autonomous_rescue_armed_since_ts: Option<u64>,
     forced_rescue_reason: Option<ForcedRescueReason>,
     consecutive_index_anchor_failures: u8,
     consecutive_index_latest_invariant_failures: u8,
@@ -181,10 +179,6 @@ fn icrc1_transfer(
     arg: TransferArg,
 ) -> Result<u64> {
     support::ledger::icrc1_transfer(pic, ledger, from, arg)
-}
-
-fn test_blackhole_controller() -> Principal {
-    Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").unwrap()
 }
 
 fn cmc_deposit_account(cmc: Principal, target: Principal) -> Account {
@@ -267,8 +261,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
         rescue_controller: fixture_principal(),
-        blackhole_controller: Some(test_blackhole_controller()),
-        blackhole_armed: Some(false),
+        autonomous_rescue_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(100_000_000),
@@ -293,8 +286,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
-        blackhole_controller: Some(test_blackhole_controller()),
-        blackhole_armed: Some(false),
+        autonomous_rescue_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
@@ -428,8 +420,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
         rescue_controller: fixture_principal(),
-        blackhole_controller: Some(test_blackhole_controller()),
-        blackhole_armed: Some(false),
+        autonomous_rescue_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(100_000_000),
@@ -454,8 +445,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
-        blackhole_controller: Some(test_blackhole_controller()),
-        blackhole_armed: Some(false),
+        autonomous_rescue_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
@@ -604,8 +594,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
         rescue_controller: fixture_principal(),
-        blackhole_controller: Some(test_blackhole_controller()),
-        blackhole_armed: Some(false),
+        autonomous_rescue_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(100_000_000),
@@ -630,8 +619,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
-        blackhole_controller: Some(test_blackhole_controller()),
-        blackhole_armed: Some(false),
+        autonomous_rescue_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
@@ -760,8 +748,7 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
         rescue_controller: fixture_principal(),
-        blackhole_controller: Some(test_blackhole_controller()),
-        blackhole_armed: Some(false),
+        autonomous_rescue_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(100_000_000),
@@ -786,8 +773,7 @@ fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
-        blackhole_controller: Some(test_blackhole_controller()),
-        blackhole_armed: Some(false),
+        autonomous_rescue_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };
@@ -1249,8 +1235,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         index_canister_id: Some(index),
         cmc_canister_id: Some(cmc),
         rescue_controller: fixture_principal(),
-        blackhole_controller: Some(test_blackhole_controller()),
-        blackhole_armed: Some(false),
+        autonomous_rescue_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
         min_tx_e8s: Some(100_000_000),
@@ -1293,8 +1278,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
         ledger_canister_id: Some(ledger),
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
-        blackhole_controller: Some(test_blackhole_controller()),
-        blackhole_armed: Some(false),
+        autonomous_rescue_armed: Some(false),
         main_interval_seconds: Some(86_400),
         rescue_interval_seconds: Some(86_400),
     };

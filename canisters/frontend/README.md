@@ -24,7 +24,7 @@ The canister serves two important HTTP surfaces:
 
 Asset responses are certified and content-typed through the Rust asset router.
 
-The frontend canister intentionally does not expose a public metrics endpoint. Live cycle and accounting data should come from the suite's existing controller, blackhole, and status monitoring paths.
+The frontend canister intentionally does not expose a public metrics endpoint. Live cycle and accounting data should come from protocol-native public status and the suite's Historian/dashboard paths. Generic blackhole compatibility routes remain available for third-party targets where public status is unavailable.
 
 The canister also applies a deliberate cache policy:
 

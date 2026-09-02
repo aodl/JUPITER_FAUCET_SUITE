@@ -505,7 +505,7 @@ struct DebugState {
     payout_plan_transfer_count: u64,
     last_main_run_ts: u64,
     main_lock_state_ts: Option<u64>,
-    blackhole_armed_since_ts: Option<u64>,
+    autonomous_rescue_armed_since_ts: Option<u64>,
     forced_rescue_reason: Option<ForcedRescueReason>,
 }
 
@@ -518,8 +518,7 @@ struct DisburserDebugConfig {
     ledger_canister_id: Principal,
     governance_canister_id: Principal,
     rescue_controller: Principal,
-    blackhole_controller: Option<Principal>,
-    blackhole_armed: Option<bool>,
+    autonomous_rescue_armed: Option<bool>,
     main_interval_seconds: u64,
     rescue_interval_seconds: u64,
 }
@@ -540,8 +539,7 @@ struct FaucetDebugConfig {
     governance_canister_id: Principal,
     funding_source_account: Account,
     rescue_controller: Principal,
-    blackhole_controller: Option<Principal>,
-    blackhole_armed: Option<bool>,
+    autonomous_rescue_armed: Option<bool>,
     expected_first_staking_tx_id: Option<u64>,
     main_interval_seconds: u64,
     rescue_interval_seconds: u64,
@@ -556,7 +554,7 @@ struct FaucetDebugState {
     rescue_triggered: bool,
     active_payout_job_present: bool,
     last_summary_present: bool,
-    blackhole_armed_since_ts: Option<u64>,
+    autonomous_rescue_armed_since_ts: Option<u64>,
     forced_rescue_reason: Option<ForcedRescueReason>,
     consecutive_index_anchor_failures: u8,
     consecutive_index_latest_invariant_failures: u8,
@@ -1361,10 +1359,6 @@ fn mainnet_cmc_principal() -> Principal {
     ic_constants::cycles_minting_canister_id()
 }
 
-fn mainnet_blackhole_principal() -> Principal {
-    ic_constants::blackhole_canister_id()
-}
-
 fn mainnet_sns_wasm_principal() -> Principal {
     ic_constants::sns_wasm_id()
 }
@@ -1415,7 +1409,6 @@ fn cmd_setup_disburser_local() -> Result<()> {
 
     let ledger_id = canister_id("mock_icrc_ledger")?;
     let gov_id = canister_id("mock_nns_governance")?;
-    let blackhole_id = canister_id("mock_blackhole")?;
     let rescue = principal_of_identity()?;
 
     let r1 = Principal::management_canister();
@@ -1432,8 +1425,7 @@ fn cmd_setup_disburser_local() -> Result<()> {
             ledger_canister_id = opt principal "{ledger_id}";
             governance_canister_id = opt principal "{gov_id}";
             rescue_controller = principal "{r3}";
-            blackhole_controller = opt principal "{blackhole_id}";
-            blackhole_armed = opt true;
+            autonomous_rescue_armed = opt true;
 
             main_interval_seconds = opt (31536000:nat64);
             rescue_interval_seconds = opt (31536000:nat64);
@@ -1462,7 +1454,6 @@ fn cmd_setup_faucet_local() -> Result<()> {
     let index_id = canister_id("mock_icp_index")?;
     let cmc_id = canister_id("mock_cmc")?;
     let gov_id = canister_id("mock_nns_governance")?;
-    let blackhole_id = canister_id("mock_blackhole")?;
     let faucet_staking_account = faucet_staking_account();
     let faucet_rescue = Principal::from_text(cmc_id.trim())?;
     let funding_source = local_faucet_funding_source_candid()?;
@@ -1476,8 +1467,7 @@ fn cmd_setup_faucet_local() -> Result<()> {
             governance_canister_id = opt principal "{gov_id}";
             funding_source_account = {funding_source};
             rescue_controller = principal "{faucet_rescue}";
-            blackhole_controller = opt principal "{blackhole_id}";
-            blackhole_armed = opt false;
+            autonomous_rescue_armed = opt false;
             expected_first_staking_tx_id = null;
             main_interval_seconds = opt (31536000:nat64);
             rescue_interval_seconds = opt (31536000:nat64);
@@ -1491,7 +1481,6 @@ fn cmd_setup_faucet_local() -> Result<()> {
         gov_id = gov_id.trim(),
         funding_source = funding_source,
         faucet_rescue = faucet_rescue.to_text(),
-        blackhole_id = blackhole_id.trim(),
     );
 
     deploy_local_canister("jupiter_faucet_dbg", Some(&faucet_args))?;
@@ -1538,8 +1527,7 @@ fn cmd_setup_historian_local() -> Result<()> {
             ledger_canister_id = opt principal "{ledger_id}";
             governance_canister_id = opt principal "{gov_id}";
             rescue_controller = principal "{r3}";
-            blackhole_controller = opt principal "{blackhole_id}";
-            blackhole_armed = opt true;
+            autonomous_rescue_armed = opt true;
 
             main_interval_seconds = opt (31536000:nat64);
             rescue_interval_seconds = opt (31536000:nat64);
@@ -1549,7 +1537,6 @@ fn cmd_setup_historian_local() -> Result<()> {
         r3 = r3.to_text(),
         ledger_id = ledger_id.trim(),
         gov_id = gov_id.trim(),
-        blackhole_id = blackhole_id.trim(),
     );
 
     deploy_local_canister("jupiter_disburser_dbg", Some(&disburser_args))?;
@@ -1572,8 +1559,7 @@ fn cmd_setup_historian_local() -> Result<()> {
             governance_canister_id = opt principal "{gov_id}";
             funding_source_account = {funding_source};
             rescue_controller = principal "{faucet_rescue}";
-            blackhole_controller = opt principal "{blackhole_id}";
-            blackhole_armed = opt false;
+            autonomous_rescue_armed = opt false;
             expected_first_staking_tx_id = null;
             main_interval_seconds = opt (31536000:nat64);
             rescue_interval_seconds = opt (31536000:nat64);
@@ -1587,7 +1573,6 @@ fn cmd_setup_historian_local() -> Result<()> {
         gov_id = gov_id.trim(),
         funding_source = funding_source,
         faucet_rescue = faucet_rescue.to_text(),
-        blackhole_id = blackhole_id.trim(),
     );
     deploy_local_canister("jupiter_faucet_dbg", Some(&faucet_args))?;
     add_self_controller("jupiter_faucet_dbg")?;
@@ -1743,8 +1728,7 @@ fn cmd_setup() -> Result<()> {
             ledger_canister_id = opt principal "{ledger_id}";
             governance_canister_id = opt principal "{gov_id}";
             rescue_controller = principal "{r3}";
-            blackhole_controller = opt principal "{blackhole_id}";
-            blackhole_armed = opt true;
+            autonomous_rescue_armed = opt true;
 
             main_interval_seconds = opt (31536000:nat64);
             rescue_interval_seconds = opt (31536000:nat64);    
@@ -1754,7 +1738,6 @@ fn cmd_setup() -> Result<()> {
         r3 = r3.to_text(),
         ledger_id = ledger_id.trim(),
         gov_id = gov_id.trim(),
-        blackhole_id = blackhole_id.trim(),
     );
 
     deploy_local_canister("jupiter_disburser_dbg", Some(&args))?;
@@ -1777,8 +1760,7 @@ fn cmd_setup() -> Result<()> {
             governance_canister_id = opt principal "{gov_id}";
             funding_source_account = {funding_source};
             rescue_controller = principal "{faucet_rescue}";
-            blackhole_controller = opt principal "{blackhole_id}";
-            blackhole_armed = opt false;
+            autonomous_rescue_armed = opt false;
             expected_first_staking_tx_id = null;
             main_interval_seconds = opt (31536000:nat64);
             rescue_interval_seconds = opt (31536000:nat64);
@@ -1792,7 +1774,6 @@ fn cmd_setup() -> Result<()> {
         gov_id = gov_id.trim(),
         funding_source = funding_source,
         faucet_rescue = faucet_rescue.to_text(),
-        blackhole_id = blackhole_id.trim(),
     );
 
     deploy_local_canister("jupiter_faucet_dbg", Some(&faucet_args))?;
@@ -2281,8 +2262,7 @@ fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 && cfg.ledger_canister_id == mainnet_ledger_principal()
                 && cfg.governance_canister_id == mainnet_governance_principal()
                 && cfg.rescue_controller == prod_lifeline_principal()
-                && cfg.blackhole_controller == Some(mainnet_blackhole_principal())
-                && cfg.blackhole_armed == Some(false)
+                && cfg.autonomous_rescue_armed == Some(false)
                 && cfg.main_interval_seconds == 86_400
                 && cfg.rescue_interval_seconds == 86_400;
             if !ok {
@@ -2298,7 +2278,7 @@ fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         label(
             "icp",
             "disburser",
-            "Rescue controllers invariants (broken→blackhole+rescue+self, healthy→blackhole+self)",
+            "Rescue controllers invariants (broken→rescue+self, healthy→self)",
         ),
         || {
             // Determine expected principals from reality (not mocks).
@@ -2307,7 +2287,6 @@ fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
 
             let self_txt = self_id.to_text();
             let rescue_txt = rescue.to_text();
-            let blackhole_txt = canister_id("mock_blackhole")?.trim().to_string();
 
             // 1) Force "broken" state.
             let old = now_secs.saturating_sub(30 * 86_400);
@@ -2317,17 +2296,15 @@ fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 &format!("(opt ({}:nat64))", old),
             )?;
 
-            // Run rescue tick: should set controllers to {blackhole, rescue, self}
+            // Run rescue tick: should set controllers to {rescue, self} and public visibility.
             let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_rescue_tick")?;
 
             let actual = get_canister_controllers_via_mock_blackhole("jupiter_disburser_dbg")?;
             let expected_broken: BTreeSet<String> =
-                [blackhole_txt.clone(), rescue_txt.clone(), self_txt.clone()]
-                    .into_iter()
-                    .collect();
+                [rescue_txt.clone(), self_txt.clone()].into_iter().collect();
             assert_controllers_eq("jupiter_disburser_dbg", &actual, &expected_broken)?;
 
-            // 2) Recovery: mark as healthy, then rescue tick should reconcile to {blackhole, self}.
+            // 2) Recovery: mark as healthy, then rescue tick should reconcile to {self}.
             let _: () = call_raw(
                 "jupiter_disburser_dbg",
                 "debug_set_last_successful_transfer_ts",
@@ -2337,8 +2314,7 @@ fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_rescue_tick")?;
 
             let actual2 = get_canister_controllers_via_mock_blackhole("jupiter_disburser_dbg")?;
-            let expected_healthy: BTreeSet<String> =
-                [blackhole_txt, self_txt].into_iter().collect();
+            let expected_healthy: BTreeSet<String> = [self_txt].into_iter().collect();
             assert_controllers_eq("jupiter_disburser_dbg", &actual2, &expected_healthy)?;
 
             Ok(())
@@ -2350,14 +2326,13 @@ fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         label(
             "icp",
             "disburser",
-            "Rescue healthy no-op (controllers remain blackhole+self)",
+            "Rescue healthy no-op (controllers remain self-only)",
         ),
         || {
             let self_id = Principal::from_text(canister_id("jupiter_disburser_dbg")?.trim())?;
             let self_txt = self_id.to_text();
-            let blackhole_txt = canister_id("mock_blackhole")?.trim().to_string();
 
-            // Ensure we are in healthy window and actively reconcile once into blackhole+self.
+            // Ensure we are in the healthy window and actively reconcile once into self-only.
             let _: () = call_raw(
                 "jupiter_disburser_dbg",
                 "debug_set_last_successful_transfer_ts",
@@ -2365,8 +2340,7 @@ fn run_local_disburser_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             )?;
             let _: () = call_raw_noargs::<()>("jupiter_disburser_dbg", "debug_rescue_tick")?;
 
-            let expected: BTreeSet<String> =
-                [blackhole_txt, self_txt.clone()].into_iter().collect();
+            let expected: BTreeSet<String> = [self_txt.clone()].into_iter().collect();
             let before = get_canister_controllers_via_mock_blackhole("jupiter_disburser_dbg")?;
             assert_controllers_eq("jupiter_disburser_dbg", &before, &expected)?;
 
@@ -3554,8 +3528,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
                         subaccount: None,
                     }
                 && cfg.rescue_controller == prod_lifeline_principal()
-                && cfg.blackhole_controller == Some(mainnet_blackhole_principal())
-                && cfg.blackhole_armed.is_none()
+                && cfg.autonomous_rescue_armed == Some(false)
                 && cfg.expected_first_staking_tx_id == Some(31_118_741)
                 && cfg.main_interval_seconds == 86_400
                 && cfg.rescue_interval_seconds == 86_400
@@ -3579,7 +3552,7 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
             let _: () = call_raw(
                 "jupiter_faucet_dbg",
-                "debug_set_blackhole_armed",
+                "debug_set_autonomous_rescue_armed",
                 "(opt true)",
             )?;
             let _: () = call_raw(
@@ -3599,15 +3572,14 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
         },
     );
 
-    run_scenario(outcomes, label("icp", "faucet", "rescue: broken path adds lifeline alongside blackhole+self and healthy path recovers to blackhole+self"), || {
+    run_scenario(outcomes, label("icp", "faucet", "rescue: broken path adds lifeline alongside self and healthy path recovers to self-only"), || {
         let faucet_id = Principal::from_text(canister_id("jupiter_faucet_dbg")?.trim())?;
         let rescue = Principal::from_text(canister_id("mock_cmc")?.trim())?;
-        let blackhole = canister_id("mock_blackhole")?.trim().to_string();
-        let expected_broken: BTreeSet<String> = [blackhole.clone(), faucet_id.to_text(), rescue.to_text()].into_iter().collect();
-        let expected_healthy: BTreeSet<String> = [blackhole, faucet_id.to_text()].into_iter().collect();
+        let expected_broken: BTreeSet<String> = [faucet_id.to_text(), rescue.to_text()].into_iter().collect();
+        let expected_healthy: BTreeSet<String> = [faucet_id.to_text()].into_iter().collect();
 
         let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
-        let _: () = call_raw("jupiter_faucet_dbg", "debug_set_blackhole_armed", "(opt true)")?;
+        let _: () = call_raw("jupiter_faucet_dbg", "debug_set_autonomous_rescue_armed", "(opt true)")?;
         let _: () = call_raw(
             "jupiter_faucet_dbg",
             "debug_set_last_successful_transfer_ts",

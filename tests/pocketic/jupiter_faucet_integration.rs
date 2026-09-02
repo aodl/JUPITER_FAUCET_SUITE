@@ -8,6 +8,9 @@ use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResult,
 };
+use jupiter_ic_clients::management::{
+    CanisterStatusArgs, CanisterStatusResult, LogVisibility, StatusVisibility,
+};
 use jupiter_nns_types::{
     list_neurons, manage_neuron, manage_neuron_response, ListNeurons, ListNeuronsResponse,
     ManageNeuronCommandRequest, ManageNeuronRequest, ManageNeuronResponse, Neuron, NeuronId,
@@ -104,8 +107,7 @@ struct FaucetInitArg {
     governance_canister_id: Option<Principal>,
     funding_source_account: Account,
     rescue_controller: Principal,
-    blackhole_controller: Option<Principal>,
-    blackhole_armed: Option<bool>,
+    autonomous_rescue_armed: Option<bool>,
     expected_first_staking_tx_id: Option<u64>,
     main_interval_seconds: Option<u64>,
     rescue_interval_seconds: Option<u64>,
@@ -115,8 +117,7 @@ struct FaucetInitArg {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct FaucetUpgradeArg {
-    blackhole_controller: Option<Principal>,
-    blackhole_armed: Option<bool>,
+    autonomous_rescue_armed: Option<bool>,
     clear_forced_rescue: Option<bool>,
 }
 
@@ -145,8 +146,7 @@ struct DebugState {
     last_successful_transfer_ts: Option<u64>,
     last_rescue_check_ts: u64,
     rescue_triggered: bool,
-    blackhole_controller: Option<Principal>,
-    blackhole_armed_since_ts: Option<u64>,
+    autonomous_rescue_armed_since_ts: Option<u64>,
     forced_rescue_reason: Option<ForcedRescueReason>,
     consecutive_index_anchor_failures: u8,
     consecutive_index_latest_invariant_failures: u8,
@@ -432,7 +432,6 @@ struct FaucetEnv {
     blackhole: Principal,
     lifeline: Principal,
     faucet: Principal,
-    blackhole_controller: Principal,
     staking_account: Account,
     funding_source_account: Account,
     pending_funding_e8s: RefCell<Vec<u64>>,
@@ -476,7 +475,6 @@ impl FaucetEnv {
             subaccount: Some([9u8; 32]),
         };
         let funding_source_account = strict_funding_source_account()?;
-        let blackhole_controller = blackhole;
 
         let mut init = FaucetInitArg {
             staking_account: staking_account.clone(),
@@ -487,8 +485,7 @@ impl FaucetEnv {
             governance_canister_id: Some(governance),
             funding_source_account: funding_source_account.clone(),
             rescue_controller: lifeline,
-            blackhole_controller: Some(blackhole_controller),
-            blackhole_armed: Some(false),
+            autonomous_rescue_armed: Some(false),
             expected_first_staking_tx_id: None,
             main_interval_seconds: Some(60),
             rescue_interval_seconds: Some(60),
@@ -511,7 +508,6 @@ impl FaucetEnv {
             blackhole,
             lifeline,
             faucet,
-            blackhole_controller,
             staking_account,
             funding_source_account,
             pending_funding_e8s: RefCell::new(Vec::new()),
@@ -652,22 +648,22 @@ impl FaucetEnv {
         )
     }
 
-    fn set_blackhole_armed(&self, v: Option<bool>) -> Result<()> {
+    fn set_autonomous_rescue_armed(&self, v: Option<bool>) -> Result<()> {
         update_one(
             &self.pic,
             self.faucet,
             Principal::anonymous(),
-            "debug_set_blackhole_armed",
+            "debug_set_autonomous_rescue_armed",
             v,
         )
     }
 
-    fn set_blackhole_armed_since_ts(&self, ts: Option<u64>) -> Result<()> {
+    fn set_autonomous_rescue_armed_since_ts(&self, ts: Option<u64>) -> Result<()> {
         update_one(
             &self.pic,
             self.faucet,
             Principal::anonymous(),
-            "debug_set_blackhole_armed_since_ts",
+            "debug_set_autonomous_rescue_armed_since_ts",
             ts,
         )
     }
@@ -717,15 +713,25 @@ impl FaucetEnv {
         self.pic.get_controllers(self.faucet)
     }
 
-    fn set_blackholed_controllers(&self) -> Result<()> {
+    fn management_status_from_non_controller(
+        &self,
+    ) -> Result<Result<CanisterStatusResult, String>> {
+        update_one(
+            &self.pic,
+            self.blackhole,
+            Principal::anonymous(),
+            "debug_management_canister_status",
+            CanisterStatusArgs {
+                canister_id: self.faucet,
+            },
+        )
+    }
+
+    fn set_self_only_controllers(&self) -> Result<()> {
         let current = self.pic.get_controllers(self.faucet);
         let sender = current.first().copied().unwrap_or(self.faucet);
         self.pic
-            .set_controllers(
-                self.faucet,
-                Some(sender),
-                vec![self.blackhole_controller, self.faucet],
-            )
+            .set_controllers(self.faucet, Some(sender), vec![self.faucet])
             .map_err(|e| anyhow!("set_controllers reject: {e:?}"))?;
         Ok(())
     }
@@ -845,8 +851,7 @@ impl FaucetEnv {
 
     fn upgrade(&self) -> Result<()> {
         self.upgrade_with_args(FaucetUpgradeArg {
-            blackhole_controller: None,
-            blackhole_armed: None,
+            autonomous_rescue_armed: None,
             clear_forced_rescue: None,
         })
     }
@@ -914,8 +919,7 @@ impl RealIcpIndexHealthEnv {
                 governance_canister_id: Some(governance),
                 funding_source_account: strict_funding_source_account()?,
                 rescue_controller: lifeline,
-                blackhole_controller: Some(blackhole),
-                blackhole_armed: Some(false),
+                autonomous_rescue_armed: Some(false),
                 expected_first_staking_tx_id: None,
                 main_interval_seconds: Some(60),
                 rescue_interval_seconds: Some(60),
@@ -1045,8 +1049,7 @@ impl RealNnsFaucetEnv {
             governance_canister_id: Some(governance),
             funding_source_account: funding_source_account.clone(),
             rescue_controller: lifeline,
-            blackhole_controller: Some(blackhole),
-            blackhole_armed: Some(false),
+            autonomous_rescue_armed: Some(false),
             expected_first_staking_tx_id: None,
             main_interval_seconds: Some(60),
             rescue_interval_seconds: Some(60),
@@ -2799,22 +2802,43 @@ fn faucet_rescue_controller_roundtrip_uses_real_controller_updates() -> Result<(
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
-    env.set_blackholed_controllers()?;
+    env.set_self_only_controllers()?;
     let c0 = env.controllers();
-    if !(c0.contains(&env.faucet) && c0.contains(&env.blackhole_controller) && c0.len() == 2) {
-        bail!("expected blackhole+self controller baseline, got {c0:?}");
+    if c0 != vec![env.faucet] {
+        bail!("expected self-only controller baseline, got {c0:?}");
+    }
+    if env.management_status_from_non_controller()?.is_ok() {
+        bail!("expected the default non-public status posture to deny a non-controller");
     }
 
-    env.set_blackhole_armed(Some(true))?;
+    env.set_autonomous_rescue_armed(Some(true))?;
     env.set_last_successful_transfer_ts(Some(0))?;
     env.rescue_tick()?;
 
     let mut broken = env.controllers();
     broken.sort_by_key(|p| p.to_text());
-    let mut expected_broken = vec![env.blackhole_controller, env.lifeline, env.faucet];
+    let mut expected_broken = vec![env.lifeline, env.faucet];
     expected_broken.sort_by_key(|p| p.to_text());
     if broken != expected_broken {
-        bail!("expected broken rescue path to widen controllers to [blackhole,self,rescue], got {broken:?}");
+        bail!("expected broken rescue path to widen controllers to [self,rescue], got {broken:?}");
+    }
+    let broken_status = env
+        .management_status_from_non_controller()?
+        .map_err(|err| anyhow!("public status failed after rescue widening: {err}"))?;
+    let mut status_broken_controllers = broken_status.settings.controllers.clone();
+    status_broken_controllers.sort_by_key(|p| p.to_text());
+    if status_broken_controllers != expected_broken {
+        bail!(
+            "management status expected recovery controllers [self,rescue], got {status_broken_controllers:?}"
+        );
+    }
+    if broken_status.settings.status_visibility != StatusVisibility::Public
+        || broken_status.settings.log_visibility != LogVisibility::Public
+    {
+        bail!(
+            "rescue widening did not establish public status/log visibility: {:?}",
+            broken_status.settings
+        );
     }
 
     let now_secs = (env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
@@ -2822,11 +2846,25 @@ fn faucet_rescue_controller_roundtrip_uses_real_controller_updates() -> Result<(
     env.rescue_tick()?;
 
     let recovered = env.controllers();
-    if !(recovered.contains(&env.faucet)
-        && recovered.contains(&env.blackhole_controller)
-        && recovered.len() == 2)
+    if recovered != vec![env.faucet] {
+        bail!("expected healthy rescue path to converge back to self-only, got {recovered:?}");
+    }
+    let recovered_status = env
+        .management_status_from_non_controller()?
+        .map_err(|err| anyhow!("public status failed after healthy narrowing: {err}"))?;
+    if recovered_status.settings.controllers != vec![env.faucet] {
+        bail!(
+            "management status expected healthy self-only controllers, got {:?}",
+            recovered_status.settings.controllers
+        );
+    }
+    if recovered_status.settings.status_visibility != StatusVisibility::Public
+        || recovered_status.settings.log_visibility != LogVisibility::Public
     {
-        bail!("expected healthy rescue path to converge back to blackhole+self, got {recovered:?}");
+        bail!(
+            "healthy narrowing did not preserve public status/log visibility: {:?}",
+            recovered_status.settings
+        );
     }
 
     Ok(())
@@ -2877,19 +2915,15 @@ fn faucet_unarmed_rescue_broken_conditions_do_not_change_controllers() -> Result
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
-    env.set_blackholed_controllers()?;
-    env.set_blackhole_armed(Some(false))?;
+    env.set_self_only_controllers()?;
+    env.set_autonomous_rescue_armed(Some(false))?;
     env.set_last_successful_transfer_ts(Some(0))?;
     let before = env.controllers();
 
     env.rescue_tick()?;
 
     let after = env.controllers();
-    if after != before
-        || !(after.contains(&env.faucet)
-            && after.contains(&env.blackhole_controller)
-            && after.len() == 2)
-    {
+    if after != before || after != vec![env.faucet] {
         bail!("expected unarmed rescue tick under broken conditions to leave controllers unchanged, before={before:?} after={after:?}");
     }
     let st = env.state()?;
@@ -2909,8 +2943,8 @@ fn faucet_unarmed_rescue_forced_reason_does_not_change_controllers() -> Result<(
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
-    env.set_blackholed_controllers()?;
-    env.set_blackhole_armed(Some(false))?;
+    env.set_self_only_controllers()?;
+    env.set_autonomous_rescue_armed(Some(false))?;
     env.set_expected_first_staking_tx_id(Some(1))?;
     let before = env.controllers();
 
@@ -2922,22 +2956,14 @@ fn faucet_unarmed_rescue_forced_reason_does_not_change_controllers() -> Result<(
         bail!("expected missing anchor twice to latch forced rescue reason even while unarmed, got {:?}", st_after_latch);
     }
     let after_latch = env.controllers();
-    if after_latch != before
-        || !(after_latch.contains(&env.faucet)
-            && after_latch.contains(&env.blackhole_controller)
-            && after_latch.len() == 2)
-    {
+    if after_latch != before || after_latch != vec![env.faucet] {
         bail!("expected forced rescue reason while unarmed not to change controllers, before={before:?} after_latch={after_latch:?}");
     }
 
     env.rescue_tick()?;
 
     let after_tick = env.controllers();
-    if after_tick != before
-        || !(after_tick.contains(&env.faucet)
-            && after_tick.contains(&env.blackhole_controller)
-            && after_tick.len() == 2)
-    {
+    if after_tick != before || after_tick != vec![env.faucet] {
         bail!("expected explicit rescue tick while unarmed and forced to leave controllers unchanged, before={before:?} after_tick={after_tick:?}");
     }
     let st_after_tick = env.state()?;
@@ -2957,9 +2983,9 @@ fn faucet_bootstrap_rescue_fires_before_first_successful_topup() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
-    env.set_blackholed_controllers()?;
-    env.set_blackhole_armed(Some(true))?;
-    env.set_blackhole_armed_since_ts(Some(0))?;
+    env.set_self_only_controllers()?;
+    env.set_autonomous_rescue_armed(Some(true))?;
+    env.set_autonomous_rescue_armed_since_ts(Some(0))?;
     env.set_last_successful_transfer_ts(None)?;
     env.advance_time_and_tick(15 * 24 * 60 * 60, 5);
     env.rescue_tick()?;
@@ -2972,7 +2998,7 @@ fn faucet_bootstrap_rescue_fires_before_first_successful_topup() -> Result<()> {
     }
     let mut controllers = env.controllers();
     controllers.sort_by_key(|p| p.to_text());
-    let mut expected = vec![env.blackhole_controller, env.lifeline, env.faucet];
+    let mut expected = vec![env.lifeline, env.faucet];
     expected.sort_by_key(|p| p.to_text());
     if controllers != expected {
         bail!("expected bootstrap rescue to widen controllers, got {controllers:?}");
@@ -3007,11 +3033,11 @@ fn faucet_correct_first_tx_anchor_stays_healthy() -> Result<()> {
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let expected_first_tx_id = 1u64;
     let env = FaucetEnv::new_with_init_overrides(|init| {
-        init.blackhole_armed = Some(true);
+        init.autonomous_rescue_armed = Some(true);
         init.expected_first_staking_tx_id = Some(expected_first_tx_id);
     })?;
 
-    env.set_blackholed_controllers()?;
+    env.set_self_only_controllers()?;
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
     let observed_first_tx_id =
@@ -3036,10 +3062,12 @@ fn faucet_correct_first_tx_anchor_stays_healthy() -> Result<()> {
     }
     let mut controllers = env.controllers();
     controllers.sort_by_key(|p| p.to_text());
-    let mut expected = vec![env.blackhole_controller, env.faucet];
+    let mut expected = vec![env.faucet];
     expected.sort_by_key(|p| p.to_text());
     if controllers != expected {
-        bail!("expected matching first tx anchor to keep healthy blackhole+self controllers, got {controllers:?}");
+        bail!(
+            "expected matching first tx anchor to keep self-only controllers, got {controllers:?}"
+        );
     }
 
     Ok(())
@@ -3051,11 +3079,11 @@ fn faucet_wrong_first_tx_anchor_latches_rescue_after_real_first_transfer() -> Re
     require_ignored_flag()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
-        init.blackhole_armed = Some(true);
+        init.autonomous_rescue_armed = Some(true);
         init.expected_first_staking_tx_id = Some(2);
     })?;
 
-    env.set_blackholed_controllers()?;
+    env.set_self_only_controllers()?;
     env.credit_payout(100_000_000)?;
     env.credit_staking(100_000_000)?;
     let observed_first_tx_id =
@@ -3077,7 +3105,7 @@ fn faucet_wrong_first_tx_anchor_latches_rescue_after_real_first_transfer() -> Re
     }
     let mut controllers = env.controllers();
     controllers.sort_by_key(|p| p.to_text());
-    let mut expected = vec![env.blackhole_controller, env.lifeline, env.faucet];
+    let mut expected = vec![env.lifeline, env.faucet];
     expected.sort_by_key(|p| p.to_text());
     if controllers != expected {
         bail!("expected wrong first tx anchor to widen controllers, got {controllers:?}");
@@ -3092,11 +3120,11 @@ fn faucet_anchor_failure_resets_if_observed_oldest_tx_heals_before_latch() -> Re
     require_ignored_flag()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
-        init.blackhole_armed = Some(true);
+        init.autonomous_rescue_armed = Some(true);
         init.expected_first_staking_tx_id = Some(1);
     })?;
 
-    env.set_blackholed_controllers()?;
+    env.set_self_only_controllers()?;
     env.main_tick()?;
     let st1 = env.state()?;
     if st1.consecutive_index_anchor_failures != 1 || st1.forced_rescue_reason.is_some() {
@@ -3134,8 +3162,8 @@ fn faucet_missing_anchor_twice_latches_forced_rescue() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
-    env.set_blackholed_controllers()?;
-    env.set_blackhole_armed(Some(true))?;
+    env.set_self_only_controllers()?;
+    env.set_autonomous_rescue_armed(Some(true))?;
     env.set_expected_first_staking_tx_id(Some(1))?;
 
     env.main_tick()?;
@@ -3157,7 +3185,7 @@ fn faucet_missing_anchor_twice_latches_forced_rescue() -> Result<()> {
     }
     let mut controllers = env.controllers();
     controllers.sort_by_key(|p| p.to_text());
-    let mut expected = vec![env.blackhole_controller, env.lifeline, env.faucet];
+    let mut expected = vec![env.lifeline, env.faucet];
     expected.sort_by_key(|p| p.to_text());
     if controllers != expected {
         bail!("expected anchor-loss forced rescue to widen controllers, got {controllers:?}");
@@ -3219,8 +3247,8 @@ fn faucet_balance_change_without_new_latest_tx_twice_latches_forced_rescue() -> 
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
-    env.set_blackholed_controllers()?;
-    env.set_blackhole_armed(Some(true))?;
+    env.set_self_only_controllers()?;
+    env.set_autonomous_rescue_armed(Some(true))?;
     env.credit_staking(100_000_000)?;
     env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     env.main_tick()?;
@@ -3253,8 +3281,8 @@ fn faucet_two_zero_success_cmc_runs_latch_forced_rescue() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
-    env.set_blackholed_controllers()?;
-    env.set_blackhole_armed(Some(true))?;
+    env.set_self_only_controllers()?;
+    env.set_autonomous_rescue_armed(Some(true))?;
     env.set_cmc_fail(true)?;
     let target = env.blackhole;
 
@@ -3286,8 +3314,8 @@ fn faucet_zero_success_runs_for_non_canister_targets_do_not_latch_forced_rescue(
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
-    env.set_blackholed_controllers()?;
-    env.set_blackhole_armed(Some(true))?;
+    env.set_self_only_controllers()?;
+    env.set_autonomous_rescue_armed(Some(true))?;
     env.set_cmc_fail(true)?;
 
     for _ in 0..3 {
@@ -3430,8 +3458,8 @@ fn faucet_zero_success_runs_for_nonexistent_canister_ids_do_not_latch_forced_res
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai")?;
 
-    env.set_blackholed_controllers()?;
-    env.set_blackhole_armed(Some(true))?;
+    env.set_self_only_controllers()?;
+    env.set_autonomous_rescue_armed(Some(true))?;
     env.set_cmc_fail(true)?;
 
     for _ in 0..3 {
@@ -3516,7 +3544,7 @@ fn faucet_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
     require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
-    env.set_blackhole_armed(Some(true))?;
+    env.set_autonomous_rescue_armed(Some(true))?;
     env.set_expected_first_staking_tx_id(Some(1))?;
     env.main_tick()?;
     env.main_tick()?;
@@ -3532,8 +3560,7 @@ fn faucet_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
     }
 
     env.upgrade_with_args(FaucetUpgradeArg {
-        blackhole_controller: None,
-        blackhole_armed: None,
+        autonomous_rescue_armed: None,
         clear_forced_rescue: Some(true),
     })?;
     let st3 = env.state()?;

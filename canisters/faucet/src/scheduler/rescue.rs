@@ -3,52 +3,56 @@ use super::*;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn desired_rescue_controllers(
     now_secs: u64,
-    blackhole_armed: bool,
-    blackhole_controller: Option<Principal>,
+    autonomous_rescue_armed: bool,
     last_xfer_opt: Option<u64>,
     rescue_controller: Principal,
     forced_reason_present: bool,
     skip_range_fault: bool,
     self_id: Principal,
-) -> Result<Option<Vec<Principal>>, u32> {
-    if !blackhole_armed {
-        return Ok(None);
+) -> Option<Vec<Principal>> {
+    if !autonomous_rescue_armed {
+        return None;
     }
-    let Some(blackhole_controller) = blackhole_controller else {
-        return Err(3107);
-    };
     let mut desired = if forced_reason_present || skip_range_fault {
-        vec![blackhole_controller, rescue_controller, self_id]
+        vec![rescue_controller, self_id]
     } else {
-        let Some(desired) = policy::desired_controllers(
-            now_secs,
-            last_xfer_opt,
-            self_id,
-            Some(blackhole_controller),
-            rescue_controller,
-        ) else {
-            return Ok(None);
+        let Some(desired) =
+            policy::desired_controllers(now_secs, last_xfer_opt, self_id, rescue_controller)
+        else {
+            return None;
         };
         desired
     };
     desired.sort_by_key(|a: &Principal| a.to_text());
     desired.dedup();
-    Ok(Some(desired))
+    Some(desired)
+}
+
+fn controller_update_settings(
+    self_id: Principal,
+    controllers: Vec<Principal>,
+) -> UpdateSettingsArgs {
+    UpdateSettingsArgs {
+        canister_id: self_id,
+        settings: CanisterSettings {
+            controllers: Some(controllers),
+            log_visibility: Some(LogVisibility::Public),
+            status_visibility: Some(StatusVisibility::Public),
+        },
+    }
 }
 
 pub(super) async fn attempt_rescue(now_secs: u64) {
     maybe_latch_bootstrap_rescue(now_secs);
     let (
-        blackhole_armed,
-        blackhole_controller,
+        autonomous_rescue_armed,
         last_xfer_opt,
         rescue_controller,
         forced_reason,
         skip_range_fault,
     ) = state::with_state(|st| {
         (
-            st.config.blackhole_armed.unwrap_or(false),
-            st.config.blackhole_controller,
+            st.config.autonomous_rescue_armed.unwrap_or(false),
             st.last_successful_transfer_ts,
             st.config.rescue_controller,
             st.forced_rescue_reason.clone(),
@@ -56,34 +60,20 @@ pub(super) async fn attempt_rescue(now_secs: u64) {
         )
     });
     let self_id = self_canister_principal();
-    let desired_opt = match desired_rescue_controllers(
+    let desired_opt = desired_rescue_controllers(
         now_secs,
-        blackhole_armed,
-        blackhole_controller,
+        autonomous_rescue_armed,
         last_xfer_opt,
         rescue_controller,
         forced_reason.is_some(),
         skip_range_fault,
         self_id,
-    ) {
-        Ok(desired) => desired,
-        Err(code) => {
-            log_error(code);
-            return;
-        }
-    };
+    );
     let Some(desired) = desired_opt else {
         return;
     };
     let rescue_active = desired.contains(&rescue_controller);
-    let arg = UpdateSettingsArgs {
-        canister_id: self_id,
-        settings: CanisterSettings {
-            controllers: Some(desired),
-            log_visibility: None,
-            status_visibility: None,
-        },
-    };
+    let arg = controller_update_settings(self_id, desired);
     if update_settings(&arg).await.is_err() {
         log_error(3101);
         return;
@@ -122,5 +112,27 @@ where
     let has_active_job = state::with_state(|st| st.active_payout_job.is_some());
     if has_active_job {
         resume_active_job().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autonomous_controller_settings_preserve_public_observability() {
+        let self_id = Principal::management_canister();
+        let lifeline_id = Principal::anonymous();
+
+        for controllers in [vec![self_id], vec![self_id, lifeline_id]] {
+            let arg = controller_update_settings(self_id, controllers.clone());
+            assert_eq!(arg.canister_id, self_id);
+            assert_eq!(arg.settings.controllers, Some(controllers));
+            assert_eq!(
+                arg.settings.status_visibility,
+                Some(StatusVisibility::Public)
+            );
+            assert_eq!(arg.settings.log_visibility, Some(LogVisibility::Public));
+        }
     }
 }

@@ -13,7 +13,7 @@ path = "../../tests/pocketic/jupiter_disburser_integration.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-candid = { workspace = true }
+candid = { workspace = true, features = ["value"] }
 serde = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }

@@ -2,7 +2,7 @@
 
 `jupiter-lifeline` is the recovery canister in the Jupiter Faucet Suite.
 
-Its job is deliberately minimal: exist as the configured rescue controller principal for operational canisters that would otherwise converge toward `self + blackhole` control while healthy. The production intent is that this principal is governed by the SNS DAO rather than any individual.
+Its job is deliberately minimal: exist as the configured recovery-authority principal for Faucet and Disburser. The production intent is that this principal is governed by the SNS DAO rather than any individual.
 
 See the suite overview in [`../../README.md`](../../README.md).
 
@@ -26,11 +26,13 @@ The underlying assumption is that real rescue logic should be added only in the 
 
 ## Role in the suite
 
-During healthy operation, [`jupiter-disburser`](../disburser) and [`jupiter-faucet`](../faucet) are expected to reconcile to `self + blackhole` controller sets.
+Once autonomous rescue is deliberately armed, healthy [`jupiter-disburser`](../disburser) and [`jupiter-faucet`](../faucet) deployments reconcile to self-only controller sets.
 
-If their local rescue policy concludes that value flow is broken, they widen their controller sets to include `jupiter-lifeline`.
+If their durable rescue policy concludes that value flow is broken, they widen their controller sets to self plus `jupiter-lifeline`. When healthy value flow returns, they remove Lifeline again.
 
-That means this canister is mostly a **reserved rescue principal**, not an active coordinator. In the intended production model, it serves as the DAO-governed recovery hook for the suite rather than as a point of unilateral human control.
+That means this canister is a **reserved rescue principal**, not an active coordinator. It has no normal recovery API, periodic controller orchestration, or speculative recovery workflow. A real Lifeline event can be handled by a separately reviewed, failure-specific Lifeline upgrade.
+
+Observation is a separate concern: Jupiter protocol canisters use public `canister_status`, so Lifeline does not need controller authority merely to expose status or cycles.
 
 ## Install and upgrade
 

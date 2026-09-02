@@ -1,4 +1,7 @@
-use candid::{CandidType, Deserialize, Principal};
+use candid::{
+    types::value::{IDLArgs, IDLValue},
+    CandidType, Deserialize, Principal,
+};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Bound,
@@ -21,17 +24,10 @@ pub(crate) struct Config {
     pub governance_canister_id: Principal,
 
     pub rescue_controller: Principal,
-    pub blackhole_controller: Option<Principal>,
-    pub blackhole_armed: Option<bool>,
+    pub autonomous_rescue_armed: Option<bool>,
 
     pub main_interval_seconds: u64,
     pub rescue_interval_seconds: u64,
-}
-
-fn opt_principal_text(principal: Option<Principal>) -> String {
-    principal
-        .map(|p| p.to_text())
-        .unwrap_or_else(|| "none".to_string())
 }
 
 fn opt_bool_text(value: Option<bool>) -> &'static str {
@@ -44,7 +40,7 @@ fn opt_bool_text(value: Option<bool>) -> &'static str {
 
 pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
     format!(
-        "CONFIG neuron_id={}, normal_recipient={}, age_bonus_recipient_1={}, age_bonus_recipient_2={}, ledger_canister_id={}, governance_canister_id={}, rescue_controller={}, blackhole_controller={}, blackhole_armed={}, main_interval_seconds={}, rescue_interval_seconds={}",
+        "CONFIG neuron_id={}, normal_recipient={}, age_bonus_recipient_1={}, age_bonus_recipient_2={}, ledger_canister_id={}, governance_canister_id={}, rescue_controller={}, autonomous_rescue_armed={}, main_interval_seconds={}, rescue_interval_seconds={}",
         cfg.neuron_id,
         account_text(&cfg.normal_recipient),
         account_text(&cfg.age_bonus_recipient_1),
@@ -52,8 +48,7 @@ pub(crate) fn runtime_config_log_line(cfg: &Config) -> String {
         cfg.ledger_canister_id.to_text(),
         cfg.governance_canister_id.to_text(),
         cfg.rescue_controller.to_text(),
-        opt_principal_text(cfg.blackhole_controller),
-        opt_bool_text(cfg.blackhole_armed),
+        opt_bool_text(cfg.autonomous_rescue_armed),
         cfg.main_interval_seconds,
         cfg.rescue_interval_seconds
     )
@@ -95,7 +90,7 @@ pub(crate) struct State {
     pub last_successful_transfer_ts: Option<u64>,
     pub last_rescue_check_ts: u64,
     pub rescue_triggered: bool,
-    pub blackhole_armed_since_ts: Option<u64>,
+    pub autonomous_rescue_armed_since_ts: Option<u64>,
     pub forced_rescue_reason: Option<ForcedRescueReason>,
     pub main_lock_state_ts: Option<u64>,
     pub payout_nonce: u64,
@@ -105,14 +100,17 @@ pub(crate) struct State {
 
 impl State {
     pub(crate) fn new(config: Config, now_secs: u64) -> Self {
-        let blackhole_armed_since_ts = config.blackhole_armed.unwrap_or(false).then_some(now_secs);
+        let autonomous_rescue_armed_since_ts = config
+            .autonomous_rescue_armed
+            .unwrap_or(false)
+            .then_some(now_secs);
         Self {
             config,
             prev_age_seconds: 0,
             last_successful_transfer_ts: None,
             last_rescue_check_ts: 0,
             rescue_triggered: false,
-            blackhole_armed_since_ts,
+            autonomous_rescue_armed_since_ts,
             forced_rescue_reason: None,
             main_lock_state_ts: Some(0),
             payout_nonce: 1,
@@ -140,10 +138,56 @@ impl Storable for VersionedStableState {
     }
 
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
-        candid::decode_one(bytes.as_ref()).expect("failed to decode disburser stable state")
+        decode_versioned_stable_state(bytes.as_ref())
+            .expect("failed to decode disburser stable state")
     }
 
     const BOUND: Bound = Bound::Unbounded;
+}
+
+fn idl_value_contains_field(value: &IDLValue, field_id: u32) -> bool {
+    match value {
+        IDLValue::Opt(value) => idl_value_contains_field(value, field_id),
+        IDLValue::Vec(values) => values
+            .iter()
+            .any(|value| idl_value_contains_field(value, field_id)),
+        IDLValue::Record(fields) => fields.iter().any(|field| {
+            field.id.get_id() == field_id || idl_value_contains_field(&field.val, field_id)
+        }),
+        IDLValue::Variant(value) => {
+            value.0.id.get_id() == field_id || idl_value_contains_field(&value.0.val, field_id)
+        }
+        _ => false,
+    }
+}
+
+// Upgrade-compatibility boundary only: retired blackhole-policy fields identify an old
+// stable record. Durable payout/failure evidence decodes through the current shape, while
+// the old controller-authority fields and reconciliation latch are deliberately neutralized.
+fn decode_versioned_stable_state(bytes: &[u8]) -> candid::Result<VersionedStableState> {
+    let idl = IDLArgs::from_bytes(bytes)?;
+    let legacy_controller_state = [
+        "blackhole_controller",
+        "blackhole_armed",
+        "blackhole_armed_since_ts",
+    ]
+    .iter()
+    .map(|name| candid::idl_hash(name))
+    .any(|field_id| {
+        idl.args
+            .iter()
+            .any(|value| idl_value_contains_field(value, field_id))
+    });
+
+    let mut decoded = candid::decode_one::<VersionedStableState>(bytes)?;
+    if legacy_controller_state {
+        if let VersionedStableState::V1(state) = &mut decoded {
+            state.config.autonomous_rescue_armed = None;
+            state.autonomous_rescue_armed_since_ts = None;
+            state.rescue_triggered = false;
+        }
+    }
+    Ok(decoded)
 }
 
 type Memory = VirtualMemory<DefaultMemoryImpl>;
@@ -291,6 +335,48 @@ pub(crate) fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
 mod tests {
     use super::*;
 
+    // Exact pre-change wire fixture. Ordinary typed Candid evolution ignores retired fields
+    // and supplies `None` for the new optional fields. The production compatibility decoder
+    // additionally detects this legacy wire shape so retired blackhole arming, its timestamp,
+    // and the controller-reconciliation latch are explicitly neutralized.
+    #[derive(CandidType)]
+    struct FrozenControllerConfig {
+        neuron_id: u64,
+        normal_recipient: Account,
+        age_bonus_recipient_1: Account,
+        age_bonus_recipient_2: Account,
+        ledger_canister_id: Principal,
+        governance_canister_id: Principal,
+        rescue_controller: Principal,
+        blackhole_controller: Option<Principal>,
+        blackhole_armed: Option<bool>,
+        main_interval_seconds: u64,
+        rescue_interval_seconds: u64,
+    }
+
+    #[derive(CandidType)]
+    struct FrozenControllerState {
+        config: FrozenControllerConfig,
+        prev_age_seconds: u64,
+        last_successful_transfer_ts: Option<u64>,
+        last_rescue_check_ts: u64,
+        rescue_triggered: bool,
+        blackhole_armed_since_ts: Option<u64>,
+        forced_rescue_reason: Option<ForcedRescueReason>,
+        main_lock_state_ts: Option<u64>,
+        payout_nonce: u64,
+        payout_plan: Option<PayoutPlan>,
+        last_main_run_ts: u64,
+    }
+
+    #[allow(clippy::large_enum_variant)]
+    #[allow(dead_code)]
+    #[derive(CandidType)]
+    enum FrozenControllerVersionedStableState {
+        Uninitialized,
+        V1(FrozenControllerState),
+    }
+
     fn reset_test_storage() {
         with_stable_cell(|cell| {
             cell.set(VersionedStableState::Uninitialized);
@@ -319,13 +405,29 @@ mod tests {
                 owner: principal(&[3]),
                 subaccount: None,
             },
-            ledger_canister_id: principal(&[4]),
+            ledger_canister_id: principal(&[14]),
             governance_canister_id: principal(&[5]),
             rescue_controller: principal(&[6]),
-            blackhole_controller: Some(principal(&[7])),
-            blackhole_armed: Some(false),
+            autonomous_rescue_armed: Some(false),
             main_interval_seconds: 60,
             rescue_interval_seconds: 120,
+        }
+    }
+
+    fn frozen_controller_config(blackhole_armed: Option<bool>) -> FrozenControllerConfig {
+        let current = sample_config();
+        FrozenControllerConfig {
+            neuron_id: current.neuron_id,
+            normal_recipient: current.normal_recipient,
+            age_bonus_recipient_1: current.age_bonus_recipient_1,
+            age_bonus_recipient_2: current.age_bonus_recipient_2,
+            ledger_canister_id: current.ledger_canister_id,
+            governance_canister_id: current.governance_canister_id,
+            rescue_controller: current.rescue_controller,
+            blackhole_controller: Some(principal(&[7])),
+            blackhole_armed,
+            main_interval_seconds: current.main_interval_seconds,
+            rescue_interval_seconds: current.rescue_interval_seconds,
         }
     }
 
@@ -340,8 +442,7 @@ mod tests {
         assert!(line.contains("ledger_canister_id="));
         assert!(line.contains("governance_canister_id="));
         assert!(line.contains("rescue_controller="));
-        assert!(line.contains("blackhole_controller="));
-        assert!(line.contains("blackhole_armed=false"));
+        assert!(line.contains("autonomous_rescue_armed=false"));
         assert!(line.contains("main_interval_seconds=60"));
         assert!(line.contains("rescue_interval_seconds=120"));
     }
@@ -358,12 +459,186 @@ mod tests {
         let mut st = State::new(sample_config(), 3_000);
         st.prev_age_seconds = 123;
         st.main_lock_state_ts = Some(44);
+        st.config.autonomous_rescue_armed = Some(true);
+        st.rescue_triggered = true;
+        st.autonomous_rescue_armed_since_ts = Some(2_999);
         set_state(st.clone());
 
         let restored = restore_state_from_stable().expect("expected persisted disburser state");
         assert_eq!(restored.prev_age_seconds, 123);
         assert_eq!(restored.main_lock_state_ts, Some(44));
         assert_eq!(restored.payout_nonce, st.payout_nonce);
+        assert_eq!(restored.config.autonomous_rescue_armed, Some(true));
+        assert!(restored.rescue_triggered);
+        assert_eq!(restored.autonomous_rescue_armed_since_ts, Some(2_999));
+    }
+
+    #[test]
+    fn deployed_unarmed_controller_state_upgrades_without_restoring_blackhole_policy() {
+        let payout_plan = PayoutPlan {
+            id: 41,
+            fee_e8s: 10_000,
+            created_at_base_nanos: 5_000,
+            transfers: vec![
+                PlannedTransfer {
+                    to: sample_config().normal_recipient,
+                    gross_share_e8s: 600_000_000,
+                    amount_e8s: 599_990_000,
+                    created_at_time_nanos: 5_001,
+                    memo: vec![1, 2, 3],
+                    status: TransferStatus::Sent {
+                        block_index: "123".to_string(),
+                    },
+                },
+                PlannedTransfer {
+                    to: sample_config().age_bonus_recipient_1,
+                    gross_share_e8s: 200_000_000,
+                    amount_e8s: 199_990_000,
+                    created_at_time_nanos: 5_002,
+                    memo: vec![4, 5, 6],
+                    status: TransferStatus::Pending,
+                },
+            ],
+        };
+        let legacy = FrozenControllerVersionedStableState::V1(FrozenControllerState {
+            config: frozen_controller_config(Some(false)),
+            prev_age_seconds: 31_536_000,
+            last_successful_transfer_ts: Some(1_000),
+            last_rescue_check_ts: 2_000,
+            rescue_triggered: true,
+            blackhole_armed_since_ts: None,
+            forced_rescue_reason: Some(ForcedRescueReason::BootstrapNoSuccess),
+            main_lock_state_ts: Some(2_001),
+            payout_nonce: 42,
+            payout_plan: Some(payout_plan),
+            last_main_run_ts: 2_002,
+        });
+        let bytes = candid::encode_one(legacy).expect("encode deployed disburser controller state");
+
+        let VersionedStableState::V1(restored) = decode_versioned_stable_state(&bytes)
+            .expect("decode deployed disburser controller state")
+        else {
+            panic!("expected restored V1 disburser state");
+        };
+
+        assert_eq!(restored.config.autonomous_rescue_armed, None);
+        assert_eq!(restored.autonomous_rescue_armed_since_ts, None);
+        assert!(!restored.rescue_triggered);
+        assert_eq!(restored.prev_age_seconds, 31_536_000);
+        assert_eq!(restored.payout_nonce, 42);
+        assert_eq!(
+            restored.forced_rescue_reason,
+            Some(ForcedRescueReason::BootstrapNoSuccess)
+        );
+        let restored_plan = restored.payout_plan.expect("payout plan should survive");
+        assert_eq!(restored_plan.id, 41);
+        assert_eq!(restored_plan.transfers.len(), 2);
+        assert_eq!(
+            restored_plan.transfers[0].status,
+            TransferStatus::Sent {
+                block_index: "123".to_string()
+            }
+        );
+        assert_eq!(restored_plan.transfers[1].status, TransferStatus::Pending);
+
+        let blackhole = principal(&[7]);
+        let self_id = principal(&[10]);
+        let desired = crate::policy::desired_controllers(
+            1_000 + 15 * 86_400,
+            restored.last_successful_transfer_ts,
+            self_id,
+            restored.config.rescue_controller,
+        )
+        .expect("broken state should request recovery controllers");
+        assert_eq!(desired, vec![restored.config.rescue_controller, self_id]);
+        assert!(!desired.contains(&blackhole));
+    }
+
+    #[test]
+    fn deployed_armed_controller_state_cannot_authorize_autonomous_rescue_after_upgrade() {
+        let payout_plan = PayoutPlan {
+            id: 51,
+            fee_e8s: 10_000,
+            created_at_base_nanos: 6_000,
+            transfers: vec![
+                PlannedTransfer {
+                    to: sample_config().normal_recipient,
+                    gross_share_e8s: 700_000_000,
+                    amount_e8s: 699_990_000,
+                    created_at_time_nanos: 6_001,
+                    memo: vec![7, 8, 9],
+                    status: TransferStatus::Sent {
+                        block_index: "456".to_string(),
+                    },
+                },
+                PlannedTransfer {
+                    to: sample_config().age_bonus_recipient_1,
+                    gross_share_e8s: 300_000_000,
+                    amount_e8s: 299_990_000,
+                    created_at_time_nanos: 6_002,
+                    memo: vec![10, 11, 12],
+                    status: TransferStatus::Pending,
+                },
+            ],
+        };
+        let legacy = FrozenControllerVersionedStableState::V1(FrozenControllerState {
+            config: frozen_controller_config(Some(true)),
+            prev_age_seconds: 63_072_000,
+            last_successful_transfer_ts: Some(1_000),
+            last_rescue_check_ts: 2_000,
+            rescue_triggered: true,
+            blackhole_armed_since_ts: Some(500),
+            forced_rescue_reason: Some(ForcedRescueReason::BootstrapNoSuccess),
+            main_lock_state_ts: Some(2_001),
+            payout_nonce: 52,
+            payout_plan: Some(payout_plan),
+            last_main_run_ts: 2_002,
+        });
+        let bytes = candid::encode_one(legacy).expect("encode armed legacy disburser state");
+
+        let VersionedStableState::V1(mut restored) =
+            VersionedStableState::from_bytes(Cow::Owned(bytes))
+        else {
+            panic!("expected restored V1 disburser state");
+        };
+
+        assert_eq!(restored.config.autonomous_rescue_armed, None);
+        assert_eq!(restored.autonomous_rescue_armed_since_ts, None);
+        assert!(!restored.rescue_triggered);
+        assert_eq!(restored.prev_age_seconds, 63_072_000);
+        assert_eq!(restored.payout_nonce, 52);
+        assert_eq!(
+            restored.forced_rescue_reason,
+            Some(ForcedRescueReason::BootstrapNoSuccess)
+        );
+        let restored_plan = restored
+            .payout_plan
+            .as_ref()
+            .expect("payout plan should survive");
+        assert_eq!(restored_plan.id, 51);
+        assert_eq!(restored_plan.transfers.len(), 2);
+        assert_eq!(
+            restored_plan.transfers[0].status,
+            TransferStatus::Sent {
+                block_index: "456".to_string()
+            }
+        );
+        assert_eq!(restored_plan.transfers[1].status, TransferStatus::Pending);
+
+        let actions = crate::apply_upgrade_args_to_state(&mut restored, None, 3_000);
+        assert_eq!(actions, crate::PostUpgradeActions::default());
+
+        let blackhole = principal(&[7]);
+        let self_id = principal(&[10]);
+        let desired = crate::policy::desired_controllers(
+            1_000 + 15 * 86_400,
+            restored.last_successful_transfer_ts,
+            self_id,
+            restored.config.rescue_controller,
+        )
+        .expect("broken state should request recovery controllers");
+        assert_eq!(desired, vec![restored.config.rescue_controller, self_id]);
+        assert!(!desired.contains(&blackhole));
     }
 
     #[test]

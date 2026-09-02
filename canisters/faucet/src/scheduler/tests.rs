@@ -780,10 +780,7 @@ mod tests {
                 subaccount: None,
             },
             rescue_controller: Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(),
-            blackhole_controller: Some(
-                Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").unwrap(),
-            ),
-            blackhole_armed: Some(false),
+            autonomous_rescue_armed: Some(false),
             expected_first_staking_tx_id: None,
             main_interval_seconds,
             rescue_interval_seconds,
@@ -5069,42 +5066,37 @@ mod tests {
     #[test]
     fn desired_rescue_controllers_widens_controllers_when_skip_range_fault_is_latched() {
         let rescue_controller = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
-        let blackhole_controller = Principal::from_text("77deu-baaaa-aaaar-qb6za-cai").unwrap();
         let self_id = Principal::anonymous();
 
         let desired = desired_rescue_controllers(
             10_000,
             true,
-            Some(blackhole_controller),
             Some(9_000),
             rescue_controller,
             false,
             true,
             self_id,
         )
-        .expect("skip-range fault should not error")
-        .expect("armed blackhole mode should produce a controller set");
+        .expect("armed autonomous rescue should produce a controller set");
 
-        let mut expected = vec![blackhole_controller, rescue_controller, self_id];
+        let mut expected = vec![rescue_controller, self_id];
         expected.sort_by(|a, b| a.to_text().cmp(&b.to_text()));
         expected.dedup();
         assert_eq!(desired, expected);
     }
 
     #[test]
-    fn desired_rescue_controllers_returns_error_when_armed_without_blackhole_controller() {
-        let err = desired_rescue_controllers(
+    fn desired_rescue_controllers_returns_none_when_unarmed() {
+        let desired = desired_rescue_controllers(
             10_000,
-            true,
-            None,
+            false,
             Some(9_000),
             Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(),
             false,
             true,
             Principal::anonymous(),
-        )
-        .expect_err("armed blackhole mode without a controller should error");
-        assert_eq!(err, 3107);
+        );
+        assert_eq!(desired, None);
     }
 
     #[test]

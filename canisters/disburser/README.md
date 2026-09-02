@@ -26,7 +26,7 @@ Unless otherwise noted, command examples in this README are run from the reposit
 1. reading the configured NNS neuron
 2. initiating `DisburseMaturity` to its own default ICP ledger account
 3. splitting staged ICP into the configured recipients
-4. reconciling healthy vs rescue controller sets when blackhole mode is armed
+4. reconciling healthy vs recovery controller sets when autonomous rescue is armed
 
 It also performs two best-effort NNS maintenance calls that are useful but intentionally non-blocking:
 
@@ -39,9 +39,8 @@ By default the canister talks to:
 
 - ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
-- canonical blackhole (`77deu-baaaa-aaaar-qb6za-cai`) when blackhole mode is configured / armed
 
-All three can be overridden at install time except the blackhole default itself, which is only used when no explicit controller is provided.
+Both can be overridden at install time. Status and cycles observation is provided by protocol-native public `canister_status`; it is independent of controller authority.
 
 ## Runtime model
 
@@ -56,7 +55,7 @@ Each timer interval is clamped to at least 60 seconds by the runtime code.
 
 ### Runtime config verification
 
-After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The disburser emits a single `CONFIG ...` line when a main tick reaches the payout / maturity-disbursement path. Daily timer ticks that only observe an in-flight NNS maturity disbursement still emit the regular `Cycles: ...` health line, but skip the config line; in normal operation this makes config logging follow the slower payout cadence. The line is comma-separated `key=value` text and includes the neuron ID, payout recipient accounts, ledger/governance canister IDs, rescue/blackhole controller settings, blackhole armed state, and timer intervals.
+After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The disburser emits a single `CONFIG ...` line when a main tick reaches the payout / maturity-disbursement path. Daily timer ticks that only observe an in-flight NNS maturity disbursement still emit the regular `Cycles: ...` health line, but skip the config line; in normal operation this makes config logging follow the slower payout cadence. The line is comma-separated `key=value` text and includes the neuron ID, payout recipient accounts, ledger/governance canister IDs, rescue controller, autonomous-rescue state, and timer intervals.
 
 ### Main tick sequence
 
@@ -172,36 +171,29 @@ The clear-and-rebuild policy is intentional: it prefers liveness over preserving
 
 On `post_upgrade`, if a persisted payout plan already exists, the canister also schedules a one-shot forced main tick about 1 second later so an interrupted payout resumes promptly instead of waiting for the normal main interval.
 
-## Rescue and blackhole policy
+## Autonomous rescue policy
 
 ### Intended controller model
 
-The intended healthy-state controller set is:
+Once autonomous rescue is deliberately armed, the healthy controller set contains only `jupiter-disburser`. When recovery is required, the controller set contains exactly `jupiter-disburser` and `jupiter-lifeline`; the implementation sorts and deduplicates principals deterministically. A later healthy transfer narrows the canister back to self-only control.
 
-- `jupiter-disburser` itself
-- the canonical blackhole canister
-
-When rescue is required, the controller set widens to:
-
-- `jupiter-lifeline`
-- the canonical blackhole canister
-- `jupiter-disburser`
+Every autonomous controller reconciliation explicitly preserves public status and public logs. The Fiduciary blackhole is not part of this policy: protocol-native public status supplies observation without granting controller authority.
 
 ### Time windows
 
-When blackhole mode is armed, controller reconciliation follows this policy based on `last_successful_transfer_ts`:
+When autonomous rescue is armed, controller reconciliation follows this policy based on `last_successful_transfer_ts`:
 
-- healthy: `<= 7 days` since last successful transfer → blackhole + self
+- healthy: `<= 7 days` since last successful transfer → self only
 - middle window: `> 7 days` and `<= 14 days` → no controller change
-- broken: `> 14 days` → blackhole + rescue controller + self
+- broken: `> 14 days` → self + rescue controller
 
 There is also a bootstrap rescue condition:
 
-- if blackhole mode has been armed for more than `14 days` and the canister has **never** recorded a successful transfer, rescue is forced with reason `BootstrapNoSuccess`
+- if autonomous rescue has been armed for more than `14 days` and the canister has **never** recorded a successful transfer, recovery is forced with reason `BootstrapNoSuccess`
 
-### Operational precondition before blackholing
+### Operational precondition before autonomous handoff
 
-Do **not** rely on the healthy `self + blackhole` controller posture until at least one successful payout transfer has occurred.
+Do **not** arm autonomous rescue or narrow to self-only control until at least one successful payout transfer has occurred, self is already a controller, public status has been independently verified, and Lifeline governance has been reviewed.
 
 Without a recorded successful transfer, the time-based rescue logic has no proof that value flow ever worked.
 
@@ -223,8 +215,7 @@ The three configured recipients must be pairwise distinct. The runtime also reje
 - `ledger_canister_id` (optional; defaults to ICP Ledger)
 - `governance_canister_id` (optional; defaults to NNS Governance)
 - `rescue_controller`
-- `blackhole_controller` (optional; defaults to canonical blackhole; when present it must not equal the disburser canister principal or `rescue_controller`)
-- `blackhole_armed` (optional)
+- `autonomous_rescue_armed` (optional)
 - `main_interval_seconds` (optional; defaults to 86400)
 - `rescue_interval_seconds` (optional; defaults to 86400)
 
@@ -234,11 +225,10 @@ A copy-pasteable mainnet install/reinstall args file is committed at [`mainnet-i
 
 Upgrade args support:
 
-- `blackhole_controller`
-- `blackhole_armed`
+- `autonomous_rescue_armed`
 - `clear_forced_rescue`
 
-`clear_forced_rescue = true` clears the latched forced-rescue reason but does not rewrite payout history. When used while blackhole mode remains armed, the disburser resets the `BootstrapNoSuccess` observation window to the upgrade time and schedules an immediate one-shot rescue/controller reconciliation after `post_upgrade`. If no successful payout exists, that reconciliation forces narrowing of a stale widened controller set to `self + blackhole`; if `update_settings` fails, narrowing remains pending and is retried by later rescue ticks. If a successful payout exists, the ordinary health-window controller policy remains authoritative. Because the clear starts a fresh bootstrap window, `BootstrapNoSuccess` can legitimately latch again after a new `> 14 days` interval with no successful payout transfer. If blackhole mode is not armed, no automatic controller target is imposed; the self-reconciliation policy is only defined for armed mode.
+`clear_forced_rescue = true` clears the latched forced-rescue reason but does not rewrite payout history. When used while autonomous rescue remains armed, the disburser resets the `BootstrapNoSuccess` observation window to the upgrade time and schedules an immediate one-shot controller reconciliation after `post_upgrade`. If no successful payout exists, that reconciliation narrows a stale recovery set to self only; if `update_settings` fails, narrowing remains pending and is retried by later rescue ticks. If a successful payout exists, the ordinary health-window policy remains authoritative. Because the clear starts a fresh bootstrap window, `BootstrapNoSuccess` can legitimately latch again after a new `> 14 days` interval with no successful payout transfer. If autonomous rescue is unarmed, no automatic controller target is imposed.
 
 Inspect the current `UpgradeArgs` definition in [`src/lib.rs`](src/lib.rs) before preparing any upgrade-time argument file.
 
@@ -250,10 +240,9 @@ The committed mainnet install args wire:
 - age bonus recipient 1: `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`)
 - age bonus recipient 2: D-QUORUM staking account `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68` (NNS Governance owner with the committed subaccount bytes)
 - rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
-- blackhole controller: canonical blackhole (`77deu-baaaa-aaaar-qb6za-cai`)
 - ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - governance canister: NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
-- `blackhole_armed = false`
+- `autonomous_rescue_armed = false`
 - `main_interval_seconds = 86400`
 - `rescue_interval_seconds = 86400`
 
@@ -311,8 +300,8 @@ Those cover, among other things:
 - maturity disbursement landing in staging
 - payout-plan persistence and duplicate-proof retry
 - upgrade mid-flight behavior
-- blackhole timer progression
-- blackhole / rescue-controller round-trips
+- timer-only rescue progression
+- self-only / Lifeline rescue-controller round-trips
 - age-bonus routing at multiple neuron ages
 - `ClaimOrRefresh` / `RefreshVotingPower` behavior
 
@@ -385,7 +374,7 @@ icp canister logs uccpi-cqaaa-aaaar-qby3q-cai -n ic
 
 ### Controller handoff notes
 
-Before handing the canister off to self-management, the DAO-governed deployment flow still needs to configure canister settings such as public log visibility and ensure the canister is a controller of itself.
+The current developer-controller cleanup is separate from final autonomous handoff. Before handing the canister off to self-management, a reviewed governance operation must verify public status, public logs, Lifeline governance, successful runtime value flow, and that the canister is already its own controller.
 
 Example:
 
@@ -394,14 +383,9 @@ icp canister settings update jupiter_disburser --environment ic --log-visibility
 icp canister settings update jupiter_disburser --environment ic --add-controller uccpi-cqaaa-aaaar-qby3q-cai
 ```
 
-After blackhole mode is armed and at least one successful payout transfer has been recorded, the DAO-governed deployment flow can hand the canister off to the healthy `self + blackhole` controller set:
+Only after those checks should autonomous rescue be deliberately armed; its next healthy reconciliation may narrow controllers to self only. The current migration must not arm this mode or remove the developer principal as part of the Fiduciary-controller cleanup.
 
-```bash
-icp canister settings update jupiter_disburser \
-  --environment ic \
-  --set-controller uccpi-cqaaa-aaaar-qby3q-cai \
-  --add-controller 77deu-baaaa-aaaar-qb6za-cai
-```
+The dedicated operational sequence is documented in [`../../docs/operations/deployment.md`](../../docs/operations/deployment.md).
 
 ## Related docs
 

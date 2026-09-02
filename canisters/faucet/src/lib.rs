@@ -4,6 +4,7 @@ mod policy;
 mod scheduler;
 mod state;
 
+use candid::types::value::{IDLArgs, IDLValue};
 use candid::{CandidType, Deserialize, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use jupiter_canister_logging::{
@@ -30,8 +31,7 @@ pub struct InitArgs {
     pub funding_source_account: Account,
 
     pub rescue_controller: Principal,
-    pub blackhole_controller: Option<Principal>,
-    pub blackhole_armed: Option<bool>,
+    pub autonomous_rescue_armed: Option<bool>,
     pub expected_first_staking_tx_id: Option<u64>,
 
     pub main_interval_seconds: Option<u64>,
@@ -42,8 +42,7 @@ pub struct InitArgs {
 
 #[derive(CandidType, Deserialize, Clone, Default)]
 pub struct UpgradeArgs {
-    pub blackhole_controller: Option<Principal>,
-    pub blackhole_armed: Option<bool>,
+    pub autonomous_rescue_armed: Option<bool>,
     pub clear_forced_rescue: Option<bool>,
     pub last_processed_funding_tx_id: Option<u64>,
     pub main_interval_seconds: Option<u64>,
@@ -79,10 +78,6 @@ fn mainnet_cmc_id() -> Principal {
 
 fn mainnet_governance_id() -> Principal {
     constants::nns_governance_id()
-}
-
-fn mainnet_blackhole_id() -> Principal {
-    constants::blackhole_canister_id()
 }
 
 pub(crate) fn canonical_relay_canister_id() -> Principal {
@@ -164,17 +159,6 @@ fn validate_config(cfg: &crate::state::Config) {
         cfg.funding_source_account != cfg.staking_account,
         "funding_source_account must not equal staking_account"
     );
-    if let Some(blackhole_controller) = cfg.blackhole_controller {
-        assert_non_anonymous_principal("blackhole_controller", blackhole_controller);
-        assert!(
-            blackhole_controller != self_id,
-            "blackhole_controller must not equal the faucet canister principal"
-        );
-        assert!(
-            blackhole_controller != cfg.rescue_controller,
-            "blackhole_controller and rescue_controller must be distinct"
-        );
-    }
     assert!(
         cfg.main_interval_seconds > 0,
         "main_interval_seconds must be greater than 0"
@@ -227,11 +211,7 @@ fn init(args: InitArgs) {
         ),
         funding_source_account: args.funding_source_account,
         rescue_controller: args.rescue_controller,
-        blackhole_controller: Some(
-            args.blackhole_controller
-                .unwrap_or_else(mainnet_blackhole_id),
-        ),
-        blackhole_armed: args.blackhole_armed,
+        autonomous_rescue_armed: args.autonomous_rescue_armed,
         expected_first_staking_tx_id: args.expected_first_staking_tx_id,
         main_interval_seconds: args.main_interval_seconds.unwrap_or(24 * 60 * 60),
         rescue_interval_seconds: args.rescue_interval_seconds.unwrap_or(24 * 60 * 60),
@@ -256,25 +236,22 @@ pub(crate) fn apply_upgrade_args_to_state(
 ) -> PostUpgradeActions {
     let mut actions = PostUpgradeActions::default();
     if let Some(args) = args {
-        if let Some(blackhole_controller) = args.blackhole_controller {
-            st.config.blackhole_controller = Some(blackhole_controller);
-        }
-        if let Some(armed) = args.blackhole_armed {
-            st.config.blackhole_armed = Some(armed);
-            st.blackhole_armed_since_ts = if armed { Some(now_secs) } else { None };
+        if let Some(armed) = args.autonomous_rescue_armed {
+            st.config.autonomous_rescue_armed = Some(armed);
+            st.autonomous_rescue_armed_since_ts = if armed { Some(now_secs) } else { None };
             if !armed {
                 st.rescue_triggered = false;
             }
         }
         if args.clear_forced_rescue.unwrap_or(false) {
             // Clearing forced rescue is a DAO acknowledgement that the prior latch
-            // is no longer authoritative after recovery and upgrade. When blackhole
-            // mode remains armed, schedule an immediate rescue/controller
+            // is no longer authoritative after recovery and upgrade. When autonomous
+            // rescue remains armed, schedule an immediate controller
             // reconciliation after post-upgrade so an obsolete widened controller
             // set does not linger until the next periodic rescue tick.
             st.forced_rescue_reason = None;
             st.skip_range_invariant_fault = Some(false);
-            if st.config.blackhole_armed.unwrap_or(false) {
+            if st.config.autonomous_rescue_armed.unwrap_or(false) {
                 actions.schedule_immediate_controller_reconcile = true;
             }
             st.consecutive_index_anchor_failures = Some(0);
@@ -336,6 +313,7 @@ fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>
     if raw.is_empty() || raw == zero_args.as_slice() {
         return Ok(None);
     }
+    reject_obsolete_controller_upgrade_fields(raw)?;
     if candid::decode_one::<InitArgs>(raw).is_ok() {
         return Err(
             "received InitArgs in faucet post_upgrade; do not pass install args to upgrade"
@@ -345,6 +323,42 @@ fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>
     reject_install_only_upgrade_fields(raw)?;
     candid::decode_one::<Option<UpgradeArgs>>(raw)
         .map_err(|err| format!("failed to decode faucet UpgradeArgs: {err}"))
+}
+
+fn reject_obsolete_controller_upgrade_fields(raw: &[u8]) -> Result<(), String> {
+    let Ok(args) = IDLArgs::from_bytes(raw) else {
+        return Ok(());
+    };
+    let Some(record_fields) = args.args.first().and_then(|arg| match arg {
+        IDLValue::Opt(value) => match value.as_ref() {
+            IDLValue::Record(fields) => Some(fields.as_slice()),
+            _ => None,
+        },
+        IDLValue::Record(fields) => Some(fields.as_slice()),
+        _ => None,
+    }) else {
+        return Ok(());
+    };
+    let field_present = |name: &str| {
+        let field_id = candid::idl_hash(name);
+        record_fields
+            .iter()
+            .any(|field| field.id.get_id() == field_id)
+    };
+    let mut obsolete = Vec::new();
+    if field_present("blackhole_controller") {
+        obsolete.push("blackhole_controller");
+    }
+    if field_present("blackhole_armed") {
+        obsolete.push("blackhole_armed");
+    }
+    if !obsolete.is_empty() {
+        return Err(format!(
+            "received obsolete field(s) {} in faucet UpgradeArgs; remove them and use autonomous_rescue_armed to configure autonomous self/Lifeline reconciliation",
+            obsolete.join(", ")
+        ));
+    }
+    Ok(())
 }
 
 fn reject_install_only_upgrade_fields(raw: &[u8]) -> Result<(), String> {
@@ -424,8 +438,7 @@ pub struct DebugState {
     pub rescue_triggered: bool,
     pub active_payout_job_present: bool,
     pub last_summary_present: bool,
-    pub blackhole_controller: Option<Principal>,
-    pub blackhole_armed_since_ts: Option<u64>,
+    pub autonomous_rescue_armed_since_ts: Option<u64>,
     pub forced_rescue_reason: Option<crate::state::ForcedRescueReason>,
     pub skip_range_invariant_fault: bool,
     pub consecutive_index_anchor_failures: u8,
@@ -464,8 +477,7 @@ pub struct DebugConfig {
     pub governance_canister_id: Principal,
     pub funding_source_account: Account,
     pub rescue_controller: Principal,
-    pub blackhole_controller: Option<Principal>,
-    pub blackhole_armed: Option<bool>,
+    pub autonomous_rescue_armed: Option<bool>,
     pub expected_first_staking_tx_id: Option<u64>,
     pub main_interval_seconds: u64,
     pub rescue_interval_seconds: u64,
@@ -491,8 +503,7 @@ fn debug_state() -> DebugState {
         rescue_triggered: st.rescue_triggered,
         active_payout_job_present: st.active_payout_job.is_some(),
         last_summary_present: st.last_summary.is_some(),
-        blackhole_controller: st.config.blackhole_controller,
-        blackhole_armed_since_ts: st.blackhole_armed_since_ts,
+        autonomous_rescue_armed_since_ts: st.autonomous_rescue_armed_since_ts,
         forced_rescue_reason: st.forced_rescue_reason.clone(),
         skip_range_invariant_fault: st.skip_range_invariant_fault.unwrap_or(false),
         consecutive_index_anchor_failures: st.consecutive_index_anchor_failures.unwrap_or(0),
@@ -575,8 +586,7 @@ fn debug_config() -> DebugConfig {
             .expect("governance_canister_id configured"),
         funding_source_account: st.config.funding_source_account,
         rescue_controller: st.config.rescue_controller,
-        blackhole_controller: st.config.blackhole_controller,
-        blackhole_armed: st.config.blackhole_armed,
+        autonomous_rescue_armed: st.config.autonomous_rescue_armed,
         expected_first_staking_tx_id: st.config.expected_first_staking_tx_id,
         main_interval_seconds: st.config.main_interval_seconds,
         rescue_interval_seconds: st.config.rescue_interval_seconds,
@@ -621,9 +631,9 @@ fn debug_reset_runtime_state() {
         st.last_successful_transfer_ts = None;
         st.last_rescue_check_ts = 0;
         st.rescue_triggered = false;
-        st.blackhole_armed_since_ts = st
+        st.autonomous_rescue_armed_since_ts = st
             .config
-            .blackhole_armed
+            .autonomous_rescue_armed
             .unwrap_or(false)
             .then_some(now_secs);
         st.forced_rescue_reason = None;
@@ -655,12 +665,12 @@ fn debug_set_last_successful_transfer_ts(ts: Option<u64>) {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
-fn debug_set_blackhole_armed(v: Option<bool>) {
+fn debug_set_autonomous_rescue_armed(v: Option<bool>) {
     guard_debug_api_not_production();
     let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
     crate::state::with_state_mut(|st| {
-        st.config.blackhole_armed = v;
-        st.blackhole_armed_since_ts = v.unwrap_or(false).then_some(now_secs);
+        st.config.autonomous_rescue_armed = v;
+        st.autonomous_rescue_armed_since_ts = v.unwrap_or(false).then_some(now_secs);
         if !v.unwrap_or(false) {
             st.rescue_triggered = false;
         }
@@ -669,9 +679,9 @@ fn debug_set_blackhole_armed(v: Option<bool>) {
 
 #[cfg(feature = "debug_api")]
 #[ic_cdk::update]
-fn debug_set_blackhole_armed_since_ts(ts: Option<u64>) {
+fn debug_set_autonomous_rescue_armed_since_ts(ts: Option<u64>) {
     guard_debug_api_not_production();
-    crate::state::with_state_mut(|st| st.blackhole_armed_since_ts = ts);
+    crate::state::with_state_mut(|st| st.autonomous_rescue_armed_since_ts = ts);
 }
 
 #[cfg(feature = "debug_api")]
@@ -762,6 +772,16 @@ mod tests {
     use super::*;
     use candid::encode_args;
 
+    #[derive(CandidType)]
+    struct LegacyBlackholeArmedUpgradeArgs {
+        blackhole_armed: Option<bool>,
+    }
+
+    #[derive(CandidType)]
+    struct LegacyBlackholeControllerUpgradeArgs {
+        blackhole_controller: Option<Principal>,
+    }
+
     fn principal(text: &str) -> Principal {
         Principal::from_text(text).unwrap()
     }
@@ -786,8 +806,7 @@ mod tests {
                 subaccount: None,
             },
             rescue_controller: principal("acjuz-liaaa-aaaar-qb4qq-cai"),
-            blackhole_controller: Some(principal("77deu-baaaa-aaaar-qb6za-cai")),
-            blackhole_armed: Some(false),
+            autonomous_rescue_armed: Some(false),
             expected_first_staking_tx_id: None,
             main_interval_seconds: 60,
             rescue_interval_seconds: 60,
@@ -809,8 +828,7 @@ mod tests {
                 subaccount: None,
             },
             rescue_controller: principal("acjuz-liaaa-aaaar-qb4qq-cai"),
-            blackhole_controller: Some(principal("77deu-baaaa-aaaar-qb6za-cai")),
-            blackhole_armed: Some(false),
+            autonomous_rescue_armed: Some(false),
             expected_first_staking_tx_id: None,
             main_interval_seconds: Some(60),
             rescue_interval_seconds: Some(60),
@@ -829,8 +847,7 @@ mod tests {
     #[test]
     fn decode_post_upgrade_args_decodes_upgrade_record() {
         let raw = encode_args((Some(UpgradeArgs {
-            blackhole_controller: Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")),
-            blackhole_armed: Some(true),
+            autonomous_rescue_armed: Some(true),
             clear_forced_rescue: Some(false),
             last_processed_funding_tx_id: Some(365),
             main_interval_seconds: Some(86_400),
@@ -840,17 +857,65 @@ mod tests {
         }),))
         .unwrap();
         let decoded = decode_post_upgrade_args_from_bytes(&raw).unwrap().unwrap();
-        assert_eq!(
-            decoded.blackhole_controller,
-            Some(principal("qoctq-giaaa-aaaaa-aaaea-cai"))
-        );
-        assert_eq!(decoded.blackhole_armed, Some(true));
+        assert_eq!(decoded.autonomous_rescue_armed, Some(true));
         assert_eq!(decoded.clear_forced_rescue, Some(false));
         assert_eq!(decoded.last_processed_funding_tx_id, Some(365));
         assert_eq!(decoded.main_interval_seconds, Some(86_400));
         assert_eq!(decoded.rescue_interval_seconds, Some(86_400));
         assert_eq!(decoded.min_tx_e8s, Some(100_000_000));
         assert_eq!(decoded.stake_recognition_delay_seconds, Some(604_800));
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_accepts_no_upgrade_args() {
+        assert!(decode_post_upgrade_args_from_bytes(&[]).unwrap().is_none());
+        let zero_args = encode_args(()).unwrap();
+        assert!(decode_post_upgrade_args_from_bytes(&zero_args)
+            .unwrap()
+            .is_none());
+        let explicit_none = encode_args((Option::<UpgradeArgs>::None,)).unwrap();
+        assert!(decode_post_upgrade_args_from_bytes(&explicit_none)
+            .unwrap()
+            .is_none());
+    }
+
+    fn assert_obsolete_blackhole_armed_rejected(value: Option<bool>) {
+        let raw = encode_args((Some(LegacyBlackholeArmedUpgradeArgs {
+            blackhole_armed: value,
+        }),))
+        .unwrap();
+        let err = expect_decode_err(&raw);
+        assert!(err.contains("obsolete field(s) blackhole_armed"), "{err}");
+        assert!(err.contains("autonomous_rescue_armed"), "{err}");
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_rejects_obsolete_blackhole_armed_true() {
+        assert_obsolete_blackhole_armed_rejected(Some(true));
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_rejects_obsolete_blackhole_armed_false() {
+        assert_obsolete_blackhole_armed_rejected(Some(false));
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_rejects_obsolete_blackhole_armed_null() {
+        assert_obsolete_blackhole_armed_rejected(None);
+    }
+
+    #[test]
+    fn decode_post_upgrade_args_rejects_obsolete_blackhole_controller() {
+        let raw = encode_args((Some(LegacyBlackholeControllerUpgradeArgs {
+            blackhole_controller: Some(principal("77deu-baaaa-aaaar-qb6za-cai")),
+        }),))
+        .unwrap();
+        let err = expect_decode_err(&raw);
+        assert!(
+            err.contains("obsolete field(s) blackhole_controller"),
+            "{err}"
+        );
+        assert!(err.contains("autonomous_rescue_armed"), "{err}");
     }
 
     #[test]
@@ -919,22 +984,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "blackhole_controller must not equal the faucet canister principal")]
-    fn validate_config_rejects_blackhole_controller_equal_to_self() {
-        let mut cfg = sample_config();
-        cfg.blackhole_controller = Some(Principal::management_canister());
-        validate_config(&cfg);
-    }
-
-    #[test]
-    #[should_panic(expected = "blackhole_controller and rescue_controller must be distinct")]
-    fn validate_config_rejects_blackhole_controller_equal_to_rescue_controller() {
-        let mut cfg = sample_config();
-        cfg.blackhole_controller = Some(cfg.rescue_controller);
-        validate_config(&cfg);
-    }
-
-    #[test]
     #[should_panic(expected = "rescue_controller must not equal the faucet canister principal")]
     fn validate_config_rejects_rescue_controller_equal_to_self() {
         let mut cfg = sample_config();
@@ -997,19 +1046,14 @@ mod tests {
         let actions = apply_upgrade_args_to_state(
             &mut st,
             Some(UpgradeArgs {
-                blackhole_controller: Some(principal("qoctq-giaaa-aaaaa-aaaea-cai")),
-                blackhole_armed: Some(true),
+                autonomous_rescue_armed: Some(true),
                 clear_forced_rescue: Some(true),
                 ..UpgradeArgs::default()
             }),
             now_secs,
         );
-        assert_eq!(
-            st.config.blackhole_controller,
-            Some(principal("qoctq-giaaa-aaaaa-aaaea-cai"))
-        );
-        assert_eq!(st.config.blackhole_armed, Some(true));
-        assert_eq!(st.blackhole_armed_since_ts, Some(now_secs));
+        assert_eq!(st.config.autonomous_rescue_armed, Some(true));
+        assert_eq!(st.autonomous_rescue_armed_since_ts, Some(now_secs));
         assert_eq!(st.main_lock_state_ts, Some(0));
         assert!(crate::state::list_skip_ranges().is_empty());
         assert_eq!(
@@ -1021,15 +1065,14 @@ mod tests {
     }
 
     #[test]
-    fn apply_upgrade_args_does_not_schedule_controller_reconcile_when_blackhole_not_armed() {
+    fn apply_upgrade_args_does_not_reconcile_when_autonomous_rescue_is_unarmed() {
         let now_secs = 456;
         let mut st = State::new(sample_config(), now_secs);
-        st.config.blackhole_armed = Some(false);
+        st.config.autonomous_rescue_armed = Some(false);
         let actions = apply_upgrade_args_to_state(
             &mut st,
             Some(UpgradeArgs {
-                blackhole_controller: None,
-                blackhole_armed: Some(false),
+                autonomous_rescue_armed: Some(false),
                 clear_forced_rescue: Some(true),
                 ..UpgradeArgs::default()
             }),
@@ -1042,7 +1085,7 @@ mod tests {
     fn apply_upgrade_args_clear_forced_rescue_resets_fault_latches_and_counters() {
         let now_secs = 789;
         let mut st = State::new(sample_config(), now_secs);
-        st.config.blackhole_armed = Some(true);
+        st.config.autonomous_rescue_armed = Some(true);
         st.forced_rescue_reason =
             Some(crate::state::ForcedRescueReason::IndexLatestInvariantBroken);
         st.skip_range_invariant_fault = Some(true);
@@ -1054,8 +1097,7 @@ mod tests {
         let actions = apply_upgrade_args_to_state(
             &mut st,
             Some(UpgradeArgs {
-                blackhole_controller: None,
-                blackhole_armed: Some(true),
+                autonomous_rescue_armed: Some(true),
                 clear_forced_rescue: Some(true),
                 ..UpgradeArgs::default()
             }),
@@ -1085,8 +1127,7 @@ mod tests {
         let actions = apply_upgrade_args_to_state(
             &mut st,
             Some(UpgradeArgs {
-                blackhole_controller: None,
-                blackhole_armed: None,
+                autonomous_rescue_armed: None,
                 clear_forced_rescue: None,
                 stake_recognition_delay_seconds: Some(604_800),
                 ..UpgradeArgs::default()
@@ -1107,8 +1148,7 @@ mod tests {
         apply_upgrade_args_to_state(
             &mut st,
             Some(UpgradeArgs {
-                blackhole_controller: None,
-                blackhole_armed: None,
+                autonomous_rescue_armed: None,
                 clear_forced_rescue: None,
                 ..UpgradeArgs::default()
             }),
@@ -1318,8 +1358,7 @@ mod tests {
         apply_upgrade_args_to_state(
             &mut st,
             Some(UpgradeArgs {
-                blackhole_controller: None,
-                blackhole_armed: None,
+                autonomous_rescue_armed: None,
                 clear_forced_rescue: None,
                 stake_recognition_delay_seconds: Some(0),
                 ..UpgradeArgs::default()

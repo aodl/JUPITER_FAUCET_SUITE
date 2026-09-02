@@ -2,8 +2,7 @@
 set -euo pipefail
 
 RELAY_CANISTER_ID="u2qkp-aqaaa-aaaar-qb7ea-cai"
-BLACKHOLE_CONTROLLER_ID="77deu-baaaa-aaaar-qb6za-cai"
-SETTINGS_COMMAND="icp canister settings update ${RELAY_CANISTER_ID} --add-controller ${BLACKHOLE_CONTROLLER_ID} --log-visibility public --log-memory-limit 2mib -n ic"
+FIDUCIARY_BLACKHOLE_TARGET_ID="77deu-baaaa-aaaar-qb6za-cai"
 
 EXPECTED_MANAGED_CANISTERS=(
   "uccpi-cqaaa-aaaar-qby3q-cai"
@@ -33,7 +32,8 @@ printf '%s\n' "$logs"
 require_contains "$logs" "Cycles:" "logs"
 require_contains "$logs" "CONFIG " "logs"
 require_contains "$logs" "$RELAY_CANISTER_ID" "logs"
-require_contains "$logs" "$BLACKHOLE_CONTROLLER_ID" "logs"
+require_contains "$logs" "$FIDUCIARY_BLACKHOLE_TARGET_ID" "managed-target logs"
+require_contains "$logs" "cycles_probe_policy=Auto" "configuration logs"
 require_contains "$logs" "max_transfers_per_tick" "logs"
 for canister_id in "${EXPECTED_MANAGED_CANISTERS[@]}"; do
   require_contains "$logs" "$canister_id" "logs"
@@ -62,9 +62,6 @@ settings="$(icp canister settings show "$RELAY_CANISTER_ID" -n ic)"
 printf '%s\n' "$settings"
 
 settings_ok=true
-if [[ "$settings" != *"$BLACKHOLE_CONTROLLER_ID"* ]]; then
-  settings_ok=false
-fi
 if [[ "$settings" != *"public"* && "$settings" != *"Public"* ]]; then
   settings_ok=false
 fi
@@ -75,17 +72,17 @@ fi
 if [[ "$settings_ok" != true ]]; then
   cat <<EOF
 
-Relay settings are not visibly configured with the expected controller/log settings.
-Run this exact command after confirming the operational/admin controller should be retained:
-
-${SETTINGS_COMMAND}
+Relay settings do not visibly confirm the expected public observability/log posture.
+Stop and inspect controller-authorized and non-controller status evidence before changing settings.
 EOF
 fi
 
 cat <<'EOF'
 
 Manual confirmations:
-- blackhole 77deu-baaaa-aaaar-qb6za-cai is a controller;
+- cycles_probe_policy is Auto and no fixed-blackhole probe is configured;
+- blackhole 77deu-baaaa-aaaar-qb6za-cai remains a managed funding target, independently of controller policy;
+- protocol-native status visibility is public when queried by a non-controller;
 - canister logs are public;
 - log memory limit is 2MiB;
 - the operational/admin controller is retained until intentional handoff;

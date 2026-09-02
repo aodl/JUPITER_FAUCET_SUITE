@@ -18,7 +18,7 @@ Unless otherwise noted, command examples in this README are run from the reposit
 2. scanning that account through the ICP index canister
 3. interpreting eligible transfer memos as supported payout targets
 4. converting a payout pot of ICP into proportional per-commitment top-ups
-5. managing its own blackhole / recovery policy once armed
+5. managing its own autonomous recovery policy once armed
 
 It does **not** control the NNS neuron itself. [`jupiter-disburser`](../disburser) is responsible for producing the ICP that the faucet spends.
 
@@ -29,7 +29,6 @@ By default the canister talks to:
 - ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`)
 - Cycles Minting Canister / CMC (`rkp4c-7iaaa-aaaaa-aaaca-cai`)
-- canonical blackhole (`77deu-baaaa-aaaar-qb6za-cai`) when blackhole mode is configured / armed
 
 ## High-level payout model
 
@@ -93,9 +92,9 @@ Memo encoding uses `icrc1_memo` text only. The primary form is declared canister
 
 Neuron staking-account top-ups require the target neuron to be public. The faucet calls NNS Governance to read the neuron and resolve its staking subaccount before it can send ICP there; a private or unreadable neuron cannot be resolved and the commitment is counted as a failed top-up attempt for that payout job.
 
-The faucet also intentionally does **not** perform an eager canister-existence probe for every eligible memo target. That would add extra network work and cycle cost directly to the value-moving path. The design bias here is to keep the blackholed faucet's hot path as small and deterministic as possible. Declared canister ID text in the memo is therefore treated as syntax and policy input only; the canister does not try to prove that every accepted short principal text identifies an installed canister before attempting a top-up. Operationally, that means memo validation is a syntax/policy check rather than an installation proof: if the current CMC path accepts the target principal, the faucet may still attempt the top-up.
+The faucet also intentionally does **not** perform an eager canister-existence probe for every eligible memo target. That would add extra network work and cycle cost directly to the value-moving path. The design bias here is to keep the faucet's hot path as small and deterministic as possible. Declared canister ID text in the memo is therefore treated as syntax and policy input only; the canister does not try to prove that every accepted short principal text identifies an installed canister before attempting a top-up. Operationally, that means memo validation is a syntax/policy check rather than an installation proof: if the current CMC path accepts the target principal, the faucet may still attempt the top-up.
 
-This is an explicit economic trade-off, not an oversight. A committer can still submit syntactically valid memo text that leads to a useless top-up attempt, so the faucet may spend ledger fee / CMC work on a target that never turns into a productive canister top-up. If some short non-canister principal text exists and passes the current CMC path, that is parser / CMC behavior rather than a supported user-facing target. The design accepts that bounded griefing surface because the alternative -- probing canister existence on the hot path -- would permanently add more complexity, cost, and failure surface to the blackholed value-moving path. The mitigation is the commitment floor itself: repeated attempts remain expensive for the attacker and still send real ICP into the protocol's funding source.
+This is an explicit economic trade-off, not an oversight. A committer can still submit syntactically valid memo text that leads to a useless top-up attempt, so the faucet may spend ledger fee / CMC work on a target that never turns into a productive canister top-up. If some short non-canister principal text exists and passes the current CMC path, that is parser / CMC behavior rather than a supported user-facing target. The design accepts that bounded griefing surface because the alternative -- probing canister existence on the hot path -- would permanently add more complexity, cost, and failure surface to the value-moving path. The mitigation is the commitment floor itself: repeated attempts remain expensive for the attacker and still send real ICP into the protocol's funding source.
 
 ### How a participant declares a target
 
@@ -120,9 +119,9 @@ The faucet does **not** permanently checkpoint “already attributed” staking 
 
 Instead, each new payout job rescans the staking account history from the beginning and re-evaluates commitments against the new payout-pot snapshot.
 
-That replay is intentionally streaming and page-bounded rather than history-buffering. The design prefers constant resident attribution state in the blackholed canister over a permanently growing durable attribution set, so the accepted growth vector is replay work and cycles consumption over time rather than unbounded attribution memory.
+That replay is intentionally streaming and page-bounded rather than history-buffering. The design prefers constant resident attribution state in the canister over a permanently growing durable attribution set, so the accepted growth vector is replay work and cycles consumption over time rather than unbounded attribution memory.
 
-To cap repeated replay cost on obviously barren history, the faucet also persists large tx-id skip ranges for spans with no transactions worth revisiting under the active attribution rules. This is a replay-work cache, not a new source of truth. For safety and simplicity, every upgrade clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional by design: skip ranges are only valid under the active commitment-classification rules, so retaining them across a future code/config change risks trusting stale replay hints. In practice upgrades are expected to be exceptional DAO-directed recovery events after blackhole activation, so conservative re-evaluation of historical staking activity is preferable to preserving cache warmth.
+To cap repeated replay cost on obviously barren history, the faucet also persists large tx-id skip ranges for spans with no transactions worth revisiting under the active attribution rules. This is a replay-work cache, not a new source of truth. For safety and simplicity, every upgrade clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional by design: skip ranges are only valid under the active commitment-classification rules, so retaining them across a future code/config change risks trusting stale replay hints. In practice upgrades are expected to be exceptional governance-directed recovery events, so conservative re-evaluation of historical staking activity is preferable to preserving cache warmth.
 
 The `10_000`-transaction persistence threshold is also intentional. The goal is to avoid repeated replay work for clearly barren history without turning skip-range storage into its own durable indexing system. Below-threshold barren spans can therefore be shaped and replayed, but the chosen threshold was set conservatively below the estimated economic break-even point where repeated replay would become more expensive for the faucet than periodically inserting fresh qualifying stake to prevent larger cached spans from forming. That keeps the durable cache small, keeps the implementation simple, and still makes large barren spans worth caching.
 
@@ -269,7 +268,7 @@ Each interval timer is clamped to at least 60 seconds by the runtime code. There
 
 ### Runtime config verification
 
-After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits `STATE ...` and `CONFIG ...` lines on every completed main-tick cadence, alongside its regular `Cycles: ...` health line. Forced scheduler ticks can emit additional state/config lines outside the regular cadence. The `CONFIG` line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, the embedded canonical Relay canister ID, funding source account, rescue/blackhole controller settings, blackhole armed state, expected first staking transaction ID, timer intervals, minimum tracked commitment, and stake-recognition delay. The `STATE` line includes the funding cursor, active funding-scan cursor/candidate/anchor, `active_payout_job_present`, active payout funding tranche, forced rescue reason, last observed staking balance and latest transaction ID, and the Index anchor/latest-invariant/latest-unreadable failure counters.
+After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits `STATE ...` and `CONFIG ...` lines on every completed main-tick cadence, alongside its regular `Cycles: ...` health line. Forced scheduler ticks can emit additional state/config lines outside the regular cadence. The `CONFIG` line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, the embedded canonical Relay canister ID, funding source account, rescue controller, autonomous-rescue state, expected first staking transaction ID, timer intervals, minimum tracked commitment, and stake-recognition delay. The `STATE` line includes the funding cursor, active funding-scan cursor/candidate/anchor, `active_payout_job_present`, active payout funding tranche, forced rescue reason, last observed staking balance and latest transaction ID, and the Index anchor/latest-invariant/latest-unreadable failure counters.
 
 ### Main tick sequence
 
@@ -339,34 +338,27 @@ This keeps memory bounded and avoids long-lived paused payout jobs. It also mean
 
 To avoid filling the canister log buffer with repetitive transfer-level noise, the faucet prefers aggregate accounting over per-record error logs. Operators should expect compact run summaries and counters such as `failed_topups` and `ambiguous_topups`, not one log line per beneficiary top-up attempt. `failed_topups` is used for deterministic beneficiary failures; `ambiguous_topups` is used when the faucet exhausts its one inline retry at a boundary where a prior ledger / CMC action may already have taken effect. These counters are beneficiary-only; a failed Relay remainder cleanup does not increment them.
 
-## Rescue and blackhole policy
+## Autonomous rescue policy
 
 ### Intended controller model
 
-The intended healthy-state controller set is:
+Once autonomous rescue is deliberately armed, the healthy controller set contains only `jupiter-faucet`. When recovery is required, the controller set contains exactly `jupiter-faucet` and `jupiter-lifeline`; the implementation sorts and deduplicates principals deterministically. Healthy value flow can narrow the canister back to self-only control.
 
-- `jupiter-faucet` itself
-- the canonical blackhole canister
-
-When rescue is required, the controller set becomes:
-
-- `jupiter-lifeline`
-- the canonical blackhole canister
-- `jupiter-faucet`
+Every autonomous controller reconciliation explicitly preserves public status and public logs. The Fiduciary blackhole is not part of this policy: protocol-native public status supplies observation without granting controller authority.
 
 ### Time-based windows
 
-When blackhole mode is armed, time-based controller reconciliation follows the same windows as the disburser:
+When autonomous rescue is armed, time-based controller reconciliation follows the same windows as the disburser:
 
-- healthy: `<= 7 days` since last successful top-up notification → blackhole + self
+- healthy: `<= 7 days` since last successful top-up notification → self only
 - middle window: `> 7 days` and `<= 14 days` → no controller change
-- broken: `> 14 days` → blackhole + rescue controller + self
+- broken: `> 14 days` → self + rescue controller
 
 Only successful CMC `notify_top_up` completions update this health timestamp. Raw ICP routes, raw cycles fallbacks, Relay remainders, and neuron staking-account transfers are successful value transfers, but they do not prove the cycles top-up notification path is healthy.
 
 There is also a bootstrap rescue condition:
 
-- more than `14 days` since blackhole arming with **no** successful top-up ever recorded → forced rescue reason `BootstrapNoSuccess`
+- more than `14 days` since autonomous rescue arming with **no** successful top-up ever recorded → forced rescue reason `BootstrapNoSuccess`
 
 ### Faucet-specific forced rescue reasons
 
@@ -391,7 +383,7 @@ Unlike the disburser, the faucet also has code-backed forced rescue latches tied
 
 Strict-tranche accounting fails closed on persistent tranche invariants. If the Faucet discovers a funding tranche that cannot be safely processed, such as a funding amount exceeding the current payout-account balance or a qualifying funding transfer without a timestamp, it latches a forced-rescue reason rather than retrying silently forever. Transient ledger/index/CMC call failures continue to use the existing retry/failure-counter paths and do not immediately trigger forced rescue.
 
-These latches are persisted and can be cleared via upgrade args when appropriate. Forced rescue reasons only lead to controller changes when the blackhole/rescue controller policy is armed and configured accordingly. Funding discovery emits compact `FUNDING` logs that distinguish `found`, `empty`, `in_progress`, `unreadable`, and `balance_mismatch`, so tranche discovery and strict-accounting failures remain visible in production logs.
+These latches are persisted and can be cleared via upgrade args when appropriate. Forced rescue reasons only lead to controller changes when autonomous rescue is deliberately armed. Funding discovery emits compact `FUNDING` logs that distinguish `found`, `empty`, `in_progress`, `unreadable`, and `balance_mismatch`, so tranche discovery and strict-accounting failures remain visible in production logs.
 
 ## Install-time and upgrade-time configuration
 
@@ -410,8 +402,7 @@ These latches are persisted and can be cleared via upgrade args when appropriate
   - this field is structurally required in the Candid init interface
   - this faucet starts life in strict funding-tranche mode
 - `rescue_controller`
-- `blackhole_controller` (optional; defaults to canonical blackhole; when present it must not equal the faucet canister principal or `rescue_controller`)
-- `blackhole_armed` (optional)
+- `autonomous_rescue_armed` (optional)
 - `expected_first_staking_tx_id` (optional)
   - a safety anchor for the oldest expected staking-account transaction **ID** visible through the index canister
   - type: `opt nat64`
@@ -471,8 +462,7 @@ Omitted upgrade args are decoded as no config change. Use optional `UpgradeArgs`
 
 Current upgrade args support these recovery/config fields:
 
-- `blackhole_controller : opt principal`
-- `blackhole_armed : opt bool`
+- `autonomous_rescue_armed : opt bool`
 - `clear_forced_rescue : opt bool`
 - `last_processed_funding_tx_id : opt nat64`
 - `main_interval_seconds : opt nat64`
@@ -515,8 +505,7 @@ tx hash: 5832a04dd8a0b8435600fe86ab91865f46af621c88aab131d3d9e14525938a36
     stake_recognition_delay_seconds = opt (604800 : nat64);
 
     clear_forced_rescue = opt true;
-    blackhole_controller = null;
-    blackhole_armed = null;
+    autonomous_rescue_armed = null;
   }
 )
 ```
@@ -627,8 +616,7 @@ After reinstall:
 
 Upgrade args support:
 
-- `blackhole_controller`
-- `blackhole_armed`
+- `autonomous_rescue_armed`
 - `clear_forced_rescue`
 - `last_processed_funding_tx_id`
 - `main_interval_seconds`
@@ -645,7 +633,7 @@ Every upgrade also clears the persisted skip-range cache before the faucet resum
 - the latched forced-rescue reason
 - the related consecutive-failure counters
 
-When `clear_forced_rescue = true` is used while blackhole mode remains armed, the faucet also schedules an immediate one-shot rescue/controller reconciliation after `post_upgrade` so a stale widened controller set does not linger until the next periodic rescue timer. If blackhole mode is not armed, no automatic controller target is imposed; the armed-mode controller policy is the only one the canister reconciles itself toward.
+When `clear_forced_rescue = true` is used while autonomous rescue remains armed, the faucet also schedules an immediate one-shot controller reconciliation after `post_upgrade` so a stale widened controller set does not linger until the next periodic rescue timer. If autonomous rescue is unarmed, no automatic controller target is imposed.
 
 ### Production wiring recorded in this repo
 
@@ -659,7 +647,6 @@ The committed mainnet install args wire the production constants used by the sui
   intended to be an oldest-transaction **ID** anchor (`opt nat64`), not a hash / string; verify the committed `mainnet-install-args.did` value before using it
 - payout account: the faucet canister default account (`acjuz-liaaa-aaaar-qb4qq-cai`, with `payout_subaccount = null`)
 - rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
-- blackhole controller: canonical blackhole (`77deu-baaaa-aaaar-qb6za-cai`)
 - ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - index canister: ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`)
 - CMC canister: Cycles Minting Canister (`rkp4c-7iaaa-aaaaa-aaaca-cai`)
@@ -728,9 +715,9 @@ For the suite-wide matrix, see [`../../tools/xtask/README.md`](../../tools/xtask
 
 ## Operational guidance
 
-### Before blackholing
+### Before autonomous handoff
 
-Do not rely on the healthy `self + blackhole` controller set until the canister has recorded at least one successful top-up notification.
+Do not arm autonomous rescue or narrow to self-only control until the canister is already its own controller, public status has been independently verified, Lifeline governance has been reviewed, and at least one successful top-up notification has proved runtime value flow. This later handoff is separate from removing the Fiduciary controller during the current developer-controlled stage.
 
 ### When reading payout behavior
 

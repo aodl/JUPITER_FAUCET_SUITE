@@ -3883,6 +3883,7 @@ dependencies = [
  "candid",
  "hex",
  "icrc-ledger-types",
+ "jupiter-build-support",
  "jupiter-ic-clients",
  "jupiter-nns-types",
  "num-traits",

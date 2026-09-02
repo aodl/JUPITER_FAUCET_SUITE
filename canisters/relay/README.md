@@ -302,7 +302,7 @@ By default Relay talks to:
 - NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`) — Relay Faucet-neuron staking and public NNS neuron surplus recipients;
 - ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`) — subaccount-1 and referenced splitter reward-attribution history;
 - `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`) — SNS owner snapshots and reward-token context, whose pinned Root dynamically supplies the matching reward Index; and
-- the configured fixed blackhole (canonical default `77deu-baaaa-aaaar-qb6za-cai`) or shared Auto probe routes — target cycles observation.
+- shared Auto probe routes, or a manually configured fixed blackhole — target cycles observation.
 
 The public install type is defined in [`jupiter_relay.did`](jupiter_relay.did):
 
@@ -387,7 +387,7 @@ blackhole_13_node_subnet    e3mmv-5qaaa-aaaah-aadma-cai
 relay, auto-included        u2qkp-aqaaa-aaaar-qb7ea-cai
 ```
 
-The canonical Relay uses Fixed probe mode through the Fiduciary blackhole, a daily cadence, and two equal public NNS neuron surplus recipients:
+The canonical Relay uses Auto probe mode, a daily cadence, and two equal public NNS neuron surplus recipients. Auto prefers protocol-native public `canister_status` for Jupiter protocol canisters, then retains cached, recognized-blackhole, and SNS routes as compatibility fallbacks for other targets:
 
 - IO neuron `10292412127977304661` with no memo;
 - Jupiter Faucet neuron `11614578985374291210` with memo `10292412127977304661`.

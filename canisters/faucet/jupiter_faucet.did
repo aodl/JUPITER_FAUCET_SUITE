@@ -11,8 +11,7 @@ type InitArgs = record {
   funding_source_account : Account;
 
   rescue_controller : principal;
-  blackhole_controller : opt principal;
-  blackhole_armed : opt bool;
+  autonomous_rescue_armed : opt bool;
   expected_first_staking_tx_id : opt nat64;
 
   main_interval_seconds : opt nat64;
