@@ -194,6 +194,12 @@ pub(super) async fn run_main_tick_with_clients<
     governance: &G,
     xrc: &X,
 ) -> Result<(), String> {
+    if state::with_state(|st| !crate::memo_registered_canister_summary_index_is_valid(st)) {
+        state::with_root_state_mut(|st| {
+            crate::repair_memo_registered_canister_summaries_if_invalid(st);
+        });
+    }
+
     if let Err(err) = refresh_icp_xdr_rate_if_due(now_secs, xrc).await {
         log_error(&format!("historian ICP/XDR rate refresh degraded: {err}"));
     }

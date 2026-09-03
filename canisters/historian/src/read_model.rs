@@ -469,25 +469,11 @@ pub(super) fn list_memo_registered_canister_summaries(
         {
             return response;
         }
-        // Slow compatibility fallback for states whose derived ranking cache is
-        // missing or drifted. Normal init/upgrade/timer paths rebuild and refresh
-        // this cache; a future maintenance pass should repair drift outside public
-        // queries before removing this full sort.
-        let mut items = memo_registered_canister_summaries(st);
-        items.sort_by_key(memo_registered_canister_summary_total_desc_key);
-        let total = items.len() as u64;
-        let start = page.saturating_mul(page_size) as usize;
-        let end = start.saturating_add(page_size as usize).min(items.len());
-        let page_items = if start >= items.len() {
-            Vec::new()
-        } else {
-            items[start..end].to_vec()
-        };
         ListMemoRegisteredCanisterSummariesResponse {
-            items: page_items,
+            items: Vec::new(),
             page,
             page_size,
-            total,
+            total: 0,
         }
     })
 }

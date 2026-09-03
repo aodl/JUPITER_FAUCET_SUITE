@@ -533,13 +533,7 @@ pub(super) fn initialize_derived_state_if_missing(st: &mut State) {
     if st.last_index_run_ts.is_none() {
         st.last_index_run_ts = Some(st.last_main_run_ts);
     }
-    if st.memo_registered_canister_summaries_cache.is_none()
-        || st
-            .memo_registered_canister_summaries_total_desc_index
-            .is_none()
-    {
-        rebuild_memo_registered_canister_summaries_cache(st);
-    }
+    repair_memo_registered_canister_summaries_if_invalid(st);
 }
 
 pub(super) fn memo_registered_canister_summary_for(
@@ -612,17 +606,17 @@ pub(super) fn memo_registered_canister_summaries_total_desc_page(
     page: u32,
     page_size: u32,
 ) -> Option<ListMemoRegisteredCanisterSummariesResponse> {
-    let cache = st.memo_registered_canister_summaries_cache.as_ref()?;
-    let index = st
-        .memo_registered_canister_summaries_total_desc_index
-        .as_ref()?;
-    if index.len() != cache.len()
-        || index
-            .iter()
-            .any(|canister_id| !cache.contains_key(canister_id))
-    {
+    if !memo_registered_canister_summary_index_is_valid(st) {
         return None;
     }
+    let cache = st
+        .memo_registered_canister_summaries_cache
+        .as_ref()
+        .expect("validated memo-registered summary cache missing");
+    let index = st
+        .memo_registered_canister_summaries_total_desc_index
+        .as_ref()
+        .expect("validated memo-registered summary index missing");
     let total = index.len() as u64;
     let start = page.saturating_mul(page_size) as usize;
     let end = start.saturating_add(page_size as usize).min(index.len());
@@ -631,7 +625,12 @@ pub(super) fn memo_registered_canister_summaries_total_desc_page(
     } else {
         index[start..end]
             .iter()
-            .filter_map(|canister_id| cache.get(canister_id).cloned())
+            .map(|canister_id| {
+                cache
+                    .get(canister_id)
+                    .expect("validated ranked canister missing from summary cache")
+                    .clone()
+            })
             .collect()
     };
     Some(ListMemoRegisteredCanisterSummariesResponse {
@@ -640,6 +639,50 @@ pub(super) fn memo_registered_canister_summaries_total_desc_page(
         page_size,
         total,
     })
+}
+
+pub(crate) fn memo_registered_canister_summary_index_is_valid(st: &State) -> bool {
+    let Some(cache) = st.memo_registered_canister_summaries_cache.as_ref() else {
+        return false;
+    };
+    let Some(index) = st
+        .memo_registered_canister_summaries_total_desc_index
+        .as_ref()
+    else {
+        return false;
+    };
+    if index.len() != cache.len() {
+        return false;
+    }
+
+    let mut previous_key = None;
+    for canister_id in index {
+        let Some(summary) = cache.get(canister_id) else {
+            return false;
+        };
+        if summary.canister_id != *canister_id {
+            return false;
+        }
+        let key = memo_registered_canister_summary_total_desc_key(summary);
+        if previous_key
+            .as_ref()
+            .is_some_and(|previous| previous >= &key)
+        {
+            return false;
+        }
+        previous_key = Some(key);
+    }
+    true
+}
+
+pub(crate) fn repair_memo_registered_canister_summaries_if_invalid(st: &mut State) -> bool {
+    if memo_registered_canister_summary_index_is_valid(st) {
+        return false;
+    }
+
+    // Full reconstruction is intentionally confined to mutable lifecycle/maintenance paths.
+    rebuild_memo_registered_canister_summaries_cache(st);
+    true
 }
 
 pub(crate) fn refresh_memo_registered_canister_summary(st: &mut State, canister_id: Principal) {
@@ -668,18 +711,6 @@ pub(crate) fn rebuild_memo_registered_canister_summaries_cache(st: &mut State) {
     for canister_id in canister_ids {
         refresh_memo_registered_canister_summary(st, canister_id);
     }
-}
-
-pub(super) fn memo_registered_canister_summaries(st: &State) -> Vec<MemoRegisteredCanisterSummary> {
-    if let Some(cache) = &st.memo_registered_canister_summaries_cache {
-        return cache.values().cloned().collect();
-    }
-
-    st.canister_tracking_reasons
-        .keys()
-        .copied()
-        .filter_map(|canister_id| memo_registered_canister_summary_for(st, canister_id))
-        .collect()
 }
 
 #[ic_cdk::init]

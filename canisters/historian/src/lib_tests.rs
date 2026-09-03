@@ -210,6 +210,28 @@ mod tests {
         }
     }
 
+    fn add_memo_registered_canister(
+        st: &mut State,
+        canister_id: Principal,
+        tx_id: u64,
+        amount_e8s: u64,
+    ) {
+        st.distinct_canisters.insert(canister_id);
+        st.canister_tracking_reasons.insert(
+            canister_id,
+            BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
+        );
+        st.commitment_history.insert(
+            canister_id,
+            vec![CommitmentSample {
+                tx_id,
+                timestamp_nanos: Some(tx_id.saturating_mul(1_000_000_000)),
+                amount_e8s,
+                counts_toward_faucet: true,
+            }],
+        );
+    }
+
     #[test]
     fn config_from_init_args_uses_mainnet_defaults_for_optional_canisters() {
         let cfg = config_from_init_args(InitArgs {
@@ -397,55 +419,209 @@ mod tests {
     }
 
     #[test]
-    fn list_memo_registered_canister_summaries_falls_back_to_slow_path_when_total_desc_index_drifts(
-    ) {
+    fn list_memo_registered_canister_summaries_uses_indexed_bounded_pagination() {
+        let mut st = base_state();
+        for idx in 0..105u64 {
+            add_memo_registered_canister(
+                &mut st,
+                Principal::from_slice(&[42, idx as u8]),
+                idx + 1,
+                100_000_000 + idx,
+            );
+        }
+        rebuild_memo_registered_canister_summaries_cache(&mut st);
+        assert!(memo_registered_canister_summary_index_is_valid(&st));
+        state::set_state(st);
+
+        let first_page =
+            list_memo_registered_canister_summaries(ListMemoRegisteredCanisterSummariesArgs {
+                page: Some(0),
+                page_size: Some(u32::MAX),
+            });
+        let second_page =
+            list_memo_registered_canister_summaries(ListMemoRegisteredCanisterSummariesArgs {
+                page: Some(1),
+                page_size: Some(u32::MAX),
+            });
+
+        assert_eq!(first_page.page, 0);
+        assert_eq!(first_page.page_size, 100);
+        assert_eq!(first_page.total, 105);
+        assert_eq!(first_page.items.len(), 100);
+        assert_eq!(second_page.page, 1);
+        assert_eq!(second_page.page_size, 100);
+        assert_eq!(second_page.total, 105);
+        assert_eq!(second_page.items.len(), 5);
+        let totals = first_page
+            .items
+            .iter()
+            .chain(&second_page.items)
+            .map(|summary| summary.total_qualifying_committed_e8s)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            totals,
+            (0..105u64)
+                .rev()
+                .map(|idx| 100_000_000 + idx)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn list_memo_registered_canister_summaries_returns_safe_empty_response_without_repairing_drift()
+    {
         let first = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let second = principal("uxrrr-q7777-77774-qaaaq-cai");
-        let mut cache = BTreeMap::new();
-        cache.insert(
-            first,
-            MemoRegisteredCanisterSummary {
-                canister_id: first,
-                tracking_reasons: vec![CanisterTrackingReason::MemoCommitment],
-                qualifying_commitment_count: 1,
-                total_qualifying_committed_e8s: 123_000_000,
-                last_commitment_ts: Some(1),
-                latest_cycles: None,
-                last_cycles_probe_ts: None,
-            },
-        );
-        cache.insert(
-            second,
-            MemoRegisteredCanisterSummary {
-                canister_id: second,
-                tracking_reasons: vec![CanisterTrackingReason::MemoCommitment],
-                qualifying_commitment_count: 2,
-                total_qualifying_committed_e8s: 456_000_000,
-                last_commitment_ts: Some(2),
-                latest_cycles: None,
-                last_cycles_probe_ts: None,
-            },
-        );
-
         let mut st = base_state();
-        st.memo_registered_canister_summaries_cache = Some(cache);
+        add_memo_registered_canister(&mut st, first, 1, 123_000_000);
+        add_memo_registered_canister(&mut st, second, 2, 456_000_000);
+        rebuild_memo_registered_canister_summaries_cache(&mut st);
         st.memo_registered_canister_summaries_total_desc_index = Some(vec![first]);
         state::set_state(st);
 
         let response =
             list_memo_registered_canister_summaries(ListMemoRegisteredCanisterSummariesArgs {
-                page: Some(0),
+                page: Some(7),
                 page_size: Some(10),
             });
 
-        assert_eq!(response.total, 2);
+        assert_eq!(response.page, 7);
+        assert_eq!(response.page_size, 10);
+        assert_eq!(response.total, 0);
+        assert!(response.items.is_empty());
+        state::with_state(|st| {
+            assert_eq!(st.commitment_history.len(), 2);
+            assert_eq!(st.commitment_history[&first][0].amount_e8s, 123_000_000);
+            assert_eq!(st.commitment_history[&second][0].amount_e8s, 456_000_000);
+            assert_eq!(
+                st.memo_registered_canister_summaries_cache
+                    .as_ref()
+                    .map(BTreeMap::len),
+                Some(2)
+            );
+            assert_eq!(
+                st.memo_registered_canister_summaries_total_desc_index,
+                Some(vec![first])
+            );
+        });
+    }
+
+    #[test]
+    fn memo_registered_canister_summary_index_validation_rejects_structural_drift() {
+        let first = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let second = principal("uxrrr-q7777-77774-qaaaq-cai");
+        let missing = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
+        let mut valid = base_state();
+        add_memo_registered_canister(&mut valid, first, 1, 123_000_000);
+        add_memo_registered_canister(&mut valid, second, 2, 456_000_000);
+        rebuild_memo_registered_canister_summaries_cache(&mut valid);
+        assert!(memo_registered_canister_summary_index_is_valid(&valid));
+
+        let mut cache_missing = valid.clone();
+        cache_missing.memo_registered_canister_summaries_cache = None;
+        assert!(!memo_registered_canister_summary_index_is_valid(
+            &cache_missing
+        ));
+
+        let mut index_missing = valid.clone();
+        index_missing.memo_registered_canister_summaries_total_desc_index = None;
+        assert!(!memo_registered_canister_summary_index_is_valid(
+            &index_missing
+        ));
+
+        let mut length_mismatch = valid.clone();
+        length_mismatch
+            .memo_registered_canister_summaries_total_desc_index
+            .as_mut()
+            .unwrap()
+            .pop();
+        assert!(!memo_registered_canister_summary_index_is_valid(
+            &length_mismatch
+        ));
+
+        let mut missing_cache_entry = valid.clone();
+        missing_cache_entry.memo_registered_canister_summaries_total_desc_index =
+            Some(vec![second, missing]);
+        assert!(!memo_registered_canister_summary_index_is_valid(
+            &missing_cache_entry
+        ));
+
+        let mut mismatched_summary_id = valid.clone();
+        mismatched_summary_id
+            .memo_registered_canister_summaries_cache
+            .as_mut()
+            .unwrap()
+            .get_mut(&first)
+            .unwrap()
+            .canister_id = missing;
+        assert!(!memo_registered_canister_summary_index_is_valid(
+            &mismatched_summary_id
+        ));
+
+        let mut wrong_order = valid;
+        wrong_order
+            .memo_registered_canister_summaries_total_desc_index
+            .as_mut()
+            .unwrap()
+            .reverse();
+        assert!(!memo_registered_canister_summary_index_is_valid(
+            &wrong_order
+        ));
+    }
+
+    #[test]
+    fn repair_memo_registered_canister_summaries_heals_drift_without_changing_authoritative_data() {
+        let first = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let second = principal("uxrrr-q7777-77774-qaaaq-cai");
+        let mut st = base_state();
+        add_memo_registered_canister(&mut st, first, 1, 123_000_000);
+        add_memo_registered_canister(&mut st, second, 2, 456_000_000);
+        st.cycles_history.insert(
+            first,
+            vec![CyclesSample {
+                timestamp_nanos: 3_000_000_000,
+                cycles: 777,
+                source: CyclesSampleSource::DirectCanisterStatus,
+            }],
+        );
+        st.memo_registered_canister_summaries_cache = None;
+        st.memo_registered_canister_summaries_total_desc_index = Some(vec![first]);
+
+        let distinct_canisters = st.distinct_canisters.clone();
+        let tracking_reasons = st.canister_tracking_reasons.clone();
+        let commitment_history = st.commitment_history.clone();
+        let cycles_history = st.cycles_history.clone();
+        let per_canister_meta = st.per_canister_meta.clone();
+
+        assert!(repair_memo_registered_canister_summaries_if_invalid(
+            &mut st
+        ));
+        assert!(memo_registered_canister_summary_index_is_valid(&st));
+        let page = memo_registered_canister_summaries_total_desc_page(&st, 0, 10)
+            .expect("repair should restore the indexed page");
+        assert_eq!(page.total, 2);
         assert_eq!(
-            response
-                .items
+            page.items
                 .iter()
-                .map(|item| item.canister_id)
+                .map(|summary| summary.canister_id)
                 .collect::<Vec<_>>(),
             vec![second, first]
+        );
+        assert_eq!(st.distinct_canisters, distinct_canisters);
+        assert_eq!(st.canister_tracking_reasons, tracking_reasons);
+        assert_eq!(st.commitment_history, commitment_history);
+        assert_eq!(st.cycles_history, cycles_history);
+        assert_eq!(st.per_canister_meta, per_canister_meta);
+
+        let index_before = st
+            .memo_registered_canister_summaries_total_desc_index
+            .clone();
+        assert!(!repair_memo_registered_canister_summaries_if_invalid(
+            &mut st
+        ));
+        assert_eq!(
+            st.memo_registered_canister_summaries_total_desc_index,
+            index_before
         );
     }
 
@@ -920,6 +1096,7 @@ mod tests {
             sns_only,
             BTreeSet::from([CanisterTrackingReason::SnsDiscovery]),
         );
+        rebuild_memo_registered_canister_summaries_cache(&mut st);
         state::set_state(st);
 
         let response =
@@ -948,6 +1125,7 @@ mod tests {
                 counts_toward_faucet: false,
             }],
         );
+        rebuild_memo_registered_canister_summaries_cache(&mut st);
         state::set_state(st);
 
         let response =
@@ -1056,6 +1234,7 @@ mod tests {
                 },
             );
         }
+        rebuild_memo_registered_canister_summaries_cache(&mut st);
         state::set_state(st);
 
         let first_page =
@@ -1094,6 +1273,7 @@ mod tests {
                 counts_toward_faucet: true,
             }],
         );
+        rebuild_memo_registered_canister_summaries_cache(&mut st);
         state::set_state(st);
 
         let response =
@@ -1468,6 +1648,11 @@ mod tests {
             Some(2)
         );
         assert_eq!(count_registered_canisters(&st), 1);
+        assert!(memo_registered_canister_summary_index_is_valid(&st));
+        let page = memo_registered_canister_summaries_total_desc_page(&st, 0, 10)
+            .expect("normalization should leave the summary index available");
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].canister_id, canister);
     }
 
     #[test]
@@ -2204,9 +2389,8 @@ mod tests {
             },
         );
 
-        let summaries = memo_registered_canister_summaries(&st);
-        assert_eq!(summaries.len(), 1);
-        let item = &summaries[0];
+        let item = memo_registered_canister_summary_for(&st, canister)
+            .expect("memo-registered canister should have a summary");
         assert_eq!(item.qualifying_commitment_count, 2);
         assert_eq!(item.total_qualifying_committed_e8s, 350);
         assert_eq!(item.last_commitment_ts, Some(3));

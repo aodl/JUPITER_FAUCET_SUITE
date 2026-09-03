@@ -74,6 +74,58 @@ mod tests {
         staking_id
     }
 
+    #[test]
+    fn main_tick_repairs_memo_registered_summary_index_drift() {
+        configure_state(10);
+        let canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.distinct_canisters.insert(canister);
+            st.canister_tracking_reasons.insert(
+                canister,
+                std::iter::once(CanisterTrackingReason::MemoCommitment).collect(),
+            );
+            st.commitment_history.insert(
+                canister,
+                vec![crate::state::CommitmentSample {
+                    tx_id: 1,
+                    timestamp_nanos: Some(1_000_000_000),
+                    amount_e8s: 150,
+                    counts_toward_faucet: true,
+                }],
+            );
+            st.memo_registered_canister_summaries_cache = None;
+            st.memo_registered_canister_summaries_total_desc_index = Some(vec![canister]);
+        });
+
+        let index = MockIndexClient::new(Vec::new());
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(0);
+        let sns_wasm = MockSnsWasmClient::new(Vec::new());
+        let sns_root = MockSnsRootClient::new(BTreeMap::new());
+        let governance = RecordingGovernanceClient::new();
+        let xrc = MockXrcClient::success(720_000_000, 8, 9_900);
+
+        block_on(run_main_tick_with_clients(
+            100_000_000_000,
+            100,
+            &index,
+            &cycles_probe,
+            &sns_wasm,
+            &sns_root,
+            &governance,
+            &xrc,
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            assert!(crate::memo_registered_canister_summary_index_is_valid(st));
+            let page = crate::memo_registered_canister_summaries_total_desc_page(st, 0, 10)
+                .expect("main-tick maintenance should repair the indexed summary page");
+            assert_eq!(page.total, 1);
+            assert_eq!(page.items[0].canister_id, canister);
+            assert_eq!(st.commitment_history[&canister][0].amount_e8s, 150);
+        });
+    }
+
     fn transfer_to_staking_memo_tx(
         id: u64,
         staking_id: &str,
