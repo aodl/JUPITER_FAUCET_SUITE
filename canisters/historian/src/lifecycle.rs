@@ -606,33 +606,56 @@ pub(super) fn memo_registered_canister_summaries_total_desc_page(
     page: u32,
     page_size: u32,
 ) -> Option<ListMemoRegisteredCanisterSummariesResponse> {
-    if !memo_registered_canister_summary_index_is_valid(st) {
+    let Some(cache) = st.memo_registered_canister_summaries_cache.as_ref() else {
         return None;
-    }
-    let cache = st
-        .memo_registered_canister_summaries_cache
-        .as_ref()
-        .expect("validated memo-registered summary cache missing");
-    let index = st
+    };
+    let Some(index) = st
         .memo_registered_canister_summaries_total_desc_index
         .as_ref()
-        .expect("validated memo-registered summary index missing");
+    else {
+        return None;
+    };
+    if cache.len() != index.len() {
+        return None;
+    }
+
     let total = index.len() as u64;
     let start = page.saturating_mul(page_size) as usize;
     let end = start.saturating_add(page_size as usize).min(index.len());
-    let items = if start >= index.len() {
-        Vec::new()
-    } else {
-        index[start..end]
-            .iter()
-            .map(|canister_id| {
-                cache
-                    .get(canister_id)
-                    .expect("validated ranked canister missing from summary cache")
-                    .clone()
-            })
-            .collect()
-    };
+    if start >= index.len() {
+        return Some(ListMemoRegisteredCanisterSummariesResponse {
+            items: Vec::new(),
+            page,
+            page_size,
+            total,
+        });
+    }
+
+    // Keep public-query validation bounded to the requested page and its two boundaries.
+    let inspected_start = start.saturating_sub(1);
+    let inspected_end = end.saturating_add(1).min(index.len());
+    let mut previous_key = None;
+    let mut items = Vec::with_capacity(end - start);
+    for (offset, canister_id) in index[inspected_start..inspected_end].iter().enumerate() {
+        let summary = cache.get(canister_id)?;
+        if summary.canister_id != *canister_id {
+            return None;
+        }
+        let key = memo_registered_canister_summary_total_desc_key(summary);
+        if previous_key
+            .as_ref()
+            .is_some_and(|previous| previous >= &key)
+        {
+            return None;
+        }
+        previous_key = Some(key);
+
+        let position = inspected_start + offset;
+        if position >= start && position < end {
+            items.push(summary.clone());
+        }
+    }
+
     Some(ListMemoRegisteredCanisterSummariesResponse {
         items,
         page,

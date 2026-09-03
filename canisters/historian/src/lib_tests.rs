@@ -232,6 +232,38 @@ mod tests {
         );
     }
 
+    fn assert_memo_summary_query_fails_safe_without_mutation(st: State, page: u32, page_size: u32) {
+        let cache_before =
+            candid::encode_one(&st.memo_registered_canister_summaries_cache).unwrap();
+        let index_before = st
+            .memo_registered_canister_summaries_total_desc_index
+            .clone();
+        let commitment_history_before = st.commitment_history.clone();
+        state::set_state(st);
+
+        let response =
+            list_memo_registered_canister_summaries(ListMemoRegisteredCanisterSummariesArgs {
+                page: Some(page),
+                page_size: Some(page_size),
+            });
+
+        assert_eq!(response.page, page);
+        assert_eq!(response.page_size, page_size.clamp(1, 100));
+        assert_eq!(response.total, 0);
+        assert!(response.items.is_empty());
+        state::with_state(|st| {
+            assert_eq!(
+                candid::encode_one(&st.memo_registered_canister_summaries_cache).unwrap(),
+                cache_before
+            );
+            assert_eq!(
+                st.memo_registered_canister_summaries_total_desc_index,
+                index_before
+            );
+            assert_eq!(st.commitment_history, commitment_history_before);
+        });
+    }
+
     #[test]
     fn config_from_init_args_uses_mainnet_defaults_for_optional_canisters() {
         let cfg = config_from_init_args(InitArgs {
@@ -468,42 +500,151 @@ mod tests {
     }
 
     #[test]
-    fn list_memo_registered_canister_summaries_returns_safe_empty_response_without_repairing_drift()
-    {
+    fn list_memo_registered_canister_summaries_fails_safe_for_missing_or_mismatched_structures() {
         let first = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let second = principal("uxrrr-q7777-77774-qaaaq-cai");
+        let mut valid = base_state();
+        add_memo_registered_canister(&mut valid, first, 1, 123_000_000);
+        add_memo_registered_canister(&mut valid, second, 2, 456_000_000);
+        rebuild_memo_registered_canister_summaries_cache(&mut valid);
+
+        let mut cache_missing = valid.clone();
+        cache_missing.memo_registered_canister_summaries_cache = None;
+        assert_memo_summary_query_fails_safe_without_mutation(cache_missing, 7, 10);
+
+        let mut index_missing = valid.clone();
+        index_missing.memo_registered_canister_summaries_total_desc_index = None;
+        assert_memo_summary_query_fails_safe_without_mutation(index_missing, 7, 10);
+
+        let mut length_mismatch = valid;
+        length_mismatch
+            .memo_registered_canister_summaries_total_desc_index
+            .as_mut()
+            .unwrap()
+            .pop();
+        assert_memo_summary_query_fails_safe_without_mutation(length_mismatch, 7, 10);
+    }
+
+    #[test]
+    fn list_memo_registered_canister_summaries_fails_safe_for_requested_page_drift() {
+        let first = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let second = principal("uxrrr-q7777-77774-qaaaq-cai");
+        let missing = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
+        let mut valid = base_state();
+        add_memo_registered_canister(&mut valid, first, 1, 123_000_000);
+        add_memo_registered_canister(&mut valid, second, 2, 456_000_000);
+        rebuild_memo_registered_canister_summaries_cache(&mut valid);
+
+        let mut missing_cache_entry = valid.clone();
+        missing_cache_entry
+            .memo_registered_canister_summaries_total_desc_index
+            .as_mut()
+            .unwrap()[0] = missing;
+        assert_memo_summary_query_fails_safe_without_mutation(missing_cache_entry, 0, 10);
+
+        let mut mismatched_summary_id = valid.clone();
+        mismatched_summary_id
+            .memo_registered_canister_summaries_cache
+            .as_mut()
+            .unwrap()
+            .get_mut(&second)
+            .unwrap()
+            .canister_id = missing;
+        assert_memo_summary_query_fails_safe_without_mutation(mismatched_summary_id, 0, 10);
+
+        let mut wrong_order = valid.clone();
+        wrong_order
+            .memo_registered_canister_summaries_total_desc_index
+            .as_mut()
+            .unwrap()
+            .reverse();
+        assert_memo_summary_query_fails_safe_without_mutation(wrong_order, 0, 10);
+
+        let mut duplicate_id = valid;
+        let index = duplicate_id
+            .memo_registered_canister_summaries_total_desc_index
+            .as_mut()
+            .unwrap();
+        index[1] = index[0];
+        assert_memo_summary_query_fails_safe_without_mutation(duplicate_id, 0, 10);
+    }
+
+    #[test]
+    fn list_memo_registered_canister_summaries_ignores_drift_outside_requested_page_until_repair() {
         let mut st = base_state();
-        add_memo_registered_canister(&mut st, first, 1, 123_000_000);
-        add_memo_registered_canister(&mut st, second, 2, 456_000_000);
+        for idx in 0..12u64 {
+            add_memo_registered_canister(
+                &mut st,
+                Principal::from_slice(&[43, idx as u8]),
+                idx + 1,
+                100_000_000 + idx,
+            );
+        }
         rebuild_memo_registered_canister_summaries_cache(&mut st);
-        st.memo_registered_canister_summaries_total_desc_index = Some(vec![first]);
+        let expected_index = st
+            .memo_registered_canister_summaries_total_desc_index
+            .clone()
+            .unwrap();
+        st.memo_registered_canister_summaries_total_desc_index
+            .as_mut()
+            .unwrap()
+            .swap(8, 9);
+        assert!(!memo_registered_canister_summary_index_is_valid(&st));
         state::set_state(st);
 
         let response =
             list_memo_registered_canister_summaries(ListMemoRegisteredCanisterSummariesArgs {
-                page: Some(7),
-                page_size: Some(10),
+                page: Some(0),
+                page_size: Some(3),
             });
 
-        assert_eq!(response.page, 7);
-        assert_eq!(response.page_size, 10);
-        assert_eq!(response.total, 0);
-        assert!(response.items.is_empty());
+        assert_eq!(response.total, 12);
+        assert_eq!(response.items.len(), 3);
+        assert_eq!(
+            response
+                .items
+                .iter()
+                .map(|summary| summary.total_qualifying_committed_e8s)
+                .collect::<Vec<_>>(),
+            vec![100_000_011, 100_000_010, 100_000_009]
+        );
         state::with_state(|st| {
-            assert_eq!(st.commitment_history.len(), 2);
-            assert_eq!(st.commitment_history[&first][0].amount_e8s, 123_000_000);
-            assert_eq!(st.commitment_history[&second][0].amount_e8s, 456_000_000);
+            assert!(!memo_registered_canister_summary_index_is_valid(st));
+        });
+
+        let repaired = state::with_root_state_mut(|st| {
+            repair_memo_registered_canister_summaries_if_invalid(st)
+        });
+        assert!(repaired);
+        state::with_state(|st| {
+            assert!(memo_registered_canister_summary_index_is_valid(st));
             assert_eq!(
-                st.memo_registered_canister_summaries_cache
+                st.memo_registered_canister_summaries_total_desc_index
                     .as_ref()
-                    .map(BTreeMap::len),
-                Some(2)
-            );
-            assert_eq!(
-                st.memo_registered_canister_summaries_total_desc_index,
-                Some(vec![first])
+                    .unwrap(),
+                &expected_index
             );
         });
+    }
+
+    #[test]
+    fn list_memo_registered_canister_summaries_fails_safe_for_page_boundary_drift() {
+        let mut st = base_state();
+        for idx in 0..6u64 {
+            add_memo_registered_canister(
+                &mut st,
+                Principal::from_slice(&[44, idx as u8]),
+                idx + 1,
+                100_000_000 + idx,
+            );
+        }
+        rebuild_memo_registered_canister_summaries_cache(&mut st);
+        st.memo_registered_canister_summaries_total_desc_index
+            .as_mut()
+            .unwrap()
+            .swap(1, 2);
+
+        assert_memo_summary_query_fails_safe_without_mutation(st, 1, 2);
     }
 
     #[test]
