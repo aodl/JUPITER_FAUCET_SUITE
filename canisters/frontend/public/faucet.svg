@@ -1,48 +1,40 @@
-<?xml version="1.0" encoding="utf-8"?>
-<svg xmlns="http://www.w3.org/2000/svg"
-     baseProfile="full"
-     class="jf-diagram"
-     width="1180"
-     height="520"
-     viewBox="0 0 1180 520"
-     role="img"
-     version="1.1">
+<svg xmlns="http://www.w3.org/2000/svg" baseProfile="full" class="jf-diagram" width="1180" height="520" viewBox="0 0 1180 520" role="img" version="1.1">
   <defs>
     <style type="text/css"><![CDATA[
       .jf-diagram { font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      .bg{fill:#ffffff;}
-      .node-title{fill:#18212b;font-size:18px;font-weight:700}
-      .node-sub{fill:#607080;font-size:13px;font-weight:520}
+      .bg{fill:#000000;fill-opacity:0.50;}
+      .node-title{fill:#F9FAFB;font-size:18px;font-weight:700}
+      .node-sub{fill:#F9FAFB;font-size:13px;font-weight:520}
       .badge{font-size:11px;font-weight:760}
-      .section{fill:#607080;font-size:12px;font-weight:760;letter-spacing:1.2px}
-      .edge-label{fill:#18212b;font-size:12px;font-weight:650}
-      .edge-mono{fill:#18212b;font-size:12px;font-weight:650;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
-      .canister.jupiter rect.body{fill:#edf9f5;stroke:#118866;}
-      .canister.target rect.body{fill:#fafbfc;stroke:#8b96a3;}
+      .section{fill:#F9FAFB;font-size:12px;font-weight:760;letter-spacing:1.2px}
+      .edge-label{fill:#F9FAFB;font-size:12px;font-weight:650}
+      .edge-mono{fill:#F9FAFB;font-size:12px;font-weight:650;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+      .canister.jupiter rect.body{fill:#18483C;stroke:#2CC39A;}
+      .canister.target rect.body{fill:#24384C;stroke:#8CA2C0;}
       .edge{fill:none;stroke-width:3.1;stroke-linecap:round;stroke-linejoin:round}
-      .edge.icp{stroke:#c4870e;}
-      .edge.cycles{stroke:#168c65;}
+      .edge.icp{stroke:#E6AA2F;}
+      .edge.cycles{stroke:#35C69E;}
     ]]></style>
     <marker id="a-icp" markerHeight="10" markerUnits="strokeWidth" markerWidth="10" orient="auto" refX="9" refY="4">
-      <path d="M0,0 L10,4 L0,8 z" fill="#c4870e"/>
+      <path d="M0,0 L10,4 L0,8 z" fill="#E6AA2F"/>
     </marker>
     <marker id="a-cycles" markerHeight="10" markerUnits="strokeWidth" markerWidth="10" orient="auto" refX="9" refY="4">
-      <path d="M0,0 L10,4 L0,8 z" fill="#168c65"/>
+      <path d="M0,0 L10,4 L0,8 z" fill="#35C69E"/>
     </marker>
   </defs>
 
   <title>Faucet payout targets</title>
   <desc>The Faucet supports three target modes: cycles to a canister, raw ICP to a canister default account, and ICP to a neuron staking account. The target is encoded by the memo.</desc>
-  <rect class="bg" x="0" y="0" width="1180" height="520"/>
+  <rect class="bg" x="0" y="0" width="1180" height="520" rx="24" ry="24"/>
 
   <!-- Faucet -->
   <g class="entity canister jupiter">
     <rect class="body" x="50" y="215" width="250" height="90" rx="23" ry="23" stroke-width="2.2"/>
-    <rect x="64" y="204" width="94" height="22" rx="11" ry="11" fill="#edf9f5" stroke="#118866" stroke-width="1.5"/>
-    <text class="badge" x="111" y="219" text-anchor="middle" fill="#118866">Jupiter Faucet</text>
-    <rect x="71" y="248" width="26" height="24" rx="6" ry="6" fill="none" stroke="#118866" stroke-width="2.2"/>
-    <line x1="77" y1="256" x2="91" y2="256" stroke="#118866" stroke-width="2"/>
-    <line x1="77" y1="264" x2="91" y2="264" stroke="#118866" stroke-width="2"/>
+    <rect x="64" y="204" width="94" height="22" rx="11" ry="11" fill="#18483C" stroke="#2CC39A" stroke-width="1.5"/>
+    <text class="badge" x="111" y="219" text-anchor="middle" fill="#F9FAFB">Jupiter Faucet</text>
+    <rect x="71" y="248" width="26" height="24" rx="6" ry="6" fill="none" stroke="#2CC39A" stroke-width="2.2"/>
+    <line x1="77" y1="256" x2="91" y2="256" stroke="#2CC39A" stroke-width="2"/>
+    <line x1="77" y1="264" x2="91" y2="264" stroke="#2CC39A" stroke-width="2"/>
     <text class="node-title" x="114" y="266">Faucet</text>
   </g>
 
@@ -63,11 +55,11 @@
   <!-- Cycles target -->
   <g class="entity canister target">
     <rect class="body" x="840" y="45" width="290" height="90" rx="23" ry="23" stroke-width="2.2"/>
-    <rect x="854" y="34" width="56" height="22" rx="11" ry="11" fill="#fafbfc" stroke="#8b96a3" stroke-width="1.5"/>
-    <text class="badge" x="882" y="49" text-anchor="middle" fill="#8b96a3">Target</text>
-    <rect x="861" y="78" width="26" height="24" rx="6" ry="6" fill="none" stroke="#8b96a3" stroke-width="2.2"/>
-    <line x1="867" y1="86" x2="881" y2="86" stroke="#8b96a3" stroke-width="2"/>
-    <line x1="867" y1="94" x2="881" y2="94" stroke="#8b96a3" stroke-width="2"/>
+    <rect x="854" y="34" width="56" height="22" rx="11" ry="11" fill="#24384C" stroke="#8CA2C0" stroke-width="1.5"/>
+    <text class="badge" x="882" y="49" text-anchor="middle" fill="#F9FAFB">Target</text>
+    <rect x="861" y="78" width="26" height="24" rx="6" ry="6" fill="none" stroke="#8CA2C0" stroke-width="2.2"/>
+    <line x1="867" y1="86" x2="881" y2="86" stroke="#8CA2C0" stroke-width="2"/>
+    <line x1="867" y1="94" x2="881" y2="94" stroke="#8CA2C0" stroke-width="2"/>
     <text class="node-title" x="904" y="87">Canister</text>
     <text class="node-sub" x="904" y="109">Receives cycles</text>
   </g>
@@ -75,34 +67,33 @@
   <!-- Raw ICP target -->
   <g class="entity canister target">
     <rect class="body" x="840" y="215" width="290" height="90" rx="23" ry="23" stroke-width="2.2"/>
-    <rect x="854" y="204" width="56" height="22" rx="11" ry="11" fill="#fafbfc" stroke="#8b96a3" stroke-width="1.5"/>
-    <text class="badge" x="882" y="219" text-anchor="middle" fill="#8b96a3">Target</text>
-    <rect x="861" y="248" width="26" height="24" rx="6" ry="6" fill="none" stroke="#8b96a3" stroke-width="2.2"/>
-    <line x1="867" y1="256" x2="881" y2="256" stroke="#8b96a3" stroke-width="2"/>
-    <line x1="867" y1="264" x2="881" y2="264" stroke="#8b96a3" stroke-width="2"/>
+    <rect x="854" y="204" width="56" height="22" rx="11" ry="11" fill="#24384C" stroke="#8CA2C0" stroke-width="1.5"/>
+    <text class="badge" x="882" y="219" text-anchor="middle" fill="#F9FAFB">Target</text>
+    <rect x="861" y="248" width="26" height="24" rx="6" ry="6" fill="none" stroke="#8CA2C0" stroke-width="2.2"/>
+    <line x1="867" y1="256" x2="881" y2="256" stroke="#8CA2C0" stroke-width="2"/>
+    <line x1="867" y1="264" x2="881" y2="264" stroke="#8CA2C0" stroke-width="2"/>
     <text class="node-title" x="904" y="257">Canister</text>
     <text class="node-sub" x="904" y="279">Default ICP account</text>
   </g>
 
   <!-- Neuron target -->
   <g class="entity neuron">
-    <polygon points="864,405 1106,405 1130,450 1106,495 864,495 840,450"
-             fill="#fff7e6" stroke="#b97712" stroke-width="2.3"/>
-    <rect x="854" y="394" width="56" height="22" rx="11" ry="11" fill="#fff7e6" stroke="#b97712" stroke-width="1.5"/>
-    <text class="badge" x="882" y="409" text-anchor="middle" fill="#b97712">Neuron</text>
-    <circle cx="876" cy="450" r="4.5" fill="none" stroke="#b97712" stroke-width="2"/>
-    <line x1="876" y1="450" x2="890" y2="450" stroke="#b97712" stroke-width="1.9"/>
-    <circle cx="890" cy="450" r="2.5" fill="#b97712"/>
-    <line x1="876" y1="450" x2="883" y2="462.124" stroke="#b97712" stroke-width="1.9"/>
-    <circle cx="883" cy="462.124" r="2.5" fill="#b97712"/>
-    <line x1="876" y1="450" x2="869" y2="462.124" stroke="#b97712" stroke-width="1.9"/>
-    <circle cx="869" cy="462.124" r="2.5" fill="#b97712"/>
-    <line x1="876" y1="450" x2="862" y2="450" stroke="#b97712" stroke-width="1.9"/>
-    <circle cx="862" cy="450" r="2.5" fill="#b97712"/>
-    <line x1="876" y1="450" x2="869" y2="437.876" stroke="#b97712" stroke-width="1.9"/>
-    <circle cx="869" cy="437.876" r="2.5" fill="#b97712"/>
-    <line x1="876" y1="450" x2="883" y2="437.876" stroke="#b97712" stroke-width="1.9"/>
-    <circle cx="883" cy="437.876" r="2.5" fill="#b97712"/>
+    <polygon points="864,405 1106,405 1130,450 1106,495 864,495 840,450" fill="#4A3718" stroke="#D49B28" stroke-width="2.3"/>
+    <rect x="854" y="394" width="56" height="22" rx="11" ry="11" fill="#4A3718" stroke="#D49B28" stroke-width="1.5"/>
+    <text class="badge" x="882" y="409" text-anchor="middle" fill="#F9FAFB">Neuron</text>
+    <circle cx="876" cy="450" r="4.5" fill="none" stroke="#D49B28" stroke-width="2"/>
+    <line x1="876" y1="450" x2="890" y2="450" stroke="#D49B28" stroke-width="1.9"/>
+    <circle cx="890" cy="450" r="2.5" fill="#E0A12E"/>
+    <line x1="876" y1="450" x2="883" y2="462.124" stroke="#D49B28" stroke-width="1.9"/>
+    <circle cx="883" cy="462.124" r="2.5" fill="#E0A12E"/>
+    <line x1="876" y1="450" x2="869" y2="462.124" stroke="#D49B28" stroke-width="1.9"/>
+    <circle cx="869" cy="462.124" r="2.5" fill="#E0A12E"/>
+    <line x1="876" y1="450" x2="862" y2="450" stroke="#D49B28" stroke-width="1.9"/>
+    <circle cx="862" cy="450" r="2.5" fill="#E0A12E"/>
+    <line x1="876" y1="450" x2="869" y2="437.876" stroke="#D49B28" stroke-width="1.9"/>
+    <circle cx="869" cy="437.876" r="2.5" fill="#E0A12E"/>
+    <line x1="876" y1="450" x2="883" y2="437.876" stroke="#D49B28" stroke-width="1.9"/>
+    <circle cx="883" cy="437.876" r="2.5" fill="#E0A12E"/>
     <text class="node-title" x="910" y="447">Neuron</text>
     <text class="node-sub" x="910" y="469">Staking account</text>
   </g>
