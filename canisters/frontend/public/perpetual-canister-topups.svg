@@ -31,7 +31,7 @@
 
   <text class="section" x="60" y="48">ONE-TIME COMMITMENT</text>
   <text class="section" x="545" y="48">RECURRING, UNSTOPPABLE TOP-UPS</text>
-  <line stroke="#6F8094" stroke-dasharray="6 7" stroke-width="1.4" x1="500" x2="500" y1="24" y2="305"/>
+  <line stroke="#CBD5E1" stroke-opacity="0.88" stroke-dasharray="6 7" stroke-width="1.6" x1="500" x2="500" y1="24" y2="305"/>
 
   <path class="edge icp" d="M 142,220 L 220,220" marker-end="url(#a-icp)"/>
   <rect fill="#111827" height="24" rx="12" ry="12" stroke="#6F8094" stroke-width="1.1" width="138.7" x="111" y="132"/>
