@@ -189,6 +189,13 @@ fn certify_all_assets() {
             }],
             compressed_encodings.clone(),
         ),
+        no_cache_asset_file(
+            "diagram-viewer.html",
+            "text/html",
+            vec![],
+            vec![],
+            compressed_encodings.clone(),
+        ),
         immutable_asset_pattern("**/*.js", "text/javascript", compressed_encodings.clone()),
         immutable_asset_pattern("**/*.css", "text/css", compressed_encodings),
         immutable_asset_file("og/preview-20260520.jpg", "image/jpeg"),
@@ -706,6 +713,22 @@ mod tests {
         );
         assert_eq!(response.body(), b"");
         assert!(header_value(&response, "ic-certificate").is_some());
+    }
+
+    #[test]
+    fn diagram_viewer_serves_as_no_cache_html() {
+        certify_all_assets();
+
+        let request = HttpRequest::get("/diagram-viewer.html").build();
+        let response = serve_asset_with_certificate(b"test-certificate", &request);
+
+        assert_eq!(response.status_code(), StatusCode::OK);
+        assert_eq!(header_value(&response, "content-type"), Some("text/html"));
+        assert_eq!(
+            header_value(&response, "cache-control"),
+            Some(NO_CACHE_ASSET_CACHE_CONTROL)
+        );
+        assert!(String::from_utf8_lossy(response.body()).contains("diagram-viewer-image"));
     }
 
     #[test]

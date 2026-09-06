@@ -398,6 +398,14 @@
                 <p class="source-pane-canister-description">Serves the certified frontend assets and dashboard UI (this website).</p>
               </article>
             </div>
+
+            <h3 class="pane-section-title">Overview Diagram</h3>
+            <figure class="pane-diagram source-overview-diagram">
+              <a href="/diagram-viewer.html?diagram=overview&amp;v=__ASSET_VERSION__" target="_blank" rel="noopener noreferrer" aria-label="Open the Jupiter Faucet suite overview diagram at full size">
+                <img src="/jupiter-faucet-overview.svg?v=__ASSET_VERSION__" alt="Diagram showing the Jupiter Faucet suite architecture, funding flows, observability, rewards, and recovery controls" loading="lazy" decoding="async" />
+              </a>
+              <figcaption>Jupiter Faucet suite overview · <a href="/diagram-viewer.html?diagram=overview&amp;v=__ASSET_VERSION__" target="_blank" rel="noopener noreferrer">Open full size</a></figcaption>
+            </figure>
           </div>
         </article>
 
@@ -497,6 +505,14 @@
                 You can estimate how much ICP needs to be committed to the Jupiter Faucet stake to keep your canister
                 perpetually topped up using the <a href="#simulator" data-panel="simulator" class="pane-external-link">simulator</a>.
               </p>
+
+              <figure class="pane-diagram">
+                <a href="/diagram-viewer.html?diagram=topups&amp;v=__ASSET_VERSION__" target="_blank" rel="noopener noreferrer" aria-label="Open the perpetual canister top-up diagram at full size">
+                  <img src="/perpetual-canister-topups.svg?v=__ASSET_VERSION__" alt="Flow diagram showing ICP committed to permanent neuron stake becoming recurring maturity and cycles for a target canister" loading="lazy" decoding="async" />
+                </a>
+                <figcaption>Perpetual canister top-ups · <a href="/diagram-viewer.html?diagram=topups&amp;v=__ASSET_VERSION__" target="_blank" rel="noopener noreferrer">Open full size</a></figcaption>
+              </figure>
+
               <p class="nav-panel-content memo-builder-safety-notice">
                 <strong>Developer tip:</strong> If you need many small ICP transfers to build up to
                 the minimum 1 ICP threshold, you might consider deploying an instance of the
@@ -506,6 +522,13 @@
             </div>
 
             <div class="nav-panel-page" data-page="1">
+              <figure class="pane-diagram">
+                <a href="/diagram-viewer.html?diagram=disburser&amp;v=__ASSET_VERSION__" target="_blank" rel="noopener noreferrer" aria-label="Open the Disburser maturity split diagram at full size">
+                  <img src="/disburser.svg?v=__ASSET_VERSION__" alt="Flow diagram showing how the Jupiter Disburser routes base maturity and age-bonus maturity" loading="lazy" decoding="async" />
+                </a>
+                <figcaption>Disburser maturity routing · <a href="/diagram-viewer.html?diagram=disburser&amp;v=__ASSET_VERSION__" target="_blank" rel="noopener noreferrer">Open full size</a></figcaption>
+              </figure>
+
               <p class="nav-panel-content">
                 <strong>Base maturity:</strong> 100% of the <em>base</em> (non age-bonus)
                 maturity generated from committed stake for topping up cycles is used to perpetually
@@ -518,9 +541,9 @@
                 into:
               </p>
               <ul class="nav-panel-content how-it-works-age-bonus-list">
-                <li><strong>0%–19%</strong> distributed to <strong>SNS jUP stakers</strong> in the form of newly minted <strong>IO</strong> (a liquid staking protocol that will be launched alongside Jupiter Faucet)</li>
+                <li><strong>95%</strong> distributed to <strong>SNS jUP stakers</strong> in the form of newly issued <strong>IO</strong> (a liquid staking protocol that will be launched alongside Jupiter Faucet)</li>
                 <li>
-                  <strong>0%–1%</strong> restaked into the
+                  <strong>5%</strong> restaked into the
                   <a
                     href="https://dashboard.internetcomputer.org/neuron/4713806069430754115"
                     target="_blank"
@@ -578,6 +601,13 @@
                 text as the outgoing memo on the perpetual ICP transfer. Declared neurons must be
                 'public' in order for Jupiter Faucet to derive their staking accounts.
               </p>
+
+              <figure class="pane-diagram">
+                <a href="/diagram-viewer.html?diagram=faucet&amp;v=__ASSET_VERSION__" target="_blank" rel="noopener noreferrer" aria-label="Open the Faucet payout targets diagram at full size">
+                  <img src="/faucet.svg?v=__ASSET_VERSION__" alt="Flow diagram showing the Jupiter Faucet memo-directed payout targets" loading="lazy" decoding="async" />
+                </a>
+                <figcaption>Faucet payout targets · <a href="/diagram-viewer.html?diagram=faucet&amp;v=__ASSET_VERSION__" target="_blank" rel="noopener noreferrer">Open full size</a></figcaption>
+              </figure>
 
               <p class="nav-panel-content">
                 The full ICP commitment memo must be ASCII and at most <strong>32 characters</strong>.
@@ -673,7 +703,18 @@
                 transforms these into a single ICP commitment that meets or surpasses the minimum
                 1 ICP threshold. The relay canister's own ID is used in the ICP commitment memo such
                 that it will perpetually receive raw ICP from Jupiter Faucet maturity.
+                Splitter subaccounts <code>10</code>, <code>20</code>, …, <code>90</code> divide a
+                deposit between immediate liquidity and subaccount <code>1</code>: the splitter number
+                is the gross percentage sent to the Relay's default account, while the remainder builds
+                its future Faucet-backed funding stream.
               </p>
+
+              <figure class="pane-diagram">
+                <a href="/diagram-viewer.html?diagram=relay&amp;v=__ASSET_VERSION__" target="_blank" rel="noopener noreferrer" aria-label="Open the Relay allocation loop diagram at full size">
+                  <img src="/relay.svg?v=__ASSET_VERSION__" alt="Flow diagram showing Relay funding, cycles allocation, managed canister top-ups, and surplus routing" loading="lazy" decoding="async" />
+                </a>
+                <figcaption>Relay allocation loop · <a href="/diagram-viewer.html?diagram=relay&amp;v=__ASSET_VERSION__" target="_blank" rel="noopener noreferrer">Open full size</a></figcaption>
+              </figure>
             </div>
 
             <div class="nav-panel-page" data-page="4">

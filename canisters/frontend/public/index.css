@@ -403,6 +403,47 @@ body.background-orbit-enhanced {
   grid-row: 1 / span 2;
 }
 
+.pane-diagram {
+  margin: 12px 10px 8px;
+}
+
+.pane-diagram > a {
+  display: block;
+  border-radius: 18px;
+  color: inherit;
+  overflow: hidden;
+  transition: filter 160ms ease, transform 160ms ease;
+}
+
+.pane-diagram > a:hover,
+.pane-diagram > a:focus-visible {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.pane-diagram img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.pane-diagram figcaption {
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.pane-diagram figcaption a {
+  color: inherit;
+}
+
+.pane-diagram figcaption a:hover,
+.pane-diagram figcaption a:focus-visible {
+  color: #fff;
+}
+
 @media (max-width: 900px) {
   .how-it-works-guide {
     grid-template-columns: 1fr;
