@@ -362,6 +362,7 @@ function setupNavbar(width = 1440, initialHash = '') {
   append(actionsMenu, 'a', { href: '#simulator', class: 'metric-rail-link nav-item', 'data-panel': 'simulator' }, 'Plan');
   append(actionsMenu, 'a', { href: '#memo-builder', class: 'metric-rail-link nav-item', 'data-panel': 'memo-builder' }, 'Commit');
   append(actionsMenu, 'a', { href: '#relay-setup', class: 'metric-rail-link nav-item', 'data-panel': 'relay-setup' }, 'Optimize');
+  append(actionsMenu, 'a', { href: '#metric-tracker', class: 'metric-rail-link nav-item', 'data-panel': 'metric-tracker' }, 'Track Memos');
 
   const metrics = append(nav, 'div', {
     class: 'nav-disclosure nav-disclosure--end',
@@ -384,7 +385,6 @@ function setupNavbar(width = 1440, initialHash = '') {
   append(metricsMenu, 'p', { class: 'metric-rail-subtitle', id: 'landing-next-run' }, 'Next historian run approx. 26 Jul 2026, 09:04 BST.');
   append(metricsMenu, 'a', { href: '#metric-stake', class: 'metric-rail-link nav-item', 'data-panel': 'metric-stake' }, 'Jupiter Stake');
   append(metricsMenu, 'a', { href: '#metric-commitments', class: 'metric-rail-link nav-item', 'data-panel': 'metric-commitments' }, 'Patron Commitments');
-  append(metricsMenu, 'a', { href: '#metric-tracker', class: 'metric-rail-link nav-item', 'data-panel': 'metric-tracker' }, 'Track Memos');
 
   const backdrop = append(document.body, 'div', { class: 'nav-panel-backdrop', id: 'nav-panel-backdrop' });
   append(backdrop, 'button', { class: 'nav-panel-close' });
@@ -554,6 +554,27 @@ test('navbar hash navigation opens panels without reopening dropdowns', () => {
   keydown(env.document, 'Escape');
   assert.equal(env.window.location.hash, '');
   assert.equal(env.backdrop.classList.contains('is-open'), false);
+});
+
+test('Track Memos panel remains owned by Actions after clicks and hash navigation', () => {
+  const env = setupNavbar();
+  const trackerLink = env.actionsMenu.querySelector('a[data-panel="metric-tracker"]');
+
+  click(env.actionsButton);
+  click(trackerLink);
+
+  assert.equal(env.window.location.hash, '#metric-tracker');
+  assert.equal(env.actionsMenu.hidden, true);
+  assert.equal(env.backdrop.classList.contains('is-open'), true);
+  assert.equal(activeSection(env.document).getAttribute('data-panel'), 'metric-tracker');
+  assert.equal(env.actionsButton.classList.contains('nav-item--active'), true);
+  assert.equal(env.metricsButton.classList.contains('nav-item--active'), false);
+
+  const direct = setupNavbar(1440, '#metric-tracker');
+  assert.equal(activeSection(direct.document).getAttribute('data-panel'), 'metric-tracker');
+  assert.equal(direct.actionsMenu.hidden, true);
+  assert.equal(direct.actionsButton.classList.contains('nav-item--active'), true);
+  assert.equal(direct.metricsButton.classList.contains('nav-item--active'), false);
 });
 
 test('How it works Relay route does not claim Actions ownership', () => {

@@ -843,7 +843,8 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
 
   assert.match(rail, /id="landing-next-run"[\s\S]*Jupiter Stake/);
   assert.match(mainJs, /setText\('landing-next-run', subtitle\);/);
-  assert.match(rail, /Jupiter Stake[\s\S]*Patron Commitments[\s\S]*Track Memos/);
+  assert.match(rail, /Jupiter Stake[\s\S]*Patron Commitments/);
+  assert.doesNotMatch(rail, /Track Memos/);
   assert.doesNotMatch(rail, /Create Relay/);
   assert.doesNotMatch(rail, /Declared Canisters/);
   assert.doesNotMatch(rail, /Target Canisters/);
@@ -863,16 +864,14 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
   assert.match(navbarJs, /key === "metric-registered"[\s\S]*key: "metric-commitments", page: 0/);
 });
 
-test('Actions nav button exposes Plan Commit and Optimize pane links', () => {
+test('Actions nav button exposes Plan, Commit, Optimize, and Track Memos pane links in order', () => {
   const actionsStart = indexHtml.indexOf('<div class="nav-popover action-rail"');
   assert.ok(actionsStart >= 0, 'missing actions rail');
   const actionsRail = indexHtml.slice(actionsStart, indexHtml.indexOf('</div>', actionsStart) + '</div>'.length);
 
   assert.match(indexHtml, /id="actions-menu-toggle"[\s\S]*aria-controls="actions-menu"[\s\S]*>Actions<\/button>/);
   assert.match(indexHtml, /id="metrics-menu-toggle"[\s\S]*aria-controls="metrics-menu"[\s\S]*>Metrics<\/button>/);
-  assert.match(actionsRail, /href="#simulator"[^>]*data-panel="simulator"[\s\S]*>Plan<\/span>/);
-  assert.match(actionsRail, /href="#memo-builder"[^>]*data-panel="memo-builder"[\s\S]*>Commit<\/span>/);
-  assert.match(actionsRail, /href="#relay-setup"[^>]*data-panel="relay-setup"[\s\S]*>Optimize<\/span>/);
+  assert.match(actionsRail, /href="#simulator"[^>]*data-panel="simulator"[\s\S]*>Plan<\/span>[\s\S]*href="#memo-builder"[^>]*data-panel="memo-builder"[\s\S]*>Commit<\/span>[\s\S]*href="#relay-setup"[^>]*data-panel="relay-setup"[\s\S]*>Optimize<\/span>[\s\S]*href="#metric-tracker"[^>]*data-panel="metric-tracker"[\s\S]*>Track Memos<\/span>/);
   assert.match(indexHtml, /<div class="nav-disclosure" data-nav-group="actions">\s*<button[\s\S]*id="actions-menu-toggle"[\s\S]*<\/button>\s*<div class="nav-popover action-rail" id="actions-menu"[^>]*hidden>/);
   assert.match(indexHtml, /<div class="nav-disclosure nav-disclosure--end" data-nav-group="metrics">\s*<button[\s\S]*id="metrics-menu-toggle"[\s\S]*<\/button>\s*<div class="nav-popover metric-rail" id="metrics-menu"[^>]*hidden>/);
   const navItemRule = navbarCss.match(/\.nav-item \{[^}]*\}/)?.[0] || '';
@@ -884,7 +883,8 @@ test('Actions nav button exposes Plan Commit and Optimize pane links', () => {
   assert.match(metricsCss, /\.nav-popover\[hidden\] \{[\s\S]*display: none;[\s\S]*\}/);
   assert.match(metricsCss, /\.action-rail \{[\s\S]*text-align: left;[\s\S]*\}/);
   assert.match(metricsCss, /\.action-rail-list \{[\s\S]*align-items: flex-start;[\s\S]*\}/);
-  assert.match(metricsCss, /\.action-rail \.metric-rail-link \{[\s\S]*justify-content: flex-start;[\s\S]*text-align: left;[\s\S]*white-space: nowrap;[\s\S]*\}/);
+  assert.match(metricsCss, /\.action-rail \.metric-rail-link \{[\s\S]*align-self: flex-start;[\s\S]*background: #000;[\s\S]*justify-content: flex-start;[\s\S]*text-align: left;[\s\S]*white-space: nowrap;[\s\S]*\}/);
+  assert.match(metricsCss, /\.action-rail \.metric-rail-link\.nav-item--active \{[\s\S]*background: #000;[\s\S]*color: #fff;[\s\S]*\}/);
   assert.match(metricsCss, /\.metric-rail-subtitle \{[\s\S]*max-width: none;[\s\S]*white-space: nowrap;[\s\S]*\}/);
   assert.match(metricsCss, /@media \(max-width: 720px\) \{[\s\S]*\.metric-rail-link \{[\s\S]*white-space: normal;[\s\S]*\}/);
   assert.match(metricsCss, /@media \(max-width: 720px\) \{[\s\S]*\.metric-rail-subtitle \{[\s\S]*max-width: min\(78vw, 340px\);[\s\S]*white-space: normal;[\s\S]*overflow-wrap: anywhere;[\s\S]*\}/);

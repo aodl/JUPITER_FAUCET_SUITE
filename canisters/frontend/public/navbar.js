@@ -50,6 +50,7 @@
       const disclosure = trigger?.closest?.("[data-nav-group]");
       const triggerGroup = disclosure?.getAttribute?.("data-nav-group");
       if (triggerGroup === "actions" || triggerGroup === "metrics") return triggerGroup;
+      if (key === "metric-tracker") return "actions";
       if (isMetricPanelKey(key)) return "metrics";
       if (
         key === "simulator" ||

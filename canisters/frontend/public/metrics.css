@@ -55,9 +55,16 @@
 }
 
 .action-rail .metric-rail-link {
+  align-self: flex-start;
+  background: #000;
   justify-content: flex-start;
   text-align: left;
   white-space: nowrap;
+}
+
+.action-rail .metric-rail-link.nav-item--active {
+  background: #000;
+  color: #fff;
 }
 
 .metric-rail-subtitle {
