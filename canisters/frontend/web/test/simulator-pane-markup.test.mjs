@@ -13,6 +13,7 @@ const diagramViewerJs = readFileSync(resolve(__dirname, '../../public/diagram-vi
 const notFoundHtml = readFileSync(resolve(__dirname, '../../public/404.html'), 'utf8');
 const notFoundCss = readFileSync(resolve(__dirname, '../../public/404.css'), 'utf8');
 const noscriptCss = readFileSync(resolve(__dirname, '../../public/noscript.css'), 'utf8');
+const scrollbarsCss = readFileSync(resolve(__dirname, '../../public/scrollbars.css'), 'utf8');
 const immutableLabelSvg = readFileSync(resolve(__dirname, '../../public/immutable-label/immutable-label.svg'), 'utf8');
 const loadingOverlayJs = readFileSync(resolve(__dirname, '../../public/loading-overlay.js'), 'utf8');
 const metricsCss = readFileSync(resolve(__dirname, '../../public/metrics.css'), 'utf8');
@@ -116,6 +117,28 @@ test('static frontend markup does not depend on inline CSS', () => {
     assert.doesNotMatch(body, /<style\b/i, `${label} should not embed style blocks`);
     assert.doesNotMatch(body, /\sstyle=/i, `${label} should not use style attributes`);
   }
+});
+
+test('all frontend pages use the shared Jupiter scrollbar theme', () => {
+  for (const [label, body] of [
+    ['index.html', indexHtml],
+    ['diagram-viewer.html', diagramViewerHtml],
+    ['404.html', notFoundHtml],
+  ]) {
+    assert.match(
+      body,
+      /<link rel="stylesheet" href="\/scrollbars\.css\?v=__ASSET_VERSION__" \/>/,
+      `${label} should load the shared scrollbar theme`,
+    );
+  }
+
+  assert.match(scrollbarsCss, /--scrollbar-track: rgba\(12, 12, 20, 0\.72\);/);
+  assert.match(scrollbarsCss, /--scrollbar-thumb: rgba\(255, 204, 0, 0\.72\);/);
+  assert.match(scrollbarsCss, /scrollbar-color: var\(--scrollbar-thumb\) var\(--scrollbar-track\);/);
+  assert.match(scrollbarsCss, /scrollbar-width: thin;/);
+  assert.match(scrollbarsCss, /\*::\-webkit-scrollbar \{\s*width: 10px;\s*height: 10px;/);
+  assert.match(scrollbarsCss, /\*::\-webkit-scrollbar-thumb:hover \{\s*background-color: var\(--scrollbar-thumb-hover\);/);
+  assert.match(scrollbarsCss, /@media \(forced-colors: active\) \{[\s\S]*scrollbar-color: auto;[\s\S]*scrollbar-width: auto;/);
 });
 
 test('first-load overlay uses the token logo and rotating cycle phrases', () => {
