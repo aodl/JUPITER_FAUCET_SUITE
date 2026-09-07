@@ -394,22 +394,28 @@
       const hashStart = hashText.indexOf("#");
       const fragment = hashStart >= 0 ? hashText.slice(hashStart + 1) : hashText;
       const fullHash = fragment ? `#${fragment}` : "";
-      const route = fragment.split("?")[0];
+      const queryStart = fragment.indexOf("?");
+      const route = queryStart >= 0 ? fragment.slice(0, queryStart) : fragment;
+      const params = queryStart >= 0
+        ? new URLSearchParams(fragment.slice(queryStart + 1))
+        : new URLSearchParams();
+      const requestedFocus = params.get("focus") || "";
+      const focus = /^diagram-[a-z0-9-]+$/.test(requestedFocus) ? requestedFocus : "";
       const pageMatch = route.match(/^([^:]+):(\d+)$/);
       const key = pageMatch ? pageMatch[1] : route;
       const page = pageMatch ? Number(pageMatch[2]) : 0;
-      if (key.startsWith("metric-tracker-")) return { key: "metric-tracker", page: 0, hash: fullHash };
-      if (key.startsWith("simulator-")) return { key: "simulator", page: 0, hash: fullHash };
-      if (key === "metric-registered") return { key: "metric-commitments", page: 0, hash: fullHash };
-      if (key === "metric-output") return { key: "metric-stake", page: 1, hash: fullHash };
-      if (key === "metric-rewards") return { key: "metric-stake", page: 2, hash: fullHash };
-      return { key, page: Number.isFinite(page) ? page : 0, hash: fullHash };
+      if (key.startsWith("metric-tracker-")) return { key: "metric-tracker", page: 0, hash: fullHash, focus };
+      if (key.startsWith("simulator-")) return { key: "simulator", page: 0, hash: fullHash, focus };
+      if (key === "metric-registered") return { key: "metric-commitments", page: 0, hash: fullHash, focus };
+      if (key === "metric-output") return { key: "metric-stake", page: 1, hash: fullHash, focus };
+      if (key === "metric-rewards") return { key: "metric-stake", page: 2, hash: fullHash, focus };
+      return { key, page: Number.isFinite(page) ? page : 0, hash: fullHash, focus };
     }
 
     function applyHash(hash) {
       if (hash === lastAppliedHash) return;
       lastAppliedHash = hash || "";
-      const { key, page } = panelTargetFromHash(hash);
+      const { key, page, focus } = panelTargetFromHash(hash);
       if (!key) {
         navState = { ...CLOSED_NAV_STATE };
         renderNavState();
@@ -428,6 +434,14 @@
             ? actionsToggle
             : panelTriggers.find((trigger) => trigger.getAttribute("data-panel") === key);
       setPanelState(key, page, owner, { syncHash: false, focusPanel: false });
+      if (focus) {
+        requestAnimationFrame(() => {
+          const focusTarget = document.getElementById(focus);
+          if (focusTarget && matchingSection.contains(focusTarget)) {
+            focusTarget.scrollIntoView({ block: "center", inline: "nearest" });
+          }
+        });
+      }
     }
 
     panelTriggers.forEach((trigger) => {

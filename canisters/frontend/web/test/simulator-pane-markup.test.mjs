@@ -383,7 +383,7 @@ test('Source and Governance panes expose subnet context', () => {
   assert.match(indexHtml, /Converts ICP to cycles and distributes to Jupiter Faucet Suite canisters proportionally based on consumption rates\./);
   assert.match(navbarCss, /\.source-pane-canister \{[\s\S]*position: relative;[\s\S]*\}/);
   assert.match(navbarCss, /\.source-pane-subnet-link \{[\s\S]*position: absolute;[\s\S]*right: 16px;[\s\S]*\}/);
-  assert.match(indexHtml, /<article class="nav-panel-section" data-panel="source"[\s\S]*<div class="source-pane-canisters">[\s\S]*<\/div>\s*<h3 class="pane-section-title">Overview Diagram<\/h3>\s*<figure class="pane-diagram source-overview-diagram">[\s\S]*src="\/jupiter-faucet-overview\.svg\?v=__ASSET_VERSION__"[\s\S]*<\/figure>\s*<\/div>\s*<\/article>\s*<article class="nav-panel-section" data-panel="governance"/);
+  assert.match(indexHtml, /<article class="nav-panel-section" data-panel="source"[\s\S]*<div class="source-pane-canisters">[\s\S]*<\/div>\s*<h3 class="pane-section-title">Overview Diagram<\/h3>\s*<figure class="pane-diagram source-overview-diagram" id="diagram-overview">[\s\S]*src="\/jupiter-faucet-overview\.svg\?v=__ASSET_VERSION__"[\s\S]*<\/figure>\s*<\/div>\s*<\/article>\s*<article class="nav-panel-section" data-panel="governance"/);
   assert.match(governance, /All Jupiter Faucet suite canisters reside on either the/);
   assert.match(governance, /network\/subnets\/pzp6e-ekpqk-3c5x7-2h6so-njoeq-mt45d-h3h6c-q3mxf-vpeq5-fk5o7-yae[^>]*>Fiduciary<\/a>/);
   assert.match(governance, /network\/subnets\/x33ed-h457x-bsgyx-oqxqf-6pzwv-wkhzr-rm2j3-npodi-purzm-n66cg-gae[^>]*>SNS subnet<\/a>/);
@@ -405,9 +405,19 @@ test('diagram links open a dark full-size viewer without exposing SVGs as standa
     const viewerHref = new RegExp(`href="/diagram-viewer\\.html\\?diagram=${diagram}&amp;v=__ASSET_VERSION__"`, 'g');
     assert.equal((indexHtml.match(viewerHref) || []).length, 2);
   }
+  const viewerLinks = indexHtml.match(/<a href="\/diagram-viewer\.html\?diagram=[^"]+"[^>]*>/g) || [];
+  assert.equal(viewerLinks.length, 10);
+  for (const link of viewerLinks) {
+    assert.doesNotMatch(link, /target="_blank"/);
+    assert.doesNotMatch(link, /rel="noopener noreferrer"/);
+  }
+  for (const diagram of ['overview', 'topups', 'disburser', 'faucet', 'relay']) {
+    assert.match(indexHtml, new RegExp(`<figure class="[^"]*pane-diagram[^"]*" id="diagram-${diagram}">`));
+  }
   assert.doesNotMatch(indexHtml, /href="\/(?:perpetual-canister-topups|disburser|faucet|relay|jupiter-faucet-overview)\.svg/);
   assert.match(diagramViewerHtml, /<meta name="color-scheme" content="dark" \/>/);
   assert.match(diagramViewerHtml, /id="diagram-viewer-image"[^>]*hidden/);
+  assert.match(diagramViewerHtml, /id="diagram-viewer-back" href="\/#intro">← Back<\/a>/);
   assert.match(diagramViewerHtml, /src="\/diagram-viewer\.js\?v=__ASSET_VERSION__" defer/);
   assert.match(diagramViewerCss, /html \{[\s\S]*color-scheme: dark;[\s\S]*background: #0c0c14;/);
   assert.match(diagramViewerCss, /#diagram-viewer-image \{[\s\S]*width: min\(100%, 1840px\);[\s\S]*height: auto;/);
@@ -443,7 +453,7 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(indexCss, /\.how-it-works-age-bonus-list \{[\s\S]*padding-left: 28px;/);
   assert.match(howItWorks, /<strong>95%<\/strong> distributed to <strong>SNS jUP stakers<\/strong>/);
   assert.match(howItWorks, /<strong>5%<\/strong> restaked into/);
-  assert.match(howItWorks, /<div class="nav-panel-page" data-page="1">\s*<figure class="pane-diagram">[\s\S]*src="\/disburser\.svg\?v=__ASSET_VERSION__"[\s\S]*<\/figure>\s*<p class="nav-panel-content">\s*<strong>Base maturity:<\/strong>/);
+  assert.match(howItWorks, /<div class="nav-panel-page" data-page="1">\s*<figure class="pane-diagram" id="diagram-disburser">[\s\S]*src="\/disburser\.svg\?v=__ASSET_VERSION__"[\s\S]*<\/figure>\s*<p class="nav-panel-content">\s*<strong>Base maturity:<\/strong>/);
   assert.match(howItWorks, /D-QUORUM is a special known neuron owned by the NNS Governance canister itself/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/neuron\/2947465672511369[^>]*>\s*αlpha-vote<\/a\s*>/);
   assert.match(howItWorks, /follows D-QUORUM indirectly through[\s\S]*to maximise voting rewards/);
@@ -535,8 +545,8 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /data-page="1"[\s\S]*src="\/disburser\.svg\?v=__ASSET_VERSION__"[\s\S]*data-page="2"/);
   assert.match(howItWorks, /data-page="2"[\s\S]*src="\/faucet\.svg\?v=__ASSET_VERSION__"[\s\S]*data-page="3"/);
   assert.match(howItWorks, /data-page="3"[\s\S]*src="\/relay\.svg\?v=__ASSET_VERSION__"[\s\S]*data-page="4"/);
-  assert.match(howItWorks, /data-page="1">\s*<figure class="pane-diagram">[\s\S]*src="\/disburser\.svg\?v=__ASSET_VERSION__"[\s\S]*<strong>Base maturity:<\/strong>[\s\S]*<strong>5%<\/strong>[\s\S]*D-QUORUM is a special known neuron/);
-  assert.match(howItWorks, /To enable raw ICP transfer mode for a canister[\s\S]*Declared neurons must be\s*'public' in order for Jupiter Faucet to derive their staking accounts\.\s*<\/p>\s*<figure class="pane-diagram">[\s\S]*src="\/faucet\.svg\?v=__ASSET_VERSION__"[\s\S]*<\/figure>\s*<p class="nav-panel-content">\s*The full ICP commitment memo/);
+  assert.match(howItWorks, /data-page="1">\s*<figure class="pane-diagram" id="diagram-disburser">[\s\S]*src="\/disburser\.svg\?v=__ASSET_VERSION__"[\s\S]*<strong>Base maturity:<\/strong>[\s\S]*<strong>5%<\/strong>[\s\S]*D-QUORUM is a special known neuron/);
+  assert.match(howItWorks, /To enable raw ICP transfer mode for a canister[\s\S]*Declared neurons must be\s*'public' in order for Jupiter Faucet to derive their staking accounts\.\s*<\/p>\s*<figure class="pane-diagram" id="diagram-faucet">[\s\S]*src="\/faucet\.svg\?v=__ASSET_VERSION__"[\s\S]*<\/figure>\s*<p class="nav-panel-content">\s*The full ICP commitment memo/);
   assert.match(howItWorks, /Splitter subaccounts <code>10<\/code>, <code>20<\/code>, …, <code>90<\/code> divide a\s*deposit between immediate liquidity and subaccount <code>1<\/code>/);
   assert.match(indexCss, /\.pane-diagram \{[\s\S]*margin: 12px 10px 8px;/);
   assert.match(indexCss, /\.pane-diagram img \{[\s\S]*width: 100%;[\s\S]*height: auto;/);

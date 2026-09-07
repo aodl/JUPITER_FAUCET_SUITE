@@ -3,31 +3,37 @@ const diagrams = Object.freeze({
     file: 'jupiter-faucet-overview.svg',
     title: 'Jupiter Faucet suite overview',
     alt: 'Diagram showing the Jupiter Faucet suite architecture, funding flows, observability, rewards, and recovery controls',
+    backHref: '/#source?focus=diagram-overview',
   },
   topups: {
     file: 'perpetual-canister-topups.svg',
     title: 'Perpetual canister top-ups',
     alt: 'Flow diagram showing ICP committed to permanent neuron stake becoming recurring maturity and cycles for a target canister',
+    backHref: '/#how-it-works?focus=diagram-topups',
   },
   disburser: {
     file: 'disburser.svg',
     title: 'Disburser maturity routing',
     alt: 'Flow diagram showing how the Jupiter Disburser routes base maturity and age-bonus maturity',
+    backHref: '/#how-it-works:1?focus=diagram-disburser',
   },
   faucet: {
     file: 'faucet.svg',
     title: 'Faucet payout targets',
     alt: 'Flow diagram showing the Jupiter Faucet memo-directed payout targets',
+    backHref: '/#how-it-works:2?focus=diagram-faucet',
   },
   relay: {
     file: 'relay.svg',
     title: 'Relay allocation loop',
     alt: 'Flow diagram showing Relay funding, cycles allocation, managed canister top-ups, and surplus routing',
+    backHref: '/#how-it-works:3?focus=diagram-relay',
   },
 });
 
 const params = new URLSearchParams(window.location.search);
 const diagram = diagrams[params.get('diagram') ?? ''];
+const back = document.querySelector('#diagram-viewer-back');
 const title = document.querySelector('#diagram-viewer-title');
 const image = document.querySelector('#diagram-viewer-image');
 const error = document.querySelector('#diagram-viewer-error');
@@ -41,6 +47,7 @@ if (!diagram) {
   const versionSuffix = assetVersion ? `?v=${encodeURIComponent(assetVersion)}` : '';
 
   document.title = `${diagram.title} · Jupiter Faucet`;
+  back.href = diagram.backHref;
   title.textContent = diagram.title;
   image.src = `/${diagram.file}${versionSuffix}`;
   image.alt = diagram.alt;

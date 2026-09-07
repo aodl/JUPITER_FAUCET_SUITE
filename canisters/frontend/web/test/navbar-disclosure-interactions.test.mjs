@@ -52,6 +52,7 @@ class FakeElement {
     this.textContent = '';
     this.isContentEditable = false;
     this.rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    this.scrollIntoViewOptions = null;
     this.classList = new FakeClassList(this);
     Object.entries(attrs).forEach(([name, value]) => this.setAttribute(name, value));
   }
@@ -113,6 +114,10 @@ class FakeElement {
   focus() {
     if (this.hidden || this.hasHiddenAncestor() || this.isConnected === false) return;
     this.ownerDocument.activeElement = this;
+  }
+
+  scrollIntoView(options) {
+    this.scrollIntoViewOptions = options;
   }
 
   contains(node) {
@@ -323,6 +328,7 @@ function setupNavbar(width = 1440, initialHash = '') {
     window,
     document,
     history: window.history,
+    URLSearchParams,
     CustomEvent: class CustomEvent {
       constructor(type, init = {}) {
         this.type = type;
@@ -392,6 +398,11 @@ function setupNavbar(width = 1440, initialHash = '') {
     addPanel(document, key, key === 'how-it-works' ? 4 : 2);
   });
   const howSection = document.querySelector('.nav-panel-section[data-panel="how-it-works"]');
+  const diagramFocusTarget = append(
+    howSection.querySelector('.nav-panel-page[data-page="2"]'),
+    'figure',
+    { id: 'diagram-faucet' },
+  );
   const howRelayPageLink = append(howSection, 'a', {
     href: '/#how-it-works:3',
     class: 'pane-link',
@@ -425,6 +436,7 @@ function setupNavbar(width = 1440, initialHash = '') {
     domainsLink,
     howRelayPageLink,
     memoBuilderPrefillLink,
+    diagramFocusTarget,
   };
 }
 
@@ -591,6 +603,15 @@ test('How it works Relay route does not claim Actions ownership', () => {
   assert.equal(env.window.location.hash, '');
   assert.equal(env.actionsButton.classList.contains('nav-item--active'), true);
   assert.equal(env.actionsMenu.hidden, false);
+});
+
+test('diagram return fragments open the right page and focus the selected diagram', () => {
+  const env = setupNavbar(1440, '#how-it-works:2?focus=diagram-faucet');
+
+  assert.equal(activeSection(env.document).getAttribute('data-panel'), 'how-it-works');
+  assert.equal(activePage(activeSection(env.document)).getAttribute('data-page'), '2');
+  assert.equal(env.diagramFocusTarget.scrollIntoViewOptions.block, 'center');
+  assert.equal(env.diagramFocusTarget.scrollIntoViewOptions.inline, 'nearest');
 });
 
 test('opening transient disclosures clears stale panel hashes', () => {
