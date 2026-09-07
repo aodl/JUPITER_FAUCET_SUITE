@@ -149,7 +149,7 @@
           <div class="nav-panel-page is-active" data-page="0">
             <div class="nav-panel-scroll-region">
               <p class="nav-panel-content">
-                <strong>Jupiter Faucet</strong> is a perpetual cycles top-up protocol for the
+                <strong>Jupiter Faucet</strong> is a perpetual cycles top-up protocol and shared infrastructure layer for the
                 <a href="https://internetcomputer.org/" target="_blank" rel="noopener noreferrer" class="pane-external-link">Internet Computer</a> - built to help canister smart contracts keep running
                 <strong>indefinitely</strong>. The
                 <a href="https://internetcomputer.org/" target="_blank" rel="noopener noreferrer" class="pane-external-link">Internet Computer</a> is designed for tamper-proof, "unstoppable" on-chain services; Jupiter
@@ -200,7 +200,15 @@
               </p>
 
               <p class="nav-panel-content">
-                Jupiter Faucet is built to propel <strong>big burners</strong>, including
+                Projects can use that simple path for one canister, or use a dedicated immutable
+                <a href="#how-it-works:3" data-panel="how-it-works" class="pane-external-link">Relay</a>
+                as shared funding infrastructure for several canisters with changing cycles needs.
+                Jupiter handles the generic funding and cycles machinery while each project keeps
+                control of its own application, governance, and incentive logic.
+              </p>
+
+              <p class="nav-panel-content">
+                This shared infrastructure is particularly useful for <strong>big burners</strong>, including
                 cycle-intensive on-chain AI workloads such as <strong><a
                   href="https://web-3-words.com/"
                   target="_blank"
@@ -386,7 +394,7 @@
                 <p class="source-pane-canister-meta">Controllers: <span class="source-pane-canister-controllers" data-source-controllers="u2qkp-aqaaa-aaaar-qb7ea-cai">Loading…</span></p>
                 <p class="source-pane-canister-meta">Memory: <span class="source-pane-canister-memory" data-source-memory="u2qkp-aqaaa-aaaar-qb7ea-cai">Loading…</span></p>
                 <p class="source-pane-canister-meta"><a href="https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/canisters/relay" target="_blank" rel="noopener noreferrer" class="pane-external-link">Source code</a></p>
-                <p class="source-pane-canister-description">Converts ICP to cycles and distributes to Jupiter Faucet Suite canisters proportionally based on consumption rates.</p>
+                <p class="source-pane-canister-description">Allocates ICP across configured canisters according to observed cycles demand, then routes eligible surplus to configured recipients.</p>
               </article>
               <article class="source-pane-canister">
                 <h3><a href="https://dashboard.internetcomputer.org/canister/jufzc-caaaa-aaaar-qb5da-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link mono">jupiter-faucet-frontend</a></h3>

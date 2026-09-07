@@ -296,7 +296,7 @@ test('transaction table pagination uses a responsive page size', () => {
 
 test('About pane includes social links and projects slide', () => {
   const about = sectionMarkup('about');
-  assert.match(about, /<strong>Jupiter Faucet<\/strong> is a perpetual cycles top-up protocol/);
+  assert.match(about, /<strong>Jupiter Faucet<\/strong> is a perpetual cycles top-up protocol and shared infrastructure layer/);
   assert.match(about, /href="https:\/\/internetcomputer\.org\/"[^>]*>Internet Computer<\/a>/);
   assert.match(about, /designed for tamper-proof, "unstoppable" on-chain services/);
   assert.match(about, /href="https:\/\/learn\.internetcomputer\.org\/hc\/en-us\/articles\/34573913497108-Cycles"[^>]*>Internet Computer cycles guide<\/a>/);
@@ -309,6 +309,9 @@ test('About pane includes social links and projects slide', () => {
   assert.match(about, /src="\/social-icons\/x-favicon\.png"/);
   assert.match(about, /one-off operation/);
   assert.match(about, /data-panel="how-it-works"[^>]*>How It Works<\/a>/);
+  assert.match(about, /dedicated immutable\s*<a href="#how-it-works:3" data-panel="how-it-works"[^>]*>Relay<\/a>\s*as shared funding infrastructure for several canisters with changing cycles needs/);
+  assert.match(about, /Jupiter handles the generic funding and cycles machinery while each project keeps\s*control of its own application, governance, and incentive logic/);
+  assert.match(about, /This shared infrastructure is particularly useful for <strong>big burners<\/strong>/);
   assert.match(about, /memo-builder-safety-notice[\s\S]*<strong>Due diligence:<\/strong>/);
   assert.match(about, /The frontend is accessible via multiple <a href="#domains" data-panel="domains" class="pane-external-link">domains<\/a> controlled by independent parties\./);
   assert.match(about, /The core components will be blackholed/);
@@ -380,7 +383,7 @@ test('Source and Governance panes expose subnet context', () => {
   assert.doesNotMatch(indexHtml, /canisters\/relay\/jupiter_relay_debug\.did/);
   assert.doesNotMatch(indexHtml, /canisters\/relay\/README\.md/);
   assert.doesNotMatch(indexHtml, /canisters\/relay\/mainnet-install-args\.did/);
-  assert.match(indexHtml, /Converts ICP to cycles and distributes to Jupiter Faucet Suite canisters proportionally based on consumption rates\./);
+  assert.match(indexHtml, /Allocates ICP across configured canisters according to observed cycles demand, then routes eligible surplus to configured recipients\./);
   assert.match(navbarCss, /\.source-pane-canister \{[\s\S]*position: relative;[\s\S]*\}/);
   assert.match(navbarCss, /\.source-pane-subnet-link \{[\s\S]*position: absolute;[\s\S]*right: 16px;[\s\S]*\}/);
   assert.match(indexHtml, /<article class="nav-panel-section" data-panel="source"[\s\S]*<div class="source-pane-canisters">[\s\S]*<\/div>\s*<h3 class="pane-section-title">Overview Diagram<\/h3>\s*<figure class="pane-diagram source-overview-diagram" id="diagram-overview">[\s\S]*src="\/jupiter-faucet-overview\.svg\?v=__ASSET_VERSION__"[\s\S]*<\/figure>\s*<\/div>\s*<\/article>\s*<article class="nav-panel-section" data-panel="governance"/);
