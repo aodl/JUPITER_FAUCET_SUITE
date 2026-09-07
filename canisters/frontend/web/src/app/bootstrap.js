@@ -127,7 +127,7 @@ function renderLandingSummary(data) {
   setMetricStatus('landing-total-output', data.counts?.total_output_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total output unavailable' } : { value: formatIcpE8s(data.counts.total_output_e8s) });
   setMetricStatus('landing-total-rewards', data.counts?.total_rewards_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total rewards unavailable' } : { value: formatIcpE8s(data.counts.total_rewards_e8s) });
   setMetricStatus('landing-registered-canisters', data.counts?.tracked_canister_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Tracked canisters unavailable' } : { value: countDisplays.trackedCanisterMetric });
-  setMetricStatus('landing-qualifying-commitments', data.counts?.qualifying_commitment_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Patron commitments unavailable' } : { value: formatInteger(data.counts.qualifying_commitment_count) });
+  setMetricStatus('landing-qualifying-commitments', data.counts?.qualifying_commitment_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Patron endowments unavailable' } : { value: formatInteger(data.counts.qualifying_commitment_count) });
   setHidden('landing-live-unavailable', true);
 }
 

@@ -85,7 +85,7 @@ Used for:
 - canonical full-configuration setup through `get_relay_configuration_view` and explicit `notify_relay_configuration`
 - paginated `list_canisters` filtered by `RelayInstance` for tracker source classification
 
-These power the registry table, commitment feed, and historian-backed status surface.
+These power the registry table, endowment feed, and historian-backed status surface.
 
 ### 2) the configured ledger canister
 
@@ -114,7 +114,7 @@ Setup deposits are aggregate protocol deposits. They are not attributed to indiv
 
 The browser data loader is intentionally defensive:
 
-- it fetches historian counts, status, registered-canister summaries, and recent commitments together, then uses historian status to discover the ledger canister id for stake
+- it fetches historian counts, status, registered-canister summaries, and recent endowments together, then uses historian status to discover the ledger canister id for stake
 - the displayed historian history tables are intentionally bounded views and also show the historian canister's current allocated memory footprint; the tracked target-canister registry is not pruned, and full transfer history still lives on the ICP ledger and its archive canisters
 - the source/governance verification view includes relay source/module metadata even though `jupiter-relay` has no public production app API
 - invalid memo text is not echoed back in the dashboard tables; invalid entries render as a generic placeholder instead

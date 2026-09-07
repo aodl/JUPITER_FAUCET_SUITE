@@ -6,7 +6,7 @@ Use `icp deploy --environment ic` for ordinary production orchestration, and use
 
 Historian production deploys are factory-enabled. The checked-in mainnet historian args set `relay_factory_enabled = opt true`, so the canonical production historian deploy artifact is the relay-enabled `release-artifacts/jupiter_historian.wasm.gz`. Self-service Relays use the canonical daily cadence with canonical 1–20 targets, automatic probe routing, and either zero or 1–5 submitted typed recipients carrying exact 0–32-byte memos. Zero recipients selects all-cycles mode; otherwise Principals are paid equally at default ICP accounts and public NNS neuron IDs at resolved Governance staking accounts. Pricing remains target-based; no IO recipient is added automatically.
 
-Existing production Historian must be upgraded in place. Reinstall destroys all Historian stable history and is prohibited for the existing production canister because it clears commitment histories, cycles histories, tracking metadata, active self-service hash mappings, setup progress, index cursors, aggregates, and other durable state. mainnet-install-args.did is for a brand-new Historian installation only; `canisters/historian/mainnet-install-args.did` must not be passed to an existing Historian upgrade.
+Existing production Historian must be upgraded in place. Reinstall destroys all Historian stable history and is prohibited for the existing production canister because it clears endowment histories, cycles histories, tracking metadata, active self-service hash mappings, setup progress, index cursors, aggregates, and other durable state. mainnet-install-args.did is for a brand-new Historian installation only; `canisters/historian/mainnet-install-args.did` must not be passed to an existing Historian upgrade.
 
 ## Fiduciary-controller retirement migration
 
@@ -176,9 +176,9 @@ Self-service Relay state is legitimate durable production state. An upgrade must
 After canonical artifacts exist, run `./tools/scripts/preflight-historian-production-upgrade` for a read-only artifact and upgrade-path preflight. Record:
 
 - Historian module hash, controllers, and stable memory size from `icp canister status j5gs6-uiaaa-aaaar-qb5cq-cai -n ic`.
-- `get_public_counts`, `get_public_status`, and the empty-route commitment health query below.
+- `get_public_counts`, `get_public_status`, and the empty-route endowment health query below.
 - All `list_canisters` pages needed to cover tracked targets, canonical Relay, and self-service Relays.
-- Representative commitment/cycles histories, known exact Relay configuration mappings, indexing cursors, fault state, and aggregate totals.
+- Representative endowment/cycles histories, known exact Relay configuration mappings, indexing cursors, fault state, and aggregate totals.
 
 Routine maintenance sequence tested with `icp 0.2.6`:
 
@@ -197,10 +197,10 @@ After upgrade, verify:
 - The module hash matches the canonical `release-artifacts/jupiter_historian.wasm.gz` package hash and controllers are unchanged.
 - Counts, cursors, totals, recent feeds, and representative historical samples are preserved.
 - Memory-26 entries, known exact active configuration mappings, and `RelayTarget`/`RelayInstance` tracking are preserved.
-- Automatic cycles probing and normal staking indexing continue, and new samples/commitments append exactly once.
+- Automatic cycles probing and normal staking indexing continue, and new samples/endowments append exactly once.
 - Any setup interrupted after an irreversible spend is `ManualRecoveryRequired`; interrupted `Reserved`/`ProbingTargets` entries are removed, while existing `Active` and `ManualRecoveryRequired` entries are preserved.
 
-### Commitment-route health
+### Endowment-route health
 
 Memory 29 is ordinary authoritative Historian state and is preserved directly by normal in-place upgrades. Query route metadata anonymously before and after an upgrade; an empty route vector is sufficient:
 
@@ -290,9 +290,9 @@ The Relay V3 reward migration resets every V1/V2 cadence timestamp to zero becau
 
 `jupiter_sns_rewards` discovers Governance and Ledger from its one configured SNS Root. The checked-in fresh-install argument configures OpenChat Root `3e3x2-xyaaa-aaaaq-aaalq-cai` only as a development placeholder. No Governance, CHAT Ledger, or future jUP Ledger ID is separately configured.
 
-Before enabling the canonical Relay reward path, verify that recent canonical Relay subaccount-1 history contains supported debit shapes and reconciles into completed Faucet commitments. Attribution paginates backwards on demand without a lifetime page, transaction, or source-count cutoff; source ownership is resolved in deterministic API-sized chunks against one snapshot. Relay inverts each account's indexed transactions from the response's current balance and trusts a suffix only when it proves a zero opening balance. Genuine account genesis means that no older transactions exist, while the reconstructed opening balance must still reconcile exactly to zero. This proof includes post-cutoff account activity and applies independently to subaccount 1 and every referenced splitter. Older history is fetched only when FIFO carry or newer ineligible commitments require it, while pagination and reconstruction inconsistencies fail closed.
+Before enabling the canonical Relay reward path, verify that recent canonical Relay subaccount-1 history contains supported debit shapes and reconciles into completed Faucet endowments. Attribution paginates backwards on demand without a lifetime page, transaction, or source-count cutoff; source ownership is resolved in deterministic API-sized chunks against one snapshot. Relay inverts each account's indexed transactions from the response's current balance and trusts a suffix only when it proves a zero opening balance. Genuine account genesis means that no older transactions exist, while the reconstructed opening balance must still reconcile exactly to zero. This proof includes post-cutoff account activity and applies independently to subaccount 1 and every referenced splitter. Older history is fetched only when FIFO carry or newer ineligible endowments require it, while pagination and reconstruction inconsistencies fail closed.
 
-Relay also reads the ICP Ledger `query_blocks(start=0, length=0).chain_length` before the ICP Index `status().num_blocks_synced` and requires the Index to cover the observed Ledger prefix. Index lag therefore cannot hide a net-zero newer deposit-plus-commitment pair and redirect the payout to an older commitment; an unavailable or behind Index retries daily without consuming weekly cadence.
+Relay also reads the ICP Ledger `query_blocks(start=0, length=0).chain_length` before the ICP Index `status().num_blocks_synced` and requires the Index to cover the observed Ledger prefix. Index lag therefore cannot hide a net-zero newer deposit-plus-endowment pair and redirect the payout to an older endowment; an unavailable or behind Index retries daily without consuming weekly cadence.
 
 Also verify that the context's pinned SNS Root returns the same Root and reward Ledger from `list_sns_canisters`, returns an Index, and that the Index `ledger_id` names that reward Ledger. Relay reconstructs its live reward balance from that Index back to the latest zero-balance boundary or account genesis, where genesis proves that no older transactions exist and the reconstructed opening balance must still be zero, then FIFO-replays incoming credits against outgoing payouts and fees. The oldest remaining non-zero reward-credit Ledger block time and owner-snapshot scan-start time form the effective exclusive ICP cutoff. There is no reward-history cursor or depth cutoff. Detectable Index lag, including any live/index balance mismatch, retries on the next accepted daily tick without consuming weekly cadence. An undetectable unindexed net-zero outgoing-plus-incoming suffix can conservatively make the reconstructed cutoff older, but cannot make it newer than the fully synchronized cutoff.
 

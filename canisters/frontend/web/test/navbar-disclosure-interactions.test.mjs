@@ -366,7 +366,7 @@ function setupNavbar(width = 1440, initialHash = '') {
     hidden: '',
   });
   append(actionsMenu, 'a', { href: '#simulator', class: 'metric-rail-link nav-item', 'data-panel': 'simulator' }, 'Plan');
-  append(actionsMenu, 'a', { href: '#memo-builder', class: 'metric-rail-link nav-item', 'data-panel': 'memo-builder' }, 'Commit');
+  append(actionsMenu, 'a', { href: '#memo-builder', class: 'metric-rail-link nav-item', 'data-panel': 'memo-builder' }, 'Endow');
   append(actionsMenu, 'a', { href: '#relay-setup', class: 'metric-rail-link nav-item', 'data-panel': 'relay-setup' }, 'Optimize');
   append(actionsMenu, 'a', { href: '#metric-tracker', class: 'metric-rail-link nav-item', 'data-panel': 'metric-tracker' }, 'Track Memos');
 
@@ -390,7 +390,7 @@ function setupNavbar(width = 1440, initialHash = '') {
   });
   append(metricsMenu, 'p', { class: 'metric-rail-subtitle', id: 'landing-next-run' }, 'Next historian run approx. 26 Jul 2026, 09:04 BST.');
   append(metricsMenu, 'a', { href: '#metric-stake', class: 'metric-rail-link nav-item', 'data-panel': 'metric-stake' }, 'Jupiter Stake');
-  append(metricsMenu, 'a', { href: '#metric-commitments', class: 'metric-rail-link nav-item', 'data-panel': 'metric-commitments' }, 'Patron Commitments');
+  append(metricsMenu, 'a', { href: '#metric-commitments', class: 'metric-rail-link nav-item', 'data-panel': 'metric-commitments' }, 'Patron Endowments');
 
   const backdrop = append(document.body, 'div', { class: 'nav-panel-backdrop', id: 'nav-panel-backdrop' });
   append(backdrop, 'button', { class: 'nav-panel-close' });

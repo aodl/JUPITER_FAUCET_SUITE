@@ -255,11 +255,11 @@ export function createSimulatorController({ copyTextToClipboard, neuronId }) {
     setSimulatorText('simulator-required-commitment', summary.requiredCommitmentE8s === null ? DASH : formatIcpE8s(summary.requiredCommitmentE8s));
     if (summary.annualTopupCycles >= summary.annualBurnCycles) {
       const surplus = summary.annualTopupCycles - summary.annualBurnCycles;
-      setSimulatorStatus(`At these assumptions the commitment covers the configured annual burn, with a projected annual surplus of ${formatTrillionCycles(surplus)}.`, '');
+      setSimulatorStatus(`At these assumptions the endowment covers the configured annual burn, with a projected annual surplus of ${formatTrillionCycles(surplus)}.`, '');
     } else {
       const shortfall = summary.annualBurnCycles - summary.annualTopupCycles;
-      const required = summary.requiredCommitmentE8s === null ? 'a larger commitment' : formatIcpE8s(summary.requiredCommitmentE8s);
-      setSimulatorStatus(`At these assumptions the canister is underfunded by ${formatTrillionCycles(shortfall)} per year. Increase the commitment to at least ${required} for an indefinite weekly projection.`, 'error');
+      const required = summary.requiredCommitmentE8s === null ? 'a larger endowment' : formatIcpE8s(summary.requiredCommitmentE8s);
+      setSimulatorStatus(`At these assumptions the canister is underfunded by ${formatTrillionCycles(shortfall)} per year. Increase the endowment to at least ${required} for an indefinite weekly projection.`, 'error');
     }
     renderSimulatorCharts(projection);
   };

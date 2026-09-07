@@ -37,7 +37,7 @@ test('buildCommitmentIndexFaultBannerText formats a valid historian fault', () =
 
   assert.equal(
     text,
-    'Historian commitment indexing is degraded. First observed at ts:123. Last cursor: n:51. Offending tx: n:49. Non-monotonic transaction ids observed from the index.',
+    'Historian endowment indexing is degraded. First observed at ts:123. Last cursor: n:51. Offending tx: n:49. Non-monotonic transaction ids observed from the index.',
   );
 });
 

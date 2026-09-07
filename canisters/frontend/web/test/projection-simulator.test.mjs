@@ -48,7 +48,7 @@ function sumBuckets(projection, key) {
   return projection.buckets.reduce((sum, bucket) => sum + bucket[key], 0n);
 }
 
-test('default projection uses 7.0% configured APY, 0.0001T daily burn, and the 1 ICP commitment floor', () => {
+test('default projection uses 7.0% configured APY, 0.0001T daily burn, and the 1 ICP endowment floor', () => {
   const projection = okProjection({
     assumedIcpPrice: '10.0',
     dailyBurnTrillionCycles: '0.0001',
@@ -160,7 +160,7 @@ test('break-even annual funding leaves the balance line flat at the single proje
   assert.equal('requiredStartingBufferCycles' in projection.summary, false);
 });
 
-test('break-even commitment is the minimal e8s amount that covers the annual burn after age-bonus discount', () => {
+test('break-even endowment is the minimal e8s amount that covers the annual burn after age-bonus discount', () => {
   const input = { assumedIcpPrice: '7.2', dailyBurnTrillionCycles: '0.100', icpCommitment: '1.0', annualApyPercent: '7.0', ageBonusBasisPoints: 1_250n };
   const baseline = okProjection(input);
   const required = baseline.summary.requiredCommitmentE8s;
@@ -170,7 +170,7 @@ test('break-even commitment is the minimal e8s amount that covers the annual bur
   assert.ok(annualTopupCyclesForCommitmentE8s({ commitmentE8s: required - 1n, ageBonusBasisPoints: 1_250n }) < baseline.summary.annualBurnCycles);
 });
 
-test('higher assumed ICP/XDR price lowers the required commitment for the same burn', () => {
+test('higher assumed ICP/XDR price lowers the required endowment for the same burn', () => {
   const lowPrice = okProjection({ assumedIcpPrice: '5.0', dailyBurnTrillionCycles: '0.100', icpCommitment: '1.0', annualApyPercent: '7.0' });
   const highPrice = okProjection({ assumedIcpPrice: '10.0', dailyBurnTrillionCycles: '0.100', icpCommitment: '1.0', annualApyPercent: '7.0' });
 
@@ -178,7 +178,7 @@ test('higher assumed ICP/XDR price lowers the required commitment for the same b
   assert.ok(lowPrice.summary.requiredCommitmentE8s <= highPrice.summary.requiredCommitmentE8s * 2n);
 });
 
-test('higher configured APY lowers the required commitment and increases annual top-ups', () => {
+test('higher configured APY lowers the required endowment and increases annual top-ups', () => {
   const sevenPercent = okProjection({ assumedIcpPrice: '10.0', dailyBurnTrillionCycles: '0.100', icpCommitment: '100.0', annualApyPercent: '7.0' });
   const threePointFivePercent = okProjection({ assumedIcpPrice: '10.0', dailyBurnTrillionCycles: '0.100', icpCommitment: '100.0', annualApyPercent: '3.5' });
   const zeroPercent = okProjection({ assumedIcpPrice: '10.0', dailyBurnTrillionCycles: '0.100', icpCommitment: '100.0', annualApyPercent: '0.0' });
@@ -193,7 +193,7 @@ test('higher configured APY lowers the required commitment and increases annual 
   assert.equal(zeroPercent.summary.isSustainableAtCurrentBurn, false);
 });
 
-test('zero burn and a valid minimum commitment produce an overfunded projection with a 1 ICP required commitment', () => {
+test('zero burn and a valid minimum endowment produce an overfunded projection with a 1 ICP required endowment', () => {
   const projection = okProjection({ assumedIcpPrice: '10.0', dailyBurnTrillionCycles: '0.000', icpCommitment: '1.0', annualApyPercent: '7.0' });
 
   assert.equal(projection.summary.annualBurnCycles, 0n);
@@ -234,7 +234,7 @@ test('normalisation reports all invalid user-facing simulator inputs together', 
   assert.equal(projection.ok, false);
   assert.match(projection.errors.join(' '), /Assumed ICP\/XDR price must be greater than zero/);
   assert.match(projection.errors.join(' '), /Daily burn in T cycles supports at most 4 decimal places/);
-  assert.match(projection.errors.join(' '), /ICP commitment must be at least 1 ICP/);
+  assert.match(projection.errors.join(' '), /ICP endowment must be at least 1 ICP/);
   assert.match(projection.errors.join(' '), /APY supports at most 1 decimal place/);
   assert.match(projection.errors.join(' '), /Age bonus must be non-negative/);
 });

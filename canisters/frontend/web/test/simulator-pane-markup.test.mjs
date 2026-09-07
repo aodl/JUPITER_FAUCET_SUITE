@@ -437,7 +437,7 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.doesNotMatch(howItWorks, /target canister ID/);
   assert.match(howItWorks, /how-it-works-guide-card is-optional/);
   assert.match(howItWorks, /href="https:\/\/nns\.ic0\.app\/address-book"[^>]*>[\s\S]*how-it-works-edit-address\.png/);
-  assert.match(howItWorks, /with a nickname to make future commitments easier/);
+  assert.match(howItWorks, /with a nickname to make future endowments easier/);
   assert.match(howItWorks, /<strong>ICRC staking account<\/strong>[\s\S]*id="copy-how-staking-account"[^>]*>Copy<\/button>/);
   assert.match(howItWorks, /<strong>Alternative account identifier<\/strong>[\s\S]*id="copy-how-staking-account-identifier"[^>]*>Copy<\/button>/);
   assert.match(howItWorks, /id="how-staking-account-identifier-link"[^>]*dashboard\.internetcomputer\.org\/account\/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d/);
@@ -445,7 +445,7 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(indexCss, /\.how-it-works-guide-card\.is-send-step \{[\s\S]*grid-row: 1 \/ span 2;[\s\S]*\}/);
   assert.match(howItWorks, /set the transaction memo to your declared canister ID/);
   assert.doesNotMatch(howItWorks, /Transfer ICP to the long-form ICRC-1 staking account address displayed above/);
-  assert.doesNotMatch(howItWorks, /While stake commitments can be made today/);
+  assert.doesNotMatch(howItWorks, /While stake endowments can be made today/);
   assert.match(howItWorks, /data-panel="metric-tracker"[^>]*>memo tracker<\/a>/);
   assert.match(howItWorks, /data-panel="simulator"[^>]*>simulator<\/a>/);
   assert.match(howItWorks, /newly issued <strong>IO<\/strong> \(a liquid staking protocol that will be launched alongside Jupiter Faucet\)/);
@@ -461,7 +461,7 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /partnership is foundational to Jupiter Faucet because truly unstoppable canisters depend on a secure and decentralized network/);
   assert.match(howItWorks, /memo-builder-safety-notice[\s\S]*<strong>Rewards:<\/strong>[\s\S]*jUP SNS tokens will be minted/);
   assert.match(howItWorks, /jUP SNS tokens will be minted[\s\S]*While the Jupiter Faucet SNS rewards components are still being finalized/);
-  assert.match(howItWorks, /data-panel="metric-commitments"[^>]*>committed ICP<\/a>/);
+  assert.match(howItWorks, /data-panel="metric-commitments"[^>]*>endowed ICP<\/a>/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/account\/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d[^>]*>staking account<\/a>/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/neuron\/11614578985374291210[^>]*>neuron<\/a>/);
   assert.match(howItWorks, /data-page-target="0"[^>]*>rules described<\/a>/);
@@ -503,7 +503,7 @@ test('cycles help opens a dedicated observability slide with actionable route gu
     /event\.target\.closest\('\[data-tooltip-navigation\]'\)[\s\S]*popover\.hidden = true/
   );
   assert.match(howItWorks, /data-page="4"[\s\S]*<h3 class="pane-section-title">Cycles Observability<\/h3>/);
-  assert.match(howItWorks, /Registering a canister through a qualifying memo commitment tells the\s*<a href="#metric-tracker"[^>]*>Memo Tracker<\/a>\s*what to track/);
+  assert.match(howItWorks, /Registering a canister through a qualifying endowment memo tells the\s*<a href="#metric-tracker"[^>]*>Memo Tracker<\/a>\s*what to track/);
   assert.match(howItWorks, /e3mmv-5qaaa-aaaah-aadma-cai[^>]*>[\s\S]*13-node blackhole<\/a>/);
   assert.match(howItWorks, /77deu-baaaa-aaaar-qb6za-cai[^>]*>[\s\S]*Fiduciary blackhole<\/a>/);
   assert.match(howItWorks, /Both are immutable, run the same independently reproducible\s*blackhole Wasm/);
@@ -534,7 +534,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   const howItWorks = sectionMarkup('how-it-works');
   const memoBuilder = sectionMarkup('memo-builder');
   assert.doesNotMatch(howItWorks, /commitment-simulator-form/);
-  assert.doesNotMatch(howItWorks, /Commitment simulator/);
+  assert.doesNotMatch(howItWorks, /Endowment simulator/);
   assert.match(howItWorks, /data-page="0"/);
   assert.match(howItWorks, /data-page="1"/);
   assert.match(howItWorks, /data-page="2"/);
@@ -546,7 +546,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /data-page="2"[\s\S]*src="\/faucet\.svg\?v=__ASSET_VERSION__"[\s\S]*data-page="3"/);
   assert.match(howItWorks, /data-page="3"[\s\S]*src="\/relay\.svg\?v=__ASSET_VERSION__"[\s\S]*data-page="4"/);
   assert.match(howItWorks, /data-page="1">\s*<figure class="pane-diagram" id="diagram-disburser">[\s\S]*src="\/disburser\.svg\?v=__ASSET_VERSION__"[\s\S]*<strong>Base maturity:<\/strong>[\s\S]*<strong>5%<\/strong>[\s\S]*D-QUORUM is a special known neuron/);
-  assert.match(howItWorks, /To enable raw ICP transfer mode for a canister[\s\S]*Declared neurons must be\s*'public' in order for Jupiter Faucet to derive their staking accounts\.\s*<\/p>\s*<figure class="pane-diagram" id="diagram-faucet">[\s\S]*src="\/faucet\.svg\?v=__ASSET_VERSION__"[\s\S]*<\/figure>\s*<p class="nav-panel-content">\s*The full ICP commitment memo/);
+  assert.match(howItWorks, /To enable raw ICP transfer mode for a canister[\s\S]*Declared neurons must be\s*'public' in order for Jupiter Faucet to derive their staking accounts\.\s*<\/p>\s*<figure class="pane-diagram" id="diagram-faucet">[\s\S]*src="\/faucet\.svg\?v=__ASSET_VERSION__"[\s\S]*<\/figure>\s*<p class="nav-panel-content">\s*The full ICP endowment memo/);
   assert.match(howItWorks, /Splitter subaccounts <code>10<\/code>, <code>20<\/code>, …, <code>90<\/code> divide a\s*deposit between immediate liquidity and subaccount <code>1<\/code>/);
   assert.match(indexCss, /\.pane-diagram \{[\s\S]*margin: 12px 10px 8px;/);
   assert.match(indexCss, /\.pane-diagram img \{[\s\S]*width: 100%;[\s\S]*height: auto;/);
@@ -653,7 +653,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(memoBuilder, /id="memo-builder-copy"[^>]*>Copy memo<\/button>/);
   assert.match(memoBuilder, /Use the generated memo as described in the/);
   assert.match(memoBuilder, /href="#how-it-works"[^>]*data-panel="how-it-works"[^>]*>basic instructions<\/a>/);
-  assert.match(memoBuilder, /\(in place of the "declared canister ID"\) to make your ICP commitment and initiate\s+perpetual top-ups/);
+  assert.match(memoBuilder, /\(in place of the "declared canister ID"\) to make your ICP endowment and initiate\s+perpetual top-ups/);
   assert.match(memoBuilder, /Use the generated memo[\s\S]*For more information about this memo builder see/);
   assert.match(memoBuilder, /For more information about this memo builder see[\s\S]*href="#how-it-works:2"[^>]*data-panel="how-it-works"[^>]*>Advanced Usage<\/a>/);
   assert.doesNotMatch(howItWorks, /Use the copied memo/);
@@ -776,7 +776,7 @@ test('simulator inputs are ordered by user control priority and use compact nume
   const priceIndex = indexOfInput(simulator, 'simulator-icp-price');
   const apyIndex = indexOfInput(simulator, 'simulator-apy');
 
-  assert.ok(commitmentIndex < burnIndex, 'ICP commitment should be first');
+  assert.ok(commitmentIndex < burnIndex, 'ICP endowment should be first');
   assert.ok(burnIndex < priceIndex, 'daily burn should be second');
   assert.ok(priceIndex < apyIndex, 'APY should follow price');
 
@@ -876,17 +876,17 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
 
   assert.match(rail, /id="landing-next-run"[\s\S]*Jupiter Stake/);
   assert.match(mainJs, /setText\('landing-next-run', subtitle\);/);
-  assert.match(rail, /Jupiter Stake[\s\S]*Patron Commitments/);
+  assert.match(rail, /Jupiter Stake[\s\S]*Patron Endowments/);
   assert.doesNotMatch(rail, /Track Memos/);
   assert.doesNotMatch(rail, /Create Relay/);
   assert.doesNotMatch(rail, /Declared Canisters/);
   assert.doesNotMatch(rail, /Target Canisters/);
-  assert.doesNotMatch(rail, />Commitments<\/span>/);
+  assert.doesNotMatch(rail, />Endowments<\/span>/);
   assert.doesNotMatch(rail, /data-panel="metric-output"/);
   assert.doesNotMatch(rail, /data-panel="metric-rewards"/);
   assert.doesNotMatch(indexHtml, /id="nav-panel-metric-output"/);
   assert.doesNotMatch(indexHtml, /id="nav-panel-metric-rewards"/);
-  assert.match(indexHtml, /id="nav-panel-metric-commitments"[\s\S]*Patron Commitments/);
+  assert.match(indexHtml, /id="nav-panel-metric-commitments"[\s\S]*Patron Endowments/);
   assert.doesNotMatch(indexHtml, /id="nav-panel-metric-registered"/);
   assert.match(stake, /data-page="1"[\s\S]*Total Output/);
   assert.match(stake, /data-page="2"[\s\S]*Total Rewards/);
@@ -897,14 +897,14 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
   assert.match(navbarJs, /key === "metric-registered"[\s\S]*key: "metric-commitments", page: 0/);
 });
 
-test('Actions nav button exposes Plan, Commit, Optimize, and Track Memos pane links in order', () => {
+test('Actions nav button exposes Plan, Endow, Optimize, and Track Memos pane links in order', () => {
   const actionsStart = indexHtml.indexOf('<div class="nav-popover action-rail"');
   assert.ok(actionsStart >= 0, 'missing actions rail');
   const actionsRail = indexHtml.slice(actionsStart, indexHtml.indexOf('</div>', actionsStart) + '</div>'.length);
 
   assert.match(indexHtml, /id="actions-menu-toggle"[\s\S]*aria-controls="actions-menu"[\s\S]*>Actions<\/button>/);
   assert.match(indexHtml, /id="metrics-menu-toggle"[\s\S]*aria-controls="metrics-menu"[\s\S]*>Metrics<\/button>/);
-  assert.match(actionsRail, /href="#simulator"[^>]*data-panel="simulator"[\s\S]*>Plan<\/span>[\s\S]*href="#memo-builder"[^>]*data-panel="memo-builder"[\s\S]*>Commit<\/span>[\s\S]*href="#relay-setup"[^>]*data-panel="relay-setup"[\s\S]*>Optimize<\/span>[\s\S]*href="#metric-tracker"[^>]*data-panel="metric-tracker"[\s\S]*>Track Memos<\/span>/);
+  assert.match(actionsRail, /href="#simulator"[^>]*data-panel="simulator"[\s\S]*>Plan<\/span>[\s\S]*href="#memo-builder"[^>]*data-panel="memo-builder"[\s\S]*>Endow<\/span>[\s\S]*href="#relay-setup"[^>]*data-panel="relay-setup"[\s\S]*>Optimize<\/span>[\s\S]*href="#metric-tracker"[^>]*data-panel="metric-tracker"[\s\S]*>Track Memos<\/span>/);
   assert.match(indexHtml, /<div class="nav-disclosure" data-nav-group="actions">\s*<button[\s\S]*id="actions-menu-toggle"[\s\S]*<\/button>\s*<div class="nav-popover action-rail" id="actions-menu"[^>]*hidden>/);
   assert.match(indexHtml, /<div class="nav-disclosure nav-disclosure--end" data-nav-group="metrics">\s*<button[\s\S]*id="metrics-menu-toggle"[\s\S]*<\/button>\s*<div class="nav-popover metric-rail" id="metrics-menu"[^>]*hidden>/);
   const navItemRule = navbarCss.match(/\.nav-item \{[^}]*\}/)?.[0] || '';
@@ -982,13 +982,13 @@ test('Relay Setup uses accessible repeatable target and recipient fields', () =>
   assert.match(metricsCss, /\.relay-setup-submit \{[\s\S]*margin-left: auto;/);
 });
 
-test('Patron Commitments table omits redundant category column', () => {
+test('Patron Endowments table omits redundant category column', () => {
   const commitments = sectionMarkup('metric-commitments');
-  assert.match(commitments, /See <a href="#how-it-works"[^>]*data-panel="how-it-works"[^>]*>How It Works<\/a> for qualifying commitment rules[\s\S]*<h3 class="pane-section-title">Declared Canisters <span id="commitments-canister-count"><\/span><\/h3>[\s\S]*<th>Timestamp<\/th>[\s\S]*<th>Amount<\/th>[\s\S]*<th>Declared<\/th>/);
-  assert.match(commitments, /See <a href="#how-it-works:2"[^>]*>Advanced Usage<\/a> for raw ICP commitment rules[\s\S]*<h3 class="pane-section-title">Declared Raw ICP Canisters <span id="commitments-raw-canister-count"><\/span><\/h3>[\s\S]*<th>Declared<\/th>/);
-  assert.match(commitments, /See <a href="#how-it-works:2"[^>]*>Advanced Usage<\/a> for neuron commitment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons <span id="commitments-neuron-count"><\/span><\/h3>[\s\S]*<th>Declared<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works"[^>]*data-panel="how-it-works"[^>]*>How It Works<\/a> for qualifying endowment rules[\s\S]*<h3 class="pane-section-title">Declared Canisters <span id="commitments-canister-count"><\/span><\/h3>[\s\S]*<th>Timestamp<\/th>[\s\S]*<th>Amount<\/th>[\s\S]*<th>Declared<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works:2"[^>]*>Advanced Usage<\/a> for raw ICP endowment rules[\s\S]*<h3 class="pane-section-title">Declared Raw ICP Canisters <span id="commitments-raw-canister-count"><\/span><\/h3>[\s\S]*<th>Declared<\/th>/);
+  assert.match(commitments, /See <a href="#how-it-works:2"[^>]*>Advanced Usage<\/a> for neuron endowment rules[\s\S]*<h3 class="pane-section-title">Declared Neurons <span id="commitments-neuron-count"><\/span><\/h3>[\s\S]*<th>Declared<\/th>/);
   assert.doesNotMatch(commitments, /<th>Memo<\/th>/);
-  assert.match(commitments, /aria-label="Patron Commitment pages"[\s\S]*aria-label="Declared Neurons"/);
+  assert.match(commitments, /aria-label="Patron Endowment pages"[\s\S]*aria-label="Declared Neurons"/);
   assert.match(mainJs, /const countDisplays = dashboardCountDisplays\(data\?\.counts\);/);
   assert.match(countDisplaysJs, /tracked_canister_count/);
   assert.match(countDisplaysJs, /memo_registered_canister_count/);
@@ -1045,7 +1045,7 @@ test('paged nav panel content keeps a stable panel height while preserving overf
   assert.doesNotMatch(navbarCss, /\.nav-panel-scroll-region \{[\s\S]*max-height: min\(46vh, calc\(100dvh - 220px\)\);[\s\S]*\}/);
   const commitments = sectionMarkup('metric-commitments');
   const scrollRegionEnd = commitments.indexOf('</div>\n          <div class="nav-panel-dots"');
-  assert.ok(scrollRegionEnd > 0, 'commitment pane dots should sit outside the scroll region');
+  assert.ok(scrollRegionEnd > 0, 'endowment pane dots should sit outside the scroll region');
   assert.match(navbarJs, /pointerDownOnBackdrop = evt\.target === backdrop/);
   assert.match(navbarJs, /const shouldClose = evt\.target === backdrop && pointerDownOnBackdrop/);
 });
@@ -1248,7 +1248,7 @@ test('burn estimate help describes the approximation and CMC conversion assumpti
   assert.match(metricsCss, /\.tracker-burn-observation \{[\s\S]*font-size: 11px;[\s\S]*opacity: 0\.68;/);
 });
 
-test('simulator prepopulates commitment from calculated break-even minimum', () => {
+test('simulator prepopulates the endowment from the calculated break-even minimum', () => {
   assert.match(mainJs, /maybePrepopulateMinimumCommitment/);
   assert.match(mainJs, /calculateSimulatorMinimumCommitmentInput/);
   assert.match(mainJs, /formatIcpCommitmentInputRoundedUp/);

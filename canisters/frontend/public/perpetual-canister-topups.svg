@@ -25,11 +25,11 @@
   </defs>
 
   <title>Perpetual canister top-up</title>
-  <desc>A one-time ICP commitment becomes permanent stake in the Faucet neuron. Recurring maturity is handled by the Jupiter Faucet Disburser and Faucet, which repeatedly top up the target canister with cycles.</desc>
+  <desc>A one-time ICP endowment becomes permanent stake in the Faucet neuron. Recurring maturity is handled by the Jupiter Faucet Disburser and Faucet, which repeatedly top up the target canister with cycles.</desc>
 
   <rect class="bg" x="35" y="10" width="1190" height="330" rx="24" ry="24"/>
 
-  <text class="section" x="60" y="48">ONE-TIME COMMITMENT</text>
+  <text class="section" x="60" y="48">ONE-TIME ENDOWMENT</text>
   <text class="section" x="545" y="48">RECURRING, UNSTOPPABLE TOP-UPS</text>
   <line stroke="#CBD5E1" stroke-opacity="0.88" stroke-dasharray="6 7" stroke-width="1.6" x1="500" x2="500" y1="24" y2="305"/>
 

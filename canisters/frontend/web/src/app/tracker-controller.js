@@ -871,11 +871,11 @@ export function createTrackerController({
       ${renderTrackerRangeControls()}
       <div class="tracker-chart-wrapper tracker-chart-wrapper--loading" aria-busy="true">
         ${renderTrackerLoadingCard({
-          title: 'ICP commitments',
+          title: 'ICP endowments',
           subtitle: isRaw
-            ? 'Retained qualifying Jupiter Faucet commitments recorded by Historian for this destination target.'
-            : 'Memo-registered commitment history from historian.',
-          message: 'Loading ICP commitment history…',
+            ? 'Retained qualifying Jupiter Faucet endowments recorded by Historian for this destination target.'
+            : 'Memo-registered endowment history from historian.',
+          message: 'Loading ICP endowment history…',
         })}
         ${isRaw
           ? renderTrackerLoadingCard({
@@ -914,8 +914,8 @@ export function createTrackerController({
     const lastSweep = formatTimestampSeconds(optValue(status.last_completed_cycles_sweep_ts));
     const lastCanisterProbe = formatTimestampSeconds(optValue(data?.overview?.meta?.last_cycles_probe_ts));
     const indexText = indexCadence === DASH
-      ? 'Commitment history is updated by historian ledger/index scans.'
-      : `Commitment history is updated by historian ledger/index scans about every ${indexCadence}${lastIndex !== DASH ? `; last scan ${lastIndex}` : ''}.`;
+      ? 'Endowment history is updated by historian ledger/index scans.'
+      : `Endowment history is updated by historian ledger/index scans about every ${indexCadence}${lastIndex !== DASH ? `; last scan ${lastIndex}` : ''}.`;
     const cyclesText = cyclesCadence === DASH
       ? `Cycles balances are sampled by historian cycles sweeps${lastCanisterProbe !== DASH ? `; this canister was last probed ${lastCanisterProbe}` : ''}.`
       : `Cycles balances are sampled by historian cycles sweeps about every ${cyclesCadence}${lastSweep !== DASH ? `; last completed sweep ${lastSweep}` : ''}${lastCanisterProbe !== DASH ? `; this canister was last probed ${lastCanisterProbe}` : ''}.`;
@@ -954,7 +954,7 @@ export function createTrackerController({
 
   const renderTrackerCommitmentsChart = (buckets, fullData = null) => {
     if (fullData?.commitments?.loading && (fullData?.commitments?.items || []).length === 0) {
-      return renderTrackerLoadingChart('Loading ICP commitment history…');
+      return renderTrackerLoadingChart('Loading ICP endowment history…');
     }
     return renderTrackerAmountBarChart({
       buckets,
@@ -962,27 +962,27 @@ export function createTrackerController({
       countKey: 'commitmentCount',
       barClass: 'tracker-chart-bar--commitment',
       emptyMessage: trackerRangeEmptyMessage({
-        rangeMessage: 'No dated commitments are available within the selected time range.',
-        emptyMessage: 'No dated commitments are available for this beneficiary yet.',
+        rangeMessage: 'No dated endowments are available within the selected time range.',
+        emptyMessage: 'No dated endowments are available for this beneficiary yet.',
       }),
-      ariaLabel: `ICP commitments in ${trackerRangeLabel()}`,
-      labelBuilder: (bucket) => `${bucket.label}: ${formatIcpE8s(bucket.commitmentAmountE8s)} across ${pluralize(bucket.commitmentCount, 'commitment')}; ${formatIcpE8s(bucket.qualifyingCommitmentAmountE8s)} qualifying across ${pluralize(bucket.qualifyingCommitmentCount, 'qualifying commitment')}`,
+      ariaLabel: `ICP endowments in ${trackerRangeLabel()}`,
+      labelBuilder: (bucket) => `${bucket.label}: ${formatIcpE8s(bucket.commitmentAmountE8s)} across ${pluralize(bucket.commitmentCount, 'endowment')}; ${formatIcpE8s(bucket.qualifyingCommitmentAmountE8s)} qualifying across ${pluralize(bucket.qualifyingCommitmentCount, 'qualifying endowment')}`,
     });
   };
 
   const renderRawCommitmentsChart = (buckets, visibleData, fullData) => {
     const commitmentError = fullData?.errors?.commitments;
     if (commitmentError) {
-      return renderTrackerEmptyChart(`Commitment history unavailable: ${commitmentError}`);
+      return renderTrackerEmptyChart(`Endowment history unavailable: ${commitmentError}`);
     }
     const rawCommitmentEmptyMessage = () => {
-      if (visibleData?.commitments?.loading) return 'Loading ICP commitment history...';
-      if (state.range === 'all') return 'No dated retained qualifying commitments are available for this target.';
+      if (visibleData?.commitments?.loading) return 'Loading ICP endowment history...';
+      if (state.range === 'all') return 'No dated retained qualifying endowments are available for this target.';
       const rangeLabel = trackerRangeLabel();
       if ((fullData?.commitments?.items || []).length > 0) {
-        return `No retained qualifying commitments are loaded for ${rangeLabel}. Select All to view older loaded history.`;
+        return `No retained qualifying endowments are loaded for ${rangeLabel}. Select All to view older loaded history.`;
       }
-      return `No retained qualifying commitments are loaded for ${rangeLabel}. The loader may not have loaded older retained rows; select All to request the full retained target history.`;
+      return `No retained qualifying endowments are loaded for ${rangeLabel}. The loader may not have loaded older retained rows; select All to request the full retained target history.`;
     };
     return renderTrackerAmountBarChart({
       buckets,
@@ -990,8 +990,8 @@ export function createTrackerController({
       countKey: 'commitmentCount',
       barClass: 'tracker-chart-bar--commitment',
       emptyMessage: rawCommitmentEmptyMessage(),
-      ariaLabel: `ICP commitments in ${trackerRangeLabel()}`,
-      labelBuilder: (bucket) => `${bucket.label}: ${formatIcpE8s(bucket.commitmentAmountE8s)} across ${pluralize(bucket.commitmentCount, 'commitment')}`,
+      ariaLabel: `ICP endowments in ${trackerRangeLabel()}`,
+      labelBuilder: (bucket) => `${bucket.label}: ${formatIcpE8s(bucket.commitmentAmountE8s)} across ${pluralize(bucket.commitmentCount, 'endowment')}`,
     });
   };
 
@@ -1147,8 +1147,8 @@ export function createTrackerController({
     wrapper.innerHTML = `
       <div class="tracker-chart-card">
         <div class="tracker-chart-header">
-          <h3>ICP commitments</h3>
-          <span>Memo-registered commitment history from historian.</span>
+          <h3>ICP endowments</h3>
+          <span>Memo-registered endowment history from historian.</span>
         </div>
         ${renderTrackerCommitmentsChart(buckets, fullData)}
       </div>
@@ -1195,8 +1195,8 @@ export function createTrackerController({
     const result = document.getElementById('tracker-result');
     if (!result) return;
     const detail = data?.isRecognized
-      ? 'Historian recognizes this principal, but not as a memo-registered commitment beneficiary.'
-      : 'This principal is not a recognized commitment beneficiary.';
+      ? 'Historian recognizes this principal, but not as a memo-registered endowment beneficiary.'
+      : 'This principal is not a recognized endowment beneficiary.';
     result.innerHTML = `
       <div class="tracker-empty-state">
         <p>${escapeHtml(detail)}</p>
@@ -1250,7 +1250,7 @@ export function createTrackerController({
         <div><dt>Latest cycles shown</dt><dd class="pane-detail-value">${latestCyclesHtml}</dd></div>
         ${renderBurnEstimateSummary(data, estimatedCyclesBurnHtml)}
       </dl>
-      <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. This canister is tracked by historian for cycles observability, not memo-registered commitment history.</p>
+      <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. This canister is tracked by historian for cycles observability, not memo-registered endowment history.</p>
       ${cyclesStatusNote}
       ${cyclesError}
       ${renderTrackerCadenceNote(data)}`;
@@ -1298,7 +1298,7 @@ export function createTrackerController({
       commitmentE8s: fullSummary.qualifyingCommittedE8s || fullSummary.totalCommittedE8s,
       simulatorHashForPrefill,
     });
-    const commitmentError = classifiedData.errors?.commitments ? `<p class="pane-status-note tracker-status-note">Commitment history unavailable: ${escapeHtml(classifiedData.errors.commitments)}</p>` : '';
+    const commitmentError = classifiedData.errors?.commitments ? `<p class="pane-status-note tracker-status-note">Endowment history unavailable: ${escapeHtml(classifiedData.errors.commitments)}</p>` : '';
     const cyclesError = classifiedData.errors?.cycles ? `<p class="pane-status-note tracker-status-note">Cycles history unavailable: ${escapeHtml(classifiedData.errors.cycles)}</p>` : '';
     const hasCyclesOutsideRange = (classifiedData?.cycles?.items || []).length > 0 && (visibleData?.cycles?.items || []).length === 0;
     const cyclesStatusNote = summary.latestCycles === null || summary.latestCycles === undefined
@@ -1323,17 +1323,17 @@ export function createTrackerController({
         ${protocolHtml}
         <div><dt>Tracking reasons</dt><dd class="pane-detail-value">${escapeHtml(trackingReasons)}</dd></div>
         <div><dt>First seen</dt><dd class="pane-detail-value">${escapeHtml(firstSeen)}</dd></div>
-        <div><dt>Last commitment</dt><dd class="pane-detail-value">${escapeHtml(lastCommitment)}</dd></div>
-        <div><dt>Patron commitments shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(commitmentLoading, formatInteger(summary.commitmentCount))}</dd></div>
-        <div><dt>Total commitments shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(commitmentLoading, formatIcpE8s(summary.totalCommittedE8s))}</dd></div>
-        <div><dt>Qualifying commitments shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(commitmentLoading, `${formatInteger(summary.qualifyingCommitmentCount)} · ${formatIcpE8s(summary.qualifyingCommittedE8s)}`)}</dd></div>
+        <div><dt>Last endowment</dt><dd class="pane-detail-value">${escapeHtml(lastCommitment)}</dd></div>
+        <div><dt>Patron endowments shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(commitmentLoading, formatInteger(summary.commitmentCount))}</dd></div>
+        <div><dt>Total ICP endowed shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(commitmentLoading, formatIcpE8s(summary.totalCommittedE8s))}</dd></div>
+        <div><dt>Qualifying endowments shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(commitmentLoading, `${formatInteger(summary.qualifyingCommitmentCount)} · ${formatIcpE8s(summary.qualifyingCommittedE8s)}`)}</dd></div>
         <div><dt>Observed CMC transfers shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(cmcLoading, formatInteger(summary.observedCmcTransferCount))}</dd></div>
         <div><dt>Observed ICP to CMC shown</dt><dd class="pane-detail-value">${renderTrackerSummaryValue(cmcLoading, formatIcpE8s(summary.observedCmcE8s))}</dd></div>
         <div><dt>Latest cycles shown</dt><dd class="pane-detail-value">${latestCyclesHtml}</dd></div>
         ${renderBurnEstimateSummary(classifiedData, estimatedCyclesBurnHtml)}
         ${estimatedCyclesBurnHtml === null ? '' : `<div><dt>Simulator prefill</dt><dd class="pane-detail-value">${simulatorPrefillHtml}</dd></div>`}
       </dl>
-      <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. Patron commitments are memo-registered ICP commitments associated with this beneficiary. Observed CMC top-ups are ICP transfers into the canister’s CMC top-up account and may include direct non-Jupiter top-ups.</p>
+      <p class="pane-status-note tracker-status-note">Showing ${escapeHtml(rangeLabel)} using ${escapeHtml(trackerBucketDescription())}. Patron endowments are memo-registered ICP endowments associated with this beneficiary. Observed CMC top-ups are ICP transfers into the canister’s CMC top-up account and may include direct non-Jupiter top-ups.</p>
       ${renderTrackerCadenceNote(classifiedData)}
       ${commitmentError}
       ${cyclesStatusNote}
@@ -1402,7 +1402,7 @@ export function createTrackerController({
     }
     const items = data?.candidates?.items || [];
     if (items.length === 0) {
-      return '<p class="pane-status-note tracker-status-note">If the right-hand side of the memo identifies another canister then it is not yet known to Jupiter Faucet through a direct cycle top-up memo commitment. You can track that canister directly by committing 1 ICP with that canister&#39;s full ID in the memo (see <a class="pane-external-link" href="#how-it-works">How it Works</a>).</p>';
+      return '<p class="pane-status-note tracker-status-note">If the right-hand side of the memo identifies another canister then it is not yet known to Jupiter Faucet through a direct cycle top-up endowment memo. You can track that canister directly by endowing 1 ICP with that canister&#39;s full ID in the memo (see <a class="pane-external-link" href="#how-it-works">How it Works</a>).</p>';
     }
     const links = items.map((item) => {
       const canisterText = item.canister_id.toText();
@@ -1452,7 +1452,7 @@ export function createTrackerController({
       : '';
     const commitmentScopeNote = !hasOutgoingMemo
       ? ''
-      : '<p class="pane-status-note tracker-status-note">Retained qualifying commitment history is recorded for the destination target as a whole and is not filtered by this outgoing memo. The chart shows retained qualifying commitments in the selected range. The transfer chart separately identifies matching and other payout memos.</p>';
+      : '<p class="pane-status-note tracker-status-note">Retained qualifying endowment history is recorded for the destination target as a whole and is not filtered by this outgoing memo. The chart shows retained qualifying endowments in the selected range. The transfer chart separately identifies matching and other payout memos.</p>';
     const matchingNote = !hasOutgoingMemo
       ? ''
       : `<p class="pane-status-note tracker-status-note">Visible Jupiter Faucet transfers matching the outgoing memo: ${escapeHtml(formatInteger(summary.faucetMatchingMemoTransferCount))} · ${escapeHtml(formatIcpE8s(summary.faucetMatchingMemoIcpE8s))}. If no transfers match, the top-up may not have been indexed yet, may be outside the loaded range, or may not have been paid through Jupiter Faucet yet.</p>`;
@@ -1464,8 +1464,8 @@ export function createTrackerController({
       <div class="tracker-chart-wrapper" id="tracker-chart-wrapper">
         <div class="tracker-chart-card">
           <div class="tracker-chart-header">
-            <h3>ICP commitments</h3>
-            <span>Retained qualifying Jupiter Faucet commitments recorded by Historian for this destination target.</span>
+            <h3>ICP endowments</h3>
+            <span>Retained qualifying Jupiter Faucet endowments recorded by Historian for this destination target.</span>
           </div>
           ${renderRawCommitmentsChart(commitmentBuckets, visibleData, classified)}
         </div>
@@ -1490,8 +1490,8 @@ export function createTrackerController({
       <dl class="pane-detail-grid tracker-summary-grid">
         <div><dt>Memo type</dt><dd class="pane-detail-value">${escapeHtml(title)}</dd></div>
         <div><dt>Tracked target</dt><dd class="pane-detail-value mono">${targetHtml}</dd></div>
-        <div><dt>Commitments shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : renderTrackerSummaryValue(commitmentLoading, formatInteger(commitmentCount))}</dd></div>
-        <div><dt>ICP committed shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : renderTrackerSummaryValue(commitmentLoading, formatIcpE8s(committedE8s))}</dd></div>
+        <div><dt>Endowments shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : renderTrackerSummaryValue(commitmentLoading, formatInteger(commitmentCount))}</dd></div>
+        <div><dt>ICP endowed shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : renderTrackerSummaryValue(commitmentLoading, formatIcpE8s(committedE8s))}</dd></div>
         <div><dt>Incoming transfers shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.totalTransferCount))}</dd></div>
         <div><dt>Incoming ICP shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.totalIcpE8s))}</dd></div>
         <div><dt>Jupiter Faucet inflow shown</dt><dd class="pane-detail-value">${escapeHtml(`${formatInteger(summary.faucetTransferCount)} · ${formatIcpE8s(summary.faucetIcpE8s)}`)}</dd></div>
@@ -1509,7 +1509,7 @@ export function createTrackerController({
     if (!result || result.innerHTML.trim()) return;
     result.innerHTML = `
       <div class="tracker-empty-state">
-        <p>Paste a memo to inspect Jupiter Faucet tracking history. Plain canister memos open cycle top-up tracking; dotted canister memos show raw ICP commitment history and incoming transfers for the target canister account; numeric memos show public neuron commitment history and staking-account inflows.</p>
+        <p>Paste a memo to inspect Jupiter Faucet tracking history. Plain canister memos open cycle top-up tracking; dotted canister memos show raw ICP endowment history and incoming transfers for the target canister account; numeric memos show public neuron endowment history and staking-account inflows.</p>
       </div>`;
   };
 

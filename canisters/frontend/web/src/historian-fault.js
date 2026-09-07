@@ -30,7 +30,7 @@ export function buildCommitmentIndexFaultBannerText(status, {
   const cursorText = fault.lastCursorTxId === null ? 'none' : formatInteger(fault.lastCursorTxId);
   const offendingText = fault.offendingTxId === null ? '—' : formatInteger(fault.offendingTxId);
   const parts = [
-    'Historian commitment indexing is degraded.',
+    'Historian endowment indexing is degraded.',
     `First observed at ${observedText}.`,
     `Last cursor: ${cursorText}.`,
     `Offending tx: ${offendingText}.`,

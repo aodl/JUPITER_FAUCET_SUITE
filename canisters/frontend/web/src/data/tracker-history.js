@@ -190,7 +190,7 @@ async function loadCommitmentHistoryPages({ fetchPage, historyLimit, minTimestam
 
 async function loadTrackerCommitments(historian, { canisterId, historyLimit, minTimestampNanos = null }) {
   if (typeof historian?.get_commitment_history !== 'function') {
-    throw new Error('Historian commitment history query is unavailable');
+    throw new Error('Historian endowment history query is unavailable');
   }
   return loadCommitmentHistoryPages({
     historyLimit,
@@ -206,7 +206,7 @@ async function loadTrackerCommitments(historian, { canisterId, historyLimit, min
 
 async function loadRawIcpCanisterCommitments(historian, { canisterId, historyLimit, minTimestampNanos = null }) {
   if (typeof historian?.get_raw_icp_commitment_history !== 'function') {
-    throw new Error('Historian raw ICP commitment history query is unavailable');
+    throw new Error('Historian raw ICP endowment history query is unavailable');
   }
   return loadCommitmentHistoryPages({
     historyLimit,
@@ -222,7 +222,7 @@ async function loadRawIcpCanisterCommitments(historian, { canisterId, historyLim
 
 async function loadNeuronCommitments(historian, { neuronId, historyLimit, minTimestampNanos = null }) {
   if (typeof historian?.get_neuron_commitment_history !== 'function') {
-    throw new Error('Historian neuron commitment history query is unavailable');
+    throw new Error('Historian neuron endowment history query is unavailable');
   }
   return loadCommitmentHistoryPages({
     historyLimit,

@@ -46,7 +46,7 @@ function registeredPaneNodes() {
   ]);
 }
 
-test('raw and neuron commitment rows link full declared memos to tracker', () => {
+test('raw and neuron endowment rows link full declared memos to tracker', () => {
   const nodes = commitmentPaneNodes();
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
   const compactCanister = canister.replaceAll('-', '');

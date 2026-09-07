@@ -257,7 +257,7 @@ function assertBurnEstimateUx(html) {
   assert.match(html, /Observation window: 4 weeks · 5 samples/);
 }
 
-test('commitment beneficiary burn estimate shows the selected log-sample observation window and help', async () => {
+test('endowment beneficiary burn estimate shows the selected log-sample observation window and help', async () => {
   const nodes = trackerNodes();
   const data = minimalTrackerData();
   data.cycles.items = [{
@@ -351,10 +351,10 @@ test('tracker renders cycles-only data for recognized relay instances', async ()
     assert.match(html, /Cycles balance/);
     assert.match(html, /RelayInstance/);
     assert.match(html, /4\.2000T cycles/);
-    assert.doesNotMatch(html, /Total committed/);
-    assert.doesNotMatch(html, /Qualifying commitments/);
-    assert.doesNotMatch(html, /not a recognized commitment beneficiary/);
-    assert.doesNotMatch(html, /Commitment history is updated/);
+    assert.doesNotMatch(html, /Total endowed/);
+    assert.doesNotMatch(html, /Qualifying endowments/);
+    assert.doesNotMatch(html, /not a recognized endowment beneficiary/);
+    assert.doesNotMatch(html, /Endowment history is updated/);
     assert.doesNotMatch(html, /tracker-burn-estimate-help/);
     assert.doesNotMatch(html, /Observation window:/);
     assert.match(html, /Cycles balances are sampled by historian cycles sweeps/);
@@ -482,13 +482,13 @@ test('tracker paints chart shells before the first data response', async () => {
   const cases = [
     {
       memo: canister,
-      expectedHeadings: [/ICP commitments/, /Observed CMC top-ups/, /Cycles balance/],
+      expectedHeadings: [/ICP endowments/, /Observed CMC top-ups/, /Cycles balance/],
       finalData: minimalTrackerData(),
       loaderKey: 'loadData',
     },
     {
       memo: `${canister.replaceAll('-', '')}.miner`,
-      expectedHeadings: [/ICP commitments/, /Raw ICP canister memo/],
+      expectedHeadings: [/ICP endowments/, /Raw ICP canister memo/],
       finalData: {
         commitments: { items: [] },
         transfers: { items: [] },
@@ -499,7 +499,7 @@ test('tracker paints chart shells before the first data response', async () => {
     },
     {
       memo: '42.miner',
-      expectedHeadings: [/ICP commitments/, /Raw ICP neuron memo/],
+      expectedHeadings: [/ICP endowments/, /Raw ICP neuron memo/],
       finalData: {
         neuronId: 42n,
         stakingAccount: { owner: Principal.fromText('aaaaa-aa'), subaccount: [] },
@@ -575,7 +575,7 @@ test('plain memo tracker renders cumulative chart progress while sources load', 
     assert.match(progressChartHtml, /Loading observed CMC top-up history/);
     assert.match(progressChartHtml, /Loading cycles balance history/);
     assert.match(progressResultHtml, /Tracker charts are still loading/);
-    assert.match(progressResultHtml, /Patron commitments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
+    assert.match(progressResultHtml, /Patron endowments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
     assert.match(progressResultHtml, /Latest cycles shown<\/dt><dd class="pane-detail-value"><span class="tracker-summary-loading">Loading…<\/span>/);
     assert.match(progressResultHtml, /data-tracker-range="month"[^>]* disabled aria-disabled="true"/);
 
@@ -611,7 +611,7 @@ test('tracker range buttons rerender loaded beneficiary data', async () => {
   }, { rangeButtons: [monthButton, allButton] });
 });
 
-test('tracker commitment empty state distinguishes scoped ranges from all history', async () => {
+test('tracker endowment empty state distinguishes scoped ranges from all history', async () => {
   const nodes = trackerNodes();
   const trackerData = {
     ...minimalTrackerData(),
@@ -636,11 +636,11 @@ test('tracker commitment empty state distinguishes scoped ranges from all histor
 
     assert.match(
       nodeMap.get('tracker-chart-wrapper').innerHTML,
-      /No dated commitments are available within the selected time range\. Select All to view older loaded history\./,
+      /No dated endowments are available within the selected time range\. Select All to view older loaded history\./,
     );
     assert.doesNotMatch(
       nodeMap.get('tracker-chart-wrapper').innerHTML,
-      /No dated commitments are available for this beneficiary yet\./,
+      /No dated endowments are available for this beneficiary yet\./,
     );
 
     controller.setRange('all');
@@ -648,17 +648,17 @@ test('tracker commitment empty state distinguishes scoped ranges from all histor
 
     assert.doesNotMatch(
       nodeMap.get('tracker-chart-wrapper').innerHTML,
-      /No dated commitments are available within the selected time range\./,
+      /No dated endowments are available within the selected time range\./,
     );
     assert.doesNotMatch(
       nodeMap.get('tracker-chart-wrapper').innerHTML,
-      /No dated commitments are available for this beneficiary yet\./,
+      /No dated endowments are available for this beneficiary yet\./,
     );
-    assert.match(nodeMap.get('tracker-chart-wrapper').innerHTML, /ICP commitments/);
+    assert.match(nodeMap.get('tracker-chart-wrapper').innerHTML, /ICP endowments/);
   });
 });
 
-test('tracker initial scoped load uses the selected-range commitment empty state', async () => {
+test('tracker initial scoped load uses the selected-range endowment empty state', async () => {
   const nodes = trackerNodes();
   const trackerData = {
     ...minimalTrackerData(),
@@ -685,11 +685,11 @@ test('tracker initial scoped load uses the selected-range commitment empty state
     assert.equal(controller.state.range, 'month');
     assert.match(
       nodeMap.get('tracker-chart-wrapper').innerHTML,
-      /No dated commitments are available within the selected time range\. Select All to view older loaded history\./,
+      /No dated endowments are available within the selected time range\. Select All to view older loaded history\./,
     );
     assert.doesNotMatch(
       nodeMap.get('tracker-chart-wrapper').innerHTML,
-      /No dated commitments are available for this beneficiary yet\./,
+      /No dated endowments are available for this beneficiary yet\./,
     );
   });
 });
@@ -1003,7 +1003,7 @@ test('tracker hides observed CMC top-up card when no top-ups are loaded', async 
     await controller.submitPrincipal();
 
     const html = nodeMap.get('tracker-chart-wrapper').innerHTML;
-    assert.match(html, /ICP commitments/);
+    assert.match(html, /ICP endowments/);
     assert.match(html, /Cycles balance/);
     assert.doesNotMatch(html, /Observed CMC top-ups/);
     assert.doesNotMatch(html, /No dated ICP transfers to the canister’s CMC top-up account are available yet/);
@@ -1347,7 +1347,7 @@ test('raw ICP tracker splits Jupiter Faucet transfers by outgoing memo match', a
   });
 });
 
-test('raw ICP canister and neuron trackers render commitment and incoming-transfer charts', async () => {
+test('raw ICP canister and neuron trackers render endowment and incoming-transfer charts', async () => {
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
   const compactCanister = canister.replaceAll('-', '');
   const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
@@ -1382,15 +1382,15 @@ test('raw ICP canister and neuron trackers render commitment and incoming-transf
       await controller.submitPrincipal();
 
       const html = nodeMap.get('tracker-result').innerHTML;
-      assert.match(html, /<h3>ICP commitments<\/h3>/);
+      assert.match(html, /<h3>ICP endowments<\/h3>/);
       assert.match(html, mode === 'rawIcpCanister' ? /Raw ICP canister memo/ : /Raw ICP neuron memo/);
-      assert.match(html, /Commitments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
+      assert.match(html, /Endowments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
       assert.match(html, /Incoming transfers shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
     });
   }
 });
 
-test('raw ICP tracker range uses the newest dated commitment or transfer as the shared anchor', async () => {
+test('raw ICP tracker range uses the newest dated endowment or transfer as the shared anchor', async () => {
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
   const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
   const faucetAccountId = accountIdentifierHex(faucetAccount);
@@ -1402,10 +1402,10 @@ test('raw ICP tracker range uses the newest dated commitment or transfer as the 
       transfers: { items: [rawTransfer(5, faucetAccountId, 500_000_000n, true)] },
       expectedCommitments: '0',
       expectedTransfers: '1',
-      emptyMessage: /No retained qualifying commitments are loaded for last month/,
+      emptyMessage: /No retained qualifying endowments are loaded for last month/,
     },
     {
-      name: 'newer commitment',
+      name: 'newer endowment',
       commitments: { items: [rawCommitment(1, 100_000_000n, dayTimestampNanos(40))] },
       transfers: { items: [rawTransfer(5, faucetAccountId, 500_000_000n, true)] },
       expectedCommitments: '1',
@@ -1446,7 +1446,7 @@ test('raw ICP tracker range uses the newest dated commitment or transfer as the 
       const html = nodeMap.get('tracker-result').innerHTML;
       assert.match(
         html,
-        new RegExp(`Commitments shown</dt><dd class="pane-detail-value">${scenario.expectedCommitments}</dd>`),
+        new RegExp(`Endowments shown</dt><dd class="pane-detail-value">${scenario.expectedCommitments}</dd>`),
         scenario.name,
       );
       assert.match(
@@ -1459,7 +1459,7 @@ test('raw ICP tracker range uses the newest dated commitment or transfer as the 
   }
 });
 
-test('raw ICP commitment chart uses range-aware empty copy', async () => {
+test('raw ICP endowment chart uses range-aware empty copy', async () => {
   const nodes = trackerNodes();
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
 
@@ -1488,17 +1488,17 @@ test('raw ICP commitment chart uses range-aware empty copy', async () => {
 
     controller.setRange('month');
     let html = nodeMap.get('tracker-result').innerHTML;
-    assert.match(html, /No retained qualifying commitments are loaded for last month/);
+    assert.match(html, /No retained qualifying endowments are loaded for last month/);
     assert.match(html, /loader may not have loaded older retained rows/);
     assert.doesNotMatch(html, /No retained target history exists/);
 
     controller.setRange('all');
     html = nodeMap.get('tracker-result').innerHTML;
-    assert.match(html, /No dated retained qualifying commitments are available for this target/);
+    assert.match(html, /No dated retained qualifying endowments are available for this target/);
   });
 });
 
-test('raw ICP commitment chart distinguishes undated retained commitments from no retained history', async () => {
+test('raw ICP endowment chart distinguishes undated retained endowments from no retained history', async () => {
   const nodes = trackerNodes();
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
 
@@ -1528,14 +1528,14 @@ test('raw ICP commitment chart distinguishes undated retained commitments from n
     controller.setRange('all');
 
     const html = nodeMap.get('tracker-result').innerHTML;
-    assert.match(html, /Commitments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
-    assert.match(html, /ICP committed shown<\/dt><dd class="pane-detail-value">4 ICP<\/dd>/);
-    assert.match(html, /No dated retained qualifying commitments are available for this target/);
+    assert.match(html, /Endowments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
+    assert.match(html, /ICP endowed shown<\/dt><dd class="pane-detail-value">4 ICP<\/dd>/);
+    assert.match(html, /No dated retained qualifying endowments are available for this target/);
     assert.doesNotMatch(html, /No retained target history exists/);
   });
 });
 
-test('raw ICP tracker isolates commitment and transfer chart failures', async () => {
+test('raw ICP tracker isolates endowment and transfer chart failures', async () => {
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
   const faucetAccount = { owner: Principal.fromText('aaaaa-aa'), subaccount: [] };
   const faucetAccountId = accountIdentifierHex(faucetAccount);
@@ -1571,20 +1571,20 @@ test('raw ICP tracker isolates commitment and transfer chart failures', async ()
 
       const html = nodeMap.get('tracker-result').innerHTML;
       if (failure === 'commitments') {
-        assert.match(html, /Commitment history unavailable: commitment query failed/);
-        assert.match(html, /Commitments shown<\/dt><dd class="pane-detail-value">—<\/dd>/);
-        assert.match(html, /ICP committed shown<\/dt><dd class="pane-detail-value">—<\/dd>/);
+        assert.match(html, /Endowment history unavailable: commitment query failed/);
+        assert.match(html, /Endowments shown<\/dt><dd class="pane-detail-value">—<\/dd>/);
+        assert.match(html, /ICP endowed shown<\/dt><dd class="pane-detail-value">—<\/dd>/);
         assert.match(html, /Incoming transfers shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
-        assert.equal((html.match(/Commitment history unavailable/g) || []).length, 1);
+        assert.equal((html.match(/Endowment history unavailable/g) || []).length, 1);
       } else {
         assert.match(html, /Raw ICP transfer history unavailable: index query failed/);
-        assert.match(html, /Commitments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
+        assert.match(html, /Endowments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
       }
     });
   }
 });
 
-test('raw ICP commitment-only data renders no empty transfer-source legend', async () => {
+test('raw ICP endowment-only data renders no empty transfer-source legend', async () => {
   const nodes = trackerNodes();
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
 
@@ -1614,13 +1614,13 @@ test('raw ICP commitment-only data renders no empty transfer-source legend', asy
     controller.setRange('all');
 
     const html = nodeMap.get('tracker-result').innerHTML;
-    assert.match(html, /Commitments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
+    assert.match(html, /Endowments shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
     assert.match(html, /Incoming transfers shown<\/dt><dd class="pane-detail-value">0<\/dd>/);
     assert.doesNotMatch(html, /tracker-source-legend/);
   });
 });
 
-test('raw ICP tracker explains target-wide commitment scope when an outgoing suffix is present', async () => {
+test('raw ICP tracker explains target-wide endowment scope when an outgoing suffix is present', async () => {
   const nodes = trackerNodes();
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
   const compactCanister = canister.replaceAll('-', '');
@@ -1644,9 +1644,9 @@ test('raw ICP tracker explains target-wide commitment scope when an outgoing suf
     await controller.submitPrincipal();
 
     const html = nodeMap.get('tracker-result').innerHTML;
-    assert.match(html, /Retained qualifying commitment history is recorded for the destination target as a whole/);
+    assert.match(html, /Retained qualifying endowment history is recorded for the destination target as a whole/);
     assert.match(html, /is not filtered by this outgoing memo/);
-    assert.match(html, /The chart shows retained qualifying commitments in the selected range/);
+    assert.match(html, /The chart shows retained qualifying endowments in the selected range/);
   });
 });
 
@@ -1811,7 +1811,7 @@ test('raw ICP tracker renders revised candidate empty and heading copy', async (
 
     const emptyHtml = nodeMap.get('tracker-result').innerHTML;
     assert.match(emptyHtml, /If the right-hand side of the memo identifies another canister/);
-    assert.match(emptyHtml, /committing 1 ICP with that canister&#39;s full ID in the memo/);
+    assert.match(emptyHtml, /endowing 1 ICP with that canister&#39;s full ID in the memo/);
     assert.match(emptyHtml, /href="#how-it-works"[^>]*>How it Works<\/a>/);
     assert.doesNotMatch(emptyHtml, /No possible matching tracked canisters/);
 

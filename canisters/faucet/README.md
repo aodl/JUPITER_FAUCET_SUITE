@@ -14,10 +14,10 @@ Unless otherwise noted, command examples in this README are run from the reposit
 
 `jupiter-faucet` owns five things:
 
-1. identifying the **staking account** whose incoming transfers define commitment history
+1. identifying the **staking account** whose incoming transfers define endowment history
 2. scanning that account through the ICP index canister
 3. interpreting eligible transfer memos as supported payout targets
-4. converting a payout pot of ICP into proportional per-commitment top-ups
+4. converting a payout pot of ICP into proportional per-endowment top-ups
 5. managing its own autonomous recovery policy once armed
 
 It does **not** control the NNS neuron itself. [`jupiter-disburser`](../disburser) is responsible for producing the ICP that the faucet spends.
@@ -42,20 +42,20 @@ Each payout job works from the funding tranche and staking-account state bounded
 
 The faucet then scans the staking account’s indexed transfer history from the beginning in a streaming, page-by-page pass and evaluates each eligible incoming transfer independently.
 
-For each eligible commitment it computes:
+For each eligible endowment it computes:
 
 `gross_share = floor(commitment_amount_for_tranche * pot_start / effective_denom_staking_balance)`
 
-Commitments after the funding transfer transaction ID are excluded from that tranche, even if they are older than the stake-recognition delay by the time the faucet executes. Multiple unprocessed funding transfers are intentionally not aggregated; each main tick creates or resumes at most one funding-tranche payout job.
+Endowments after the funding transfer transaction ID are excluded from that tranche, even if they are older than the stake-recognition delay by the time the faucet executes. Multiple unprocessed funding transfers are intentionally not aggregated; each main tick creates or resumes at most one funding-tranche payout job.
 
-The Faucet compares staking-account commitment transaction IDs with payout-account funding transaction IDs. This relies on ICP Index transaction IDs being ICP ledger block indices in the global ledger order, not per-account sequence numbers.
+The Faucet compares staking-account endowment transaction IDs with payout-account funding transaction IDs. This relies on ICP Index transaction IDs being ICP ledger block indices in the global ledger order, not per-account sequence numbers.
 
 If `gross_share` is greater than the current ledger fee, the faucet:
 
 1. sends `gross_share - fee` ICP to the beneficiary’s CMC deposit subaccount
 2. calls `notify_top_up`
 
-If not, that commitment is skipped for that payout job and the unallocated value remains available for the end-of-job remainder path.
+If not, that endowment is skipped for that payout job and the unallocated value remains available for the end-of-job remainder path.
 
 ## Beneficiary attribution rules
 
@@ -80,9 +80,9 @@ Memo handling is intentionally simple and code-driven:
 
 Invalid memos are counted as `ignored_bad_memo` in the payout summary and do not block later transfers.
 
-### Minimum tracked commitment
+### Minimum tracked endowment
 
-The default minimum tracked commitment is:
+The default minimum tracked endowment is:
 
 - `min_tx_e8s = 100_000_000` (`1 ICP`)
 
@@ -90,11 +90,11 @@ Transfers below that threshold are ignored for attribution and counted as `ignor
 
 Memo encoding uses `icrc1_memo` text only. The primary form is declared canister ID text. The parser accepts short valid principal text, but Jupiter Faucet's supported principal-based target is a declared canister ID; ordinary non-canister principal IDs are too long for the 32-byte memo limit. The faucet also accepts `canister_id.memo` for raw ICP routing and ASCII decimal NNS neuron IDs for neuron staking-account top-ups. The legacy 64-bit numeric memo path is still ignored. We do not hard-code a `-cai` suffix check, because the 32-byte memo limit already excludes ordinary long user principals and we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended declared canister ID for the normal cycles top-up path; that is the primary supported UX.
 
-Neuron staking-account top-ups require the target neuron to be public. The faucet calls NNS Governance to read the neuron and resolve its staking subaccount before it can send ICP there; a private or unreadable neuron cannot be resolved and the commitment is counted as a failed top-up attempt for that payout job.
+Neuron staking-account top-ups require the target neuron to be public. The faucet calls NNS Governance to read the neuron and resolve its staking subaccount before it can send ICP there; a private or unreadable neuron cannot be resolved and the endowment is counted as a failed top-up attempt for that payout job.
 
 The faucet also intentionally does **not** perform an eager canister-existence probe for every eligible memo target. That would add extra network work and cycle cost directly to the value-moving path. The design bias here is to keep the faucet's hot path as small and deterministic as possible. Declared canister ID text in the memo is therefore treated as syntax and policy input only; the canister does not try to prove that every accepted short principal text identifies an installed canister before attempting a top-up. Operationally, that means memo validation is a syntax/policy check rather than an installation proof: if the current CMC path accepts the target principal, the faucet may still attempt the top-up.
 
-This is an explicit economic trade-off, not an oversight. A committer can still submit syntactically valid memo text that leads to a useless top-up attempt, so the faucet may spend ledger fee / CMC work on a target that never turns into a productive canister top-up. If some short non-canister principal text exists and passes the current CMC path, that is parser / CMC behavior rather than a supported user-facing target. The design accepts that bounded griefing surface because the alternative -- probing canister existence on the hot path -- would permanently add more complexity, cost, and failure surface to the value-moving path. The mitigation is the commitment floor itself: repeated attempts remain expensive for the attacker and still send real ICP into the protocol's funding source.
+This is an explicit economic trade-off, not an oversight. A patron can still submit syntactically valid memo text that leads to a useless top-up attempt, so the faucet may spend ledger fee / CMC work on a target that never turns into a productive canister top-up. If some short non-canister principal text exists and passes the current CMC path, that is parser / CMC behavior rather than a supported user-facing target. The design accepts that bounded griefing surface because the alternative -- probing canister existence on the hot path -- would permanently add more complexity, cost, and failure surface to the value-moving path. The mitigation is the endowment floor itself: repeated attempts remain expensive for the attacker and still send real ICP into the protocol's funding source.
 
 ### How a participant declares a target
 
@@ -109,7 +109,7 @@ A participant declares a faucet target by sending ICP to the configured staking 
 
 When using the [NNS dapp](https://nns.ic0.app/wallet/?u=), send to the long-form ICRC-1 staking account address so the text memo path is available. If the memo field is hidden, use the command menu to enable transaction memos before submitting the transfer. The faucet ignores the legacy numeric memo field; neuron IDs are supported only as ASCII text in `icrc1_memo`.
 
-The committer does not need to control the declared canister. Commitments are declarations about the desired beneficiary target, not ownership proofs.
+The patron does not need to control the declared canister. Endowments are declarations about the desired beneficiary target, not ownership proofs.
 
 ## Important payout semantics
 
@@ -117,20 +117,20 @@ The committer does not need to control the declared canister. Commitments are de
 
 The faucet does **not** permanently checkpoint “already attributed” staking transfers across jobs.
 
-Instead, each new payout job rescans the staking account history from the beginning and re-evaluates commitments against the new payout-pot snapshot.
+Instead, each new payout job rescans the staking account history from the beginning and re-evaluates endowments against the new payout-pot snapshot.
 
 That replay is intentionally streaming and page-bounded rather than history-buffering. The design prefers constant resident attribution state in the canister over a permanently growing durable attribution set, so the accepted growth vector is replay work and cycles consumption over time rather than unbounded attribution memory.
 
-To cap repeated replay cost on obviously barren history, the faucet also persists large tx-id skip ranges for spans with no transactions worth revisiting under the active attribution rules. This is a replay-work cache, not a new source of truth. For safety and simplicity, every upgrade clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional by design: skip ranges are only valid under the active commitment-classification rules, so retaining them across a future code/config change risks trusting stale replay hints. In practice upgrades are expected to be exceptional governance-directed recovery events, so conservative re-evaluation of historical staking activity is preferable to preserving cache warmth.
+To cap repeated replay cost on obviously barren history, the faucet also persists large tx-id skip ranges for spans with no transactions worth revisiting under the active attribution rules. This is a replay-work cache, not a new source of truth. For safety and simplicity, every upgrade clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional by design: skip ranges are only valid under the active endowment-classification rules, so retaining them across a future code/config change risks trusting stale replay hints. In practice upgrades are expected to be exceptional governance-directed recovery events, so conservative re-evaluation of historical staking activity is preferable to preserving cache warmth.
 
 The `10_000`-transaction persistence threshold is also intentional. The goal is to avoid repeated replay work for clearly barren history without turning skip-range storage into its own durable indexing system. Below-threshold barren spans can therefore be shaped and replayed, but the chosen threshold was set conservatively below the estimated economic break-even point where repeated replay would become more expensive for the faucet than periodically inserting fresh qualifying stake to prevent larger cached spans from forming. That keeps the durable cache small, keeps the implementation simple, and still makes large barren spans worth caching.
 
 Only the **active** job persists the scan cursor, partial skip-span state, and aggregate counters.
-### 2) Commitments are not aggregated
+### 2) Endowments are not aggregated
 
-Each eligible commitment is processed independently, even when multiple commitments map to the same beneficiary.
+Each eligible endowment is processed independently, even when multiple endowments map to the same beneficiary.
 
-So if the same beneficiary appears twice in staking-account history, the faucet treats those as two distinct commitment records for payout purposes. That is an intentional trade-off of the single-pass streaming model, and it means repeated qualifying commitments for the same beneficiary may incur repeated outbound ledger fees.
+So if the same beneficiary appears twice in staking-account history, the faucet treats those as two distinct endowment records for payout purposes. That is an intentional trade-off of the single-pass streaming model, and it means repeated qualifying endowments for the same beneficiary may incur repeated outbound ledger fees.
 
 ### 3) The denominator is a round-effective staking snapshot
 
@@ -139,12 +139,12 @@ A payout job snapshots the payout pot exactly once at job start and uses a round
 Instead, the faucet carries forward a **round-start staking snapshot** and builds a **round-effective denominator** for the round that just finished:
 
 - stake already present at the start of the round counts at full weight
-- valid in-round commitments are added with a conservative time weight
-- commitments whose tx id is beyond the round-end snapshot are excluded from the current round entirely
+- valid in-round endowments are added with a conservative time weight
+- endowments whose tx id is beyond the round-end snapshot are excluded from the current round entirely
 
-The time weight is intentionally conservative. The faucet uses the commitment timestamp plus a configured stake-recognition delay before treating that commitment as effective for the current round. The committed production install args set `stake_recognition_delay_seconds = 604800` (7 days). This is faucet-side accounting only: it does not change when NNS maturity accrues, when maturity can be spawned, or when the disburser runs. It approximates the fact that the staking neuron only begins earning the larger maturity stream after later NNS-side recognition, and it biases against over-crediting very recent stake.
+The time weight is intentionally conservative. The faucet uses the endowment timestamp plus a configured stake-recognition delay before treating that endowment as effective for the current round. The committed production install args set `stake_recognition_delay_seconds = 604800` (7 days). This is faucet-side accounting only: it does not change when NNS maturity accrues, when maturity can be spawned, or when the disburser runs. It approximates the fact that the staking neuron only begins earning the larger maturity stream after later NNS-side recognition, and it biases against over-crediting very recent stake.
 
-A commitment's effective time is:
+An endowment's effective time is:
 
 ```text
 commitment_time + stake_recognition_delay_seconds
@@ -156,7 +156,7 @@ Round weighting uses inclusive/exclusive boundaries:
 - effective during the round => linearly prorated weight
 - effective at or after round end => zero weight in that round
 
-The funding cursor and staking-history scan are separate: the funding cursor selects consumed payout-account funding tranches, while staking-account history remains replayable so older commitments continue contributing according to the recognition-delay and round-weighting rules. Deployments that introduce new tranche semantics should ensure cursor/config alignment before opening multi-user participation.
+The funding cursor and staking-history scan are separate: the funding cursor selects consumed payout-account funding tranches, while staking-account history remains replayable so older endowments continue contributing according to the recognition-delay and round-weighting rules. Deployments that introduce new tranche semantics should ensure cursor/config alignment before opening multi-user participation.
 
 The tx-id boundaries are more authoritative than timestamps for inclusion. The faucet captures the latest staking-account tx id at the end of each completed round and uses that as the inclusive upper bound for the next payout job, so equal timestamps do not create ambiguity.
 
@@ -169,16 +169,16 @@ A job uses the payout-account balance captured at the beginning of the job. It d
 The faucet explicitly addresses the case where the same additional stake amount arrives at different times within the reward accumulation window. The intended property is:
 
 - if extra stake is present for the full window, pot growth and denominator growth should track closely, so beneficiary payout should stay roughly unchanged
-- if the same stake arrives late in the window, it should receive only the weight justified by the time it could plausibly have been earning, rather than pinching earlier committers
+- if the same stake arrives late in the window, it should receive only the weight justified by the time it could plausibly have been earning, rather than pinching earlier patrons
 - once a later round begins cleanly, any remaining payout differences are expected to reflect real factors such as age-bonus differences rather than unfair denominator timing
 
 Operationally, the mitigation strategy is therefore:
 
 1. persist the round-start staking balance, latest tx id, and timestamp at the end of each completed payout round
 2. snapshot the next round's payout pot and latest tx id exactly once at job start
-3. build the current round's effective denominator as `round_start_balance + weighted valid in-round commitments`
-4. use the same weighted amount for each in-round commitment's numerator and for the round-effective denominator
-5. ignore invalid memo commitments in the weighting adjustment path so adversaries cannot force large numbers of pointless weighting calculations with malformed deposits
+3. build the current round's effective denominator as `round_start_balance + weighted valid in-round endowments`
+4. use the same weighted amount for each in-round endowment's numerator and for the round-effective denominator
+5. ignore invalid memo endowments in the weighting adjustment path so adversaries cannot force large numbers of pointless weighting calculations with malformed deposits
 
 The repo covers this in three layers:
 
@@ -196,7 +196,7 @@ Internally the faucet tracks `gross_outflow_e8s` as **Ledger-accepted outflow pl
 
 ### 6) A computed share at or below the fee is not a failure
 
-When `gross_share <= fee`, the commitment is classified as `NoTransfer`.
+When `gross_share <= fee`, the endowment is classified as `NoTransfer`.
 
 That means:
 
@@ -209,7 +209,7 @@ That means:
 
 ### Staking account
 
-The staking account is the input side of the faucet. Incoming transfers into this account define commitment history.
+The staking account is the input side of the faucet. Incoming transfers into this account define endowment history.
 
 ### Payout account
 
@@ -268,7 +268,7 @@ Each interval timer is clamped to at least 60 seconds by the runtime code. There
 
 ### Runtime config verification
 
-After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits `STATE ...` and `CONFIG ...` lines on every completed main-tick cadence, alongside its regular `Cycles: ...` health line. Forced scheduler ticks can emit additional state/config lines outside the regular cadence. The `CONFIG` line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, the embedded canonical Relay canister ID, funding source account, rescue controller, autonomous-rescue state, expected first staking transaction ID, timer intervals, minimum tracked commitment, and stake-recognition delay. The `STATE` line includes the funding cursor, active funding-scan cursor/candidate/anchor, `active_payout_job_present`, active payout funding tranche, forced rescue reason, last observed staking balance and latest transaction ID, and the Index anchor/latest-invariant/latest-unreadable failure counters.
+After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits `STATE ...` and `CONFIG ...` lines on every completed main-tick cadence, alongside its regular `Cycles: ...` health line. Forced scheduler ticks can emit additional state/config lines outside the regular cadence. The `CONFIG` line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, the embedded canonical Relay canister ID, funding source account, rescue controller, autonomous-rescue state, expected first staking transaction ID, timer intervals, minimum tracked endowment, and stake-recognition delay. The `STATE` line includes the funding cursor, active funding-scan cursor/candidate/anchor, `active_payout_job_present`, active payout funding tranche, forced rescue reason, last observed staking balance and latest transaction ID, and the Index anchor/latest-invariant/latest-unreadable failure counters.
 
 ### Main tick sequence
 
@@ -285,7 +285,7 @@ On each successful main tick, the canister:
 6. otherwise, creates an `ActivePayoutJob`
 7. scans the staking account through the ICP index canister, page by page
 8. evaluates each eligible incoming transfer independently
-9. for each eligible beneficiary commitment, performs ledger transfer then `notify_top_up`
+9. for each eligible beneficiary endowment, performs ledger transfer then `notify_top_up`
 10. if a beneficiary CMC-deposit transfer is conclusively rejected, completes one raw fallback before scanning another beneficiary; ambiguous transfer outcomes do not fallback
 11. if CMC proves a refund with a refund block, releases the checked reduced credit and completes the same one raw fallback without a redundant notification
 12. when scanning is complete, optionally sends the raw-ICP remainder to the canonical Relay default account
@@ -293,7 +293,7 @@ On each successful main tick, the canister:
 
 ## Retry and failure behavior
 
-The faucet performs top-ups on a **best-effort** basis. A payout job attempts to convert the current payout pot into beneficiary top-ups, but it does not guarantee that every individually eligible commitment will be topped up during that run.
+The faucet performs top-ups on a **best-effort** basis. A payout job attempts to convert the current payout pot into beneficiary top-ups, but it does not guarantee that every individually eligible endowment will be topped up during that run.
 
 ### Persisted job state
 
@@ -326,12 +326,12 @@ The faucet does **not** retry forever and does **not** buffer a retry queue in m
 
 - first accepted-ledger notify failure → retry that notify once immediately, inline
 - first NNS Governance staking-subaccount lookup failure for a neuron directive → retry that lookup once immediately, inline
-- if both notify replies are typed terminal rejections → count that commitment as **failed** and continue
-- otherwise, if the retry still leaves transport / retryable uncertainty → count that commitment as **ambiguous** and continue
-- if both staking-subaccount lookup attempts fail → count that commitment as **failed** and continue
+- if both notify replies are typed terminal rejections → count that endowment as **failed** and continue
+- otherwise, if the retry still leaves transport / retryable uncertainty → count that endowment as **ambiguous** and continue
+- if both staking-subaccount lookup attempts fail → count that endowment as **failed** and continue
 - if the wider payout tick later aborts for some unrelated transient reason, the unfinished active job is preserved and retried on the next scheduler opportunity (weekly main tick by default, or sooner via the daily rescue tick's forced main resume)
 
-This keeps memory bounded and avoids long-lived paused payout jobs. It also means top-ups are strictly **best effort**: some eligible commitments may fail deterministically, while others may end in an ambiguous transfer/notify boundary and be reflected separately in the summary counters. Neuron `claim_or_refresh_neuron` is also best effort after a ledger-accepted neuron-stake transfer; the NNS endpoint is publicly callable, and a failed claim/refresh does not mean the transferred ICP is lost. Later natural NNS flow or a manual/public retry can refresh the neuron, so no durable claim-refresh retry queue is maintained. The faucet also proactively rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
+This keeps memory bounded and avoids long-lived paused payout jobs. It also means top-ups are strictly **best effort**: some eligible endowments may fail deterministically, while others may end in an ambiguous transfer/notify boundary and be reflected separately in the summary counters. Neuron `claim_or_refresh_neuron` is also best effort after a ledger-accepted neuron-stake transfer; the NNS endpoint is publicly callable, and a failed claim/refresh does not mean the transferred ICP is lost. Later natural NNS flow or a manual/public retry can refresh the neuron, so no durable claim-refresh retry queue is maintained. The faucet also proactively rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
 
 
 ### Logging policy
@@ -390,7 +390,7 @@ These latches are persisted and can be cleared via upgrade args when appropriate
 ### Init args
 
 - `staking_account`
-  - the account whose incoming transfers define commitment history
+  - the account whose incoming transfers define endowment history
 - `payout_subaccount` (optional)
   - the faucet account subaccount to spend from; if omitted the canister default account is used
 - `ledger_canister_id` (optional; defaults to ICP Ledger)
@@ -707,7 +707,7 @@ Those cover, among other things:
 - immediate duplicate-safe retry for ambiguous transfer and notify failures
 - full-history replay on each new job
 - page-boundary scanning across large histories
-- same-beneficiary commitments staying separate
+- same-beneficiary endowments staying separate
 - bounded state footprint across repeated runs
 - rescue-controller round-trips and forced-rescue latching
 

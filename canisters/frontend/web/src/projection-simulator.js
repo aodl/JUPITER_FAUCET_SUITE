@@ -135,10 +135,10 @@ function normaliseSimulatorInputs(raw = {}) {
     icpCommitmentE8s = parseDecimalToScaledBigInt(raw.icpCommitment, E8S_PER_ICP, {
       allowZero: false,
       maxFractionDigits: 1,
-      fieldName: 'ICP commitment',
+      fieldName: 'ICP endowment',
     });
     if (icpCommitmentE8s < E8S_PER_ICP) {
-      errors.push('ICP commitment must be at least 1 ICP.');
+      errors.push('ICP endowment must be at least 1 ICP.');
     }
   } catch (error) {
     errors.push(error.message);

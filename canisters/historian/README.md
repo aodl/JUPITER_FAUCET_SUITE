@@ -2,7 +2,7 @@
 
 `jupiter-historian` is the indexing and observability canister for the Jupiter Faucet Suite.
 
-It keeps a durable set of declared canisters discovered from faucet staking-account transfer memos, records bounded commitment history for tracked canisters, records protocol-routed ICP output and rewards totals for the dashboard, and records bounded periodic cycles observations when those balances are observable on-chain.
+It keeps a durable set of declared canisters discovered from faucet staking-account transfer memos, records bounded endowment history for tracked canisters, records protocol-routed ICP output and rewards totals for the dashboard, and records bounded periodic cycles observations when those balances are observable on-chain.
 
 See the suite overview in [`../../README.md`](../../README.md).
 
@@ -14,17 +14,17 @@ Unless otherwise noted, command examples in this README are run from the reposit
 
 1. incrementally indexing the faucet staking account without reprocessing the same transfer twice
 2. keeping distinct canister sets discovered from transfer memos and optional SNS discovery
-3. recording capped per-canister commitment history so frontends can graph participation over time
-4. recording authoritative lifetime qualifying commitment totals for exact commitment routes
+3. recording capped per-canister endowment history so frontends can graph participation over time
+4. recording authoritative lifetime qualifying endowment totals for exact endowment routes
 5. recording protocol-routed ICP output and rewards totals for the dashboard
-6. recording capped cycles history so frontends can show what happened after commitment
+6. recording capped cycles history so frontends can show what happened after an endowment
 7. exposing the public read model consumed by the production frontend
 
 This canister is **read-oriented**. It does not move value, control the NNS neuron, or perform top-ups.
 
 ## Observation model
 
-### Commitment indexing
+### Endowment indexing
 
 The historian scans the same ICRC-1 staking account address that [`jupiter-faucet`](../faucet) uses: `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`.
 
@@ -35,7 +35,7 @@ For each eligible incoming `Transfer` **to** the staking account (`TransferFrom`
 - transaction ID
 - timestamp (from index timestamp when available, otherwise created-at time if available)
 - transfer amount
-- whether the commitment counts toward faucet eligibility under the current `min_tx_e8s`
+- whether the endowment counts toward faucet eligibility under the current `min_tx_e8s`
 
 Memo handling mirrors the faucet’s input rules:
 
@@ -44,17 +44,17 @@ Memo handling mirrors the faucet’s input rules:
 - treat an empty `icrc1_memo` as missing / invalid
 - trim ASCII text before trying to parse a supported declaration
 
-If the memo decodes to declared canister ID text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, historian treats the target as a normal canister top-up beneficiary derived from memo text. The parser accepts short valid principal text, but Jupiter Faucet's supported principal-based target is a declared canister ID; ordinary non-canister principal IDs are too long for the 32-byte memo limit. Historian also indexes `canister_id.memo` raw ICP directives into the recent commitments feed with the declared canister and right-hand memo segment separated, and indexes ASCII decimal NNS neuron IDs into the recent commitments feed as neuron commitments. Below-threshold memo commitments are kept only in separate capped recent feeds and do **not** create durable canister tracking or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying normal canister top-up targets so later cycles and Jupiter routing activity can be tracked efficiently on-chain and on the frontend. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions.
+If the memo decodes to declared canister ID text in `icrc1_memo` (max 32 bytes) **and** the amount is at least `min_tx_e8s`, historian treats the target as a normal canister top-up beneficiary derived from memo text. The parser accepts short valid principal text, but Jupiter Faucet's supported principal-based target is a declared canister ID; ordinary non-canister principal IDs are too long for the 32-byte memo limit. Historian also indexes `canister_id.memo` raw ICP directives into the recent endowments feed with the declared canister and right-hand memo segment separated, and indexes ASCII decimal NNS neuron IDs into the recent endowments feed as neuron endowments. Below-threshold endowments with memos are kept only in separate capped recent feeds and do **not** create durable canister tracking or cycles-sweep targets. The production minimum is intentionally **1 ICP** so registering very large numbers of beneficiaries stays expensive; historian keeps that durable registry specifically for qualifying normal canister top-up targets so later cycles and Jupiter routing activity can be tracked efficiently on-chain and on the frontend. The code also enforces an absolute floor of **0.1 ICP** because lower values can become dust once weekly top-up fees are considered in weak ICP-price conditions.
 
-Operationally, this means historian treats **non-empty ASCII `icrc1_memo` text that parses as short valid principal text, `canister_id.memo`, or a non-zero decimal `u64` neuron ID, fits within 32 bytes, and is neither the anonymous principal nor the management canister principal when a principal is present** as a candidate declaration. The supported plain-principal UX is still a declared canister ID. Legacy numeric memos are ignored, and below-threshold commitments never create durable tracking.
+Operationally, this means historian treats **non-empty ASCII `icrc1_memo` text that parses as short valid principal text, `canister_id.memo`, or a non-zero decimal `u64` neuron ID, fits within 32 bytes, and is neither the anonymous principal nor the management canister principal when a principal is present** as a candidate declaration. The supported plain-principal UX is still a declared canister ID. Legacy numeric memos are ignored, and below-threshold endowments never create durable tracking.
 
 Memo encoding uses `icrc1_memo` text only. Historian intentionally ignores the legacy numeric memo path because the supported declarations require text, and the 64-bit numeric memo field is not a reliable way to carry those declarations. Historian also deliberately does not hard-code a `-cai` suffix check, so future textual canister-ID conventions are not baked into durable indexing logic. This mirrors the faucet’s policy-only memo validation: accepted short principal text is not itself a proof that the target is an installed canister, and short non-canister principal text would be parser behavior rather than a supported user-facing target.
 
-If the memo is valid text but does **not** parse as a supported declaration under that policy, the historian keeps a capped recent-invalid-commitment marker instead of dropping the attempt completely. The feed records that an invalid memo attempt happened without echoing attacker-provided text back through the public dashboard/API.
+If the memo is valid text but does **not** parse as a supported declaration under that policy, the historian keeps a capped recent-invalid-endowment marker instead of dropping the attempt completely. The feed records that an invalid memo attempt happened without echoing attacker-provided text back through the public dashboard/API.
 
-### Lifetime commitment-route totals
+### Lifetime endowment-route totals
 
-`get_commitment_route_summaries` is the authoritative batch query for cumulative qualifying ICP committed through Jupiter Faucet to exact memo-declared routes. It reports committed/staked ICP only. It does not report payouts, delivered cycles, balances, conversion rates, fees, burn coverage, maturity, Relay support, or estimated future results.
+`get_commitment_route_summaries` is the authoritative batch query for cumulative qualifying ICP endowed through Jupiter Faucet to exact memo-declared routes. It reports endowed/staked ICP only. It does not report payouts, delivered cycles, balances, conversion rates, fees, burn coverage, maturity, Relay support, or estimated future results.
 
 The three route variants preserve the memo parser's exact distinctions:
 
@@ -64,7 +64,7 @@ The three route variants preserve the memo parser's exact distinctions:
 
 Canister route identity uses parsed Principal bytes, so compact and hyphenated text that parses to the same Principal addresses one route. Raw and neuron suffix bytes are preserved exactly, including empty bytes; they are not trimmed, lowercased, or normalized. Neuron routes are keyed by the declared neuron ID rather than a principal or derived staking account. NNS neuron staking accounts share Governance as owner and are distinguished by neuron-derived subaccounts, while Jupiter's declaration already provides the stable neuron ID; this query therefore neither derives an account nor calls Governance.
 
-Each exact route has one stable cumulative roll-up containing its qualifying commitment count and total qualifying committed e8s. Multiple transactions update that one entry. The total is independent of the bounded normal-canister, destination-wide raw-ICP, and neuron-wide retained histories and does not decrease when those histories prune old samples.
+Each exact route has one stable cumulative roll-up containing its qualifying endowment count and total qualifying endowed e8s. Multiple transactions update that one entry. The total is independent of the bounded normal-canister, destination-wide raw-ICP, and neuron-wide retained histories and does not decrease when those histories prune old samples.
 
 The response is an as-of view. `indexed_through_staking_tx_id` is the existing staking-account index cursor, `last_index_run_ts` reports freshness, and `commitment_index_fault` carries any durable index-order fault. `complete_from_genesis` is true only after this projection has covered staking-account history from genesis through the returned cursor. A zero count and total are authoritative only when `complete_from_genesis = true` and `commitment_index_fault = null`; otherwise zero may mean the projection is incomplete or indexing is degraded. The query preserves request order and duplicates, processes at most 100 routes, and sets `truncated = true` when additional inputs were supplied.
 
@@ -118,26 +118,26 @@ SNS discovery supplies membership only. It writes no cycles sample or probe resu
 
 ## Retention and deduplication
 
-The historian intentionally keeps a bounded read model for **history**. It is not an archive of all transfers ever sent to the staking account. The canonical full transfer history remains on the ICP ledger and its archive canisters, which can also be queried through third-party dashboards. If tracked-canister cardinality ever becomes an operational issue, the intended next step is to add a dedicated archive canister rather than impose a hard cap on the live historian registry. Derived caches are rebuilt at runtime instead of being treated as durable source-of-truth state, and the durable commitment/cycles histories are stored as entry-keyed stable maps with per-canister retained-key indexes so hot-path updates do not rewrite whole per-canister sample vectors in stable memory.
+The historian intentionally keeps a bounded read model for **history**. It is not an archive of all transfers ever sent to the staking account. The canonical full transfer history remains on the ICP ledger and its archive canisters, which can also be queried through third-party dashboards. If tracked-canister cardinality ever becomes an operational issue, the intended next step is to add a dedicated archive canister rather than impose a hard cap on the live historian registry. Derived caches are rebuilt at runtime instead of being treated as durable source-of-truth state, and the durable endowment/cycles histories are stored as entry-keyed stable maps with per-canister retained-key indexes so hot-path updates do not rewrite whole per-canister sample vectors in stable memory.
 
 Durable bounded state uses these caps:
 
 - the tracked target-canister registry for normal canister top-up beneficiaries is **not pruned**
 - `max_cycles_entries_per_canister` default `100`, hard-clamped to `250`
 - `max_commitment_entries_per_canister` default `100`, hard-clamped to `250`
-- recent qualifying commitments: `500`
-- recent below-threshold memo commitments: `100`
-- recent invalid-memo commitments: `100`
+- recent qualifying endowments: `500`
+- recent below-threshold memo endowments: `100`
+- recent invalid-memo endowments: `100`
 
 Deduplication rules are:
 
-- commitments are deduped by transaction ID within the retained per-canister history window
-- recent commitments and invalid commitments are deduped by transaction ID
+- endowments are deduped by transaction ID within the retained per-canister history window
+- recent endowments and invalid endowments are deduped by transaction ID
 - cycles samples are not appended twice for the same canister and timestamp
 
-## Check a Jupiter Faucet commitment
+## Check a Jupiter Faucet endowment
 
-External consumers can call the production Historian at `j5gs6-uiaaa-aaaar-qb5cq-cai` using the anonymous `get_commitment_route_summaries` query to ask whether one or more exact Jupiter Faucet routes have qualifying commitments and how much ICP has been committed over their lifetime.
+External consumers can call the production Historian at `j5gs6-uiaaa-aaaar-qb5cq-cai` using the anonymous `get_commitment_route_summaries` query to ask whether one or more exact Jupiter Faucet routes have qualifying endowments and how much ICP has been endowed over their lifetime.
 
 The two canister-route forms are:
 
@@ -166,7 +166,7 @@ icp canister call j5gs6-uiaaa-aaaar-qb5cq-cai get_commitment_route_summaries \
   --query
 ```
 
-`total_qualifying_committed_e8s` is the lifetime qualifying ICP committed to that exact route; divide it by `100_000_000` for ICP. `qualifying_commitment_count` is the number of qualifying commitments included in that total. The response is authoritative through `indexed_through_staking_tx_id`.
+`total_qualifying_committed_e8s` is the lifetime qualifying ICP endowed to that exact route; divide it by `100_000_000` for ICP. `qualifying_commitment_count` is the number of qualifying endowments included in that total. The response is authoritative through `indexed_through_staking_tx_id`.
 
 **A zero total is authoritative only when `complete_from_genesis == true` and `commitment_index_fault == null`.** If either condition is not satisfied, treat the amount as unavailable or incomplete, not as zero.
 
@@ -203,17 +203,17 @@ The historian also schedules an immediate one-shot tick roughly 1 second after i
 
 On each driver run it:
 
-1. advances commitment indexing
+1. advances endowment indexing
 2. performs SNS discovery when the SNS / cycles cadence is due and SNS tracking is enabled
 3. starts or advances a cycles sweep when the sweep cadence is due or a prior sweep is still in progress
 
-Commitment indexing records a visible durable fault if the historian observes non-monotonic staking-account transaction ids from the index. While the fault is present the dashboard surfaces the degraded state, and later driver ticks retry commitment indexing from the last known-good cursor. Once the upstream index recovers and forward progress resumes cleanly, the fault clears automatically.
+Endowment indexing records a visible durable fault if the historian observes non-monotonic staking-account transaction ids from the index. While the fault is present the dashboard surfaces the degraded state, and later driver ticks retry endowment indexing from the last known-good cursor. Once the upstream index recovers and forward progress resumes cleanly, the fault clears automatically.
 
 The historian logs its own `Cycles: <amount>` line only once per completed sweep sample of **itself**, not on every 10-minute driver tick.
 
 ### Runtime config verification
 
-After verifying that the deployed Wasm matches the source build, users can verify the live install-time and upgrade-time config from public canister logs. The historian emits a single `CONFIG ...` line on the cycles-sweep cadence when it records the historian canister's own cycles sample, alongside its regular `Cycles: ...` line. The line is comma-separated `key=value` text and includes the staking, output, rewards, ledger/index/CMC/faucet/SNS-W/XRC settings, SNS tracking flag, scan and cycles intervals, minimum tracked commitment, retention caps, and per-tick work limits.
+After verifying that the deployed Wasm matches the source build, users can verify the live install-time and upgrade-time config from public canister logs. The historian emits a single `CONFIG ...` line on the cycles-sweep cadence when it records the historian canister's own cycles sample, alongside its regular `Cycles: ...` line. The line is comma-separated `key=value` text and includes the staking, output, rewards, ledger/index/CMC/faucet/SNS-W/XRC settings, SNS tracking flag, scan and cycles intervals, minimum tracked endowment, retention caps, and per-tick work limits.
 
 ### Sweep batching
 
@@ -229,7 +229,7 @@ That keeps sweep work bounded even when the tracked set grows.
 
 ### Stable route-roll-up state
 
-Stable memory 29 is the authoritative lifetime commitment-route map and is preserved directly by normal in-place upgrades. The normal staking-account indexer is its only writer: a fresh Historian starts with `commitment_route_rollups_complete_from_genesis = Some(false)`, builds the map while indexing from genesis, and changes the marker to `Some(true)` only after genesis coverage is established.
+Stable memory 29 is the authoritative lifetime endowment-route map and is preserved directly by normal in-place upgrades. The normal staking-account indexer is its only writer: a fresh Historian starts with `commitment_route_rollups_complete_from_genesis = Some(false)`, builds the map while indexing from genesis, and changes the marker to `Some(true)` only after genesis coverage is established.
 
 Production is expected to report `complete_from_genesis = true` and `commitment_index_fault = null` before and after a routine upgrade. If completeness unexpectedly becomes false or an index fault is present, investigate the invariant violation rather than initiating a historical rebuild. Existing production Historian must be upgraded in place and must not be reinstalled.
 
@@ -285,7 +285,7 @@ Inspect the current `UpgradeArgs` definition in [`src/lifecycle.rs`](src/lifecyc
 
 The committed [`mainnet-install-args.did`](mainnet-install-args.did) configures:
 
-- the Jupiter staking account as the commitment source
+- the Jupiter staking account as the endowment source
 - default ICP Ledger, ICP Index, CMC, faucet, and SNS-WASM IDs by leaving those principals as `null`
 - `enable_sns_tracking = false`
 - `scan_interval_seconds = 600`
@@ -331,9 +331,9 @@ The suite-level [PocketIC E2E tests](../../tests/pocketic) also exercise histori
 
 Coverage includes, among other things:
 
-- memo-derived commitment indexing without duplicate replay
+- memo-derived endowment indexing without duplicate replay
 - recent invalid-memo handling
-- commitment-index degraded-state detection and automatic recovery on non-monotonic staking-account tx pages
+- endowment-index degraded-state detection and automatic recovery on non-monotonic staking-account tx pages
 - direct-first cycles sampling with blackhole/SNS fallbacks
 - SNS membership discovery feeding the unified cycles probe
 - state preservation across historian upgrades

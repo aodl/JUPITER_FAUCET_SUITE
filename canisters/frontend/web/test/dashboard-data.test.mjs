@@ -845,7 +845,7 @@ test('loadTrackerData returns unrecognised state without history queries', async
       },
       async get_commitment_history() {
         commitmentHistoryCalled = true;
-        throw new Error('should not query commitment history for an unrecognised canister');
+        throw new Error('should not query endowment history for an unrecognised canister');
       },
       async get_cycles_history() {
         throw new Error('should not query cycles history for an unrecognised canister');
@@ -860,7 +860,7 @@ test('loadTrackerData returns unrecognised state without history queries', async
   assert.deepEqual(data.cycles.items, []);
 });
 
-test('loadTrackerData loads commitment, observed CMC top-up, and cycles histories for memo-registered beneficiaries', async () => {
+test('loadTrackerData loads endowment, observed CMC top-up, and cycles histories for memo-registered beneficiaries', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
   const calls = [];
   const progress = [];
@@ -1198,7 +1198,7 @@ test('loadTrackerData pages recent historian histories until the timestamp cutof
   );
 });
 
-test('loadTrackerData treats SNS-only canisters as cycles-tracked without commitment history', async () => {
+test('loadTrackerData treats SNS-only canisters as cycles-tracked without endowment history', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
   const calls = [];
   const data = await loadTrackerData({
@@ -1222,7 +1222,7 @@ test('loadTrackerData treats SNS-only canisters as cycles-tracked without commit
         }];
       },
       async get_commitment_history() {
-        throw new Error('SNS-only canisters should not query commitment history');
+        throw new Error('SNS-only canisters should not query endowment history');
       },
       async get_cycles_history(args) {
         calls.push(['cycles', args]);
@@ -1245,7 +1245,7 @@ test('loadTrackerData treats SNS-only canisters as cycles-tracked without commit
   assert.deepEqual(calls.map(([kind]) => kind), ['cycles']);
 });
 
-test('loadTrackerData loads RelayTarget cycles without commitment history', async () => {
+test('loadTrackerData loads RelayTarget cycles without endowment history', async () => {
   const target = principal('jufzc-caaaa-aaaar-qb5da-cai');
   const calls = [];
   const data = await loadTrackerData({
@@ -1269,7 +1269,7 @@ test('loadTrackerData loads RelayTarget cycles without commitment history', asyn
         }];
       },
       async get_commitment_history() {
-        throw new Error('RelayTarget should not query commitment history');
+        throw new Error('RelayTarget should not query endowment history');
       },
       async get_cycles_history(args) {
         calls.push(['cycles', args]);
@@ -1292,7 +1292,7 @@ test('loadTrackerData loads RelayTarget cycles without commitment history', asyn
   assert.deepEqual(calls.map(([kind]) => kind), ['cycles']);
 });
 
-test('loadTrackerData loads RelayInstance cycles without commitment history', async () => {
+test('loadTrackerData loads RelayInstance cycles without endowment history', async () => {
   const target = principal('u2qkp-aqaaa-aaaar-qb7ea-cai');
   const calls = [];
   const data = await loadTrackerData({
@@ -1316,7 +1316,7 @@ test('loadTrackerData loads RelayInstance cycles without commitment history', as
         }];
       },
       async get_commitment_history() {
-        throw new Error('RelayInstance should not query commitment history');
+        throw new Error('RelayInstance should not query endowment history');
       },
       async get_cycles_history(args) {
         calls.push(['cycles', args]);
@@ -1377,7 +1377,7 @@ test('loadRawIcpCanisterTrackerData uses the large raw ICP transfer limit by def
   assert.equal(data.transfers.limit, RAW_ICP_TRACKER_TRANSFER_LIMIT);
 });
 
-test('loadRawIcpCanisterTrackerData loads raw commitment history alongside transfers', async () => {
+test('loadRawIcpCanisterTrackerData loads raw endowment history alongside transfers', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
   const calls = [];
 
@@ -1425,7 +1425,7 @@ test('loadRawIcpCanisterTrackerData loads raw commitment history alongside trans
   assert.equal(data.errors.transfers, null);
 });
 
-test('loadRawIcpCanisterTrackerData isolates commitment query failures from transfers', async () => {
+test('loadRawIcpCanisterTrackerData isolates endowment query failures from transfers', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
 
   const data = await loadRawIcpCanisterTrackerData({
@@ -1440,7 +1440,7 @@ test('loadRawIcpCanisterTrackerData isolates commitment query failures from tran
         });
       },
       async get_raw_icp_commitment_history() {
-        throw new Error('raw commitment outage');
+        throw new Error('raw endowment outage');
       },
       async find_canisters_by_memo_prefix() {
         return { items: [], truncated: false };
@@ -1455,11 +1455,11 @@ test('loadRawIcpCanisterTrackerData isolates commitment query failures from tran
 
   assert.deepEqual(data.commitments.items, []);
   assert.deepEqual(data.transfers.items, []);
-  assert.match(data.errors.commitments, /raw commitment outage/);
+  assert.match(data.errors.commitments, /raw endowment outage/);
   assert.equal(data.errors.transfers, null);
 });
 
-test('loadRawIcpCanisterTrackerData isolates transfer failures from commitments', async () => {
+test('loadRawIcpCanisterTrackerData isolates transfer failures from endowments', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
 
   const data = await loadRawIcpCanisterTrackerData({
@@ -1496,7 +1496,7 @@ test('loadRawIcpCanisterTrackerData isolates transfer failures from commitments'
   assert.match(data.errors.transfers, /index outage/);
 });
 
-test('loadRawIcpCanisterTrackerData emits cumulative progress without discarding commitments', async () => {
+test('loadRawIcpCanisterTrackerData emits cumulative progress without discarding endowments', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
   const progress = [];
 
@@ -1538,7 +1538,7 @@ test('loadRawIcpCanisterTrackerData emits cumulative progress without discarding
   assert.equal(finalProgress.transfers.loading, false);
 });
 
-test('loadNeuronStakeTrackerData loads neuron commitment history with isolated transfer failure', async () => {
+test('loadNeuronStakeTrackerData loads neuron endowment history with isolated transfer failure', async () => {
   const calls = [];
   const stakingSubaccount = Array.from({ length: 32 }, () => 7);
 
@@ -1586,7 +1586,7 @@ test('loadNeuronStakeTrackerData loads neuron commitment history with isolated t
   assert.match(data.errors.transfers, /index outage/);
 });
 
-test('loadNeuronStakeTrackerData isolates commitment query failures from transfers', async () => {
+test('loadNeuronStakeTrackerData isolates endowment query failures from transfers', async () => {
   const stakingSubaccount = Array.from({ length: 32 }, () => 7);
 
   const data = await loadNeuronStakeTrackerData({
@@ -1601,7 +1601,7 @@ test('loadNeuronStakeTrackerData isolates commitment query failures from transfe
         });
       },
       async get_neuron_commitment_history() {
-        throw new Error('neuron commitment outage');
+        throw new Error('neuron endowment outage');
       },
     },
     governanceActorFactory: () => ({
@@ -1628,7 +1628,7 @@ test('loadNeuronStakeTrackerData isolates commitment query failures from transfe
   assert.deepEqual(data.commitments.items, []);
   assert.equal(data.transfers.items.length, 1);
   assert.equal(data.transfers.items[0].tx_id, 21n);
-  assert.match(data.errors.commitments, /neuron commitment outage/);
+  assert.match(data.errors.commitments, /neuron endowment outage/);
   assert.equal(data.errors.transfers, null);
 });
 

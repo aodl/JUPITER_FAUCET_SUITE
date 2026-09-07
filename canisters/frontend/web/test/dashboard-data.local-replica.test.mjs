@@ -75,7 +75,7 @@ maybeTest('loadDashboardData matches the expected local replica fixture', async 
   }
 
   if (expected.recent) {
-    assert.ok(data.recent, 'expected recent commitments to be present');
+    assert.ok(data.recent, 'expected recent endowments to be present');
     assert.equal(data.recent.items.length, expected.recent.items.length);
     for (let i = 0; i < expected.recent.items.length; i += 1) {
       const actual = data.recent.items[i];

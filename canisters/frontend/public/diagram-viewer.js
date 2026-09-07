@@ -8,7 +8,7 @@ const diagrams = Object.freeze({
   topups: {
     file: 'perpetual-canister-topups.svg',
     title: 'Perpetual canister top-ups',
-    alt: 'Flow diagram showing ICP committed to permanent neuron stake becoming recurring maturity and cycles for a target canister',
+    alt: 'Flow diagram showing ICP endowed to permanent neuron stake becoming recurring maturity and cycles for a target canister',
     backHref: '/#how-it-works?focus=diagram-topups',
   },
   disburser: {

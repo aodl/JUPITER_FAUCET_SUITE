@@ -315,7 +315,7 @@ export function createDashboardTablesController({
           <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
           <td>${formatCommitmentTarget(item)}</td>
         </tr>`,
-      paneEmptyMessage(data, 'recent', 'No declared canister commitments indexed yet.'),
+      paneEmptyMessage(data, 'recent', 'No declared canister endowments indexed yet.'),
       3,
     );
     paginate(
@@ -327,7 +327,7 @@ export function createDashboardTablesController({
           <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
           <td>${renderMemoTrackerLink(rawIcpDeclaredMemo(item))}</td>
         </tr>`,
-      paneEmptyMessage(data, 'recent', 'No raw ICP commitments indexed yet.'),
+      paneEmptyMessage(data, 'recent', 'No raw ICP endowments indexed yet.'),
       3,
     );
     paginate(
@@ -339,7 +339,7 @@ export function createDashboardTablesController({
           <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
           <td>${renderMemoTrackerLink(neuronDeclaredMemo(item))}</td>
         </tr>`,
-      paneEmptyMessage(data, 'recent', 'No declared neuron commitments indexed yet.'),
+      paneEmptyMessage(data, 'recent', 'No declared neuron endowments indexed yet.'),
       3,
     );
   };

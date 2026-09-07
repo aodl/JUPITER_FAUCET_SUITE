@@ -1,10 +1,12 @@
 # Jupiter Faucet Suite
 
-[Jupiter Faucet](https://www.jupiter-faucet.com/#intro) is a perpetual cycles top-up protocol and shared infrastructure layer for long-lived Internet Computer projects. It turns committed ICP and recurring NNS maturity into reusable funding routes so applications do not each need to build and operate their own neuron-management, maturity-routing, and cycles-management stack.
+[Jupiter Faucet](https://www.jupiter-faucet.com/#intro) is a perpetual cycles top-up protocol and shared infrastructure layer for long-lived Internet Computer projects. It turns endowed ICP and recurring NNS maturity into reusable funding routes so applications do not each need to build and operate their own neuron-management, maturity-routing, and cycles-management stack.
 
 Applications remain responsible for their own business and incentive logic: which behaviour deserves rewards, how value should be weighted, how abuse is constrained, and which governance or product policies apply. Jupiter provides generic infrastructure beneath those decisions; it does not make them for the application.
 
-The primary integration model is to use **the canonical Jupiter Faucet deployed on IC mainnet**. Projects can make commitments through the established productive-stake and maturity flow, share its public observability and review surface, and create a dedicated immutable Relay through the deployed frontend and Historian when they need managed multi-canister funding.
+The primary integration model is to use **the canonical Jupiter Faucet deployed on IC mainnet**. Projects can make endowments through the established productive-stake and maturity flow, share its public observability and review surface, and create a dedicated immutable Relay through the deployed frontend and Historian when they need managed multi-canister funding.
+
+In user-facing documentation, an **endowment** is a qualifying ICP transfer into the Jupiter Faucet neuron's staking account. Existing code, Candid methods, stable-state fields, and URL parameters that use `commitment` terminology retain those names for compatibility.
 
 This repository contains the production canisters, certified frontend, shared crates, tests, and release tooling that implement and verify the suite. The implementation is split into narrow value-moving, allocation, observation, and support roles so each authority boundary can be reviewed independently.
 
@@ -17,17 +19,17 @@ This repository contains the production canisters, certified frontend, shared cr
 Keeping an application running introduces generic work beyond its product logic: maintaining cycles buffers, managing an ICP reserve, harvesting and routing maturity, avoiding chronic overfunding, handling surplus, and making long-lived value-moving automation reviewable. Jupiter makes those concerns composable rather than requiring each project to engineer them from scratch.
 
 - **Your project keeps:** application-specific reward eligibility, anti-sybil rules, business economics, product revenue policy, and project governance.
-- **Jupiter can handle:** long-term commitment routes, NNS maturity routing, direct or managed cycles funding, raw ICP and supported neuron routes, observed-demand allocation, surplus execution, and public operational history.
+- **Jupiter can handle:** long-term endowment routes, NNS maturity routing, direct or managed cycles funding, raw ICP and supported neuron routes, observed-demand allocation, surplus execution, and public operational history.
 
 The [shared-infrastructure architecture guide](docs/architecture/shared-infrastructure.md) explains this boundary, common composition patterns, the separate pre-launch IO relationship, and the concrete trust properties relevant to adopting shared infrastructure.
 
-The suite overview shows what can be composed: one long-term commitment can produce recurring output, route directly to a target, or supply a Relay that allocates cycles according to measured demand. It also depicts the intended relationship with the separate IO project. IO is not yet release-ready or live.
+The suite overview shows what can be composed: one long-term endowment can produce recurring output, route directly to a target, or supply a Relay that allocates cycles according to measured demand. It also depicts the intended relationship with the separate IO project. IO is not yet release-ready or live.
 
 <img src="/canisters/frontend/public/jupiter-faucet-overview.svg">
 
 | If your project needs... | Start with... |
 | --- | --- |
-| Long-term cycles funding for one canister | A [direct Faucet commitment](https://www.jupiter-faucet.com/#how-it-works) |
+| Long-term cycles funding for one canister | A [direct Faucet endowment](https://www.jupiter-faucet.com/#how-it-works) |
 | Funding for several canisters with changing demand | A Relay created through the [mainnet self-service factory](https://www.jupiter-faucet.com/#relay-setup) |
 | A blend of immediately spendable and future funding | [Relay splitter funding](https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/canisters/relay#funding-a-relay) plus Faucet |
 | Surplus returned to a treasury account or public NNS neuron | [Relay surplus recipients](https://github.com/aodl/JUPITER_FAUCET_SUITE/tree/master/canisters/relay#surplus-recipients-and-reward-attribution) |
@@ -46,7 +48,7 @@ The operational path is intentionally split across small canisters:
 - [`canisters/faucet`](canisters/faucet) receives the base ICP flow, scans the configured staking account, interprets eligible transfer memos, and performs proportional payouts as cycles top-ups, raw ICP transfers, or NNS neuron stake transfers (the target canister/neuron and top-up mode is determined by the staking account transfer memo).
   <img src="/canisters/frontend/public/faucet.svg">
 - [`canisters/relay`](canisters/relay) receives suite-funding ICP from the faucet, tops up managed suite canisters from recent cycles-burn observations plus carried recovery deficits, and routes remaining surplus only after canister recovery targets are met.
-- [`canisters/historian`](canisters/historian) indexes commitment history, target canisters, cycles samples, SNS discovery, and dashboard-facing public state.
+- [`canisters/historian`](canisters/historian) indexes endowment history, target canisters, cycles samples, SNS discovery, and dashboard-facing public state.
 - [`canisters/frontend`](canisters/frontend) serves the certified public site and browser dashboard.
 - [`canisters/lifeline`](canisters/lifeline) provides minimal recovery support.
 - [`canisters/sns-rewards`](canisters/sns-rewards) maintains SNS owner snapshots and supplies snapshot-scoped reward context and account-owner lookups to Relay.
