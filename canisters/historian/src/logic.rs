@@ -142,13 +142,15 @@ pub(crate) fn push_commitment(
     sample: CommitmentSample,
     max_entries: u32,
 ) -> bool {
-    if history
-        .iter()
-        .any(|existing| existing.tx_id == sample.tx_id)
-    {
-        return false;
-    }
-    history.push(sample);
+    // Index pages arrive newest-first, but bounded continuation applies older
+    // pages in later calls. Keep the retained read model ordered by transaction
+    // id rather than by callback/application order.
+    history.sort_unstable_by_key(|item| item.tx_id);
+    let insertion_index = match history.binary_search_by_key(&sample.tx_id, |item| item.tx_id) {
+        Ok(_) => return false,
+        Err(index) => index,
+    };
+    history.insert(insertion_index, sample);
     prune_vec(history, max_entries);
     true
 }
@@ -197,16 +199,20 @@ pub(crate) fn apply_commitment_seen(
     now_secs: u64,
 ) {
     if meta.first_seen_ts.is_none() {
-        meta.first_seen_ts = Some(
-            timestamp_nanos
-                .map(|ts| ts / 1_000_000_000)
-                .unwrap_or(now_secs),
-        );
+        // This is registration observation time, not the timestamp of the
+        // earliest transfer encountered during a possibly out-of-order scan.
+        meta.first_seen_ts = Some(now_secs);
     }
+    // When the Index omits a timestamp, the observation time is the only
+    // available evidence. In either case older backfill must not move this
+    // metadata backwards.
+    let observed_ts = timestamp_nanos
+        .map(|ts| ts / 1_000_000_000)
+        .unwrap_or(now_secs);
     meta.last_commitment_ts = Some(
-        timestamp_nanos
-            .map(|ts| ts / 1_000_000_000)
-            .unwrap_or(now_secs),
+        meta.last_commitment_ts
+            .map(|existing| existing.max(observed_ts))
+            .unwrap_or(observed_ts),
     );
 }
 
@@ -642,6 +648,45 @@ mod tests {
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].tx_id, 2);
         assert_eq!(history[1].tx_id, 3);
+    }
+
+    #[test]
+    fn push_commitment_keeps_newest_transaction_ids_when_older_pages_arrive() {
+        let sample = |tx_id| CommitmentSample {
+            tx_id,
+            timestamp_nanos: Some(tx_id),
+            amount_e8s: 10,
+            counts_toward_faucet: true,
+        };
+        for cap in [1, 2, 100] {
+            let mut history = Vec::new();
+            for tx_id in (512..=1_011).chain(12..=511).chain(std::iter::once(11)) {
+                assert!(push_commitment(&mut history, sample(tx_id), cap));
+            }
+            let expected_start = 1_012 - u64::from(cap.min(1_001));
+            assert_eq!(
+                history.iter().map(|item| item.tx_id).collect::<Vec<_>>(),
+                (expected_start..=1_011).collect::<Vec<_>>(),
+                "cap {cap} must retain the newest transaction-id suffix",
+            );
+        }
+    }
+
+    #[test]
+    fn commitment_metadata_is_independent_of_backfill_order() {
+        let mut meta = CanisterMeta::default();
+        apply_commitment_seen(&mut meta, Some(1_011_000_000_000), 2_000);
+        apply_commitment_seen(&mut meta, Some(511_000_000_000), 2_001);
+        apply_commitment_seen(&mut meta, None, 2_002);
+        assert_eq!(
+            meta.first_seen_ts,
+            Some(2_000),
+            "first seen is observation time"
+        );
+        assert_eq!(meta.last_commitment_ts, Some(2_002));
+        apply_commitment_seen(&mut meta, Some(510_000_000_000), 1_500);
+        assert_eq!(meta.first_seen_ts, Some(2_000));
+        assert_eq!(meta.last_commitment_ts, Some(2_002));
     }
 
     #[test]

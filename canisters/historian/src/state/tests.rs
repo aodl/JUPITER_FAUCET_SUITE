@@ -454,7 +454,20 @@ mod tests {
             message: "representative deployed fault".to_string(),
         });
         state.initial_cycles_probe_queue = vec![principal(&[31])];
-        let expected = build_root_snapshot(&state);
+        let mut expected = build_root_snapshot(&state);
+        // This fixture predates the bounded catch-up/endowment-refresh fields. The
+        // compatibility contract is that every deployed field survives exactly,
+        // while fields introduced later decode as absent and are materialized by
+        // restore_state_current.
+        expected.active_staking_catch_up = None;
+        expected.active_output_catch_up = None;
+        expected.active_rewards_catch_up = None;
+        expected.commitment_index_lock_expires_at_ts = None;
+        expected.commitment_index_lock_generation = None;
+        expected.commitment_index_lock_owner = None;
+        expected.endowment_refresh_next_allowed_ts = None;
+        expected.endowment_refresh_ineffective_streak = None;
+        expected.commitment_index_revision = None;
         let expected_config = expected.config.clone();
         let deployed_root = DeployedStableRootState::from(expected.clone());
         assert!(deployed_root
@@ -494,7 +507,32 @@ mod tests {
         assert_eq!(root.last_index_run_ts, Some(123_456));
         assert_eq!(root.commitment_index_fault, expected.commitment_index_fault);
         assert_eq!(root.initial_cycles_probe_queue, vec![principal(&[31])]);
+        assert!(root.active_staking_catch_up.is_none());
+        assert!(root.active_output_catch_up.is_none());
+        assert!(root.active_rewards_catch_up.is_none());
+        assert!(root.commitment_index_lock_expires_at_ts.is_none());
+        assert!(root.commitment_index_lock_generation.is_none());
+        assert!(root.commitment_index_lock_owner.is_none());
+        assert!(root.endowment_refresh_next_allowed_ts.is_none());
+        assert!(root.endowment_refresh_ineffective_streak.is_none());
+        assert!(root.commitment_index_revision.is_none());
         assert_eq!(root.config.relay_factory_enabled, Some(true));
+
+        let mut unsupported = expected.clone();
+        unsupported.staking_index_descending = Some(false);
+        unsupported.output_route_index_descending = Some(false);
+        unsupported.rewards_route_index_descending = Some(false);
+        let bytes = candid::encode_one(DeployedVersionedStableState::Current(
+            DeployedStableRootState::from(unsupported),
+        ))
+        .expect("encode deployed ascending-order flags");
+        let decoded = VersionedStableState::from_bytes(Cow::Owned(bytes));
+        let VersionedStableState::Current(root) = decoded else {
+            panic!("expected current root");
+        };
+        assert_eq!(root.staking_index_descending, Some(false));
+        assert_eq!(root.output_route_index_descending, Some(false));
+        assert_eq!(root.rewards_route_index_descending, Some(false));
         assert_eq!(
             root.config.canonical_relay_canister_id,
             Some(sample_config().canonical_relay_canister_id)

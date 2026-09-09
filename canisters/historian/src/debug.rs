@@ -39,6 +39,10 @@ pub struct DebugState {
     pub last_icp_xdr_rate_error: Option<String>,
     pub cached_cycles_probe_route_count: u32,
     pub last_index_run_ts: Option<u64>,
+    pub commitment_index_lock_expires_at_ts: Option<u64>,
+    pub commitment_index_lock_generation: u64,
+    pub endowment_refresh_next_allowed_ts: u64,
+    pub endowment_refresh_ineffective_streak: u8,
 }
 
 #[cfg(feature = "debug_api")]
@@ -127,6 +131,10 @@ pub(super) fn debug_state() -> DebugState {
         last_icp_xdr_rate_error: st.last_icp_xdr_rate_error.clone(),
         cached_cycles_probe_route_count: st.cached_cycles_probe_routes.len() as u32,
         last_index_run_ts: st.last_index_run_ts,
+        commitment_index_lock_expires_at_ts: st.commitment_index_lock_expires_at_ts,
+        commitment_index_lock_generation: st.commitment_index_lock_generation,
+        endowment_refresh_next_allowed_ts: st.endowment_refresh_next_allowed_ts,
+        endowment_refresh_ineffective_streak: st.endowment_refresh_ineffective_streak,
     })
 }
 

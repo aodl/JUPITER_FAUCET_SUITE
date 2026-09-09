@@ -257,10 +257,13 @@ pub(super) fn commitment_history_snapshot(
     st: &State,
     canister_id: Principal,
 ) -> Vec<CommitmentSample> {
-    st.commitment_history
+    let mut history = st
+        .commitment_history
         .get(&canister_id)
         .cloned()
-        .unwrap_or_else(|| state::stable_commitment_history_for(canister_id))
+        .unwrap_or_else(|| state::stable_commitment_history_for(canister_id));
+    history.sort_unstable_by_key(|item| item.tx_id);
+    history
 }
 
 pub(super) fn cycles_history_snapshot(st: &State, canister_id: Principal) -> Vec<CyclesSample> {
@@ -274,20 +277,26 @@ pub(super) fn raw_icp_commitment_history_snapshot(
     st: &State,
     canister_id: Principal,
 ) -> Vec<CommitmentSample> {
-    st.raw_icp_commitment_history
+    let mut history = st
+        .raw_icp_commitment_history
         .get(&canister_id)
         .cloned()
-        .unwrap_or_else(|| state::stable_raw_icp_commitment_history_for(canister_id))
+        .unwrap_or_else(|| state::stable_raw_icp_commitment_history_for(canister_id));
+    history.sort_unstable_by_key(|item| item.tx_id);
+    history
 }
 
 pub(super) fn neuron_commitment_history_snapshot(
     st: &State,
     neuron_id: u64,
 ) -> Vec<CommitmentSample> {
-    st.neuron_commitment_history
+    let mut history = st
+        .neuron_commitment_history
         .get(&neuron_id)
         .cloned()
-        .unwrap_or_else(|| state::stable_neuron_commitment_history_for(neuron_id))
+        .unwrap_or_else(|| state::stable_neuron_commitment_history_for(neuron_id));
+    history.sort_unstable_by_key(|item| item.tx_id);
+    history
 }
 
 pub(super) fn fallback_qualifying_commitment_count(st: &State) -> u64 {
@@ -839,6 +848,9 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     ensure_canonical_relay_tracking(st);
     validate_config(&st.config);
     st.main_lock_state_ts = Some(0);
+    st.commitment_index_lock_expires_at_ts = Some(0);
+    st.commitment_index_lock_owner = None;
+    st.commitment_index_lock_generation = st.commitment_index_lock_generation.saturating_add(1);
 }
 
 pub(super) fn decode_post_upgrade_args_from_bytes(
@@ -878,6 +890,17 @@ pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs
     // heap view.
     state::set_state_after_upgrade(st, &registry_principals);
     crate::relay_setup::reconcile_interrupted_creating_entries_after_upgrade();
+}
+
+#[ic_cdk::inspect_message]
+pub(super) fn inspect_message() {
+    if ic_cdk::api::msg_method_name() == "refresh_endowments" {
+        // Cost-saving ingress filter only. Inter-canister calls bypass this hook,
+        // and the replicated update guard performs the authoritative exact-principal
+        // whitelist check before dispatch or any ICP Index call.
+        return;
+    }
+    ic_cdk::api::accept_message();
 }
 
 fn log_lifecycle(event: &str) {

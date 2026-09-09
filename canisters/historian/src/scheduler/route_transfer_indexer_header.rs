@@ -27,17 +27,6 @@ pub(super) fn indexed_route_cursor(st: &state::State, kind: &IndexedRouteKind) -
     }
 }
 
-pub(super) fn set_indexed_route_cursor(
-    st: &mut state::State,
-    kind: &IndexedRouteKind,
-    cursor: Option<u64>,
-) {
-    match kind {
-        IndexedRouteKind::Output => st.last_indexed_output_tx_id = cursor,
-        IndexedRouteKind::Rewards => st.last_indexed_rewards_tx_id = cursor,
-    }
-}
-
 pub(super) fn indexed_route_oldest_cursor(
     st: &state::State,
     kind: &IndexedRouteKind,
@@ -62,6 +51,27 @@ pub(super) fn indexed_route_backfill_complete(st: &state::State, kind: &IndexedR
     match kind {
         IndexedRouteKind::Output => st.output_route_backfill_complete.unwrap_or(false),
         IndexedRouteKind::Rewards => st.rewards_route_backfill_complete.unwrap_or(false),
+    }
+}
+
+pub(super) fn indexed_route_catch_up(
+    st: &state::State,
+    kind: &IndexedRouteKind,
+) -> Option<DescendingIndexCatchUp> {
+    match kind {
+        IndexedRouteKind::Output => st.active_output_catch_up.clone(),
+        IndexedRouteKind::Rewards => st.active_rewards_catch_up.clone(),
+    }
+}
+
+pub(super) fn set_indexed_route_catch_up(
+    st: &mut state::State,
+    kind: &IndexedRouteKind,
+    catch_up: Option<DescendingIndexCatchUp>,
+) {
+    match kind {
+        IndexedRouteKind::Output => st.active_output_catch_up = catch_up,
+        IndexedRouteKind::Rewards => st.active_rewards_catch_up = catch_up,
     }
 }
 

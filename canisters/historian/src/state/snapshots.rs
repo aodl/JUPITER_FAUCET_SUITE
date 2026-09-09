@@ -42,6 +42,15 @@ pub(super) fn build_root_snapshot(st: &State) -> StableRootState {
         icp_xdr_rate: st.icp_xdr_rate.clone(),
         last_icp_xdr_rate_attempt_ts: st.last_icp_xdr_rate_attempt_ts,
         last_icp_xdr_rate_error: st.last_icp_xdr_rate_error.clone(),
+        active_staking_catch_up: st.active_staking_catch_up.clone(),
+        active_output_catch_up: st.active_output_catch_up.clone(),
+        active_rewards_catch_up: st.active_rewards_catch_up.clone(),
+        commitment_index_lock_expires_at_ts: st.commitment_index_lock_expires_at_ts,
+        commitment_index_lock_generation: Some(st.commitment_index_lock_generation),
+        commitment_index_lock_owner: st.commitment_index_lock_owner,
+        endowment_refresh_next_allowed_ts: Some(st.endowment_refresh_next_allowed_ts),
+        endowment_refresh_ineffective_streak: Some(st.endowment_refresh_ineffective_streak),
+        commitment_index_revision: Some(st.commitment_index_revision),
     }
 }
 

@@ -36,6 +36,62 @@ struct DebugCall {
     caller: Principal,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RefreshEndowmentsProxyArgs {
+    canister_id: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RefreshEndowmentsOnewayBatchArgs {
+    canister_id: Principal,
+    call_count: u32,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RefreshEndowmentsRawOnewayBatchArgs {
+    canister_id: Principal,
+    call_count: u32,
+    raw_args: Vec<u8>,
+    take_raw_args: bool,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct CommitmentIndexFault {
+    observed_at_ts: u64,
+    last_cursor_tx_id: Option<u64>,
+    offending_tx_id: u64,
+    message: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum RefreshEndowmentsOutcome {
+    Updated,
+    NoQualifyingChange,
+    IncompleteProgress,
+    Busy,
+    RateLimited,
+    UpstreamFailure { message: String },
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct EndowmentIndexProgress {
+    revision: u64,
+    newly_indexed_qualifying_endowments: u64,
+    complete_from_genesis: bool,
+    committed_head_staking_tx_id: Option<u64>,
+    oldest_indexed_staking_tx_id: Option<u64>,
+    observed_head_staking_tx_id: Option<u64>,
+    next_staking_start_tx_id: Option<u64>,
+    commitment_index_fault: Option<CommitmentIndexFault>,
+    retry_after_ts: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RefreshEndowmentsResponse {
+    outcome: RefreshEndowmentsOutcome,
+    progress: EndowmentIndexProgress,
+}
+
 thread_local! {
     static CALLS: RefCell<Vec<DebugCall>> = const { RefCell::new(Vec::new()) };
 }
@@ -74,6 +130,53 @@ async fn debug_management_update_settings(args: UpdateSettingsArgs) -> Result<()
     management::update_settings(&args)
         .await
         .map_err(|err| format!("{err:?}"))
+}
+
+#[ic_cdk::update]
+async fn debug_refresh_endowments(
+    args: RefreshEndowmentsProxyArgs,
+) -> Result<RefreshEndowmentsResponse, String> {
+    let response = Call::bounded_wait(args.canister_id, "refresh_endowments")
+        .with_arg(())
+        .await
+        .map_err(|err| format!("refresh_endowments call failed: {err:?}"))?;
+    response
+        .candid()
+        .map_err(|err| format!("refresh_endowments decode failed: {err:?}"))
+}
+
+#[ic_cdk::update]
+fn debug_refresh_endowments_oneway_batch(
+    args: RefreshEndowmentsOnewayBatchArgs,
+) -> Result<u32, String> {
+    for ordinal in 0..args.call_count {
+        Call::bounded_wait(args.canister_id, "refresh_endowments")
+            .with_arg(())
+            .oneway()
+            .map_err(|err| format!("refresh_endowments one-way call {ordinal} failed: {err:?}"))?;
+    }
+    Ok(args.call_count)
+}
+
+#[ic_cdk::update]
+fn debug_refresh_endowments_raw_oneway_batch(
+    args: RefreshEndowmentsRawOnewayBatchArgs,
+) -> Result<u32, String> {
+    for ordinal in 0..args.call_count {
+        let result = if args.take_raw_args {
+            Call::bounded_wait(args.canister_id, "refresh_endowments")
+                .take_raw_args(args.raw_args.clone())
+                .oneway()
+        } else {
+            Call::bounded_wait(args.canister_id, "refresh_endowments")
+                .with_raw_args(&args.raw_args)
+                .oneway()
+        };
+        result.map_err(|err| {
+            format!("refresh_endowments raw one-way call {ordinal} failed: {err:?}")
+        })?;
+    }
+    Ok(args.call_count)
 }
 
 #[ic_cdk::query]

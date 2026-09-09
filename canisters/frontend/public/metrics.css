@@ -1175,6 +1175,105 @@
   display: none !important;
 }
 
+.relay-funding-section {
+  display: grid;
+  gap: 16px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.relay-funding-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.relay-funding-heading h3,
+.relay-funding-group h4,
+.relay-funding-card h5 {
+  margin: 0;
+}
+
+.relay-funding-heading .pane-eyebrow {
+  margin: 0 0 4px;
+}
+
+.relay-funding-group {
+  display: grid;
+  gap: 10px;
+}
+
+.relay-funding-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 12px;
+}
+
+.relay-funding-card {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.relay-funding-card > p {
+  margin: 7px 0 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  opacity: 0.8;
+}
+
+.relay-funding-card dl {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+}
+
+.relay-funding-card dt {
+  margin-bottom: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.68;
+}
+
+.relay-funding-card dd {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.relay-funding-value {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+}
+
+.relay-funding-details {
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+}
+
+.relay-funding-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.relay-funding-details p,
+.relay-funding-endowment-flow p,
+.relay-funding-section > p {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .tracker-chart-wrapper {
   display: grid;
   gap: 14px;
@@ -1612,6 +1711,14 @@
   }
 
   .relay-setup-memo-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .relay-funding-heading {
+    flex-direction: column;
+  }
+
+  .relay-funding-value {
     grid-template-columns: 1fr;
   }
 

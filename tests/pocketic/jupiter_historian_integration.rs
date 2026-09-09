@@ -2,7 +2,7 @@
 #![allow(clippy::unnecessary_cast)]
 
 use anyhow::{anyhow, bail, Context, Result};
-use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
+use candid::{decode_one, encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Bound,
@@ -51,6 +51,13 @@ static RELAY_ENABLED_HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static CYCLE_BURNER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static NNS_GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+
+const WHITELISTED_ENDOWMENT_REFRESH_PROXY_BYTES: &[u8] = &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1];
+
+fn whitelisted_endowment_refresh_proxy() -> Principal {
+    Principal::from_slice(WHITELISTED_ENDOWMENT_REFRESH_PROXY_BYTES)
+}
+
 fn index_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&INDEX_WASM, "mock-icp-index", None)
 }
@@ -275,8 +282,150 @@ struct GetCommitmentRouteSummariesResponse {
     truncated: bool,
     complete_from_genesis: bool,
     indexed_through_staking_tx_id: Option<u64>,
+    oldest_indexed_staking_tx_id: Option<u64>,
     last_index_run_ts: Option<u64>,
     commitment_index_fault: Option<CommitmentIndexFault>,
+    revision: Option<u64>,
+    observed_head_staking_tx_id: Option<u64>,
+    next_staking_start_tx_id: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum ExpectedEndowmentStatus {
+    KnownIndexed,
+    ObservedNotQualifying,
+    NotYetObserved,
+    NotFoundInRetainedEvidence,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum RefreshEndowmentsOutcome {
+    Updated,
+    NoQualifyingChange,
+    IncompleteProgress,
+    Busy,
+    RateLimited,
+    UpstreamFailure { message: String },
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct EndowmentIndexProgress {
+    revision: u64,
+    newly_indexed_qualifying_endowments: u64,
+    complete_from_genesis: bool,
+    committed_head_staking_tx_id: Option<u64>,
+    oldest_indexed_staking_tx_id: Option<u64>,
+    observed_head_staking_tx_id: Option<u64>,
+    next_staking_start_tx_id: Option<u64>,
+    commitment_index_fault: Option<CommitmentIndexFault>,
+    retry_after_ts: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct RefreshEndowmentsResponse {
+    outcome: RefreshEndowmentsOutcome,
+    progress: EndowmentIndexProgress,
+}
+
+fn refresh_endowments_via_proxy(
+    pic: &PocketIc,
+    proxy: Principal,
+    historian: Principal,
+) -> Result<RefreshEndowmentsResponse> {
+    let response: Result<RefreshEndowmentsResponse, String> = update_one(
+        pic,
+        proxy,
+        Principal::anonymous(),
+        "debug_refresh_endowments",
+        RefreshEndowmentsProxyArgs {
+            canister_id: historian,
+        },
+    )?;
+    response.map_err(|message| anyhow!(message))
+}
+
+fn send_canonical_oneway_batch(
+    pic: &PocketIc,
+    proxy: Principal,
+    historian: Principal,
+    call_count: u32,
+) -> Result<(u128, u128)> {
+    let historian_cycles_before = pic.cycle_balance(historian);
+    let proxy_cycles_before = pic.cycle_balance(proxy);
+    let sent: Result<u32, String> = update_one(
+        pic,
+        proxy,
+        Principal::anonymous(),
+        "debug_refresh_endowments_oneway_batch",
+        RefreshEndowmentsOnewayBatchArgs {
+            canister_id: historian,
+            call_count,
+        },
+    )?;
+    assert_eq!(sent.map_err(|message| anyhow!(message))?, call_count);
+    tick_n(pic, call_count as usize + 40);
+    Ok((
+        historian_cycles_before.saturating_sub(pic.cycle_balance(historian)),
+        proxy_cycles_before.saturating_sub(pic.cycle_balance(proxy)),
+    ))
+}
+
+fn send_raw_oneway_batch(
+    pic: &PocketIc,
+    proxy: Principal,
+    historian: Principal,
+    call_count: u32,
+    raw_args: Vec<u8>,
+    take_raw_args: bool,
+) -> Result<(u128, u128)> {
+    let historian_cycles_before = pic.cycle_balance(historian);
+    let proxy_cycles_before = pic.cycle_balance(proxy);
+    let sent: Result<u32, String> = update_one(
+        pic,
+        proxy,
+        Principal::anonymous(),
+        "debug_refresh_endowments_raw_oneway_batch",
+        RefreshEndowmentsRawOnewayBatchArgs {
+            canister_id: historian,
+            call_count,
+            raw_args,
+            take_raw_args,
+        },
+    )?;
+    assert_eq!(sent.map_err(|message| anyhow!(message))?, call_count);
+    tick_n(pic, call_count as usize + 40);
+    Ok((
+        historian_cycles_before.saturating_sub(pic.cycle_balance(historian)),
+        proxy_cycles_before.saturating_sub(pic.cycle_balance(proxy)),
+    ))
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct EndowmentTransactionStatusResponse {
+    transaction_id: u64,
+    status: ExpectedEndowmentStatus,
+    revision: u64,
+    complete_from_genesis: bool,
+    commitment_index_fault: Option<CommitmentIndexFault>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RefreshEndowmentsProxyArgs {
+    canister_id: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RefreshEndowmentsOnewayBatchArgs {
+    canister_id: Principal,
+    call_count: u32,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RefreshEndowmentsRawOnewayBatchArgs {
+    canister_id: Principal,
+    call_count: u32,
+    raw_args: Vec<u8>,
+    take_raw_args: bool,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -285,6 +434,13 @@ struct DebugIndexGetCall {
     start: Option<u64>,
     max_results: u64,
     returned_count: u64,
+}
+
+#[derive(Clone, Debug, CandidType)]
+#[allow(dead_code)]
+enum DebugIndexGetBehavior {
+    Ok,
+    Err(String),
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -401,6 +557,10 @@ struct DebugState {
     last_icp_xdr_rate_error: Option<String>,
     cached_cycles_probe_route_count: u32,
     last_index_run_ts: Option<u64>,
+    commitment_index_lock_expires_at_ts: Option<u64>,
+    commitment_index_lock_generation: u64,
+    endowment_refresh_next_allowed_ts: u64,
+    endowment_refresh_ineffective_streak: u8,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, Default)]
@@ -2509,10 +2669,18 @@ struct Harness {
     blackhole: Principal,
     sns_wasm: Principal,
     historian: Principal,
+    proxy: Principal,
 }
 
 impl Harness {
     fn new(enable_sns_tracking: bool) -> Result<Self> {
+        Self::new_with_scan_interval(enable_sns_tracking, 60)
+    }
+
+    fn new_with_scan_interval(
+        enable_sns_tracking: bool,
+        scan_interval_seconds: u64,
+    ) -> Result<Self> {
         let pic = support::pocketic::builder()
             .with_application_subnet()
             .build();
@@ -2522,7 +2690,9 @@ impl Harness {
         let cmc = pic.create_canister();
         let xrc = pic.create_canister();
         let historian = pic.create_canister();
-        for canister in [index, blackhole, sns_wasm, cmc, xrc, historian] {
+        let proxy = whitelisted_endowment_refresh_proxy();
+        create_fixed_canister(&pic, proxy)?;
+        for canister in [index, blackhole, sns_wasm, cmc, xrc, historian, proxy] {
             pic.add_cycles(canister, 5_000_000_000_000);
         }
         pic.install_canister(index, index_wasm()?, vec![], None);
@@ -2535,6 +2705,7 @@ impl Harness {
         set_controllers_exact(&pic, blackhole, vec![blackhole])?;
         pic.install_canister(sns_wasm, sns_wasm_wasm()?, vec![], None);
         pic.install_canister(xrc, xrc_wasm()?, vec![], None);
+        pic.install_canister(proxy, status_proxy_wasm()?, vec![], None);
 
         let staking_account = Account {
             owner: Principal::management_canister(),
@@ -2552,7 +2723,7 @@ impl Harness {
             sns_wasm_canister_id: Some(sns_wasm),
             xrc_canister_id: Some(xrc),
             enable_sns_tracking: Some(enable_sns_tracking),
-            scan_interval_seconds: Some(60),
+            scan_interval_seconds: Some(scan_interval_seconds),
             cycles_interval_seconds: Some(1),
             min_tx_e8s: Some(10_000_000),
             max_cycles_entries_per_canister: Some(100),
@@ -2575,6 +2746,7 @@ impl Harness {
             blackhole,
             sns_wasm,
             historian,
+            proxy,
         })
     }
 
@@ -2590,6 +2762,859 @@ impl Harness {
         self.pic.advance_time(Duration::from_secs(2));
         tick_n(&self.pic, 5);
     }
+}
+
+#[test]
+#[ignore]
+fn endowment_refresh_full_page_has_bounded_calls_and_measured_pocketic_cost() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new_with_scan_interval(false, 3_600)?;
+    let staking_id = h.staking_identifier()?;
+    let target = Principal::from_slice(&[71]);
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_repeated_transfer",
+        encode_args((
+            staking_id.clone(),
+            500_u64,
+            100_000_000_u64,
+            Some(target.to_text().into_bytes()),
+        ))?,
+    )?;
+
+    let cycles_before = h.pic.cycle_balance(h.historian);
+    let response = refresh_endowments_via_proxy(&h.pic, h.proxy, h.historian)?;
+    let cycles_after = h.pic.cycle_balance(h.historian);
+
+    assert_eq!(
+        response.outcome,
+        RefreshEndowmentsOutcome::IncompleteProgress
+    );
+    assert_eq!(response.progress.newly_indexed_qualifying_endowments, 500);
+    assert!(!response.progress.complete_from_genesis);
+    let calls: Vec<DebugIndexGetCall> = query_one(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_get_calls",
+        (),
+    )?;
+    let staking_calls: Vec<_> = calls
+        .iter()
+        .filter(|call| call.account_identifier == staking_id)
+        .collect();
+    assert_eq!(staking_calls.len(), 1);
+    assert_eq!(staking_calls[0].max_results, 500);
+    assert_eq!(staking_calls[0].returned_count, 500);
+    assert!(cycles_before > cycles_after);
+    eprintln!(
+        "endowment refresh PocketIC qualifying-full-page cycles delta: {}",
+        cycles_before.saturating_sub(cycles_after)
+    );
+
+    let calls_before_denials: Vec<DebugIndexGetCall> = query_one(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_get_calls",
+        (),
+    )?;
+    let cycles_before_denials = h.pic.cycle_balance(h.historian);
+    let admission_before_denials: DebugState = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    let attacking_proxy_cycles_before = h.pic.cycle_balance(h.proxy);
+    for ordinal in 0..4_u64 {
+        let denial: Result<RefreshEndowmentsResponse, String> = update_one(
+            &h.pic,
+            h.proxy,
+            Principal::from_slice(&[73, ordinal as u8]),
+            "debug_refresh_endowments",
+            RefreshEndowmentsProxyArgs {
+                canister_id: h.historian,
+            },
+        )?;
+        assert_eq!(
+            denial
+                .expect("canister call should receive a bounded denial")
+                .outcome,
+            RefreshEndowmentsOutcome::RateLimited
+        );
+    }
+    let attacking_proxy_cycles_delta =
+        attacking_proxy_cycles_before.saturating_sub(h.pic.cycle_balance(h.proxy));
+    let cycles_after_denials = h.pic.cycle_balance(h.historian);
+    let calls_after_denials: Vec<DebugIndexGetCall> = query_one(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_get_calls",
+        (),
+    )?;
+    let admission_after_denials: DebugState = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    assert_eq!(calls_after_denials.len(), calls_before_denials.len());
+    assert_eq!(
+        admission_after_denials.endowment_refresh_next_allowed_ts,
+        admission_before_denials.endowment_refresh_next_allowed_ts,
+    );
+    assert_eq!(
+        admission_after_denials.endowment_refresh_ineffective_streak,
+        admission_before_denials.endowment_refresh_ineffective_streak,
+    );
+    let historian_denial_cycles_delta = cycles_before_denials.saturating_sub(cycles_after_denials);
+    eprintln!(
+        "endowment refresh PocketIC four rate-limited whitelisted calls: historian cycles delta={}, calling proxy cycles delta={}, historian/proxy ratio={:.4}",
+        historian_denial_cycles_delta,
+        attacking_proxy_cycles_delta,
+        historian_denial_cycles_delta as f64 / attacking_proxy_cycles_delta.max(1) as f64,
+    );
+
+    let historian_controller = h
+        .pic
+        .get_controllers(h.historian)
+        .first()
+        .copied()
+        .unwrap_or(Principal::anonymous());
+    support::governance::stop_canister_as(&h.pic, h.historian, historian_controller)?;
+    h.pic.advance_time(Duration::from_secs(61));
+    tick_n(&h.pic, 5);
+    support::governance::start_canister_as(&h.pic, h.historian, historian_controller)?;
+    let _ = refresh_endowments_via_proxy(&h.pic, h.proxy, h.historian)?;
+
+    support::governance::stop_canister_as(&h.pic, h.historian, historian_controller)?;
+    h.pic.advance_time(Duration::from_secs(121));
+    tick_n(&h.pic, 5);
+    for route_index in 0..25_u64 {
+        let memo = match route_index % 3 {
+            0 => Principal::from_slice(&[80, route_index as u8])
+                .to_text()
+                .into_bytes(),
+            1 => format!(
+                "{}.memo-{route_index:02}",
+                Principal::from_slice(&[81, route_index as u8])
+                    .to_text()
+                    .replace('-', "")
+            )
+            .into_bytes(),
+            _ => format!("{}.memo-{route_index:02}", 10_000 + route_index).into_bytes(),
+        };
+        let _: u64 = update_bytes(
+            &h.pic,
+            h.index,
+            Principal::anonymous(),
+            "debug_append_repeated_transfer",
+            encode_args((staking_id.clone(), 20_u64, 100_000_000_u64, Some(memo)))?,
+        )?;
+    }
+    support::governance::start_canister_as(&h.pic, h.historian, historian_controller)?;
+    let calls_before_populated: Vec<DebugIndexGetCall> = query_one(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_get_calls",
+        (),
+    )?;
+    let cycles_before_populated = h.pic.cycle_balance(h.historian);
+    let populated = refresh_endowments_via_proxy(&h.pic, h.proxy, h.historian)?;
+    let cycles_after_populated = h.pic.cycle_balance(h.historian);
+    assert_eq!(populated.progress.newly_indexed_qualifying_endowments, 500);
+    let calls_after_populated: Vec<DebugIndexGetCall> = query_one(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_get_calls",
+        (),
+    )?;
+    assert_eq!(
+        calls_after_populated.len(),
+        calls_before_populated.len() + 1,
+        "a populated-state endowment refresh still has a one-page hard outcall bound"
+    );
+    eprintln!(
+        "endowment refresh PocketIC populated-25-route full-page cycles delta (representative, not a worst-case ceiling): {}",
+        cycles_before_populated.saturating_sub(cycles_after_populated)
+    );
+
+    let recent_before_backfill: ListRecentCommitmentsResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_recent_commitments",
+        ListRecentCommitmentsArgs {
+            limit: Some(100),
+            qualifying_only: Some(true),
+        },
+    )?;
+    support::governance::stop_canister_as(&h.pic, h.historian, historian_controller)?;
+    h.pic.advance_time(Duration::from_secs(61));
+    tick_n(&h.pic, 5);
+    support::governance::start_canister_as(&h.pic, h.historian, historian_controller)?;
+    let cycles_before_boundary_backfill = h.pic.cycle_balance(h.historian);
+    let _ = refresh_endowments_via_proxy(&h.pic, h.proxy, h.historian)?;
+    let cycles_after_boundary_backfill = h.pic.cycle_balance(h.historian);
+    let recent_after_backfill: ListRecentCommitmentsResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_recent_commitments",
+        ListRecentCommitmentsArgs {
+            limit: Some(100),
+            qualifying_only: Some(true),
+        },
+    )?;
+    assert_eq!(recent_after_backfill.items, recent_before_backfill.items);
+    eprintln!(
+        "endowment refresh PocketIC older-boundary-page cycles delta (no recent-feed expansion): {}",
+        cycles_before_boundary_backfill.saturating_sub(cycles_after_boundary_backfill)
+    );
+
+    let failing = Harness::new(false)?;
+    let _: () = update_one(
+        &failing.pic,
+        failing.index,
+        Principal::anonymous(),
+        "debug_set_get_script",
+        vec![DebugIndexGetBehavior::Err(
+            "measured upstream failure".into(),
+        )],
+    )?;
+    let cycles_before_failure = failing.pic.cycle_balance(failing.historian);
+    let failure = refresh_endowments_via_proxy(&failing.pic, failing.proxy, failing.historian)?;
+    let cycles_after_failure = failing.pic.cycle_balance(failing.historian);
+    assert!(matches!(
+        failure.outcome,
+        RefreshEndowmentsOutcome::UpstreamFailure { .. }
+    ));
+    assert!(cycles_before_failure > cycles_after_failure);
+    eprintln!(
+        "endowment refresh PocketIC upstream-failure cycles delta: {}",
+        cycles_before_failure.saturating_sub(cycles_after_failure)
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn unauthorized_canisters_are_rejected_without_state_changes_or_consuming_the_slot() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new_with_scan_interval(false, 3_600)?;
+    let now_secs = (h.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+    let _: () = update_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_set_main_lock_expires_at_ts",
+        Some(now_secs + 3_600),
+    )?;
+
+    let near_match = Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 2, 1]);
+    let unrelated = h.pic.create_canister();
+    for proxy in [near_match, unrelated] {
+        if proxy == near_match {
+            create_fixed_canister(&h.pic, proxy)?;
+        }
+        h.pic.add_cycles(proxy, 1_000_000_000_000);
+        h.pic
+            .install_canister(proxy, status_proxy_wasm()?, vec![], None);
+    }
+
+    let state_before: DebugState = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    let stable_before = h.pic.get_stable_memory(h.historian);
+    let calls_before = debug_index_calls(&h)?.len();
+    let historian_cycles_before = h.pic.cycle_balance(h.historian);
+    let attacker_cycles_before = [
+        h.pic.cycle_balance(near_match),
+        h.pic.cycle_balance(unrelated),
+    ];
+
+    for (ordinal, proxy) in [near_match, unrelated].into_iter().enumerate() {
+        let response: Result<RefreshEndowmentsResponse, String> = update_one(
+            &h.pic,
+            proxy,
+            Principal::from_slice(&[93, ordinal as u8]),
+            "debug_refresh_endowments",
+            RefreshEndowmentsProxyArgs {
+                canister_id: h.historian,
+            },
+        )?;
+        let rejection = response.expect_err("an unlisted canister must be rejected");
+        assert!(
+            rejection.contains("caller is not authorized to refresh endowments"),
+            "unexpected authorization rejection: {rejection}"
+        );
+    }
+
+    let (oneway_historian_delta, oneway_attacker_delta) =
+        send_canonical_oneway_batch(&h.pic, near_match, h.historian, 128)?;
+    let (raw_oneway_historian_delta, raw_oneway_attacker_delta) = send_raw_oneway_batch(
+        &h.pic,
+        unrelated,
+        h.historian,
+        128,
+        b"DIDL\0\x01\x7f".to_vec(),
+        true,
+    )?;
+    eprintln!(
+        "unauthorized one-way exact-whitelist storms: canonical Historian/attacker deltas={}/{}, malformed-raw Historian/attacker deltas={}/{}",
+        oneway_historian_delta,
+        oneway_attacker_delta,
+        raw_oneway_historian_delta,
+        raw_oneway_attacker_delta,
+    );
+
+    let state_after: DebugState = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    assert_eq!(
+        state_after, state_before,
+        "authorization must precede mutation"
+    );
+    assert_eq!(
+        h.pic.get_stable_memory(h.historian),
+        stable_before,
+        "authorization rejection must not persist state"
+    );
+    assert_eq!(
+        debug_index_calls(&h)?.len(),
+        calls_before,
+        "unauthorized calls must never reach the ICP Index"
+    );
+    let historian_delta = historian_cycles_before.saturating_sub(h.pic.cycle_balance(h.historian));
+    let attacker_delta = attacker_cycles_before[0]
+        .saturating_sub(h.pic.cycle_balance(near_match))
+        .saturating_add(attacker_cycles_before[1].saturating_sub(h.pic.cycle_balance(unrelated)));
+    eprintln!(
+        "combined unauthorized awaited and one-way fixtures: historian cycles delta={}, attacking proxies cycles delta={}",
+        historian_delta,
+        attacker_delta,
+    );
+
+    let authorized = refresh_endowments_via_proxy(&h.pic, h.proxy, h.historian)?;
+    assert!(matches!(
+        authorized.outcome,
+        RefreshEndowmentsOutcome::NoQualifyingChange
+            | RefreshEndowmentsOutcome::IncompleteProgress
+            | RefreshEndowmentsOutcome::Updated
+    ));
+    assert_eq!(
+        debug_index_calls(&h)?.len(),
+        calls_before + 1,
+        "unauthorized callers must not consume the whitelisted caller's slot"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn concurrent_whitelisted_refreshes_reserve_one_global_attempt_and_leave_scheduler_live(
+) -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new_with_scan_interval(false, 3_600)?;
+    let calls_before: Vec<DebugIndexGetCall> = query_one(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_get_calls",
+        (),
+    )?;
+    let cycles_before_burst = h.pic.cycle_balance(h.historian);
+    let proxy_cycles_before = h.pic.cycle_balance(h.proxy);
+    let mut message_ids = Vec::new();
+    for ordinal in 0..8_u8 {
+        message_ids.push(
+            h.pic
+                .submit_call(
+                    h.proxy,
+                    Principal::from_slice(&[91, ordinal]),
+                    "debug_refresh_endowments",
+                    encode_args((RefreshEndowmentsProxyArgs {
+                        canister_id: h.historian,
+                    },))?,
+                )
+                .map_err(|error| anyhow!("submit concurrent refresh: {error:?}"))?,
+        );
+    }
+
+    let mut accepted = 0;
+    let mut rate_limited = 0;
+    let mut fixed_retry_after = None;
+    for message_id in message_ids {
+        let bytes = h
+            .pic
+            .await_call(message_id)
+            .map_err(|error| anyhow!("await concurrent refresh: {error:?}"))?;
+        let response: Result<RefreshEndowmentsResponse, String> = decode_one(&bytes)?;
+        let response = response.map_err(|message| anyhow!(message))?;
+        match response.outcome {
+            RefreshEndowmentsOutcome::NoQualifyingChange
+            | RefreshEndowmentsOutcome::IncompleteProgress
+            | RefreshEndowmentsOutcome::Updated => accepted += 1,
+            RefreshEndowmentsOutcome::RateLimited | RefreshEndowmentsOutcome::Busy => {
+                rate_limited += 1;
+                if let Some(retry_after_ts) = fixed_retry_after {
+                    assert_eq!(response.progress.retry_after_ts, Some(retry_after_ts));
+                } else {
+                    fixed_retry_after = response.progress.retry_after_ts;
+                }
+            }
+            RefreshEndowmentsOutcome::UpstreamFailure { message } => {
+                return Err(anyhow!("unexpected concurrent refresh failure: {message}"));
+            }
+        }
+    }
+    assert_eq!(
+        accepted, 1,
+        "authoritative admission must reserve one attempt"
+    );
+    assert_eq!(rate_limited, 7);
+    let calls_after: Vec<DebugIndexGetCall> = query_one(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_get_calls",
+        (),
+    )?;
+    assert_eq!(
+        calls_after.len(),
+        calls_before.len() + 1,
+        "concurrent whitelisted calls must not admit more than one Index call",
+    );
+    let burst_cycles_delta = cycles_before_burst.saturating_sub(h.pic.cycle_balance(h.historian));
+    let attacking_proxy_cycles_delta =
+        proxy_cycles_before.saturating_sub(h.pic.cycle_balance(h.proxy));
+
+    let control = Harness::new_with_scan_interval(false, 3_600)?;
+    let control_cycles_before = control.pic.cycle_balance(control.historian);
+    let _: RefreshEndowmentsResponse =
+        refresh_endowments_via_proxy(&control.pic, control.proxy, control.historian)?;
+    let control_cycles_delta =
+        control_cycles_before.saturating_sub(control.pic.cycle_balance(control.historian));
+    let seven_replicated_denials_delta = burst_cycles_delta.saturating_sub(control_cycles_delta);
+    eprintln!(
+        "queued eight-call whitelisted storm: historian delta={}, calling proxy delta={}, one accepted control={}, seven replicated denial residual={} (~{} each)",
+        burst_cycles_delta,
+        attacking_proxy_cycles_delta,
+        control_cycles_delta,
+        seven_replicated_denials_delta,
+        seven_replicated_denials_delta / 7,
+    );
+
+    let staking_id = h.staking_identifier()?;
+    let target = Principal::from_slice(&[92]);
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_repeated_transfer",
+        encode_args((
+            staking_id,
+            1_u64,
+            100_000_000_u64,
+            Some(target.to_text().into_bytes()),
+        ))?,
+    )?;
+    let calls_before_scheduler: Vec<DebugIndexGetCall> = query_one(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_get_calls",
+        (),
+    )?;
+    let _: () = update_noargs(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_driver_tick",
+    )?;
+    let calls_after_scheduler: Vec<DebugIndexGetCall> = query_one(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_get_calls",
+        (),
+    )?;
+    assert!(
+        calls_after_scheduler.len() > calls_before_scheduler.len(),
+        "scheduled indexing must remain live after a many-canister storm"
+    );
+    Ok(())
+}
+
+fn assert_refresh_storm_did_not_accumulate_caller_state(before: &DebugState, after: &DebugState) {
+    assert_eq!(
+        after.distinct_canister_count,
+        before.distinct_canister_count
+    );
+    assert_eq!(
+        after.cached_cycles_probe_route_count,
+        before.cached_cycles_probe_route_count
+    );
+    assert_eq!(
+        after.initial_cycles_probe_queue,
+        before.initial_cycles_probe_queue
+    );
+    assert_eq!(
+        after.initial_cycles_probe_queue_len,
+        before.initial_cycles_probe_queue_len
+    );
+}
+
+fn debug_index_calls(h: &Harness) -> Result<Vec<DebugIndexGetCall>> {
+    query_one(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_get_calls",
+        (),
+    )
+}
+
+fn assert_scheduled_indexing_live_after_storm(h: &Harness, marker: u8) -> Result<()> {
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_repeated_transfer",
+        encode_args((
+            h.staking_identifier()?,
+            1_u64,
+            100_000_000_u64,
+            Some(Principal::from_slice(&[marker]).to_text().into_bytes()),
+        ))?,
+    )?;
+    let calls_before = debug_index_calls(h)?.len();
+    let _: () = update_noargs(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_driver_tick",
+    )?;
+    assert!(
+        debug_index_calls(h)?.len() > calls_before,
+        "scheduled indexing must remain live after the one-way storm"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn whitelisted_batched_oneway_refresh_storms_preserve_global_admission() -> Result<()> {
+    require_ignored_flag()?;
+    const CALL_COUNT: u32 = 128;
+    let h = Harness::new_with_scan_interval(false, 3_600)?;
+    let caller_state_before: DebugState = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    let index_calls_before = debug_index_calls(&h)?.len();
+
+    let (available_historian_delta, available_attacker_delta) =
+        send_canonical_oneway_batch(&h.pic, h.proxy, h.historian, CALL_COUNT)?;
+    let index_calls_after_available = debug_index_calls(&h)?.len();
+    assert_eq!(
+        index_calls_after_available,
+        index_calls_before + 1,
+        "one admitted global slot permits one ICP Index request"
+    );
+    let state_after_available: DebugState = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    assert_refresh_storm_did_not_accumulate_caller_state(
+        &caller_state_before,
+        &state_after_available,
+    );
+    eprintln!(
+        "canonical one-way batch from Available ({} calls): historian delta={}, attacker delta={}, historian/attacker ratio={:.4}",
+        CALL_COUNT,
+        available_historian_delta,
+        available_attacker_delta,
+        available_historian_delta as f64 / available_attacker_delta.max(1) as f64,
+    );
+
+    let (denied_historian_delta, denied_attacker_delta) =
+        send_canonical_oneway_batch(&h.pic, h.proxy, h.historian, CALL_COUNT)?;
+    let state_after_denied: DebugState = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    assert_eq!(
+        debug_index_calls(&h)?.len(),
+        index_calls_after_available,
+        "rate-limited one-way calls must not reach the ICP Index"
+    );
+    assert_eq!(
+        state_after_denied.endowment_refresh_next_allowed_ts,
+        state_after_available.endowment_refresh_next_allowed_ts,
+        "denied one-way calls must not move the global cooldown"
+    );
+    assert_eq!(
+        state_after_denied.endowment_refresh_ineffective_streak,
+        state_after_available.endowment_refresh_ineffective_streak,
+        "denied one-way calls must not move the ineffective streak"
+    );
+    assert_refresh_storm_did_not_accumulate_caller_state(&caller_state_before, &state_after_denied);
+    eprintln!(
+        "canonical one-way batch while RateLimited ({} calls): historian delta={}, attacker delta={}, historian/attacker ratio={:.4}, historian excess={:.2}%",
+        CALL_COUNT,
+        denied_historian_delta,
+        denied_attacker_delta,
+        denied_historian_delta as f64 / denied_attacker_delta.max(1) as f64,
+        denied_historian_delta.saturating_sub(denied_attacker_delta) as f64
+            * 100.0
+            / denied_attacker_delta.max(1) as f64,
+    );
+    assert_scheduled_indexing_live_after_storm(&h, 94)?;
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn whitelisted_raw_oneway_refresh_payloads_reach_bounded_admission() -> Result<()> {
+    require_ignored_flag()?;
+    let fixtures = vec![
+        (
+            "small malformed Candid",
+            b"DIDL\0\x01\x7f".to_vec(),
+            8_u32,
+            false,
+        ),
+        (
+            "well-formed unexpected Candid arguments",
+            encode_args((7_u64, "unexpected".to_string()))?,
+            8,
+            true,
+        ),
+        ("4,096-byte arbitrary payload", vec![0xa5; 4_096], 8, true),
+        (
+            "262,144-byte arbitrary payload",
+            vec![0x5a; 262_144],
+            4,
+            false,
+        ),
+    ];
+    let mut eight_call_historian_delta = None;
+
+    for (label, raw_args, call_count, take_raw_args) in fixtures {
+        let h = Harness::new_with_scan_interval(false, 3_600)?;
+        let state_before: DebugState = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "debug_state",
+            (),
+        )?;
+        let index_calls_before = debug_index_calls(&h)?.len();
+        let payload_len = raw_args.len();
+        let (historian_delta, attacker_delta) = send_raw_oneway_batch(
+            &h.pic,
+            h.proxy,
+            h.historian,
+            call_count,
+            raw_args,
+            take_raw_args,
+        )?;
+        assert_eq!(
+            debug_index_calls(&h)?.len(),
+            index_calls_before + 1,
+            "{label} must remain bounded to one admitted ICP Index request"
+        );
+        let state_after: DebugState = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "debug_state",
+            (),
+        )?;
+        assert_refresh_storm_did_not_accumulate_caller_state(&state_before, &state_after);
+        assert!(historian_delta > 0, "{label} must execute on Historian");
+        assert!(attacker_delta > 0, "{label} must charge the attacker");
+        if call_count == 8 {
+            if let Some(expected_delta) = eight_call_historian_delta {
+                assert_eq!(
+                    historian_delta, expected_delta,
+                    "raw payload contents or byte length must not add a Historian argument-decoding cost"
+                );
+            } else {
+                eight_call_historian_delta = Some(historian_delta);
+            }
+        } else {
+            assert!(
+                historian_delta < eight_call_historian_delta.expect("eight-call baseline missing"),
+                "the materially larger raw payload must not increase Historian execution cost"
+            );
+        }
+        eprintln!(
+            "raw one-way fixture={label:?}, payload_bytes={}, calls={}, take_raw_args={}, historian delta={}, attacker delta={}, historian/attacker ratio={:.4}",
+            payload_len,
+            call_count,
+            take_raw_args,
+            historian_delta,
+            attacker_delta,
+            historian_delta as f64 / attacker_delta.max(1) as f64,
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn pending_genesis_backfill_survives_an_actual_historian_upgrade() -> Result<()> {
+    require_ignored_flag()?;
+    let h = Harness::new_with_scan_interval(false, 3_600)?;
+    let staking_id = h.staking_identifier()?;
+    let target = Principal::from_slice(&[72]);
+
+    let empty = refresh_endowments_via_proxy(&h.pic, h.proxy, h.historian)?;
+    assert!(empty.progress.complete_from_genesis);
+    let _: () = update_noargs(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_driver_tick",
+    )?;
+    let now_secs = (h.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+    let _: () = update_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "debug_set_main_lock_expires_at_ts",
+        Some(now_secs + 3_600),
+    )?;
+    let historian_controller = h
+        .pic
+        .get_controllers(h.historian)
+        .first()
+        .copied()
+        .unwrap_or(Principal::anonymous());
+    support::governance::stop_canister_as(&h.pic, h.historian, historian_controller)?;
+    h.pic.advance_time(Duration::from_secs(61));
+    tick_n(&h.pic, 5);
+    let _: u64 = update_bytes(
+        &h.pic,
+        h.index,
+        Principal::anonymous(),
+        "debug_append_repeated_transfer",
+        encode_args((
+            staking_id,
+            1_001_u64,
+            100_000_000_u64,
+            Some(target.to_text().into_bytes()),
+        ))?,
+    )?;
+    support::governance::start_canister_as(&h.pic, h.historian, historian_controller)?;
+
+    let first = refresh_endowments_via_proxy(&h.pic, h.proxy, h.historian)?;
+    assert_eq!(first.outcome, RefreshEndowmentsOutcome::IncompleteProgress);
+    assert_eq!(first.progress.newly_indexed_qualifying_endowments, 500);
+    assert!(!first.progress.complete_from_genesis);
+
+    support::governance::stop_canister_as(&h.pic, h.historian, historian_controller)?;
+    h.pic
+        .upgrade_canister(
+            h.historian,
+            historian_wasm()?,
+            encode_one(Option::<HistorianUpgradeArg>::None)?,
+            Some(historian_controller),
+        )
+        .map_err(|error| anyhow!("upgrade pending-backfill Historian: {error:?}"))?;
+    support::governance::start_canister_as(&h.pic, h.historian, historian_controller)?;
+    let mut previous_count = 500;
+    let mut counts: PublicCounts = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    for _ in 0..10 {
+        if counts.qualifying_commitment_count == 1_001 {
+            break;
+        }
+        h.pic.advance_time(Duration::from_secs(61));
+        tick_n(&h.pic, 10);
+        let _: () = update_noargs(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "debug_driver_tick",
+        )?;
+        counts = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "get_public_counts",
+            (),
+        )?;
+        assert!(counts.qualifying_commitment_count >= previous_count);
+        assert!(counts.qualifying_commitment_count <= 1_001);
+        previous_count = counts.qualifying_commitment_count;
+    }
+    assert_eq!(counts.qualifying_commitment_count, 1_001);
+    let summaries: GetCommitmentRouteSummariesResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_commitment_route_summaries",
+        GetCommitmentRouteSummariesArgs {
+            routes: vec![CommitmentRoute::CyclesTopUp {
+                canister_id: target,
+            }],
+        },
+    )?;
+    assert!(summaries.complete_from_genesis);
+    assert_eq!(summaries.items[0].qualifying_commitment_count, 1_001);
+
+    let history: CommitmentHistoryPage = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_commitment_history",
+        GetCommitmentHistoryArgs {
+            canister_id: target,
+            start_after_tx_id: None,
+            limit: Some(100),
+            descending: Some(false),
+        },
+    )?;
+    assert_eq!(history.items.len(), 100);
+    assert!(history
+        .items
+        .windows(2)
+        .all(|items| items[0].tx_id < items[1].tx_id));
+    assert_eq!(history.items.last().map(|item| item.tx_id), Some(1_001));
+    Ok(())
 }
 
 #[test]
@@ -2687,6 +3712,271 @@ fn real_icp_index_pagination_excludes_start_boundary_when_walking_older_history(
     assert!(
         second_ids.windows(2).all(|window| window[0] > window[1]),
         "expected second page to stay newest-first, got ids {second_ids:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn real_index_lag_canister_poke_status_and_revision_aware_route_flow() -> Result<()> {
+    require_ignored_flag()?;
+    let pic = build_pic_with_real_icp();
+    let ledger = real_icp_ledger_principal();
+    let index = real_icp_index_principal();
+    let historian = pic.create_canister();
+    let proxy = whitelisted_endowment_refresh_proxy();
+    create_fixed_canister(&pic, proxy)?;
+    for canister in [historian, proxy] {
+        pic.add_cycles(canister, 10_000_000_000_000);
+    }
+    pic.install_canister(proxy, status_proxy_wasm()?, vec![], None);
+
+    let staking_account = Account {
+        owner: Principal::management_canister(),
+        subaccount: Some([61u8; 32]),
+    };
+    let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
+    let dependency = Principal::from_slice(&[62]);
+    let target = Principal::from_slice(&[63]);
+    let init = HistorianInitArg {
+        staking_account,
+        output_source_account: Some(Account {
+            owner: dependency,
+            subaccount: Some([1u8; 32]),
+        }),
+        output_account: Some(Account {
+            owner: dependency,
+            subaccount: Some([2u8; 32]),
+        }),
+        rewards_account: Some(Account {
+            owner: dependency,
+            subaccount: Some([3u8; 32]),
+        }),
+        ledger_canister_id: Some(ledger),
+        index_canister_id: Some(index),
+        cmc_canister_id: Some(dependency),
+        faucet_canister_id: Some(dependency),
+        sns_wasm_canister_id: Some(dependency),
+        xrc_canister_id: Some(dependency),
+        enable_sns_tracking: Some(false),
+        scan_interval_seconds: Some(3_600),
+        cycles_interval_seconds: Some(604_800),
+        min_tx_e8s: Some(100_000_000),
+        max_cycles_entries_per_canister: Some(10),
+        max_commitment_entries_per_canister: Some(10),
+        max_index_pages_per_tick: Some(10),
+        max_canisters_per_cycles_tick: Some(1),
+        relay_factory_enabled: Some(false),
+        relay_setup_min_e8s: None,
+        relay_initial_cycles: None,
+        relay_cycle_safety_margin_e8s: None,
+        relay_min_subaccount_one_seed_e8s: None,
+        self_service_relay_interval_seconds: None,
+        canonical_relay_canister_id: None,
+        canonical_relay_targets: Some(Vec::new()),
+    };
+    pic.install_canister(
+        historian,
+        historian_wasm()?,
+        encode_one(init.clone())?,
+        None,
+    );
+
+    let fee_e8s = icrc1_fee(&pic, ledger)?;
+    let transaction_id = icrc1_transfer(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: staking_account,
+            fee: Some(Nat::from(fee_e8s)),
+            created_at_time: None,
+            memo: Some(Memo::from(target.to_text().into_bytes())),
+            amount: Nat::from(100_000_000u64),
+        },
+    )?;
+    let unsynchronized = index_account_transactions(&pic, index, staking_id.clone(), None, 10)?;
+    assert!(
+        unsynchronized
+            .transactions
+            .iter()
+            .all(|transaction| transaction.id != transaction_id),
+        "the fixture must expose a deterministic Ledger/Index lag window"
+    );
+
+    for ingress_caller in [
+        Principal::anonymous(),
+        Principal::self_authenticating(&[42_u8; 32]),
+    ] {
+        let cycles_before = pic.cycle_balance(historian);
+        let rejection = pic.update_call(
+            historian,
+            ingress_caller,
+            "refresh_endowments",
+            encode_args(())?,
+        );
+        assert!(
+            rejection.is_err(),
+            "anonymous and authenticated ingress must both be rejected"
+        );
+        assert_eq!(
+            pic.cycle_balance(historian),
+            cycles_before,
+            "ingress inspection rejection must have zero measured Historian replicated-execution delta",
+        );
+    }
+
+    for malformed_args in [b"DIDL\0\x01\x7f".to_vec(), vec![0_u8; 4_096]] {
+        let cycles_before = pic.cycle_balance(historian);
+        let rejection = pic.update_call(
+            historian,
+            Principal::anonymous(),
+            "refresh_endowments",
+            malformed_args,
+        );
+        assert!(rejection.is_err());
+        assert_eq!(
+            pic.cycle_balance(historian),
+            cycles_before,
+            "malformed or oversized ingress must be rejected before replicated execution",
+        );
+    }
+
+    let cycles_before_empty = pic.cycle_balance(historian);
+    let proxy_cycles_before_empty = pic.cycle_balance(proxy);
+    let empty = refresh_endowments_via_proxy(&pic, proxy, historian)?;
+    let cycles_after_empty = pic.cycle_balance(historian);
+    let proxy_cycles_after_empty = pic.cycle_balance(proxy);
+    assert_eq!(empty.outcome, RefreshEndowmentsOutcome::NoQualifyingChange);
+    assert!(empty.progress.complete_from_genesis);
+    let pending: EndowmentTransactionStatusResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_endowment_transaction_status",
+        transaction_id,
+    )?;
+    assert_eq!(pending.status, ExpectedEndowmentStatus::NotYetObserved);
+    assert!(cycles_before_empty > cycles_after_empty);
+    eprintln!(
+        "accepted empty real-Index canister poke: historian cycles delta={}, proxy cycles delta={}, historian/proxy ratio={:.4}",
+        cycles_before_empty.saturating_sub(cycles_after_empty),
+        proxy_cycles_before_empty.saturating_sub(proxy_cycles_after_empty),
+        cycles_before_empty.saturating_sub(cycles_after_empty) as f64
+            / proxy_cycles_before_empty
+                .saturating_sub(proxy_cycles_after_empty)
+                .max(1) as f64,
+    );
+
+    // Pause Historian while advancing the replica so the real Index can
+    // synchronize without the scheduled Historian writer consuming the same
+    // transaction. This keeps the next observation attributable to the
+    // whitelisted endpoint while preserving normal timer configuration.
+    let historian_controller = pic
+        .get_controllers(historian)
+        .first()
+        .copied()
+        .unwrap_or(Principal::anonymous());
+    let now_secs = (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+    let _: () = update_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "debug_set_main_lock_expires_at_ts",
+        Some(now_secs + 3_600),
+    )?;
+    support::governance::stop_canister_as(&pic, historian, historian_controller)?;
+    pic.advance_time(Duration::from_secs(61));
+    tick_n(&pic, 10);
+
+    let indexed = wait_for_index_transactions(&pic, index, &staking_id, 1)?;
+    assert_eq!(indexed.transactions[0].id, transaction_id);
+    support::governance::start_canister_as(&pic, historian, historian_controller)?;
+    let updated = refresh_endowments_via_proxy(&pic, proxy, historian)?;
+    assert_eq!(updated.outcome, RefreshEndowmentsOutcome::Updated);
+    assert_eq!(updated.progress.newly_indexed_qualifying_endowments, 1);
+    let known: EndowmentTransactionStatusResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_endowment_transaction_status",
+        transaction_id,
+    )?;
+    assert_eq!(known.status, ExpectedEndowmentStatus::KnownIndexed);
+    assert_eq!(known.revision, updated.progress.revision);
+
+    let summaries: GetCommitmentRouteSummariesResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_commitment_route_summaries",
+        GetCommitmentRouteSummariesArgs {
+            routes: vec![CommitmentRoute::CyclesTopUp {
+                canister_id: target,
+            }],
+        },
+    )?;
+    assert_eq!(summaries.items[0].qualifying_commitment_count, 1);
+    assert_eq!(
+        summaries.items[0].total_qualifying_committed_e8s,
+        100_000_000
+    );
+    assert_eq!(summaries.revision, Some(updated.progress.revision));
+    assert!(summaries.complete_from_genesis);
+    assert!(summaries.commitment_index_fault.is_none());
+
+    let second_transaction_id = icrc1_transfer(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: staking_account,
+            fee: Some(Nat::from(fee_e8s)),
+            created_at_time: None,
+            memo: Some(Memo::from(target.to_text().into_bytes())),
+            amount: Nat::from(110_000_000u64),
+        },
+    )?;
+    support::governance::stop_canister_as(&pic, historian, historian_controller)?;
+    pic.advance_time(Duration::from_secs(61));
+    tick_n(&pic, 10);
+    let indexed = wait_for_index_transactions(&pic, index, &staking_id, 2)?;
+    assert!(indexed
+        .transactions
+        .iter()
+        .any(|transaction| transaction.id == second_transaction_id));
+    support::governance::start_canister_as(&pic, historian, historian_controller)?;
+    let second = refresh_endowments_via_proxy(&pic, proxy, historian)?;
+    assert_eq!(second.outcome, RefreshEndowmentsOutcome::Updated);
+    let second_known: EndowmentTransactionStatusResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_endowment_transaction_status",
+        second_transaction_id,
+    )?;
+    assert_eq!(second_known.status, ExpectedEndowmentStatus::KnownIndexed);
+    let summaries: GetCommitmentRouteSummariesResponse = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_commitment_route_summaries",
+        GetCommitmentRouteSummariesArgs {
+            routes: vec![CommitmentRoute::CyclesTopUp {
+                canister_id: target,
+            }],
+        },
+    )?;
+    assert_eq!(summaries.items[0].qualifying_commitment_count, 2);
+    assert_eq!(
+        summaries.items[0].total_qualifying_committed_e8s,
+        210_000_000
+    );
+    eprintln!(
+        "endowment refresh PocketIC empty-pass cycles delta: {}",
+        cycles_before_empty.saturating_sub(cycles_after_empty)
     );
     Ok(())
 }
@@ -4582,7 +5872,10 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
         .filter(|call| call.account_identifier == staking_id)
         .nth(staking_calls_before)
         .expect("missing steady-state staking Index call");
-    assert!(steady_state_call.start.is_some());
+    assert!(
+        steady_state_call.start.is_none(),
+        "newest-first catch-up must sample the head before pinning an older-page cursor"
+    );
     assert!(steady_state_call.max_results > 0);
     assert!(steady_state_call.returned_count <= steady_state_call.max_results);
 
@@ -4616,7 +5909,10 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
         .filter(|call| call.account_identifier == staking_id)
         .nth(staking_calls_after)
         .expect("missing overlap staking Index call");
-    assert!(overlap_call.start.is_some());
+    assert!(
+        overlap_call.start.is_none(),
+        "a completed newest-first interval starts the next bounded scan at the current head"
+    );
     assert!(overlap_call.max_results > 0);
     assert!(overlap_call.returned_count <= overlap_call.max_results);
     Ok(())

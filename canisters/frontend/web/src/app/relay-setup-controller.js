@@ -3,7 +3,16 @@ import { createActor as createLedgerActor } from '../../declarations/icp_ledger/
 import { createActor as createGovernanceActor } from '../../declarations/nns_governance/index.js';
 import { createHistorianClient, normalizeError } from './agent.js';
 import { GOVERNANCE_CANISTER_ID } from './config.js';
-import { accountIdentifierHex, bytesToHex, readOptional } from '../data/dashboard-transforms.js';
+import {
+  accountIdentifierHex,
+  bytesToHex,
+  icrcAccountText,
+  readOptional,
+} from '../data/dashboard-transforms.js';
+import {
+  deriveRelayFundingDestinations,
+  relayMemoBuilderHash,
+} from '../data/relay-funding.js';
 import { loadPublicNeuronStakingAccount } from '../data/nns-neurons.js';
 import { DASH, formatIcpE8s, renderCanisterTrackerLink } from './view-formatters.js';
 
@@ -13,7 +22,7 @@ const MAX_RECIPIENTS = 5;
 export const MAX_RELAY_SURPLUS_MEMO_BYTES = 32;
 const MAX_U64 = 18_446_744_073_709_551_615n;
 const DEFAULT_POLL_INTERVAL_MS = 12_000;
-const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+export { icrcAccountText } from '../data/dashboard-transforms.js';
 
 function variantName(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
@@ -188,67 +197,6 @@ export function duplicatePrincipalIndexes(values) {
 
 export const duplicateRelayTargetIndexes = duplicatePrincipalIndexes;
 
-function crc32(bytes) {
-  let value = 0xffffffff;
-  for (const byte of bytes) {
-    value = CRC32_TABLE[(value ^ byte) & 0xff] ^ (value >>> 8);
-  }
-  return (value ^ 0xffffffff) >>> 0;
-}
-
-const CRC32_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let index = 0; index < 256; index += 1) {
-    let value = index;
-    for (let bit = 0; bit < 8; bit += 1) {
-      value = (value & 1) !== 0 ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
-    }
-    table[index] = value >>> 0;
-  }
-  return table;
-})();
-
-function concatBytes(...parts) {
-  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  return out;
-}
-
-function base32NoPadding(bytes) {
-  let bits = 0;
-  let value = 0;
-  let out = '';
-  for (const byte of bytes) {
-    value = (value << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      out += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  if (bits > 0) out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
-  return out;
-}
-
-export function icrcAccountText(account) {
-  if (!account?.owner) return '';
-  const owner = principalText(account.owner);
-  const subaccount = account.subaccount?.[0] ? Uint8Array.from(account.subaccount[0]) : new Uint8Array(32);
-  if (subaccount.every((byte) => byte === 0)) return owner;
-  const checksum = crc32(concatBytes(account.owner.toUint8Array(), subaccount));
-  const checksumBytes = new Uint8Array([
-    (checksum >>> 24) & 0xff,
-    (checksum >>> 16) & 0xff,
-    (checksum >>> 8) & 0xff,
-    checksum & 0xff,
-  ]);
-  return `${owner}-${base32NoPadding(checksumBytes)}.${bytesToHex(subaccount)}`;
-}
-
 function setText(id, value) {
   const node = document.getElementById(id);
   if (node) node.textContent = value ?? '';
@@ -285,6 +233,48 @@ function relayIdFromState(state) {
   return principalText(state?.[kind]?.relay_canister_id);
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function fundingCopyButton(index, field, label) {
+  return `<button class="pane-copy-button" type="button" data-relay-funding-copy="${field}" data-relay-funding-index="${index}">${label}</button>`;
+}
+
+export function renderRelayFundingCards(destinations) {
+  const renderGroup = (title, items, offset) => `
+    <section class="relay-funding-group">
+      <h4>${escapeHtml(title)}</h4>
+      <div class="relay-funding-card-grid">
+        ${items.map((destination, localIndex) => {
+    const index = offset + localIndex;
+    const explorer = `https://dashboard.internetcomputer.org/account/${encodeURIComponent(destination.legacyAccountIdentifier)}`;
+    return `
+          <article class="relay-funding-card">
+            <h5>${escapeHtml(destination.name)}</h5>
+            <p>${escapeHtml(destination.purpose)}</p>
+            <dl>
+              <div><dt>Owner</dt><dd class="mono">${escapeHtml(destination.owner.toText())}</dd></div>
+              <div><dt>Subaccount</dt><dd class="mono">${escapeHtml(destination.semanticSubaccount)}</dd></div>
+              <div><dt>Full 32-byte subaccount hex</dt><dd class="mono relay-funding-value">${escapeHtml(destination.subaccountHex)} ${fundingCopyButton(index, 'subaccountHex', 'Copy')}</dd></div>
+              <div><dt>ICRC account</dt><dd class="mono relay-funding-value"><a class="pane-external-link" href="${explorer}" target="_blank" rel="noopener noreferrer">${escapeHtml(destination.icrcAccountText)}</a> ${fundingCopyButton(index, 'icrcAccountText', 'Copy')}</dd></div>
+              <div><dt>Legacy ICP account identifier</dt><dd class="mono relay-funding-value"><a class="pane-external-link" href="${explorer}" target="_blank" rel="noopener noreferrer">${escapeHtml(destination.legacyAccountIdentifier)}</a> ${fundingCopyButton(index, 'legacyAccountIdentifier', 'Copy')}</dd></div>
+            </dl>
+          </article>`;
+  }).join('')}
+      </div>
+    </section>`;
+  return [
+    renderGroup('Direct funding accounts', destinations.slice(0, 2), 0),
+    renderGroup('Gross-budget splitter accounts', destinations.slice(2), 2),
+  ].join('');
+}
+
 export function createRelaySetupController({
   frontendConfig = {},
   isLocalHost = () => false,
@@ -310,6 +300,8 @@ export function createRelaySetupController({
     loading: false,
     creating: false,
     requiredBalanceOverride: null,
+    activeRelayId: '',
+    fundingDestinations: [],
   };
   let generation = 0;
   let pollHandle = null;
@@ -830,6 +822,8 @@ export function createRelaySetupController({
     state.error = '';
     state.loading = false;
     state.creating = false;
+    state.activeRelayId = '';
+    state.fundingDestinations = [];
     render();
   }
 
@@ -1028,6 +1022,13 @@ export function createRelaySetupController({
       ? principalText(notifyDetails?.relay_canister_id)
       : '';
     const displayedRelayId = relayId || notifiedRelayId;
+    const activeRelayId = kind === 'Active'
+      ? relayId
+      : notifyKind === 'Active' ? notifiedRelayId : '';
+    state.activeRelayId = activeRelayId;
+    state.fundingDestinations = activeRelayId
+      ? deriveRelayFundingDestinations(activeRelayId)
+      : [];
     const activeOrBlocked = ['Active', 'InProgress', 'ManualRecoveryRequired'].includes(kind)
       || ['Active', 'InProgress', 'ManualRecoveryRequired'].includes(notifyKind);
     const resumableFinalization = isResumableFinalization(view);
@@ -1087,6 +1088,18 @@ export function createRelaySetupController({
     }
     setHtml('relay-setup-existing-relay', displayedRelayId ? `<p>Relay: ${renderCanisterTrackerLink(displayedRelayId)}</p>` : '');
     setHidden('relay-setup-existing-relay', !displayedRelayId);
+    setHtml(
+      'relay-funding-destinations',
+      activeRelayId ? renderRelayFundingCards(state.fundingDestinations) : '',
+    );
+    setText('relay-funding-owner', activeRelayId || DASH);
+    setText('relay-funding-copy-status', '');
+    const memoBuilderLink = document.getElementById('relay-funding-memo-builder-link');
+    if (memoBuilderLink) {
+      if (activeRelayId) memoBuilderLink.href = relayMemoBuilderHash(activeRelayId);
+      else memoBuilderLink.removeAttribute('href');
+    }
+    setHidden('relay-funding-section', !activeRelayId);
   }
 
   function setupArgs() {
@@ -1355,6 +1368,41 @@ export function createRelaySetupController({
     });
   }
 
+  function bindFundingCopies() {
+    const container = document.getElementById('relay-funding-destinations');
+    if (!container || container.dataset.bound === 'true') return;
+    container.dataset.bound = 'true';
+    container.addEventListener('click', async (event) => {
+      const button = event.target?.closest?.('[data-relay-funding-copy]');
+      if (!button) return;
+      const index = Number.parseInt(button.dataset.relayFundingIndex || '', 10);
+      const field = button.dataset.relayFundingCopy;
+      const destination = state.fundingDestinations[index];
+      const value = destination?.[field];
+      if (!state.activeRelayId || typeof value !== 'string' || !value) return;
+      const activeRelayId = state.activeRelayId;
+      try {
+        if (typeof copyTextToClipboard !== 'function') {
+          throw new Error('Clipboard access is unavailable.');
+        }
+        await copyTextToClipboard(value);
+        if (
+          state.activeRelayId !== activeRelayId
+          || state.fundingDestinations[index] !== destination
+          || destination[field] !== value
+        ) return;
+        setText('relay-funding-copy-status', `${destination.name}: copied.`);
+      } catch {
+        if (
+          state.activeRelayId !== activeRelayId
+          || state.fundingDestinations[index] !== destination
+          || destination[field] !== value
+        ) return;
+        setText('relay-funding-copy-status', 'Copy failed. Select and copy the value manually.');
+      }
+    });
+  }
+
   function bindPane() {
     for (const kind of ['target', 'recipient']) {
       const spec = listSpecs[kind];
@@ -1431,6 +1479,7 @@ export function createRelaySetupController({
     }
     bindCopy('copy-relay-setup-icrc-account', 'relay-setup-icrc-account');
     bindCopy('copy-relay-setup-account-identifier', 'relay-setup-account-identifier');
+    bindFundingCopies();
   }
 
   return {

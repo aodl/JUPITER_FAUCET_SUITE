@@ -14,8 +14,15 @@ import {
   parseRelayMemo,
   parseRelayNeuronId,
   parseRelayTargetSet,
+  renderRelayFundingCards,
 } from '../src/app/relay-setup-controller.js';
 import { accountIdentifierHex } from '../src/data/dashboard-transforms.js';
+import {
+  deriveRelayFundingDestinations,
+  relayFundingSubaccount,
+  relayMemoBuilderHash,
+} from '../src/data/relay-funding.js';
+import { buildAdvancedMemo } from '../src/advanced-memo-builder.js';
 
 const TARGET_A = '22255-zqaaa-aaaas-qf6uq-cai';
 const TARGET_B = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
@@ -125,6 +132,8 @@ const DOM_IDS = [
   'relay-setup-mode-routing', 'relay-setup-mode-all-cycles',
   'relay-setup-recipient-editor', 'relay-setup-surplus-mode',
   'relay-setup-surplus-mode-summary',
+  'relay-funding-section', 'relay-funding-owner', 'relay-funding-destinations',
+  'relay-funding-copy-status', 'relay-funding-memo-builder-link',
 ];
 
 async function withDom(run) {
@@ -277,6 +286,62 @@ function deferred() {
 
 async function flushMicrotasks(count = 8) {
   for (let index = 0; index < count; index += 1) await Promise.resolve();
+}
+
+const ICRC_TEXT_BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
+
+function decodeBase32NoPadding(text) {
+  let bits = 0;
+  let value = 0;
+  const bytes = [];
+  for (const character of text) {
+    const digit = ICRC_TEXT_BASE32.indexOf(character);
+    assert.notEqual(digit, -1, `invalid base32 character ${character}`);
+    value = (value << 5) | digit;
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  assert.equal(bits === 0 || (value & ((1 << bits) - 1)) === 0, true, 'non-zero base32 padding');
+  return Uint8Array.from(bytes);
+}
+
+function independentCrc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function decodeCanonicalIcrcAccountText(text) {
+  const dot = text.indexOf('.');
+  if (dot === -1) {
+    return { owner: Principal.fromText(text), subaccount: new Uint8Array(32) };
+  }
+  assert.equal(text.indexOf('.', dot + 1), -1, 'multiple subaccount separators');
+  const accountPrefix = text.slice(0, dot);
+  const suffix = text.slice(dot + 1);
+  assert.match(suffix, /^[1-9a-f][0-9a-f]*$/u, 'suffix must be canonical lower-case hex');
+  assert.ok(suffix.length <= 64, 'subaccount suffix is too long');
+  const checksumSeparator = accountPrefix.lastIndexOf('-');
+  assert.ok(checksumSeparator > 0, 'missing account checksum');
+  const owner = Principal.fromText(accountPrefix.slice(0, checksumSeparator));
+  const encodedChecksum = decodeBase32NoPadding(accountPrefix.slice(checksumSeparator + 1));
+  assert.equal(encodedChecksum.length, 4);
+  const subaccountHex = suffix.padStart(64, '0');
+  const subaccount = Uint8Array.from(subaccountHex.match(/../gu).map((pair) => Number.parseInt(pair, 16)));
+  const checksum = independentCrc32(Uint8Array.from([...owner.toUint8Array(), ...subaccount]));
+  assert.deepEqual(
+    [...encodedChecksum],
+    [(checksum >>> 24) & 0xff, (checksum >>> 16) & 0xff, (checksum >>> 8) & 0xff, checksum & 0xff],
+  );
+  return { owner, subaccount };
 }
 
 function controllerHarness({
@@ -2399,7 +2464,284 @@ test('active exact set hides setup account and controls and renders Relay tracke
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
     assert.equal(nodes.get('relay-setup-create-panel').hidden, true);
     assert.match(nodes.get('relay-setup-existing-relay').innerHTML, /br5f7/);
+    assert.equal(nodes.get('relay-funding-section').hidden, false);
+    assert.equal(nodes.get('relay-funding-owner').textContent, RELAY);
+    assert.equal(harness.controller.state.fundingDestinations.length, 11);
   });
+});
+
+test('all eleven Relay funding destinations use protocol subaccount bytes and independent legacy fixtures', () => {
+  const destinations = deriveRelayFundingDestinations('u2qkp-aqaaa-aaaar-qb7ea-cai');
+  assert.equal(destinations.length, 11);
+  assert.deepEqual(
+    destinations.map((destination) => destination.subaccountNumber),
+    [null, 1, 10, 20, 30, 40, 50, 60, 70, 80, 90],
+  );
+  assert.deepEqual(
+    destinations.map((destination) => destination.legacyAccountIdentifier),
+    [
+      'ffe4e010416d894b2a973fa46212c14c9c83363fa886f7216c3b1c9fa50a30cd',
+      '9fffa5e0762fd8be8e4c3078d4101926fb8d3c15aa3fa077b981ea779ded42ee',
+      '888cbe557e118986bfdd515c6d7622dc54a0a83b6bff17287134fa514a805594',
+      '4f74f3f8320540a1998c4ff4da9264f166ba8546cbaef9650177c573cb913619',
+      'a6b8c79aad7424c51f566db0781060404a1e13f2c9b96531fbd8664759967c84',
+      '75b0acc13f98dd766111e510682c4038b32f4e165d60f26457ebf741e119cff8',
+      'ddc112cd674286bc5342c933ad70b94d5a6f956f08283a9cfc2dacc7346df034',
+      '98394d5d6d5438c1629b9801574478c63170c115df9ae2c02b223e8b501b8fd5',
+      '3d27e1558913c4771959af6119e9758c79e548c75ee6951da7f1fc726a0760e7',
+      '1f2e1e0d228cda21e9bb2852554362739a8c955755c2034ee04893d38a47442a',
+      '7dd38b0e9fa61ec7075d730fa3fe6026fb128b816e36d4007bcd937a3cd52f3e',
+    ],
+  );
+  assert.equal(destinations[0].icrcAccountText, 'u2qkp-aqaaa-aaaar-qb7ea-cai');
+  assert.equal(destinations[0].subaccountHex, '00'.repeat(32));
+  assert.equal(destinations[6].subaccountHex, `${'00'.repeat(31)}32`);
+  assert.equal(destinations[10].subaccountHex, `${'00'.repeat(31)}5a`);
+  assert.deepEqual(Array.from(relayFundingSubaccount(90)), [...Array(31).fill(0), 90]);
+  assert.equal(
+    accountIdentifierHex({
+      owner: Principal.fromText('u2qkp-aqaaa-aaaar-qb7ea-cai'),
+      subaccount: [Array(32).fill(0)],
+    }),
+    destinations[0].legacyAccountIdentifier,
+    'null and explicit all-zero default subaccounts derive the same destination',
+  );
+
+  const other = deriveRelayFundingDestinations(RELAY);
+  assert.equal(other.length, 11);
+  assert.notDeepEqual(
+    other.map((destination) => destination.legacyAccountIdentifier),
+    destinations.map((destination) => destination.legacyAccountIdentifier),
+  );
+});
+
+test('all Relay funding ICRC texts are canonical fixtures and independently round-trip', () => {
+  const fixtures = new Map([
+    ['u2qkp-aqaaa-aaaar-qb7ea-cai', [
+      'u2qkp-aqaaa-aaaar-qb7ea-cai',
+      'u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1',
+      'u2qkp-aqaaa-aaaar-qb7ea-cai-mbrbjvq.a',
+      'u2qkp-aqaaa-aaaar-qb7ea-cai-tjwstni.14',
+      'u2qkp-aqaaa-aaaar-qb7ea-cai-pk4mbky.1e',
+      'u2qkp-aqaaa-aaaar-qb7ea-cai-wubfkmq.28',
+      'u2qkp-aqaaa-aaaar-qb7ea-cai-jbqkysa.32',
+      'u2qkp-aqaaa-aaaar-qb7ea-cai-v7micty.3c',
+      'u2qkp-aqaaa-aaaar-qb7ea-cai-d4ebs3i.46',
+      'u2qkp-aqaaa-aaaar-qb7ea-cai-5pokypa.50',
+      'u2qkp-aqaaa-aaaar-qb7ea-cai-bmeukiq.5a',
+    ]],
+    [RELAY, [
+      RELAY,
+      `${RELAY}-6igz3ry.1`,
+      `${RELAY}-mxpuity.a`,
+      `${RELAY}-t7ihsla.14`,
+      `${RELAY}-p4czamq.1e`,
+      `${RELAY}-wc7qlky.28`,
+      `${RELAY}-jxo7zui.32`,
+      `${RELAY}-vjs5dvq.3c`,
+      `${RELAY}-dk2ut5a.46`,
+      `${RELAY}-5zq7zji.50`,
+      `${RELAY}-b22bloy.5a`,
+    ]],
+  ]);
+
+  for (const [ownerText, expectedTexts] of fixtures) {
+    const destinations = deriveRelayFundingDestinations(ownerText);
+    assert.deepEqual(destinations.map(({ icrcAccountText: text }) => text), expectedTexts);
+    destinations.forEach((destination, index) => {
+      const decoded = decodeCanonicalIcrcAccountText(destination.icrcAccountText);
+      assert.equal(decoded.owner.toText(), ownerText);
+      assert.deepEqual([...decoded.subaccount], [...relayFundingSubaccount(destination.subaccountNumber)]);
+      assert.equal(destination.subaccountHex, Buffer.from(decoded.subaccount).toString('hex'));
+      assert.equal(destination.legacyAccountIdentifier, deriveRelayFundingDestinations(ownerText)[index].legacyAccountIdentifier);
+    });
+  }
+
+  const owner = Principal.fromText(RELAY);
+  const cases = [
+    { bytes: new Uint8Array(32), expected: RELAY },
+    { bytes: Uint8Array.from([...Array(31).fill(0), 0x0a]), suffix: '.a' },
+    { bytes: Uint8Array.from([...Array(31).fill(0), 0xab]), suffix: '.ab' },
+    { bytes: Uint8Array.from([0x0a, ...Array(31).fill(0)]), suffixLength: 63 },
+    { bytes: Uint8Array.from([0xab, ...Array(31).fill(0)]), suffixLength: 64 },
+  ];
+  assert.equal(icrcAccountText({ owner, subaccount: [] }), RELAY);
+  for (const entry of cases) {
+    const account = { owner, subaccount: [[...entry.bytes]] };
+    const text = icrcAccountText(account);
+    if (entry.expected) assert.equal(text, entry.expected);
+    if (entry.suffix) assert.equal(text.endsWith(entry.suffix), true);
+    if (entry.suffixLength) assert.equal(text.split('.')[1].length, entry.suffixLength);
+    assert.deepEqual([...decodeCanonicalIcrcAccountText(text).subaccount], [...entry.bytes]);
+  }
+
+  const deterministicSetup = setupAccount();
+  const setupText = icrcAccountText(deterministicSetup);
+  assert.equal(setupText.split('.')[1], Array.from({ length: 31 }, (_, index) => index + 1)
+    .map((byte) => byte.toString(16).padStart(2, '0')).join('').replace(/^0+/u, ''));
+  assert.deepEqual(
+    [...decodeCanonicalIcrcAccountText(setupText).subaccount],
+    deterministicSetup.subaccount[0],
+  );
+});
+
+test('Active query remains operational when factory creation is unavailable', async () => {
+  await withDom(async (nodes) => {
+    const harness = controllerHarness({
+      view: viewFor({
+        account: null,
+        factoryAvailable: false,
+        state: { Active: { relay_canister_id: Principal.fromText(RELAY) } },
+      }),
+    });
+    await submit(nodes, harness);
+    assert.equal(nodes.get('relay-setup-factory').textContent, 'Unavailable');
+    assert.equal(nodes.get('relay-funding-section').hidden, false);
+    assert.match(nodes.get('relay-funding-destinations').innerHTML, /Subaccount 90/);
+  });
+});
+
+test('Active notify exposes funding before a stale InProgress query catches up', async () => {
+  await withDom(async (nodes) => {
+    const staleInProgress = {
+      InProgress: {
+        phase: { FinalizationAttempted: null },
+        relay_canister_id: [Principal.fromText(RELAY)],
+      },
+    };
+    const harness = controllerHarness({
+      view: viewFor({ account: null, state: staleInProgress }),
+      notify: { Active: { relay_canister_id: Principal.fromText(RELAY) } },
+    });
+    await submit(nodes, harness);
+    await harness.controller.createRelay();
+    assert.equal(nodes.get('relay-funding-section').hidden, false);
+    assert.equal(harness.controller.state.activeRelayId, RELAY);
+    const href = nodes.get('relay-funding-memo-builder-link').href;
+    assert.equal(href, relayMemoBuilderHash(RELAY));
+    const params = new URLSearchParams(href.split('?')[1]);
+    assert.equal(params.get('canister'), RELAY);
+    assert.equal(params.get('mode'), 'rawIcp');
+    assert.equal(params.get('title'), 'Relay Canister');
+    assert.equal(params.get('label'), 'Optional Donor Name');
+    const memo = buildAdvancedMemo({
+      mode: params.get('mode'),
+      canisterText: params.get('canister'),
+      optionalMemoText: '',
+    });
+    assert.equal(memo.ok, true);
+    assert.equal(memo.output, `${RELAY.replaceAll('-', '')}.`);
+  });
+});
+
+test('non-Active states and form changes clear every derived funding action', async () => {
+  await withDom(async (nodes) => {
+    seedTargetRow(nodes, TARGET_A);
+    const recipient = seedRecipientRow(nodes, RECIPIENT_A);
+    const harness = controllerHarness({
+      view: viewFor({
+        account: null,
+        state: { Active: { relay_canister_id: Principal.fromText(RELAY) } },
+      }),
+    });
+    harness.controller.bindPane();
+    await harness.controller.submitConfiguration();
+    assert.equal(nodes.get('relay-funding-section').hidden, false);
+    recipient.input.value = RECIPIENT_B;
+    nodes.get('relay-setup-recipient-list').listeners.get('input')({ target: recipient.input });
+    assert.equal(nodes.get('relay-funding-section').hidden, true);
+    assert.equal(nodes.get('relay-funding-destinations').innerHTML, '');
+    assert.equal(nodes.get('relay-funding-memo-builder-link').href, '');
+    assert.equal(harness.controller.state.activeRelayId, '');
+    assert.deepEqual(harness.controller.state.fundingDestinations, []);
+  });
+
+  for (const state of [
+    { NotFunded: null },
+    { InProgress: { phase: { CreateDispatched: null }, relay_canister_id: [Principal.fromText(RELAY)] } },
+    { ManualRecoveryRequired: { phase: { RelayFunded: null }, relay_canister_id: [Principal.fromText(RELAY)], message: 'manual' } },
+    { FailedPreSpend: { message: 'failed' } },
+  ]) {
+    await withDom(async (nodes) => {
+      const harness = controllerHarness({ view: viewFor({ account: null, state }) });
+      await submit(nodes, harness);
+      assert.equal(nodes.get('relay-funding-section').hidden, true);
+      assert.deepEqual(harness.controller.state.fundingDestinations, []);
+    });
+  }
+});
+
+test('funding copy actions report success and clipboard failure accessibly', async () => {
+  await withDom(async (nodes) => {
+    const harness = controllerHarness({
+      view: viewFor({ account: null, state: { Active: { relay_canister_id: Principal.fromText(RELAY) } } }),
+    });
+    harness.controller.bindPane();
+    await submit(nodes, harness);
+    const button = new FakeElement('', 'button');
+    button.dataset.relayFundingCopy = 'icrcAccountText';
+    button.dataset.relayFundingIndex = '6';
+    await nodes.get('relay-funding-destinations').listeners.get('click')({ target: button });
+    assert.equal(harness.calls.copied[0], harness.controller.state.fundingDestinations[6].icrcAccountText);
+    assert.match(nodes.get('relay-funding-copy-status').textContent, /copied/i);
+  });
+
+  await withDom(async (nodes) => {
+    const harness = controllerHarness({
+      view: viewFor({ account: null, state: { Active: { relay_canister_id: Principal.fromText(RELAY) } } }),
+      copyTextToClipboard: async () => { throw new Error('denied'); },
+    });
+    harness.controller.bindPane();
+    await submit(nodes, harness);
+    const button = new FakeElement('', 'button');
+    button.dataset.relayFundingCopy = 'legacyAccountIdentifier';
+    button.dataset.relayFundingIndex = '10';
+    await nodes.get('relay-funding-destinations').listeners.get('click')({ target: button });
+    assert.match(nodes.get('relay-funding-copy-status').textContent, /copy failed/i);
+  });
+});
+
+test('delayed funding clipboard feedback cannot survive configuration invalidation', async () => {
+  await withDom(async (nodes) => {
+    const clipboard = deferred();
+    seedTargetRow(nodes, TARGET_A);
+    const recipient = seedRecipientRow(nodes, RECIPIENT_A);
+    const harness = controllerHarness({
+      view: viewFor({ account: null, state: { Active: { relay_canister_id: Principal.fromText(RELAY) } } }),
+      copyTextToClipboard: () => clipboard.promise,
+    });
+    harness.controller.bindPane();
+    await harness.controller.submitConfiguration();
+    const button = new FakeElement('', 'button');
+    button.dataset.relayFundingCopy = 'icrcAccountText';
+    button.dataset.relayFundingIndex = '6';
+    const copy = nodes.get('relay-funding-destinations').listeners.get('click')({ target: button });
+    await flushMicrotasks();
+    assert.equal(harness.calls.copied.length, 1);
+    recipient.input.value = RECIPIENT_B;
+    nodes.get('relay-setup-recipient-list').listeners.get('input')({ target: recipient.input });
+    clipboard.resolve();
+    await copy;
+    assert.equal(nodes.get('relay-funding-copy-status').textContent, '');
+    assert.equal(harness.controller.state.activeRelayId, '');
+  });
+});
+
+test('funding card rendering escapes values and narrow-screen CSS keeps cards stacked', () => {
+  const html = renderRelayFundingCards([{
+    name: '<img src=x onerror=alert(1)>',
+    purpose: '<script>bad()</script>',
+    owner: Principal.fromText(RELAY),
+    semanticSubaccount: 'null',
+    subaccountHex: '00'.repeat(32),
+    icrcAccountText: RELAY,
+    legacyAccountIdentifier: 'ab'.repeat(32),
+  }]);
+  assert.doesNotMatch(html, /<script>|<img/);
+  assert.match(html, /&lt;script&gt;|&lt;img/);
+  const css = readFileSync(new URL('../../public/metrics.css', import.meta.url), 'utf8');
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.relay-funding-heading[\s\S]*flex-direction: column/);
+  assert.match(css, /\.relay-funding-card-grid[\s\S]*minmax\(min\(100%, 300px\), 1fr\)/);
 });
 
 test('source and markup contain no payment proof, refund, quote, indicative, or automatic notify flow', () => {

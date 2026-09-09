@@ -201,18 +201,17 @@ fn get_account_identifier_transactions(args: GetArgs) -> GetResp {
             return GetResp::Err(GetAccountIdentifierTransactionsError { message });
         }
 
-        let start_idx = match args.start {
-            None => 0,
+        let end_idx = match args.start {
+            None => st.txs.len(),
             Some(last_seen) => st
                 .txs
                 .iter()
-                .position(|t| t.id == last_seen)
-                .map(|i| i + 1)
-                .unwrap_or(st.txs.len()),
+                .position(|transaction| transaction.id == last_seen)
+                .unwrap_or(0),
         };
 
         let mut out = Vec::new();
-        for tx in st.txs[start_idx..].iter() {
+        for tx in st.txs[..end_idx].iter().rev() {
             let include = match &tx.transaction.operation {
                 IndexOperation::Transfer { to, .. } => to == &args.account_identifier,
                 IndexOperation::Burn { from, .. } => from == &args.account_identifier,
@@ -235,7 +234,14 @@ fn get_account_identifier_transactions(args: GetArgs) -> GetResp {
 
         GetResp::Ok(GetAccountIdentifierTransactionsResponse {
             balance: account_balance_e8s(&st.txs, &args.account_identifier),
-            oldest_tx_id: st.txs.first().map(|t| t.id),
+            oldest_tx_id: st.txs.iter().find_map(|transaction| {
+                let belongs_to_account = match &transaction.transaction.operation {
+                    IndexOperation::Transfer { to, .. } => to == &args.account_identifier,
+                    IndexOperation::Burn { from, .. } => from == &args.account_identifier,
+                    _ => false,
+                };
+                belongs_to_account.then_some(transaction.id)
+            }),
             transactions: out,
         })
     })
@@ -424,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn start_cursor_is_exclusive_of_last_seen_transaction_id() {
+    fn account_history_is_newest_first_and_start_walks_exclusively_toward_older_history() {
         ST.with(|s| {
             let mut st = s.borrow_mut();
             st.next_id = 3;
@@ -437,6 +443,19 @@ mod tests {
             st.scripted_get_behaviors.clear();
         });
 
+        let newest = get_account_identifier_transactions(GetArgs {
+            account_identifier: "target".to_string(),
+            start: None,
+            max_results: 2,
+        });
+        match newest {
+            GetResp::Ok(ok) => {
+                let ids: Vec<u64> = ok.transactions.into_iter().map(|tx| tx.id).collect();
+                assert_eq!(ids, vec![3, 2]);
+            }
+            GetResp::Err(err) => panic!("unexpected error: {}", err.message),
+        }
+
         let resp = get_account_identifier_transactions(GetArgs {
             account_identifier: "target".to_string(),
             start: Some(2),
@@ -446,7 +465,7 @@ mod tests {
         match resp {
             GetResp::Ok(ok) => {
                 let ids: Vec<u64> = ok.transactions.into_iter().map(|tx| tx.id).collect();
-                assert_eq!(ids, vec![3]);
+                assert_eq!(ids, vec![1]);
             }
             GetResp::Err(err) => panic!("unexpected error: {}", err.message),
         }

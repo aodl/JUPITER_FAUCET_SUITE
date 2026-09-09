@@ -2557,8 +2557,8 @@ fn faucet_retry_exhaustion_on_one_commitment_does_not_block_later_success_in_sam
 
     env.credit_payout(100_000_000)?;
     env.credit_staking(200_000_000)?;
-    env.append_transfer(100_000_000, Some(failed_target.to_text().into_bytes()))?;
     env.append_transfer(100_000_000, Some(success_target.to_text().into_bytes()))?;
+    env.append_transfer(100_000_000, Some(failed_target.to_text().into_bytes()))?;
     env.set_ledger_error_script(vec![
         DebugNextTransferError::TemporarilyUnavailable,
         DebugNextTransferError::TemporarilyUnavailable,
@@ -2572,7 +2572,7 @@ fn faucet_retry_exhaustion_on_one_commitment_does_not_block_later_success_in_sam
     let summary = env.summary()?;
     if summary.topped_up_count != 2 || summary.failed_topups != 0 || summary.ambiguous_topups != 0 {
         bail!(
-            "expected one raw fallback and one later cycles success, got topped_up_count={} failed_topups={} ambiguous_topups={}",
+            "expected one raw fallback and one later-scanned cycles success, got topped_up_count={} failed_topups={} ambiguous_topups={}",
             summary.topped_up_count,
             summary.failed_topups,
             summary.ambiguous_topups
@@ -2595,7 +2595,7 @@ fn faucet_retry_exhaustion_on_one_commitment_does_not_block_later_success_in_sam
         .count();
     if success_count != 1 || failed_count != 0 {
         bail!(
-            "expected only the later cycles commitment to notify successfully, got success_count={} failed_count={}",
+            "expected only the later-scanned cycles commitment to notify successfully, got success_count={} failed_count={}",
             success_count,
             failed_count,
         );
@@ -2645,9 +2645,9 @@ fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() ->
         .iter()
         .filter(|n| n.canister_id == second_target)
         .count();
-    if first_count_after_first != 1 || second_count_after_first != 0 {
+    if first_count_after_first != 0 || second_count_after_first != 1 {
         bail!(
-            "expected first page work to complete before index failure, got first_count={} second_count={}",
+            "expected the newest-first page to complete before index failure, got first_count={} second_count={}",
             first_count_after_first,
             second_count_after_first
         );
@@ -2737,9 +2737,9 @@ fn faucet_daily_rescue_tick_resumes_interrupted_job_before_next_main_interval() 
         .iter()
         .filter(|n| n.canister_id == second_target)
         .count();
-    if first_count_after_failure != 1 || second_count_after_failure != 0 {
+    if first_count_after_failure != 0 || second_count_after_failure != 1 {
         bail!(
-            "expected only first-page work before failure, got first_count={} second_count={}",
+            "expected only newest-first page work before failure, got first_count={} second_count={}",
             first_count_after_failure,
             second_count_after_failure,
         );

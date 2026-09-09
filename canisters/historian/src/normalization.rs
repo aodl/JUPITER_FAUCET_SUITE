@@ -235,6 +235,7 @@ pub(crate) fn normalize_runtime_state(st: &mut State) {
                 false
             }
         });
+        history.sort_unstable_by_key(|item| item.tx_id);
         recent_under_threshold.extend(removed);
         if history.len() > st.config.max_commitment_entries_per_canister as usize {
             let excess = history.len() - st.config.max_commitment_entries_per_canister as usize;
@@ -249,6 +250,7 @@ pub(crate) fn normalize_runtime_state(st: &mut State) {
     }
     for history in st.raw_icp_commitment_history.values_mut() {
         history.retain(|item| item.counts_toward_faucet);
+        history.sort_unstable_by_key(|item| item.tx_id);
         if history.len() > st.config.max_commitment_entries_per_canister as usize {
             let excess = history.len() - st.config.max_commitment_entries_per_canister as usize;
             history.drain(0..excess);
@@ -258,6 +260,7 @@ pub(crate) fn normalize_runtime_state(st: &mut State) {
         .retain(|_, history| !history.is_empty());
     for history in st.neuron_commitment_history.values_mut() {
         history.retain(|item| item.counts_toward_faucet);
+        history.sort_unstable_by_key(|item| item.tx_id);
         if history.len() > st.config.max_commitment_entries_per_canister as usize {
             let excess = history.len() - st.config.max_commitment_entries_per_canister as usize;
             history.drain(0..excess);
@@ -311,7 +314,12 @@ pub(crate) fn normalize_runtime_state(st: &mut State) {
     normalize_recent_invalid_commitments(&mut recent_invalid);
     st.recent_invalid_commitments = Some(recent_invalid);
 
-    st.qualifying_commitment_count = Some(fallback_qualifying_commitment_count(st));
+    let retained_history_count = fallback_qualifying_commitment_count(st);
+    st.qualifying_commitment_count = Some(
+        st.qualifying_commitment_count
+            .unwrap_or(retained_history_count)
+            .max(retained_history_count),
+    );
 
     let commitment_last_ts: BTreeMap<_, _> = commitment_history_canister_ids(st)
         .into_iter()
@@ -327,7 +335,13 @@ pub(crate) fn normalize_runtime_state(st: &mut State) {
         })
         .collect();
     for (canister_id, meta) in st.per_canister_meta.iter_mut() {
-        meta.last_commitment_ts = commitment_last_ts.get(canister_id).copied().flatten();
+        if let Some(history_last_ts) = commitment_last_ts.get(canister_id).copied().flatten() {
+            meta.last_commitment_ts = Some(
+                meta.last_commitment_ts
+                    .map(|existing| existing.max(history_last_ts))
+                    .unwrap_or(history_last_ts),
+            );
+        }
     }
 
     let distinct_canisters: BTreeSet<_> = st

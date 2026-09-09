@@ -118,7 +118,7 @@ The broadest high-level view is the suite overview below. It shows the relations
 
 ![Jupiter Faucet suite overview](../../canisters/frontend/public/jupiter-faucet-overview.svg)
 
-For project funding, the Relay diagram is more focused: it shows one funding destination, the immediate-versus-future splitter paths, observed cycles demand across managed canisters, and surplus leaving the cycles loop after targets are covered.
+For project funding, the Relay diagram is more focused: it shows one Relay-owned funding hub, the immediate-versus-future paths through its default, staging, and splitter accounts, observed cycles demand across managed canisters, and surplus leaving the cycles loop after targets are covered.
 
 ![Jupiter Relay funding and allocation flows](../../canisters/frontend/public/relay.svg)
 

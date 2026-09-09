@@ -103,6 +103,42 @@ export function accountIdentifierHex(account) {
   return bytesToHex(accountIdentifierBytes(account));
 }
 
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+
+function base32NoPadding(bytes) {
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  return out;
+}
+
+export function icrcAccountText(account) {
+  if (!account?.owner) return '';
+  const owner = typeof account.owner.toText === 'function'
+    ? account.owner.toText()
+    : String(account.owner);
+  const subaccount = uint8ArrayFromOptBytes(account.subaccount);
+  if (subaccount.every((byte) => byte === 0)) return owner;
+  const checksum = crc32(concatBytes(account.owner.toUint8Array(), subaccount));
+  const checksumBytes = new Uint8Array([
+    (checksum >>> 24) & 0xff,
+    (checksum >>> 16) & 0xff,
+    (checksum >>> 8) & 0xff,
+    checksum & 0xff,
+  ]);
+  const canonicalSuffix = bytesToHex(subaccount).replace(/^0+/u, '');
+  return `${owner}-${base32NoPadding(checksumBytes)}.${canonicalSuffix}`;
+}
+
 export function buildRegisteredCanisterSummariesRequest({ page = 0, pageSize = REGISTERED_SUMMARY_PAGE_SIZE } = {}) {
   return {
     page: [page],

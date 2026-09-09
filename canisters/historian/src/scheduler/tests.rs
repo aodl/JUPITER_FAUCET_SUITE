@@ -11,10 +11,13 @@ mod tests {
     use crate::state::{ActiveCyclesSweep, Config, State};
     use async_trait::async_trait;
     use candid::Principal;
+    use futures::channel::oneshot;
     use futures::executor::block_on;
+    use futures::FutureExt;
     use icrc_ledger_types::icrc1::account::Account;
     use std::collections::{BTreeMap, VecDeque};
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
 
     fn principal(text: &str) -> candid::Principal {
         candid::Principal::from_text(text).unwrap()
@@ -113,6 +116,7 @@ mod tests {
             &sns_root,
             &governance,
             &xrc,
+            &|| 100,
         ))
         .unwrap();
 
@@ -232,6 +236,128 @@ mod tests {
         calls: Mutex<Vec<(String, Option<u64>, u64)>>,
     }
 
+    struct DelayedIndexClient {
+        response: Mutex<
+            Option<
+                oneshot::Receiver<
+                    Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError>,
+                >,
+            >,
+        >,
+        calls: Mutex<u32>,
+    }
+
+    struct LeaseClockIndexClient {
+        pages: Mutex<VecDeque<GetAccountIdentifierTransactionsResponse>>,
+        clock: Arc<AtomicU64>,
+        attempt_refresh_on_call: u32,
+        first_response_clock: u64,
+        refresh_attempt_clock: u64,
+        calls: Mutex<u32>,
+        refresh_acquired: AtomicBool,
+    }
+
+    impl LeaseClockIndexClient {
+        fn new(
+            pages: Vec<GetAccountIdentifierTransactionsResponse>,
+            clock: Arc<AtomicU64>,
+            attempt_refresh_on_call: u32,
+            first_response_clock: u64,
+            refresh_attempt_clock: u64,
+        ) -> Self {
+            Self {
+                pages: Mutex::new(pages.into()),
+                clock,
+                attempt_refresh_on_call,
+                first_response_clock,
+                refresh_attempt_clock,
+                calls: Mutex::new(0),
+                refresh_acquired: AtomicBool::new(false),
+            }
+        }
+
+        fn now(&self) -> u64 {
+            self.clock.load(Ordering::SeqCst)
+        }
+
+        fn calls(&self) -> u32 {
+            *self.calls.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl IndexClient for LeaseClockIndexClient {
+        async fn get_account_identifier_transactions(
+            &self,
+            _account_identifier: String,
+            _start: Option<u64>,
+            _max_results: u64,
+        ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            let call = {
+                let mut calls = self.calls.lock().unwrap();
+                *calls += 1;
+                *calls
+            };
+            if call == 1 {
+                self.clock
+                    .store(self.first_response_clock, Ordering::SeqCst);
+            }
+            if call == self.attempt_refresh_on_call {
+                self.clock
+                    .store(self.refresh_attempt_clock, Ordering::SeqCst);
+                let acquired = CommitmentIndexGuard::acquire(
+                    self.now(),
+                    state::CommitmentIndexLeaseOwner::EndowmentRefresh,
+                );
+                self.refresh_acquired
+                    .store(acquired.is_some(), Ordering::SeqCst);
+                drop(acquired);
+            }
+            Ok(self
+                .pages
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| index_page(Vec::new())))
+        }
+    }
+
+    struct ClockAdvancingXrc<'a> {
+        clock: &'a AtomicU64,
+    }
+
+    #[async_trait]
+    impl ExchangeRateClient for ClockAdvancingXrc<'_> {
+        async fn get_icp_xdr_rate(
+            &self,
+        ) -> Result<crate::clients::IcpXdrRate, crate::clients::ClientError> {
+            self.clock.store(190, Ordering::SeqCst);
+            Ok(crate::clients::IcpXdrRate {
+                rate: 720_000_000,
+                decimals: 8,
+                timestamp: 100,
+            })
+        }
+    }
+
+    impl DelayedIndexClient {
+        fn new() -> (
+            Self,
+            oneshot::Sender<
+                Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError>,
+            >,
+        ) {
+            let (sender, receiver) = oneshot::channel();
+            (
+                Self {
+                    response: Mutex::new(Some(receiver)),
+                    calls: Mutex::new(0),
+                },
+                sender,
+            )
+        }
+    }
+
     impl MockIndexClient {
         fn new(pages: Vec<GetAccountIdentifierTransactionsResponse>) -> Self {
             Self {
@@ -271,6 +397,51 @@ mod tests {
         state::get_commitment_route_rollup(&key)
     }
 
+    fn paged_commitment_ids(canister_id: Principal, descending: bool, raw_icp: bool) -> Vec<u64> {
+        let mut cursor = None;
+        let mut ids = Vec::new();
+        loop {
+            let args = crate::GetCommitmentHistoryArgs {
+                canister_id,
+                start_after_tx_id: cursor,
+                limit: Some(1),
+                descending: Some(descending),
+            };
+            let page = if raw_icp {
+                crate::read_model::get_raw_icp_commitment_history(args)
+            } else {
+                crate::read_model::get_commitment_history(args)
+            };
+            ids.extend(page.items.iter().map(|item| item.tx_id));
+            let Some(next) = page.next_start_after_tx_id else {
+                break;
+            };
+            cursor = Some(next);
+        }
+        ids
+    }
+
+    fn paged_neuron_commitment_ids(neuron_id: u64, descending: bool) -> Vec<u64> {
+        let mut cursor = None;
+        let mut ids = Vec::new();
+        loop {
+            let page = crate::read_model::get_neuron_commitment_history(
+                crate::GetNeuronCommitmentHistoryArgs {
+                    neuron_id,
+                    start_after_tx_id: cursor,
+                    limit: Some(1),
+                    descending: Some(descending),
+                },
+            );
+            ids.extend(page.items.iter().map(|item| item.tx_id));
+            let Some(next) = page.next_start_after_tx_id else {
+                break;
+            };
+            cursor = Some(next);
+        }
+        ids
+    }
+
     #[async_trait]
     impl IndexClient for MockIndexClient {
         async fn get_account_identifier_transactions(
@@ -294,6 +465,26 @@ mod tests {
                         oldest_tx_id: None,
                     })
                 })
+        }
+    }
+
+    #[async_trait]
+    impl IndexClient for DelayedIndexClient {
+        async fn get_account_identifier_transactions(
+            &self,
+            _account_identifier: String,
+            _start: Option<u64>,
+            _max_results: u64,
+        ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            *self.calls.lock().unwrap() += 1;
+            let receiver = {
+                self.response
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("one delayed response")
+            };
+            receiver.await.expect("delayed sender must resolve")
         }
     }
 
@@ -913,6 +1104,7 @@ mod tests {
                 &sns_root,
                 &governance,
                 &xrc,
+                &|| now_secs,
             ))
             .unwrap();
         }
@@ -1053,6 +1245,7 @@ mod tests {
             &sns_root,
             &governance,
             &xrc,
+            &|| 123,
         ))
         .unwrap();
 
@@ -1072,6 +1265,168 @@ mod tests {
                 Some(222)
             );
         });
+    }
+
+    #[test]
+    fn unsupported_route_pagination_does_not_block_unrelated_scheduled_maintenance() {
+        for (route_index, route_name) in [(0_u64, "output"), (1_u64, "rewards")] {
+            let _staking_id = configure_state(10);
+            let initial_target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+            let sweep_target = principal("acjuz-liaaa-aaaar-qb4qq-cai");
+            state::with_state_mut(|st| {
+                st.config.enable_sns_tracking = true;
+                st.config.cycles_interval_seconds = 10;
+                st.config.max_canisters_per_cycles_tick = 10;
+                st.last_sns_discovery_ts = 0;
+                st.last_completed_cycles_sweep_ts = 0;
+                st.commitment_index_lock_expires_at_ts = Some(999);
+                st.commitment_index_lock_owner =
+                    Some(crate::state::CommitmentIndexLeaseOwner::Scheduled);
+                st.active_route_sweep = Some(ActiveRouteSweep {
+                    started_at_ts_nanos: 123_000_000_000,
+                    next_index: route_index,
+                });
+                st.output_route_index_descending = Some(route_index != 0);
+                st.rewards_route_index_descending = Some(route_index != 1);
+                st.last_indexed_output_tx_id = Some(41);
+                st.last_indexed_rewards_tx_id = Some(42);
+                st.total_output_e8s = Some(410);
+                st.total_rewards_e8s = Some(420);
+                st.active_cycles_sweep = Some(ActiveCyclesSweep {
+                    started_at_ts_nanos: 122_000_000_000,
+                    canisters: vec![sweep_target],
+                    next_index: 0,
+                });
+                st.distinct_canisters.insert(initial_target);
+                st.distinct_canisters.insert(sweep_target);
+                st.canister_tracking_reasons.insert(
+                    initial_target,
+                    std::iter::once(CanisterTrackingReason::MemoCommitment).collect(),
+                );
+                st.canister_tracking_reasons.insert(
+                    sweep_target,
+                    std::iter::once(CanisterTrackingReason::MemoCommitment).collect(),
+                );
+                st.commitment_history.insert(
+                    initial_target,
+                    vec![crate::state::CommitmentSample {
+                        tx_id: 10,
+                        timestamp_nanos: Some(10),
+                        amount_e8s: 150,
+                        counts_toward_faucet: true,
+                    }],
+                );
+                st.commitment_history.insert(
+                    sweep_target,
+                    vec![crate::state::CommitmentSample {
+                        tx_id: 11,
+                        timestamp_nanos: Some(11),
+                        amount_e8s: 150,
+                        counts_toward_faucet: true,
+                    }],
+                );
+                st.initial_cycles_probe_queue.push(initial_target);
+            });
+
+            let index = MockIndexClient::new(Vec::new());
+            let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+            let sns_wasm = MockSnsWasmClient::new(vec![Ok(
+                crate::clients::sns_wasm::ListDeployedSnsesResponse {
+                    instances: Vec::new(),
+                },
+            )]);
+            let sns_root = MockSnsRootClient::new(BTreeMap::new());
+            let governance = RecordingGovernanceClient::new();
+            let xrc = MockXrcClient::success(720_000_000, 8, 9_900);
+
+            block_on(run_main_tick_with_clients(
+                123_000_000_000,
+                123,
+                &index,
+                &cycles_probe,
+                &sns_wasm,
+                &sns_root,
+                &governance,
+                &xrc,
+                &|| 123,
+            ))
+            .unwrap_or_else(|err| panic!("{route_name} degradation aborted the tick: {err}"));
+
+            assert!(
+                index.calls().is_empty(),
+                "invalid {route_name} route must not call Index"
+            );
+            assert_eq!(sns_wasm.calls(), 1, "due SNS discovery must remain live");
+            assert_eq!(
+                cycles_probe.blackhole_targets(),
+                vec![initial_target, sweep_target],
+                "initial and active-sweep cycles probes must remain live",
+            );
+            assert!(
+                state::with_state(crate::read_model::route_index_fault)
+                    .as_deref()
+                    .is_some_and(|message| message.contains(route_name)),
+                "the degraded route must be visible in public status",
+            );
+            state::with_state(|st| {
+                assert_eq!(st.last_indexed_output_tx_id, Some(41));
+                assert_eq!(st.last_indexed_rewards_tx_id, Some(42));
+                assert_eq!(st.total_output_e8s, Some(410));
+                assert_eq!(st.total_rewards_e8s, Some(420));
+                assert_eq!(
+                    st.active_route_sweep.as_ref().map(|sweep| sweep.next_index),
+                    Some(route_index),
+                    "the degraded route must remain selected for a later retry",
+                );
+                assert_eq!(
+                    if route_index == 0 {
+                        st.output_route_index_descending
+                    } else {
+                        st.rewards_route_index_descending
+                    },
+                    Some(false),
+                    "unsupported state must remain observable",
+                );
+                assert!(st.initial_cycles_probe_queue.is_empty());
+                assert!(st.active_cycles_sweep.is_none());
+            });
+
+            state::with_state_mut(|st| {
+                st.active_cycles_sweep = Some(ActiveCyclesSweep {
+                    started_at_ts_nanos: 132_000_000_000,
+                    canisters: vec![initial_target, sweep_target],
+                    next_index: 0,
+                });
+            });
+            block_on(run_main_tick_with_clients(
+                133_000_000_000,
+                133,
+                &index,
+                &cycles_probe,
+                &sns_wasm,
+                &sns_root,
+                &governance,
+                &xrc,
+                &|| 133,
+            ))
+            .unwrap_or_else(|err| {
+                panic!("later tick remained blocked by {route_name} degradation: {err}")
+            });
+            assert!(index.calls().is_empty());
+            assert_eq!(sns_wasm.calls(), 2, "later SNS discovery must remain live");
+            assert_eq!(
+                cycles_probe.blackhole_targets().len(),
+                4,
+                "the later due sweep must probe both still-tracked canisters",
+            );
+            state::with_state(|st| {
+                assert_eq!(
+                    st.active_route_sweep.as_ref().map(|sweep| sweep.next_index),
+                    Some(route_index),
+                );
+                assert_eq!(st.last_completed_cycles_sweep_ts, 133);
+            });
+        }
     }
 
     #[test]
@@ -1119,6 +1474,7 @@ mod tests {
             &sns_root,
             &governance,
             &xrc,
+            &|| 10_000,
         ))
         .unwrap();
         state::with_state(|st| {
@@ -2059,7 +2415,10 @@ mod tests {
         let calls = mock.calls();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].1, None);
-        assert_eq!(calls[1].1, Some(10));
+        assert_eq!(
+            calls[1].1, None,
+            "newest-first catch-up samples the current head before walking older pages"
+        );
 
         state::with_state(|st| {
             let recent = st.recent_commitments.as_ref().unwrap();
@@ -2071,7 +2430,854 @@ mod tests {
     }
 
     #[test]
-    fn ascending_commitment_route_completeness_covers_genesis_including_empty_history() {
+    fn empty_and_single_initial_pages_persist_the_configured_newest_first_contract() {
+        for page in [
+            index_page(Vec::new()),
+            index_page(vec![IndexTransactionWithId {
+                id: 42,
+                transaction: IndexTransaction {
+                    memo: 0,
+                    icrc1_memo: None,
+                    operation: IndexOperation::Mint {
+                        to: "irrelevant".to_string(),
+                        amount: Tokens::new(1),
+                    },
+                    created_at_time: None,
+                    timestamp: None,
+                },
+            }]),
+        ] {
+            configure_state(1);
+            let index = MockIndexClient::new(vec![page]);
+            block_on(process_commitment_indexing(&index, 200)).unwrap();
+            assert_eq!(index.calls()[0].1, None);
+            assert_eq!(
+                state::with_state(|st| st.staking_index_descending),
+                Some(true)
+            );
+        }
+    }
+
+    #[test]
+    fn persisted_ascending_staking_state_fails_closed_without_an_index_call() {
+        let _staking_id = configure_state(1);
+        state::with_state_mut(|st| {
+            st.last_indexed_staking_tx_id = Some(42);
+            st.oldest_indexed_staking_tx_id = Some(42);
+            st.staking_index_descending = Some(false);
+            st.staking_backfill_complete = Some(true);
+            st.commitment_route_rollups_complete_from_genesis = Some(true);
+        });
+        let index = MockIndexClient::new(vec![index_page(Vec::new())]);
+        let error = block_on(process_commitment_indexing(&index, 200)).unwrap_err();
+        assert!(error.contains("unsupported persisted ascending"));
+        assert!(index.calls().is_empty());
+        state::with_state(|st| {
+            assert_eq!(st.last_indexed_staking_tx_id, Some(42));
+            assert_eq!(st.staking_index_descending, Some(false));
+            assert_eq!(
+                st.commitment_route_rollups_complete_from_genesis,
+                Some(false)
+            );
+            assert!(st.commitment_index_fault.is_some());
+        });
+    }
+
+    #[test]
+    fn persisted_ascending_output_and_rewards_state_fail_closed_without_index_calls() {
+        configure_state(1);
+        let index = MockIndexClient::new(vec![index_page(Vec::new())]);
+        state::with_state_mut(|st| {
+            st.output_route_index_descending = Some(false);
+            st.active_route_sweep = Some(ActiveRouteSweep {
+                started_at_ts_nanos: 100,
+                next_index: 0,
+            });
+        });
+        let output_error = block_on(process_route_indexing(100, 200, &index)).unwrap_err();
+        assert!(output_error.contains("unsupported persisted ascending output"));
+        assert!(index.calls().is_empty());
+
+        state::with_state_mut(|st| {
+            st.output_route_index_descending = Some(true);
+            st.rewards_route_index_descending = Some(false);
+            st.active_route_sweep = Some(ActiveRouteSweep {
+                started_at_ts_nanos: 100,
+                next_index: 1,
+            });
+        });
+        let rewards_error = block_on(process_route_indexing(100, 201, &index)).unwrap_err();
+        assert!(rewards_error.contains("unsupported persisted ascending rewards"));
+        assert!(index.calls().is_empty());
+    }
+
+    #[test]
+    fn descending_commitment_catch_up_resumes_unfinished_interval_before_new_head_scan() {
+        let staking_id = configure_state(1);
+        let canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.last_indexed_staking_tx_id = Some(10);
+            st.oldest_indexed_staking_tx_id = Some(1);
+            st.staking_index_descending = Some(true);
+            st.staking_backfill_complete = Some(true);
+            st.commitment_route_rollups_complete_from_genesis = Some(true);
+        });
+
+        let newest_page = index_page(
+            (512..=1_011)
+                .rev()
+                .map(|id| {
+                    transfer_to_staking_tx(id, &staking_id, canister, 100, id * 1_000_000_000)
+                })
+                .collect(),
+        );
+        block_on(process_commitment_indexing(
+            &MockIndexClient::new(vec![newest_page]),
+            200,
+        ))
+        .unwrap();
+        state::with_state_mut(|st| st.config.max_index_pages_per_tick = 2);
+
+        let older_page = index_page(
+            (12..=511)
+                .rev()
+                .map(|id| {
+                    transfer_to_staking_tx(id, &staking_id, canister, 100, id * 1_000_000_000)
+                })
+                .collect(),
+        );
+        let oldest_page = index_page(vec![transfer_to_staking_tx(
+            11,
+            &staking_id,
+            canister,
+            100,
+            11_000_000_000,
+        )]);
+        let resumed = MockIndexClient::new(vec![older_page, oldest_page]);
+        block_on(process_commitment_indexing(&resumed, 201)).unwrap();
+
+        assert_eq!(resumed.calls()[0].1, Some(512));
+        assert_eq!(
+            route_rollup(crate::CommitmentRoute::CyclesTopUp {
+                canister_id: canister,
+            }),
+            state::CommitmentRouteRollup {
+                qualifying_commitment_count: 1_001,
+                total_qualifying_committed_e8s: 100_100,
+            }
+        );
+        let ascending = paged_commitment_ids(canister, false, false);
+        assert_eq!(ascending, (912..=1_011).collect::<Vec<_>>());
+        assert_eq!(
+            paged_commitment_ids(canister, true, false),
+            ascending.iter().rev().copied().collect::<Vec<_>>()
+        );
+        state::with_state(|st| {
+            assert_eq!(
+                st.per_canister_meta
+                    .get(&canister)
+                    .and_then(|meta| meta.last_commitment_ts),
+                Some(1_011),
+            );
+        });
+
+        let restored = state::restore_state_from_stable().expect("catch-up state reloads");
+        state::set_state_root_only(restored);
+        assert_eq!(
+            paged_commitment_ids(canister, false, false),
+            (912..=1_011).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn every_endowment_history_retains_newest_ids_for_all_configured_caps() {
+        let cycles = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let raw = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
+        let processing_order: Vec<u64> = (512..=1_011)
+            .chain(12..=511)
+            .chain(std::iter::once(11))
+            .collect();
+
+        for cap in [1, 2, 100] {
+            let staking_id = configure_state(1);
+            state::with_state_mut(|st| st.config.max_commitment_entries_per_canister = cap);
+            let _batch = state::begin_persistence_batch();
+            for tx_id in &processing_order {
+                apply_indexed_commitment_tx(
+                    &transfer_to_staking_tx(
+                        *tx_id,
+                        &staking_id,
+                        cycles,
+                        100,
+                        tx_id * 1_000_000_000,
+                    ),
+                    &staking_id,
+                    100,
+                    2_000,
+                );
+                apply_indexed_commitment_tx(
+                    &transfer_to_staking_memo_tx(
+                        2_000 + tx_id,
+                        &staking_id,
+                        format!("{}.", raw.to_text()).into_bytes(),
+                        100,
+                        tx_id * 1_000_000_000,
+                    ),
+                    &staking_id,
+                    100,
+                    2_000,
+                );
+                apply_indexed_commitment_tx(
+                    &transfer_to_staking_memo_tx(
+                        4_000 + tx_id,
+                        &staking_id,
+                        b"42.memo".to_vec(),
+                        100,
+                        tx_id * 1_000_000_000,
+                    ),
+                    &staking_id,
+                    100,
+                    2_000,
+                );
+            }
+            drop(_batch);
+
+            let retained = u64::from(cap.min(1_001));
+            let expected_cycles = (1_012 - retained..=1_011).collect::<Vec<_>>();
+            let expected_raw = expected_cycles
+                .iter()
+                .map(|tx_id| tx_id + 2_000)
+                .collect::<Vec<_>>();
+            let expected_neuron = expected_cycles
+                .iter()
+                .map(|tx_id| tx_id + 4_000)
+                .collect::<Vec<_>>();
+            assert_eq!(paged_commitment_ids(cycles, false, false), expected_cycles);
+            assert_eq!(paged_commitment_ids(raw, false, true), expected_raw);
+            assert_eq!(paged_neuron_commitment_ids(42, false), expected_neuron);
+            assert_eq!(
+                paged_commitment_ids(cycles, true, false),
+                expected_cycles.iter().rev().copied().collect::<Vec<_>>()
+            );
+            assert_eq!(
+                paged_commitment_ids(raw, true, true),
+                expected_raw.iter().rev().copied().collect::<Vec<_>>()
+            );
+            assert_eq!(
+                paged_neuron_commitment_ids(42, true),
+                expected_neuron.iter().rev().copied().collect::<Vec<_>>()
+            );
+            for route in [
+                crate::CommitmentRoute::CyclesTopUp {
+                    canister_id: cycles,
+                },
+                crate::CommitmentRoute::RawIcp {
+                    destination_canister_id: raw,
+                    memo: Vec::new(),
+                },
+                crate::CommitmentRoute::NeuronStake {
+                    neuron_id: 42,
+                    memo: Some(b"memo".to_vec()),
+                },
+            ] {
+                assert_eq!(route_rollup(route).qualifying_commitment_count, 1_001);
+            }
+
+            let restored = state::restore_state_from_stable().expect("bounded histories reload");
+            state::set_state_root_only(restored);
+            assert_eq!(paged_commitment_ids(cycles, false, false), expected_cycles);
+            assert_eq!(paged_commitment_ids(raw, false, true), expected_raw);
+            assert_eq!(paged_neuron_commitment_ids(42, false), expected_neuron);
+        }
+    }
+
+    #[test]
+    fn endowment_refresh_commits_all_endowment_routes_before_returning() {
+        let staking_id = configure_state(10);
+        let cycles_target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let raw_target = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
+        let page = index_page(vec![
+            transfer_to_staking_tx(9, &staking_id, cycles_target, 101, 9),
+            transfer_to_staking_tx(8, &staking_id, cycles_target, 100, 8),
+            transfer_to_staking_tx(7, &staking_id, cycles_target, 99, 7),
+            transfer_to_staking_memo_tx(
+                6,
+                &staking_id,
+                format!("{}.", raw_target.to_text()).into_bytes(),
+                101,
+                6,
+            ),
+            transfer_to_staking_memo_tx(
+                5,
+                &staking_id,
+                format!("{}.", raw_target.to_text()).into_bytes(),
+                100,
+                5,
+            ),
+            transfer_to_staking_memo_tx(
+                4,
+                &staking_id,
+                format!("{}.", raw_target.to_text()).into_bytes(),
+                99,
+                4,
+            ),
+            transfer_to_staking_memo_tx(3, &staking_id, b"42.memo".to_vec(), 101, 3),
+            transfer_to_staking_memo_tx(2, &staking_id, b"42.memo".to_vec(), 100, 2),
+            transfer_to_staking_memo_tx(1, &staking_id, b"42.memo".to_vec(), 99, 1),
+        ]);
+        let index = MockIndexClient::new(vec![page]);
+
+        let response = block_on(refresh_endowments_with_client(&index, 100));
+
+        assert_eq!(response.outcome, crate::RefreshEndowmentsOutcome::Updated);
+        assert_eq!(response.progress.newly_indexed_qualifying_endowments, 6);
+        assert!(response.progress.complete_from_genesis);
+        assert_eq!(
+            endowment_transaction_status(9).status,
+            crate::ExpectedEndowmentStatus::KnownIndexed
+        );
+        let summaries =
+            crate::get_commitment_route_summaries(crate::GetCommitmentRouteSummariesArgs {
+                routes: vec![
+                    crate::CommitmentRoute::CyclesTopUp {
+                        canister_id: cycles_target,
+                    },
+                    crate::CommitmentRoute::RawIcp {
+                        destination_canister_id: raw_target,
+                        memo: Vec::new(),
+                    },
+                    crate::CommitmentRoute::NeuronStake {
+                        neuron_id: 42,
+                        memo: Some(b"memo".to_vec()),
+                    },
+                ],
+            });
+        assert!(summaries.complete_from_genesis);
+        assert_eq!(summaries.revision, Some(response.progress.revision));
+        assert_eq!(
+            summaries
+                .items
+                .iter()
+                .map(|item| item.total_qualifying_committed_e8s)
+                .collect::<Vec<_>>(),
+            vec![201, 201, 201]
+        );
+        assert!(summaries
+            .items
+            .iter()
+            .all(|item| item.qualifying_commitment_count == 2));
+        state::with_state(|st| {
+            assert!(st.commitment_history.is_empty());
+            assert!(st.raw_icp_commitment_history.is_empty());
+            assert!(st.neuron_commitment_history.is_empty());
+            assert_eq!(
+                st.recent_under_threshold_commitments
+                    .as_ref()
+                    .unwrap()
+                    .len(),
+                2
+            );
+            assert_eq!(
+                st.recent_under_threshold_neuron_commitments
+                    .as_ref()
+                    .unwrap()
+                    .len(),
+                1
+            );
+        });
+    }
+
+    #[test]
+    fn endowment_refresh_commits_at_most_one_page_and_finishes_the_pinned_interval_before_new_arrivals(
+    ) {
+        let staking_id = configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.last_indexed_staking_tx_id = Some(10);
+            st.oldest_indexed_staking_tx_id = Some(1);
+            st.staking_index_descending = Some(true);
+            st.staking_backfill_complete = Some(true);
+            st.commitment_route_rollups_complete_from_genesis = Some(true);
+        });
+
+        let first = MockIndexClient::new(vec![index_page(
+            (512..=1_011)
+                .rev()
+                .map(|id| transfer_to_staking_tx(id, &staking_id, target, 100, id))
+                .collect(),
+        )]);
+        let first_response = block_on(refresh_endowments_with_client(&first, 100));
+        assert_eq!(first.calls().len(), 1);
+        assert_eq!(
+            first_response.outcome,
+            crate::RefreshEndowmentsOutcome::IncompleteProgress
+        );
+        assert_eq!(
+            first_response.progress.newly_indexed_qualifying_endowments,
+            500
+        );
+        assert_eq!(
+            first_response.progress.committed_head_staking_tx_id,
+            Some(10)
+        );
+        assert_eq!(
+            first_response.progress.observed_head_staking_tx_id,
+            Some(1_011)
+        );
+        assert_eq!(first_response.progress.next_staking_start_tx_id, Some(512));
+        assert_eq!(
+            endowment_transaction_status(11).status,
+            crate::ExpectedEndowmentStatus::NotYetObserved,
+            "an ID inside the unread part of a pinned interval remains pending"
+        );
+
+        // Transaction 1,012 arrives after the interval was pinned. The next
+        // accepted request must continue below 512 instead of restarting at it.
+        let second = MockIndexClient::new(vec![index_page(
+            (12..=511)
+                .rev()
+                .map(|id| transfer_to_staking_tx(id, &staking_id, target, 100, id))
+                .collect(),
+        )]);
+        let second_response = block_on(refresh_endowments_with_client(&second, 160));
+        assert_eq!(second.calls()[0].1, Some(512));
+        assert_eq!(
+            second_response.outcome,
+            crate::RefreshEndowmentsOutcome::IncompleteProgress
+        );
+        assert_eq!(
+            second_response.progress.newly_indexed_qualifying_endowments,
+            500
+        );
+        assert_eq!(second_response.progress.next_staking_start_tx_id, Some(12));
+
+        let third = MockIndexClient::new(vec![index_page(vec![transfer_to_staking_tx(
+            11,
+            &staking_id,
+            target,
+            100,
+            11,
+        )])]);
+        let third_response = block_on(refresh_endowments_with_client(&third, 220));
+        assert_eq!(third.calls()[0].1, Some(12));
+        assert_eq!(
+            third_response.outcome,
+            crate::RefreshEndowmentsOutcome::Updated
+        );
+        assert_eq!(
+            third_response.progress.committed_head_staking_tx_id,
+            Some(1_011)
+        );
+        assert!(third_response.progress.complete_from_genesis);
+
+        let fourth = MockIndexClient::new(vec![index_page(vec![
+            transfer_to_staking_tx(1_012, &staking_id, target, 100, 1_012),
+            transfer_to_staking_tx(1_011, &staking_id, target, 100, 1_011),
+        ])]);
+        let fourth_response = block_on(refresh_endowments_with_client(&fourth, 280));
+        assert_eq!(fourth.calls()[0].1, None);
+        assert_eq!(
+            fourth_response.outcome,
+            crate::RefreshEndowmentsOutcome::Updated
+        );
+        assert_eq!(
+            fourth_response.progress.committed_head_staking_tx_id,
+            Some(1_012)
+        );
+        assert_eq!(
+            route_rollup(crate::CommitmentRoute::CyclesTopUp {
+                canister_id: target,
+            }),
+            state::CommitmentRouteRollup {
+                qualifying_commitment_count: 1_002,
+                total_qualifying_committed_e8s: 100_200,
+            }
+        );
+    }
+
+    #[test]
+    fn descending_endowment_refresh_preserves_a_latched_fault_and_reports_partial_success() {
+        let staking_id = configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let fault = state::CommitmentIndexFault {
+            observed_at_ts: 50,
+            last_cursor_tx_id: Some(10),
+            offending_tx_id: 9,
+            message: "operator review required".into(),
+        };
+        state::with_state_mut(|st| {
+            st.last_indexed_staking_tx_id = Some(10);
+            st.oldest_indexed_staking_tx_id = Some(1);
+            st.staking_index_descending = Some(true);
+            st.staking_backfill_complete = Some(true);
+            st.commitment_route_rollups_complete_from_genesis = Some(true);
+            st.commitment_index_fault = Some(fault.clone());
+        });
+        let index = MockIndexClient::new(vec![index_page(vec![
+            transfer_to_staking_tx(50_000, &staking_id, target, 100, 50_000),
+            transfer_to_staking_tx(10, &staking_id, target, 100, 10),
+        ])]);
+
+        let response = block_on(refresh_endowments_with_client(&index, 100));
+
+        assert_eq!(
+            response.outcome,
+            crate::RefreshEndowmentsOutcome::IncompleteProgress
+        );
+        assert_eq!(response.progress.newly_indexed_qualifying_endowments, 1);
+        assert_eq!(response.progress.commitment_index_fault, Some(fault));
+        assert!(!response.progress.complete_from_genesis);
+        assert_eq!(response.progress.committed_head_staking_tx_id, Some(50_000));
+    }
+
+    #[test]
+    fn endowment_refresh_denials_are_cheap_and_do_not_slide_backoff() {
+        let _staking_id = configure_state(10);
+        let first = MockIndexClient::new(vec![index_page(Vec::new())]);
+        let response = block_on(refresh_endowments_with_client(&first, 100));
+        assert_eq!(
+            response.outcome,
+            crate::RefreshEndowmentsOutcome::NoQualifyingChange
+        );
+        assert_eq!(response.progress.retry_after_ts, Some(160));
+        assert_eq!(first.calls().len(), 1);
+
+        let denied = MockIndexClient::new(Vec::new());
+        let root_before_denials = candid::encode_one(
+            state::restore_state_from_stable().expect("accepted attempt persisted root state"),
+        )
+        .unwrap();
+        for now_secs in [101, 120, 159] {
+            let response = block_on(refresh_endowments_with_client(&denied, now_secs));
+            assert_eq!(
+                response.outcome,
+                crate::RefreshEndowmentsOutcome::RateLimited
+            );
+            assert_eq!(response.progress.retry_after_ts, Some(160));
+        }
+        assert!(denied.calls().is_empty());
+        assert_eq!(
+            candid::encode_one(
+                state::restore_state_from_stable().expect("denials preserve stable root state")
+            )
+            .unwrap(),
+            root_before_denials,
+            "update-level denials create no caller/transaction records or stable-root writes",
+        );
+
+        let second = MockIndexClient::new(vec![index_page(Vec::new())]);
+        let response = block_on(refresh_endowments_with_client(&second, 160));
+        assert_eq!(
+            response.outcome,
+            crate::RefreshEndowmentsOutcome::NoQualifyingChange
+        );
+        assert_eq!(response.progress.retry_after_ts, Some(280));
+        assert_eq!(second.calls().len(), 1);
+    }
+
+    #[test]
+    fn busy_and_rate_limited_refreshes_skip_the_index() {
+        let _staking_id = configure_state(10);
+        let scheduled =
+            CommitmentIndexGuard::acquire(100, state::CommitmentIndexLeaseOwner::Scheduled)
+                .unwrap();
+        let index = MockIndexClient::new(Vec::new());
+        let busy = block_on(refresh_endowments_with_client(&index, 101));
+        assert_eq!(busy.outcome, crate::RefreshEndowmentsOutcome::Busy);
+        assert!(index.calls().is_empty());
+        drop(scheduled);
+
+        state::with_state_mut(|st| st.endowment_refresh_next_allowed_ts = 200);
+        let rate_limited = block_on(refresh_endowments_with_client(&index, 150));
+        assert_eq!(
+            rate_limited.outcome,
+            crate::RefreshEndowmentsOutcome::RateLimited
+        );
+        assert!(index.calls().is_empty());
+    }
+
+    #[test]
+    fn one_refresh_reserves_global_admission_from_concurrent_callers() {
+        let _staking_id = configure_state(10);
+        let (first_index, sender) = DelayedIndexClient::new();
+        let mut first = Box::pin(refresh_endowments_with_client(&first_index, 100));
+        assert!(first.as_mut().now_or_never().is_none());
+        assert_eq!(*first_index.calls.lock().unwrap(), 1);
+
+        let second_index = MockIndexClient::new(Vec::new());
+        let second = block_on(refresh_endowments_with_client(&second_index, 100));
+        assert_eq!(second.outcome, crate::RefreshEndowmentsOutcome::Busy);
+        assert!(second_index.calls().is_empty());
+
+        sender.send(Ok(index_page(Vec::new()))).unwrap();
+        let completed = block_on(first);
+        assert_eq!(
+            completed.outcome,
+            crate::RefreshEndowmentsOutcome::NoQualifyingChange
+        );
+        assert_eq!(*first_index.calls.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn transaction_status_query_distinguishes_invalid_pending_and_unretained_evidence() {
+        let staking_id = configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let index = MockIndexClient::new(vec![index_page(vec![
+            transfer_to_staking_memo_tx(100, &staking_id, b"invalid".to_vec(), 100, 100),
+            transfer_to_staking_tx(99, &staking_id, target, 100, 99),
+        ])]);
+        let _ = block_on(refresh_endowments_with_client(&index, 100));
+        assert_eq!(
+            endowment_transaction_status(100).status,
+            crate::ExpectedEndowmentStatus::ObservedNotQualifying
+        );
+
+        assert_eq!(
+            endowment_transaction_status(101).status,
+            crate::ExpectedEndowmentStatus::NotYetObserved
+        );
+        assert_eq!(
+            endowment_transaction_status(98).status,
+            crate::ExpectedEndowmentStatus::NotFoundInRetainedEvidence,
+            "a larger observed global ID is not evidence that the hinted transfer qualified"
+        );
+    }
+
+    #[test]
+    fn endowment_refresh_backoff_caps_and_failed_outcalls_consume_attempts() {
+        let _staking_id = configure_state(10);
+        let schedule = [
+            (100, 160),
+            (160, 280),
+            (280, 520),
+            (520, 1_000),
+            (1_000, 1_600),
+            (1_600, 2_200),
+        ];
+        for (now_secs, expected_retry) in schedule {
+            let index = MockIndexClient::new(vec![index_page(Vec::new())]);
+            let response = block_on(refresh_endowments_with_client(&index, now_secs));
+            assert_eq!(response.progress.retry_after_ts, Some(expected_retry));
+            assert_eq!(index.calls().len(), 1);
+        }
+
+        let failed = MockIndexClient::scripted(vec![Err(crate::clients::ClientError::Call(
+            "upstream unavailable".into(),
+        ))]);
+        let response = block_on(refresh_endowments_with_client(&failed, 2_200));
+        assert!(matches!(
+            response.outcome,
+            crate::RefreshEndowmentsOutcome::UpstreamFailure { .. }
+        ));
+        assert_eq!(response.progress.retry_after_ts, Some(2_800));
+        assert_eq!(failed.calls().len(), 1);
+
+        state::with_state_mut(|st| st.endowment_refresh_next_allowed_ts = 0);
+        let unicode_failure = MockIndexClient::scripted(vec![Err(
+            crate::clients::ClientError::Call("\u{1f6a8}".repeat(600)),
+        )]);
+        let response = block_on(refresh_endowments_with_client(&unicode_failure, 3_000));
+        let crate::RefreshEndowmentsOutcome::UpstreamFailure { message } = response.outcome else {
+            panic!("expected bounded upstream failure")
+        };
+        assert!(
+            message.len() <= 512,
+            "diagnostics are bounded in encoded bytes"
+        );
+        assert!(message.is_char_boundary(message.len()));
+    }
+
+    #[test]
+    fn busy_endowment_refresh_is_cheap_and_does_not_reserve_cooldown() {
+        let _staking_id = configure_state(10);
+        let scheduled =
+            CommitmentIndexGuard::acquire(100, state::CommitmentIndexLeaseOwner::Scheduled)
+                .unwrap();
+        let denied = MockIndexClient::new(Vec::new());
+        let response = block_on(refresh_endowments_with_client(&denied, 101));
+        assert_eq!(response.outcome, crate::RefreshEndowmentsOutcome::Busy);
+        assert!(denied.calls().is_empty());
+        assert_eq!(
+            state::with_state(|st| st.endowment_refresh_next_allowed_ts),
+            0
+        );
+        drop(scheduled);
+    }
+
+    #[test]
+    fn stale_endowment_refresh_callback_cannot_commit_or_release_the_timer_lease() {
+        let staking_id = configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let (index, sender) = DelayedIndexClient::new();
+        let mut refresh = Box::pin(refresh_endowments_with_client(&index, 100));
+        assert!(refresh.as_mut().now_or_never().is_none());
+        assert_eq!(*index.calls.lock().unwrap(), 1);
+
+        let scheduled =
+            CommitmentIndexGuard::acquire(101, state::CommitmentIndexLeaseOwner::Scheduled)
+                .unwrap();
+        sender
+            .send(Ok(index_page(vec![transfer_to_staking_tx(
+                1,
+                &staking_id,
+                target,
+                100,
+                1,
+            )])))
+            .unwrap();
+        let response = block_on(refresh);
+        assert_eq!(response.outcome, crate::RefreshEndowmentsOutcome::Busy);
+        assert_eq!(
+            route_rollup(crate::CommitmentRoute::CyclesTopUp {
+                canister_id: target,
+            }),
+            state::CommitmentRouteRollup::default()
+        );
+        assert!(scheduled.token().is_current());
+        drop(scheduled);
+    }
+
+    #[test]
+    fn scheduled_indexing_preempts_endowment_refresh_lease_without_stale_release() {
+        let _staking_id = configure_state(10);
+        let refresh =
+            CommitmentIndexGuard::acquire(100, state::CommitmentIndexLeaseOwner::EndowmentRefresh)
+                .unwrap();
+        let refresh_token = refresh.token();
+        let timer = CommitmentIndexGuard::acquire(101, state::CommitmentIndexLeaseOwner::Scheduled)
+            .unwrap();
+        assert!(!refresh_token.is_current());
+        assert!(timer.token().is_current());
+
+        drop(refresh);
+        assert!(timer.token().is_current());
+        drop(timer);
+        state::with_state(|st| {
+            assert_eq!(st.commitment_index_lock_expires_at_ts, Some(0));
+            assert_eq!(st.commitment_index_lock_owner, None);
+        });
+    }
+
+    #[test]
+    fn lease_renewal_obeys_expiry_boundaries_and_cannot_touch_a_successor() {
+        configure_state(1);
+        let scheduled =
+            CommitmentIndexGuard::acquire(100, state::CommitmentIndexLeaseOwner::Scheduled)
+                .unwrap();
+        let original = scheduled.token();
+        let renewed = original.renew(174).unwrap();
+        assert!(!original.is_current());
+        assert!(renewed.is_current());
+        assert!(CommitmentIndexGuard::acquire(
+            248,
+            state::CommitmentIndexLeaseOwner::EndowmentRefresh
+        )
+        .is_none());
+
+        let successor =
+            CommitmentIndexGuard::acquire(249, state::CommitmentIndexLeaseOwner::EndowmentRefresh)
+                .expect("the exact expiry boundary permits stuck-owner recovery");
+        assert!(renewed.renew(249).is_err());
+        drop(scheduled);
+        assert!(successor.token().is_current());
+        drop(successor);
+    }
+
+    #[test]
+    fn scheduled_multi_page_indexing_renews_lease_at_page_boundaries() {
+        let staking_id = configure_state(2);
+        let canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let first_page = index_page(
+            (2..=(PAGE_SIZE + 1))
+                .rev()
+                .map(|id| transfer_to_staking_tx(id, &staking_id, canister, 100, id))
+                .collect(),
+        );
+        let second_page = index_page(vec![transfer_to_staking_tx(
+            1,
+            &staking_id,
+            canister,
+            100,
+            1,
+        )]);
+        let clock = Arc::new(AtomicU64::new(100));
+        let index =
+            LeaseClockIndexClient::new(vec![first_page, second_page], clock.clone(), 2, 160, 180);
+        let scheduled =
+            CommitmentIndexGuard::acquire(100, state::CommitmentIndexLeaseOwner::Scheduled)
+                .unwrap();
+
+        block_on(process_commitment_indexing_bounded(
+            &index,
+            100,
+            2,
+            Some(scheduled.token()),
+            &|| index.now(),
+        ))
+        .unwrap();
+
+        assert!(!index.refresh_acquired.load(Ordering::SeqCst));
+        assert_eq!(
+            state::with_state(|st| st.qualifying_commitment_count),
+            Some(PAGE_SIZE + 1)
+        );
+    }
+
+    #[test]
+    fn main_tick_acquires_scheduled_index_lease_after_delayed_xrc() {
+        let staking_id = configure_state(1);
+        let canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let clock = Arc::new(AtomicU64::new(100));
+        let index = LeaseClockIndexClient::new(
+            vec![
+                index_page(vec![transfer_to_staking_tx(
+                    1,
+                    &staking_id,
+                    canister,
+                    100,
+                    1,
+                )]),
+                index_page(Vec::new()),
+            ],
+            clock.clone(),
+            1,
+            191,
+            191,
+        );
+        let xrc = ClockAdvancingXrc { clock: &clock };
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(0);
+        let sns_wasm = MockSnsWasmClient::new(Vec::new());
+        let sns_root = MockSnsRootClient::new(BTreeMap::new());
+        let governance = RecordingGovernanceClient::new();
+
+        block_on(run_main_tick_with_clients(
+            100_000_000_000,
+            100,
+            &index,
+            &cycles_probe,
+            &sns_wasm,
+            &sns_root,
+            &governance,
+            &xrc,
+            &|| clock.load(Ordering::SeqCst),
+        ))
+        .unwrap();
+
+        assert!(!index.refresh_acquired.load(Ordering::SeqCst));
+        assert_eq!(
+            index.calls(),
+            2,
+            "route indexing continues after staking indexing"
+        );
+        assert_eq!(
+            state::with_state(|st| st.qualifying_commitment_count),
+            Some(1)
+        );
+        assert!(cycles_probe.blackhole_targets().contains(&canister));
+    }
+
+    #[test]
+    fn newest_first_commitment_route_completeness_covers_empty_genesis() {
         let _staking_id = configure_state(10);
         assert_eq!(
             state::with_state(|st| st.commitment_route_rollups_complete_from_genesis),
@@ -2095,7 +3301,7 @@ mod tests {
     }
 
     #[test]
-    fn ascending_route_completeness_and_rollups_resume_after_later_page_failure() {
+    fn newest_first_genesis_backfill_resumes_after_second_page_failure() {
         let staking_id = configure_state(2);
         state::with_state_mut(|st| st.config.max_commitment_entries_per_canister = 1);
         let canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
@@ -2105,11 +3311,12 @@ mod tests {
             })
             .unwrap();
         let first_page = GetAccountIdentifierTransactionsResponse {
-            balance: PAGE_SIZE * 150,
-            transactions: (1..=PAGE_SIZE)
+            balance: (PAGE_SIZE + 1) * 150,
+            transactions: (2..=(PAGE_SIZE + 1))
+                .rev()
                 .map(|tx_id| transfer_to_staking_tx(tx_id, &staking_id, canister, 150, tx_id))
                 .collect(),
-            oldest_tx_id: Some(1),
+            oldest_tx_id: Some(2),
         };
         let failing = MockIndexClient::scripted(vec![
             Ok(first_page),
@@ -2121,12 +3328,15 @@ mod tests {
         let err = block_on(process_commitment_indexing(&failing, 200)).unwrap_err();
         assert!(err.contains("transient second-page failure"));
         state::with_state(|st| {
-            assert_eq!(st.last_indexed_staking_tx_id, Some(PAGE_SIZE));
+            assert_eq!(st.last_indexed_staking_tx_id, Some(PAGE_SIZE + 1));
+            assert_eq!(st.oldest_indexed_staking_tx_id, Some(2));
             assert_eq!(
                 st.commitment_route_rollups_complete_from_genesis,
-                Some(true)
+                Some(false)
             );
-            assert_eq!(st.commitment_history.get(&canister).unwrap().len(), 1);
+            let history = st.commitment_history.get(&canister).unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].tx_id, PAGE_SIZE + 1);
         });
         assert_eq!(
             state::get_commitment_route_rollup(&route_key),
@@ -2135,15 +3345,12 @@ mod tests {
                 total_qualifying_committed_e8s: PAGE_SIZE * 150,
             }
         );
-        assert_eq!(failing.calls()[1].1, Some(PAGE_SIZE));
+        assert_eq!(failing.calls()[1].1, Some(2));
 
         let retry = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
             balance: (PAGE_SIZE + 1) * 150,
-            transactions: vec![
-                transfer_to_staking_tx(PAGE_SIZE, &staking_id, canister, 150, PAGE_SIZE),
-                transfer_to_staking_tx(PAGE_SIZE + 1, &staking_id, canister, 150, PAGE_SIZE + 1),
-            ],
-            oldest_tx_id: Some(PAGE_SIZE),
+            transactions: vec![transfer_to_staking_tx(1, &staking_id, canister, 150, 1)],
+            oldest_tx_id: Some(1),
         }]);
         block_on(process_commitment_indexing(&retry, 201)).unwrap();
 
@@ -2155,14 +3362,14 @@ mod tests {
             );
             assert_eq!(st.commitment_history.get(&canister).unwrap().len(), 1);
         });
-        assert_eq!(retry.calls()[0].1, Some(PAGE_SIZE));
+        assert_eq!(retry.calls()[0].1, Some(2));
         assert_eq!(
             state::get_commitment_route_rollup(&route_key),
             state::CommitmentRouteRollup {
                 qualifying_commitment_count: PAGE_SIZE + 1,
                 total_qualifying_committed_e8s: (PAGE_SIZE + 1) * 150,
             },
-            "the repeated cursor transaction must not be counted twice after pruning"
+            "the failed second-page request resumes below the durable oldest cursor"
         );
     }
 
@@ -2261,28 +3468,14 @@ mod tests {
         );
         state::set_state_root_only(restored);
         state::with_state_mut(|st| st.config.max_index_pages_per_tick = 2);
-        let second = MockIndexClient::new(vec![
-            GetAccountIdentifierTransactionsResponse {
-                balance: 0,
-                transactions: vec![transfer_to_staking_memo_tx(
-                    latest,
-                    &staking_id,
-                    raw_empty.clone(),
-                    150,
-                    latest,
-                )],
-                oldest_tx_id: Some(1),
-            },
-            GetAccountIdentifierTransactionsResponse {
-                balance: 0,
-                transactions: vec![
-                    transfer_to_staking_memo_tx(101, &staking_id, raw_empty.clone(), 200, 101),
-                    transfer_to_staking_memo_tx(100, &staking_id, raw_empty.clone(), 170, 100),
-                    transfer_to_staking_memo_tx(99, &staking_id, b"42.".to_vec(), 180, 99),
-                ],
-                oldest_tx_id: Some(99),
-            },
-        ]);
+        let second = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
+            balance: 0,
+            transactions: vec![
+                transfer_to_staking_memo_tx(100, &staking_id, raw_empty.clone(), 170, 100),
+                transfer_to_staking_memo_tx(99, &staking_id, b"42.".to_vec(), 180, 99),
+            ],
+            oldest_tx_id: Some(99),
+        }]);
         block_on(process_commitment_indexing(&second, 201)).unwrap();
         state::with_state(|st| {
             assert_eq!(st.staking_backfill_complete, Some(true));
@@ -2308,7 +3501,7 @@ mod tests {
                 qualifying_commitment_count: 3,
                 total_qualifying_committed_e8s: 520,
             },
-            "the oldest-cursor overlap was already pruned from retained history and must still be skipped"
+            "the exclusive Index cursor resumes immediately below the persisted oldest page"
         );
         assert_eq!(
             state::get_commitment_route_rollup(&neuron_key),
@@ -2402,6 +3595,175 @@ mod tests {
     }
 
     #[test]
+    fn descending_output_catch_up_uses_original_boundary_across_multiple_pages() {
+        let _staking_id = configure_state(3);
+        let (source, output) =
+            state::with_state(|st| (st.config.output_source_account, st.config.output_account));
+        let source_id = account_identifier_text_for_account(&source);
+        let output_id = account_identifier_text_for_account(&output);
+        state::with_state_mut(|st| {
+            st.last_indexed_output_tx_id = Some(10);
+            st.oldest_indexed_output_tx_id = Some(1);
+            st.output_route_index_descending = Some(true);
+            st.output_route_backfill_complete = Some(true);
+        });
+
+        let newest_page = index_page(
+            (512..=1_011)
+                .rev()
+                .map(|id| transfer_between_accounts_tx(id, &source_id, &output_id, 1, id))
+                .collect(),
+        );
+        let older_page = index_page(
+            (12..=511)
+                .rev()
+                .map(|id| transfer_between_accounts_tx(id, &source_id, &output_id, 1, id))
+                .collect(),
+        );
+        let oldest_page = index_page(vec![transfer_between_accounts_tx(
+            11, &source_id, &output_id, 1, 11,
+        )]);
+        let index = MockIndexClient::new(vec![newest_page, older_page, oldest_page]);
+
+        block_on(process_route_indexing(100, 200, &index)).unwrap();
+
+        assert_eq!(index.calls()[0].1, None);
+        assert_eq!(index.calls()[1].1, Some(512));
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(1_001));
+            assert_eq!(st.last_indexed_output_tx_id, Some(1_011));
+        });
+    }
+
+    #[test]
+    fn descending_output_catch_up_resumes_after_second_page_failure_and_restore() {
+        let _staking_id = configure_state(2);
+        let (source_id, output_id) = state::with_state(|st| {
+            (
+                account_identifier_text_for_account(&st.config.output_source_account),
+                account_identifier_text_for_account(&st.config.output_account),
+            )
+        });
+        state::with_state_mut(|st| {
+            st.total_output_e8s = Some(0);
+            st.last_indexed_output_tx_id = Some(10);
+            st.oldest_indexed_output_tx_id = Some(1);
+            st.output_route_index_descending = Some(true);
+            st.output_route_backfill_complete = Some(true);
+        });
+
+        let first_page = index_page(
+            (512..=1_011)
+                .rev()
+                .map(|id| transfer_between_accounts_tx(id, &source_id, &output_id, 1, id))
+                .collect(),
+        );
+        let failing = MockIndexClient::scripted(vec![
+            Ok(first_page),
+            Err(crate::clients::ClientError::Call(
+                "transient second output page failure".into(),
+            )),
+        ]);
+        let error = block_on(process_route_indexing(100, 200, &failing)).unwrap_err();
+        assert!(error.contains("transient second output page failure"));
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(500));
+            assert_eq!(st.last_indexed_output_tx_id, Some(10));
+            assert_eq!(
+                st.active_output_catch_up
+                    .as_ref()
+                    .and_then(|progress| progress.next_start_tx_id),
+                Some(512)
+            );
+        });
+
+        let restored = state::restore_state_from_stable().expect("output continuation persists");
+        state::set_state_root_only(restored);
+        let retry = MockIndexClient::new(vec![
+            index_page(
+                (12..=511)
+                    .rev()
+                    .map(|id| transfer_between_accounts_tx(id, &source_id, &output_id, 1, id))
+                    .collect(),
+            ),
+            index_page(vec![transfer_between_accounts_tx(
+                11, &source_id, &output_id, 1, 11,
+            )]),
+        ]);
+        block_on(process_route_indexing(101, 201, &retry)).unwrap();
+        assert_eq!(retry.calls()[0].1, Some(512));
+        assert_eq!(retry.calls()[1].1, Some(12));
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(1_001));
+            assert_eq!(st.last_indexed_output_tx_id, Some(1_011));
+            assert!(st.active_output_catch_up.is_none());
+        });
+    }
+
+    #[test]
+    fn descending_rewards_catch_up_resumes_after_failure_and_restore() {
+        configure_state(2);
+        let (source_id, rewards_id) = state::with_state(|st| {
+            (
+                account_identifier_text_for_account(&st.config.output_source_account),
+                account_identifier_text_for_account(&st.config.rewards_account),
+            )
+        });
+        state::with_state_mut(|st| {
+            st.total_rewards_e8s = Some(0);
+            st.last_indexed_rewards_tx_id = Some(10);
+            st.oldest_indexed_rewards_tx_id = Some(1);
+            st.rewards_route_index_descending = Some(true);
+            st.rewards_route_backfill_complete = Some(true);
+            st.active_route_sweep = Some(ActiveRouteSweep {
+                started_at_ts_nanos: 100,
+                next_index: 1,
+            });
+        });
+        let first_page = index_page(
+            (512..=1_011)
+                .rev()
+                .map(|id| transfer_between_accounts_tx(id, &source_id, &rewards_id, 1, id))
+                .collect(),
+        );
+        let failing = MockIndexClient::scripted(vec![
+            Ok(first_page),
+            Err(crate::clients::ClientError::Call(
+                "transient second rewards page failure".into(),
+            )),
+        ]);
+        let error = block_on(process_route_indexing(100, 200, &failing)).unwrap_err();
+        assert!(error.contains("transient second rewards page failure"));
+        assert_eq!(state::with_state(|st| st.total_rewards_e8s), Some(500));
+
+        let restored = state::restore_state_from_stable().expect("rewards continuation persists");
+        state::set_state_root_only(restored);
+        let retry = MockIndexClient::new(vec![
+            index_page(
+                (12..=511)
+                    .rev()
+                    .map(|id| transfer_between_accounts_tx(id, &source_id, &rewards_id, 1, id))
+                    .collect(),
+            ),
+            index_page(vec![transfer_between_accounts_tx(
+                11,
+                &source_id,
+                &rewards_id,
+                1,
+                11,
+            )]),
+        ]);
+        block_on(process_route_indexing(101, 201, &retry)).unwrap();
+        assert_eq!(retry.calls()[0].1, Some(512));
+        assert_eq!(retry.calls()[1].1, Some(12));
+        state::with_state(|st| {
+            assert_eq!(st.total_rewards_e8s, Some(1_001));
+            assert_eq!(st.last_indexed_rewards_tx_id, Some(1_011));
+            assert!(st.active_rewards_catch_up.is_none());
+        });
+    }
+
+    #[test]
     fn route_indexing_counts_transfer_from_and_skips_repeated_cursor_without_double_counting() {
         let _staking_id = configure_state(1);
         let (source, output, rewards) = state::with_state(|st| {
@@ -2414,47 +3776,35 @@ mod tests {
         let source_id = account_identifier_text_for_account(&source);
         let output_id = account_identifier_text_for_account(&output);
         let rewards_id = account_identifier_text_for_account(&rewards);
-        let filler: Vec<_> = (11..(10 + PAGE_SIZE))
-            .map(|id| transfer_between_accounts_tx(id, "third-party", &output_id, 1_000, id))
-            .collect();
-        let mut first_page = vec![transfer_from_between_accounts_tx(
-            10,
-            &source_id,
-            &output_id,
-            111_000_000,
-            10,
-        )];
-        first_page.extend(filler);
         let mock = MockIndexClient::new(vec![
             GetAccountIdentifierTransactionsResponse {
                 balance: 0,
-                transactions: first_page,
+                transactions: vec![transfer_from_between_accounts_tx(
+                    10,
+                    &source_id,
+                    &output_id,
+                    111_000_000,
+                    10,
+                )],
                 oldest_tx_id: Some(10),
             },
             GetAccountIdentifierTransactionsResponse {
                 balance: 0,
+                transactions: vec![transfer_between_accounts_tx(
+                    30,
+                    &source_id,
+                    &rewards_id,
+                    5_000_000,
+                    30,
+                )],
+                oldest_tx_id: Some(30),
+            },
+            GetAccountIdentifierTransactionsResponse {
+                balance: 0,
                 transactions: vec![
-                    transfer_from_between_accounts_tx(
-                        10 + PAGE_SIZE - 1,
-                        &source_id,
-                        &output_id,
-                        999_000_000,
-                        20,
-                    ),
-                    transfer_between_accounts_tx(
-                        10 + PAGE_SIZE,
-                        &source_id,
-                        &output_id,
-                        22_000_000,
-                        21,
-                    ),
-                    transfer_between_accounts_tx(
-                        10 + PAGE_SIZE + 1,
-                        "third-party",
-                        &output_id,
-                        333_000_000,
-                        22,
-                    ),
+                    transfer_between_accounts_tx(12, "third-party", &output_id, 333_000_000, 22),
+                    transfer_between_accounts_tx(11, &source_id, &output_id, 22_000_000, 21),
+                    transfer_from_between_accounts_tx(10, &source_id, &output_id, 999_000_000, 20),
                 ],
                 oldest_tx_id: Some(10),
             },
@@ -2474,19 +3824,7 @@ mod tests {
         block_on(process_route_indexing(100, 200, &mock)).unwrap();
         state::with_state(|st| {
             assert_eq!(st.total_output_e8s, Some(111_000_000));
-            assert_eq!(st.last_indexed_output_tx_id, Some(10 + PAGE_SIZE - 1));
-            assert_eq!(
-                st.active_route_sweep
-                    .as_ref()
-                    .map(|active| active.next_index),
-                Some(0)
-            );
-        });
-
-        block_on(process_route_indexing(101, 201, &mock)).unwrap();
-        state::with_state(|st| {
-            assert_eq!(st.total_output_e8s, Some(133_000_000), "repeated cursor tx should be skipped while the new routed transfer is counted once");
-            assert_eq!(st.last_indexed_output_tx_id, Some(10 + PAGE_SIZE + 1));
+            assert_eq!(st.last_indexed_output_tx_id, Some(10));
             assert_eq!(
                 st.active_route_sweep
                     .as_ref()
@@ -2495,105 +3833,67 @@ mod tests {
             );
         });
 
+        block_on(process_route_indexing(101, 201, &mock)).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(111_000_000));
+            assert_eq!(st.total_rewards_e8s, Some(5_000_000));
+            assert!(st.active_route_sweep.is_none());
+        });
+
         block_on(process_route_indexing(102, 202, &mock)).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(133_000_000), "the repeated boundary transfer is skipped while the new routed transfer is counted once");
+            assert_eq!(st.total_rewards_e8s, Some(5_000_000));
+            assert_eq!(st.last_indexed_output_tx_id, Some(12));
+            assert_eq!(
+                st.active_route_sweep
+                    .as_ref()
+                    .map(|active| active.next_index),
+                Some(1)
+            );
+        });
+
+        block_on(process_route_indexing(103, 203, &mock)).unwrap();
         state::with_state(|st| {
             assert_eq!(st.total_output_e8s, Some(133_000_000));
             assert_eq!(st.total_rewards_e8s, Some(5_000_000));
-            assert_eq!(st.last_indexed_rewards_tx_id, Some(30));
             assert!(st.active_route_sweep.is_none());
         });
     }
 
     #[test]
-    fn non_monotonic_commitment_page_latches_fault_and_stops_indexing() {
-        let staking_id = configure_state(10);
-        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
+    fn faulted_partially_applied_ascending_state_remains_latched_and_unchanged() {
+        configure_state(10);
         state::with_state_mut(|st| {
             st.last_indexed_staking_tx_id = Some(50);
-            st.oldest_indexed_staking_tx_id = Some(50);
+            st.oldest_indexed_staking_tx_id = Some(25);
             st.staking_index_descending = Some(false);
-            st.staking_backfill_complete = Some(true);
+            st.staking_backfill_complete = Some(false);
+            st.commitment_route_rollups_complete_from_genesis = Some(false);
+            st.commitment_index_fault = Some(crate::state::CommitmentIndexFault {
+                observed_at_ts: 150,
+                last_cursor_tx_id: Some(49),
+                offending_tx_id: 50,
+                message: "pre-existing coverage fault".to_string(),
+            });
         });
-        let mock = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
-            balance: 300,
-            transactions: vec![
-                transfer_to_staking_tx(51, &staking_id, beneficiary, 150, 124_000_000_000),
-                transfer_to_staking_tx(49, &staking_id, beneficiary, 150, 123_000_000_000),
-            ],
-            oldest_tx_id: Some(49),
-        }]);
+        let mock = MockIndexClient::new(vec![index_page(Vec::new())]);
 
         let err = block_on(process_commitment_indexing(&mock, 200)).unwrap_err();
-        assert!(err.contains("non-monotonic"));
+        assert!(err.contains("unsupported persisted ascending"));
+        assert!(mock.calls().is_empty());
         state::with_state(|st| {
             let fault = st
                 .commitment_index_fault
                 .as_ref()
                 .expect("fault should be latched");
-            assert_eq!(fault.observed_at_ts, 200);
-            assert_eq!(fault.last_cursor_tx_id, Some(51));
-            assert_eq!(fault.offending_tx_id, 49);
-            assert_eq!(st.last_indexed_staking_tx_id, Some(51));
-            assert_eq!(st.last_index_run_ts, Some(0));
-        });
-    }
-
-    #[test]
-    fn commitment_index_fault_clears_automatically_once_index_order_recovers() {
-        let staking_id = configure_state(10);
-        let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        state::with_state_mut(|st| {
-            st.last_indexed_staking_tx_id = Some(50);
-            st.oldest_indexed_staking_tx_id = Some(50);
-            st.staking_index_descending = Some(false);
-            st.staking_backfill_complete = Some(true);
-        });
-        let mock = MockIndexClient::new(vec![
-            GetAccountIdentifierTransactionsResponse {
-                balance: 150,
-                transactions: vec![
-                    transfer_to_staking_tx(51, &staking_id, beneficiary, 150, 124_000_000_000),
-                    transfer_to_staking_tx(49, &staking_id, beneficiary, 150, 123_000_000_000),
-                ],
-                oldest_tx_id: Some(49),
-            },
-            GetAccountIdentifierTransactionsResponse {
-                balance: 450,
-                transactions: vec![
-                    transfer_to_staking_tx(51, &staking_id, beneficiary, 300, 124_000_000_000),
-                    transfer_to_staking_tx(52, &staking_id, beneficiary, 450, 125_000_000_000),
-                ],
-                oldest_tx_id: Some(51),
-            },
-        ]);
-
-        let err = block_on(process_commitment_indexing(&mock, 200)).unwrap_err();
-        assert!(err.contains("non-monotonic"));
-        state::with_state(|st| {
-            let fault = st
-                .commitment_index_fault
-                .as_ref()
-                .expect("fault should be latched");
-            assert_eq!(fault.observed_at_ts, 200);
-            assert_eq!(fault.last_cursor_tx_id, Some(51));
-            assert_eq!(fault.offending_tx_id, 49);
-            assert_eq!(st.last_indexed_staking_tx_id, Some(51));
-        });
-
-        block_on(process_commitment_indexing(&mock, 201)).unwrap();
-        state::with_state(|st| {
-            assert!(
-                st.commitment_index_fault.is_none(),
-                "fault should auto-clear after a clean retry"
-            );
-            assert_eq!(st.last_indexed_staking_tx_id, Some(52));
-            assert_eq!(st.last_index_run_ts, Some(201));
-            assert_eq!(st.qualifying_commitment_count, Some(2));
             assert_eq!(
-                st.recent_commitments.as_ref().map(|items| items.len()),
-                Some(2)
+                fault.observed_at_ts, 150,
+                "the original fault remains latched"
             );
-            assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 52);
+            assert_eq!(st.last_indexed_staking_tx_id, Some(50));
+            assert_eq!(st.oldest_indexed_staking_tx_id, Some(25));
+            assert_eq!(st.qualifying_commitment_count, Some(0));
         });
     }
 

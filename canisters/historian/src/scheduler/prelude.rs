@@ -10,7 +10,8 @@ pub(super) use crate::clients::{
 pub(super) use crate::state::{
     self, ActiveCyclesSweep, ActiveRouteSweep, ActiveSnsDiscovery, CanisterMeta,
     CanisterTrackingReason, CommitmentIndexFault, CyclesProbeResult, CyclesSampleSource,
-    IndexedRouteKind, InvalidCommitment, RecentCommitment, RecentNeuronCommitment,
+    DescendingIndexCatchUp, IndexedRouteKind, InvalidCommitment, RecentCommitment,
+    RecentNeuronCommitment,
 };
 pub(super) use crate::{
     logic, MAX_RECENT_INVALID_COMMITMENTS, MAX_RECENT_QUALIFYING_COMMITMENTS,

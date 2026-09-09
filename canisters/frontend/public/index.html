@@ -1211,6 +1211,41 @@
               <button class="pane-page-button" id="relay-setup-create" type="button" disabled>Create Relay</button>
             </section>
             <section id="relay-setup-existing-relay" hidden></section>
+            <section class="relay-funding-section" id="relay-funding-section" hidden>
+              <div class="relay-funding-heading">
+                <div>
+                  <p class="pane-eyebrow">Active Relay funding</p>
+                  <h3>Fund your Relay</h3>
+                </div>
+                <a class="pane-page-button" id="relay-funding-memo-builder-link">Build a perpetual raw-ICP memo</a>
+              </div>
+              <p>
+                The active Relay owner is <code class="mono" id="relay-funding-owner">—</code>.
+                Send operational funding to one of the Relay accounts below—not to the Historian setup account.
+                The account/subaccount selects what the deposit does; putting “50” in a transaction memo does not select subaccount 50.
+                Unsupported subaccounts are not automatically swept and may be unrecoverable.
+              </p>
+              <div id="relay-funding-destinations"></div>
+              <p class="pane-status-note tracker-status-note" id="relay-funding-copy-status" role="status" aria-live="polite"></p>
+              <details class="relay-funding-details">
+                <summary>Timing, thresholds, and fees</summary>
+                <p>
+                  Relay processing happens on eligible scheduled ticks, not immediately when ICP arrives. Default-account ICP stays liquid for later burn-responsive allocation and any configured surplus routing. Subaccount 1 aggregates deposits and constructs the Relay’s own Faucet memo; it does not forward each depositor’s memo as donor attribution.
+                </p>
+                <p>
+                  For splitter balance <var>B</var>, current planning fee <var>F</var>, and percentage <var>p</var>: <code>B &gt; F</code>, <code>B − F ≥ 100,000,000 e8s</code>, <code>D = floor(B × p / 100)</code>, <code>S = B − D</code>, and both <code>D</code> and <code>S</code> must exceed <var>F</var>. Initial receipts are <code>D − F</code> to default and <code>S − F</code> to staging, so the labels are gross budget percentages—not exact percentages of net receipts.
+                </p>
+                <p>
+                  The later subaccount-1-to-Faucet transfer pays another fee and independently requires at least 1 ICP after that fee. A valid split can therefore leave staging ICP waiting for more deposits. Durable retries reprice fees when necessary. The first complete burn sample is baseline-only, so a new Relay is not an instant rescue for a nearly frozen target.
+                </p>
+              </details>
+              <div class="pane-inline-block relay-funding-endowment-flow">
+                <h4>Endow future raw-ICP funding</h4>
+                <p>
+                  The memo-builder link targets this Relay’s default account in raw-ICP mode. Send the resulting endowment transfer to the <strong>Faucet neuron’s staking account</strong> with that memo. If the endowment qualifies, later Faucet raw-ICP payouts go to the <strong>Relay default account</strong>. The link only prepares a memo; it does not deposit or transfer ICP.
+                </p>
+              </div>
+            </section>
           </div>
         </article>
 

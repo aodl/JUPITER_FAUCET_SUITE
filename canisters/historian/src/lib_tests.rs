@@ -67,6 +67,28 @@ mod tests {
     }
 
     #[test]
+    fn refresh_endowments_candid_is_zero_argument() {
+        let expected = "refresh_endowments : () -> (RefreshEndowmentsResponse);";
+        for (label, service) in [
+            ("Rust export", __export_service()),
+            (
+                "production DID",
+                include_str!("../jupiter_historian.did").into(),
+            ),
+            (
+                "debug DID",
+                include_str!("../jupiter_historian_debug.did").into(),
+            ),
+        ] {
+            let signature = service
+                .lines()
+                .find(|line| line.contains("refresh_endowments :"))
+                .unwrap_or_else(|| panic!("{label} omits refresh_endowments"));
+            assert_eq!(signature.trim(), expected, "{label} signature diverged");
+        }
+    }
+
+    #[test]
     fn decode_post_upgrade_args_decodes_upgrade_record() {
         let raw = encode_args((Some(UpgradeArgs {
             staking_account: Some(alternate_account()),
@@ -204,6 +226,15 @@ mod tests {
             icp_xdr_rate: None,
             last_icp_xdr_rate_attempt_ts: None,
             last_icp_xdr_rate_error: None,
+            active_staking_catch_up: None,
+            active_output_catch_up: None,
+            active_rewards_catch_up: None,
+            commitment_index_lock_expires_at_ts: None,
+            commitment_index_lock_generation: 0,
+            commitment_index_lock_owner: None,
+            endowment_refresh_next_allowed_ts: 0,
+            endowment_refresh_ineffective_streak: 0,
+            commitment_index_revision: 0,
             canister_module_hash_cache: Vec::new(),
             canister_module_hash_cache_updated_ts: None,
             canister_module_hash_refresh_lock_ts: None,
@@ -1797,6 +1828,29 @@ mod tests {
     }
 
     #[test]
+    fn normalize_runtime_state_preserves_lifetime_count_beyond_retained_history() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = base_state();
+        st.qualifying_commitment_count = Some(500);
+        st.commitment_history.insert(
+            canister,
+            (401..=500)
+                .map(|tx_id| CommitmentSample {
+                    tx_id,
+                    timestamp_nanos: Some(tx_id * 1_000_000_000),
+                    amount_e8s: 100,
+                    counts_toward_faucet: true,
+                })
+                .collect(),
+        );
+
+        normalize_runtime_state(&mut st);
+
+        assert_eq!(st.qualifying_commitment_count, Some(500));
+        assert_eq!(st.commitment_history[&canister].len(), 100);
+    }
+
+    #[test]
     fn normalize_runtime_state_prunes_memo_only_registration_when_history_is_non_qualifying() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
@@ -2641,7 +2695,10 @@ mod tests {
             ]
         );
         assert!(!response.truncated);
-        assert!(response.complete_from_genesis);
+        assert!(
+            !response.complete_from_genesis,
+            "a latched indexing fault makes route totals non-authoritative"
+        );
         assert_eq!(response.indexed_through_staking_tx_id, Some(99));
         assert_eq!(response.last_index_run_ts, Some(777));
         assert_eq!(response.commitment_index_fault, Some(fault));

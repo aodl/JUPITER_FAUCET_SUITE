@@ -2,7 +2,7 @@
 
 Historian creates an immutable controllerless Relay from one complete configuration: 1–20 managed target canister principals and either zero or 1–5 typed surplus recipients. Each recipient is `Principal { principal; memo }` or `Neuron { neuron_id; memo }`, where `memo` is a required exact 0–32-byte blob and an empty blob means no outgoing Ledger memo. Both vectors are required by `get_relay_configuration_view` and `notify_relay_configuration`. The empty recipient vector is the sole backend representation of all-cycles mode.
 
-Targets are sorted by raw principal bytes. Recipients are canonicalized with Principals first in raw-byte order and neurons second in ascending numeric order. A memo stays attached to its destination and does not participate in sorting. Duplicate type-and-destination pairs are rejected even when their memos differ. No IO recipient, custom subaccount, weighting, or target-canister memo is added.
+Targets are sorted by raw principal bytes. Recipients are canonicalized with Principals first in raw-byte order and neurons second in ascending numeric order. A memo stays attached to its destination and does not participate in sorting. Duplicate type-and-destination pairs are rejected even when their memos differ. No IO recipient, custom recipient subaccount, weighting, or target-canister memo is added; Relay's fixed operational funding subaccounts remain available after activation.
 
 ## Canonical configuration identity
 

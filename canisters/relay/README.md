@@ -2,7 +2,7 @@
 
 `jupiter-relay` is an autonomous ICP-to-cycles allocator for Internet Computer projects.
 
-A Relay gives a project **one ICP funding destination** and uses that funding to keep a fixed set of canisters supplied with cycles according to their observed consumption. It measures cycles burn, converts ICP through the Cycles Minting Canister (CMC), tops up the canisters that need it, and can route genuine excess ICP to fixed surplus recipients instead of allowing cycles buffers to grow without bound.
+A Relay gives a project **one Relay-owned funding hub** and uses that funding to keep a fixed set of canisters supplied with cycles according to their observed consumption. Its default account, staging account, and fixed splitter subaccounts offer different ways into the same hub. Relay measures cycles burn, converts ICP through the Cycles Minting Canister (CMC), tops up the canisters that need it, and can route genuine excess ICP to fixed surplus recipients instead of allowing cycles buffers to grow without bound.
 
 Relay can use ordinary direct ICP funding, but it also integrates with [Jupiter Faucet](../faucet/README.md): a Faucet endowment can perpetually produce raw ICP for a Relay, while Relay decides how that ICP should be allocated as downstream needs change.
 
@@ -38,13 +38,13 @@ The current self-service configuration is:
 - either **zero surplus recipients** for all-cycles mode or **1–5 typed recipients**;
 - a Principal/default-account or public NNS-neuron destination per recipient;
 - an exact 0–32-byte Ledger memo per recipient, entered as text or hexadecimal; and
-- no custom recipient weights, subaccounts, or automatic IO recipient; and
+- no custom recipient weights, recipient subaccounts, or automatic IO recipient; and
 - a daily Relay cadence with automatic cycles-probe routing.
 
 ### Creation flow
 
 1. Choose the targets and surplus recipients in the frontend.
-2. Historian canonicalizes both lists and returns the deterministic setup account and current funding requirement for that complete configuration.
+2. Historian canonicalizes both lists and returns the deterministic setup account and its **nominal** minimum for that complete configuration. This query is not a live funding quote.
 3. Fund the setup account, then explicitly press **Create Relay**. Funding alone never starts creation.
 4. Historian verifies that every target is observable, creates the child canister, installs the reviewed Relay Wasm and immutable configuration, and sends the remaining eligible setup balance to the child's **subaccount 1**.
 5. Historian verifies the installed module/settings, atomically removes all controllers while retaining public logs and public status, directly audits that controllerless state, and records the configuration as active.
@@ -54,11 +54,13 @@ After activation, fund the **Relay itself**, not the setup account. Historian do
 
 Targets, recipient destinations, and exact memo bytes jointly define the immutable configuration. One explicitly framed canonical encoder covers every configuration, including empty memos and zero recipients. Order does not matter, but changing any target, destination, type, or memo produces a different setup account and Relay configuration. Repeating the exact same configuration returns its existing active Relay rather than creating a duplicate.
 
-Setup deposits are aggregate protocol deposits: Historian does not attribute them to individual payers and does not automatically refund an incorrectly funded configuration. The frontend's live funding requirement should be treated as authoritative because Historian rechecks the ICP ledger fee and CMC conversion rate before irreversible work.
+Setup deposits are aggregate protocol deposits: Historian does not attribute them to individual payers and does not automatically refund an incorrectly funded configuration. When the user explicitly requests creation, Historian checks the live ICP Ledger fee and CMC conversion requirements before irreversible work. That authoritative update may require more ICP than the nominal query showed; the frontend preserves the live shortfall until the user funds it and explicitly retries, rather than lowering it on a later nominal refresh.
 
 The detailed factory state machine, funding formula, fail-closed reconciliation, `ManualRecoveryRequired` behavior, and deployment sequence are intentionally documented once in [`../../docs/relay-setup-recovery.md`](../../docs/relay-setup-recovery.md).
 
 ### Target observability
+
+New managed targets cannot be anonymous, the management canister, Historian itself, the Fiduciary blackhole, or the configured ICP Ledger, ICP Index, or CMC. The canonical production Relay target set is separately reserved regardless of surplus-recipient choices. These are target rules, not recipient-account rules: a target and Principal recipient may overlap when each is independently valid, while duplicate targets and duplicate recipient destinations remain disallowed.
 
 Relay must be able to measure cycles balances before it can allocate by burn. Self-service Historian therefore probes every target before spending setup ICP, and the child uses the shared **Auto** observation policy at runtime. Auto tries local self balance, then protocol-native direct `canister_status`, then cached/recognized blackhole and SNS fallbacks. Ordinary sampling can use `public` or caller-specific `allowed_viewers` access. Preflight for a not-yet-created child accepts direct status only when visibility is exactly `public`; Historian-only access is not reusable, though a recognized blackhole/SNS fallback can still qualify the target. Public status exposes the management canister's status response, not only the cycles number.
 
@@ -145,7 +147,7 @@ ICP sent there is immediately available to the allocation loop. It is finite fun
 
 ### Direct Jupiter Faucet endowment
 
-If the sender can make a normal qualifying Faucet endowment and attach an ICRC memo, use:
+After activation, the frontend provides a **Build a perpetual raw-ICP memo** link for the actual child Relay. If the sender can make a normal qualifying Faucet endowment and attach an ICRC memo, use:
 
 ```text
 <relay-canister-id>.
@@ -153,7 +155,7 @@ If the sender can make a normal qualifying Faucet endowment and attach an ICRC m
 
 The trailing `.` matters. Under [`jupiter-memo-policy`](../../crates/memo-policy), `canister_id.memo` requests **raw ICP** to that canister rather than a direct cycles top-up; an empty right-hand segment means no outgoing raw-ICP memo.
 
-Jupiter Faucet then sends future payout ICP to Relay's default account. Faucet produces the recurring ICP; Relay decides how to allocate it.
+Send that endowment ICP to the **Faucet neuron's staking account**, not to the Relay. The link only builds the memo; it does not deposit or transfer ICP. Jupiter Faucet then sends future payout ICP directly to Relay's default account. Faucet produces the recurring ICP; Relay decides how to allocate it.
 
 ### Subaccount 1
 
@@ -164,7 +166,7 @@ owner = <relay principal>
 subaccount = 0000000000000000000000000000000000000000000000000000000000000001
 ```
 
-Incoming memos are irrelevant. On an accepted main tick, once the balance can send at least 1 ICP after the resolved ledger fee, Relay forwards `balance - fee` to the canonical Jupiter Faucet neuron staking account with a memo derived from its own principal:
+Incoming deposits aggregate and their memos are not forwarded as individual donor attribution. On an accepted main tick, once the balance can send at least 1 ICP after the resolved ledger fee, Relay forwards `balance - fee` to the canonical Jupiter Faucet neuron staking account with a memo derived from its own principal:
 
 ```text
 <relay principal without hyphens>.Relay
@@ -190,11 +192,25 @@ Every Relay intrinsically recognizes subaccounts `10, 20, ... 90`. The number is
 | 80 | 80% | 20% |
 | 90 | 90% | 10% |
 
-A numbered subaccount is 32 bytes with the number in the final byte. Each split pays one ICP ledger fee per leg, so both gross leg budgets must exceed the current fee. Small deposits simply remain until a later tick or additional deposit makes the split valid.
+A numbered subaccount is 32 bytes with 31 zero bytes and the number in the final byte (`50` is byte `0x32`; `90` is byte `0x5a`). The funding account selects the behavior: putting `50` in a transaction memo does not select subaccount 50. Unsupported subaccounts are not swept automatically and may be unrecoverable.
+
+For balance `B`, current planning fee `F`, and splitter percentage `p`, initial planning requires:
+
+```text
+B > F
+B - F >= 100_000_000 e8s
+D = floor(B * p / 100)
+S = B - D
+D > F and S > F
+default transfer = D - F
+subaccount-1 transfer = S - F
+```
+
+The percentages are gross budgets, not an exact split of final net receipts, because each initial leg pays one Ledger fee. The later subaccount-1-to-Faucet transfer pays another fee and independently requires `balance - fee >= 100_000_000 e8s`. A valid splitter payment can therefore leave the staging share waiting for further deposits. The formulas describe initial planning; durable retry/repricing may use a different live fee when a later attempt executes.
 
 Splitter execution is sequential but durably journaled before the first transfer. The default-account leg executes first; the subaccount-1 leg follows only after the first leg is accepted (including ledger `Duplicate`). Deposits arriving after a split has been pinned are left for a later independent split.
 
-Subaccount 90 is a practical “mostly now, gradually more forever” path: each payment keeps 90% available for current cycles needs while directing 10% toward the future Faucet-backed funding stream.
+Subaccount 90 is a practical “mostly now, gradually more forever” path: its gross budget directs 90% toward current cycles needs and 10% toward the future Faucet-backed funding stream, subject to the separate fees and thresholds above.
 
 ## Surplus recipients and reward attribution
 

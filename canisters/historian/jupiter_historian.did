@@ -162,7 +162,47 @@ type GetCommitmentRouteSummariesResponse = record {
   truncated : bool;
   complete_from_genesis : bool;
   indexed_through_staking_tx_id : opt nat64;
+  oldest_indexed_staking_tx_id : opt nat64;
   last_index_run_ts : opt nat64;
+  commitment_index_fault : opt CommitmentIndexFault;
+  revision : opt nat64;
+  observed_head_staking_tx_id : opt nat64;
+  next_staking_start_tx_id : opt nat64;
+};
+type ExpectedEndowmentStatus = variant {
+  KnownIndexed;
+  ObservedNotQualifying;
+  NotYetObserved;
+  NotFoundInRetainedEvidence;
+};
+type RefreshEndowmentsOutcome = variant {
+  Updated;
+  NoQualifyingChange;
+  IncompleteProgress;
+  Busy;
+  RateLimited;
+  UpstreamFailure : record { message : text };
+};
+type EndowmentIndexProgress = record {
+  revision : nat64;
+  newly_indexed_qualifying_endowments : nat64;
+  complete_from_genesis : bool;
+  committed_head_staking_tx_id : opt nat64;
+  oldest_indexed_staking_tx_id : opt nat64;
+  observed_head_staking_tx_id : opt nat64;
+  next_staking_start_tx_id : opt nat64;
+  commitment_index_fault : opt CommitmentIndexFault;
+  retry_after_ts : opt nat64;
+};
+type RefreshEndowmentsResponse = record {
+  outcome : RefreshEndowmentsOutcome;
+  progress : EndowmentIndexProgress;
+};
+type EndowmentTransactionStatusResponse = record {
+  transaction_id : nat64;
+  status : ExpectedEndowmentStatus;
+  revision : nat64;
+  complete_from_genesis : bool;
   commitment_index_fault : opt CommitmentIndexFault;
 };
 type CanisterOverview = record {
@@ -207,6 +247,7 @@ type PublicStatus = record {
   stable_memory_bytes : opt nat64;
   total_memory_bytes : opt nat64;
   commitment_index_fault : opt CommitmentIndexFault;
+  route_index_fault : opt text;
   icp_xdr_rate : opt IcpXdrRateSnapshot;
   last_icp_xdr_rate_error : opt text;
   relay_factory_enabled : opt bool;
@@ -333,6 +374,8 @@ service : (InitArgs) -> {
   get_raw_icp_commitment_history : (GetCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
   get_neuron_commitment_history : (GetNeuronCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
   get_commitment_route_summaries : (GetCommitmentRouteSummariesArgs) -> (GetCommitmentRouteSummariesResponse) query;
+  get_endowment_transaction_status : (nat64) -> (EndowmentTransactionStatusResponse) query;
+  refresh_endowments : () -> (RefreshEndowmentsResponse);
   get_canister_overview : (principal) -> (opt CanisterOverview) query;
   get_public_counts : () -> (PublicCounts) query;
   get_public_status : () -> (PublicStatus) query;

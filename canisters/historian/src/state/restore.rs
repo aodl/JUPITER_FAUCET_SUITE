@@ -73,6 +73,17 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
         icp_xdr_rate: root.icp_xdr_rate,
         last_icp_xdr_rate_attempt_ts: root.last_icp_xdr_rate_attempt_ts,
         last_icp_xdr_rate_error: root.last_icp_xdr_rate_error,
+        active_staking_catch_up: root.active_staking_catch_up,
+        active_output_catch_up: root.active_output_catch_up,
+        active_rewards_catch_up: root.active_rewards_catch_up,
+        commitment_index_lock_expires_at_ts: root.commitment_index_lock_expires_at_ts,
+        commitment_index_lock_generation: root.commitment_index_lock_generation.unwrap_or(0),
+        commitment_index_lock_owner: root.commitment_index_lock_owner,
+        endowment_refresh_next_allowed_ts: root.endowment_refresh_next_allowed_ts.unwrap_or(0),
+        endowment_refresh_ineffective_streak: root
+            .endowment_refresh_ineffective_streak
+            .unwrap_or(0),
+        commitment_index_revision: root.commitment_index_revision.unwrap_or(0),
         canister_module_hash_cache: Vec::new(),
         canister_module_hash_cache_updated_ts: None,
         canister_module_hash_refresh_lock_ts: None,

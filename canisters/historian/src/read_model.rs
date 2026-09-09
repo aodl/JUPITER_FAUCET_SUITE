@@ -180,10 +180,23 @@ pub(super) fn get_commitment_route_summaries(
     state::with_state(|st| GetCommitmentRouteSummariesResponse {
         items,
         truncated,
-        complete_from_genesis: st.commitment_route_rollups_complete_from_genesis == Some(true),
+        complete_from_genesis: st.commitment_route_rollups_complete_from_genesis == Some(true)
+            && st.active_staking_catch_up.is_none()
+            && st.commitment_index_fault.is_none(),
         indexed_through_staking_tx_id: st.last_indexed_staking_tx_id,
+        oldest_indexed_staking_tx_id: st.oldest_indexed_staking_tx_id,
         last_index_run_ts: st.last_index_run_ts,
         commitment_index_fault: st.commitment_index_fault.clone(),
+        revision: Some(st.commitment_index_revision),
+        observed_head_staking_tx_id: st
+            .active_staking_catch_up
+            .as_ref()
+            .map(|progress| progress.observed_head_tx_id)
+            .or(st.last_indexed_staking_tx_id),
+        next_staking_start_tx_id: st
+            .active_staking_catch_up
+            .as_ref()
+            .and_then(|progress| progress.next_start_tx_id),
     })
 }
 
@@ -228,6 +241,24 @@ pub(super) fn get_public_counts() -> PublicCounts {
     })
 }
 
+pub(crate) fn route_index_fault(st: &state::State) -> Option<String> {
+    match (
+        st.output_route_index_descending == Some(false),
+        st.rewards_route_index_descending == Some(false),
+    ) {
+        (true, true) => {
+            Some("unsupported persisted ascending output and rewards pagination state".to_string())
+        }
+        (true, false) => {
+            Some("unsupported persisted ascending output pagination state".to_string())
+        }
+        (false, true) => {
+            Some("unsupported persisted ascending rewards pagination state".to_string())
+        }
+        (false, false) => None,
+    }
+}
+
 #[ic_cdk::query]
 pub(super) fn get_public_status() -> PublicStatus {
     let heap_memory_bytes = allocated_heap_memory_bytes();
@@ -253,6 +284,7 @@ pub(super) fn get_public_status() -> PublicStatus {
         stable_memory_bytes: Some(stable_memory_bytes),
         total_memory_bytes: Some(heap_memory_bytes.saturating_add(stable_memory_bytes)),
         commitment_index_fault: st.commitment_index_fault.clone(),
+        route_index_fault: route_index_fault(st),
         icp_xdr_rate: st.icp_xdr_rate.clone(),
         last_icp_xdr_rate_error: st.last_icp_xdr_rate_error.clone(),
         relay_factory_enabled: Some(st.config.relay_factory_enabled),
@@ -268,6 +300,51 @@ pub(super) fn get_relay_configuration_view(args: RelaySetupArgs) -> RelaySetupVi
 #[ic_cdk::update]
 pub(super) async fn notify_relay_configuration(args: RelaySetupArgs) -> RelaySetupNotifyResult {
     crate::relay_setup::notify_relay_configuration(args).await
+}
+
+// The production whitelist is intentionally empty by default. Protocols integrating
+// Jupiter Faucet may request that a specific backend canister be whitelisted when
+// they want their UI to offer expedited endowment recognition: after a user completes
+// a Faucet endowment, that backend canister may call `refresh_endowments()` so
+// Historian performs one bounded staking-account Index pass immediately instead of
+// waiting for its normal poll cadence. This permission grants no general Historian
+// control and remains subject to the existing global cadence, single-flight lease,
+// and one-page indexing bound. Every addition or removal requires a reviewed
+// Historian code change and canister upgrade.
+#[cfg(not(feature = "debug_api"))]
+const ENDOWMENT_REFRESH_CALLER_WHITELIST: &[&[u8]] = &[];
+
+// PocketIC installs its authorized test proxy at this fixed principal. This entry is
+// compiled only into the debug Wasm and is absent from the production build.
+#[cfg(feature = "debug_api")]
+const ENDOWMENT_REFRESH_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
+
+fn endowment_refresh_caller_is_whitelisted(caller: Principal) -> bool {
+    ENDOWMENT_REFRESH_CALLER_WHITELIST
+        .iter()
+        .any(|allowed| caller.as_slice() == *allowed)
+}
+
+fn guard_endowment_refresh_caller() -> Result<(), String> {
+    let caller = ic_cdk::api::msg_caller();
+    endowment_refresh_caller_is_whitelisted(caller)
+        .then_some(())
+        .ok_or_else(|| "caller is not authorized to refresh endowments".to_string())
+}
+
+#[ic_cdk::update(guard = "guard_endowment_refresh_caller")]
+pub(super) async fn refresh_endowments() -> RefreshEndowmentsResponse {
+    // Ingress is rejected by canister_inspect_message as a cost-saving filter. The
+    // exact-principal guard above is the authoritative replicated boundary for every
+    // invocation and runs before this async body.
+    crate::scheduler::refresh_endowments().await
+}
+
+#[ic_cdk::query]
+pub(super) fn get_endowment_transaction_status(
+    transaction_id: u64,
+) -> EndowmentTransactionStatusResponse {
+    crate::scheduler::endowment_transaction_status(transaction_id)
 }
 
 fn principal_matches_compact_prefix(principal: Principal, prefix: &str) -> bool {
@@ -634,4 +711,23 @@ pub(super) fn list_recent_commitments(
         items.truncate(limit);
         ListRecentCommitmentsResponse { items }
     })
+}
+
+#[cfg(all(test, not(feature = "debug_api")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_endowment_refresh_whitelist_is_empty_by_default() {
+        assert!(ENDOWMENT_REFRESH_CALLER_WHITELIST.is_empty());
+        assert!(!endowment_refresh_caller_is_whitelisted(
+            Principal::anonymous()
+        ));
+        assert!(!endowment_refresh_caller_is_whitelisted(
+            Principal::self_authenticating(b"authenticated ingress")
+        ));
+        assert!(!endowment_refresh_caller_is_whitelisted(
+            Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1])
+        ));
+    }
 }

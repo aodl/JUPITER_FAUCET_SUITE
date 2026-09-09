@@ -132,11 +132,28 @@ export const idlFactory = ({ IDL }) => {
   });
   const GetCommitmentRouteSummariesResponse = IDL.Record({
     'indexed_through_staking_tx_id' : IDL.Opt(IDL.Nat64),
+    'oldest_indexed_staking_tx_id' : IDL.Opt(IDL.Nat64),
+    'observed_head_staking_tx_id' : IDL.Opt(IDL.Nat64),
     'truncated' : IDL.Bool,
     'complete_from_genesis' : IDL.Bool,
     'commitment_index_fault' : IDL.Opt(CommitmentIndexFault),
+    'next_staking_start_tx_id' : IDL.Opt(IDL.Nat64),
     'items' : IDL.Vec(CommitmentRouteSummary),
+    'revision' : IDL.Opt(IDL.Nat64),
     'last_index_run_ts' : IDL.Opt(IDL.Nat64),
+  });
+  const ExpectedEndowmentStatus = IDL.Variant({
+    'KnownIndexed' : IDL.Null,
+    'ObservedNotQualifying' : IDL.Null,
+    'NotYetObserved' : IDL.Null,
+    'NotFoundInRetainedEvidence' : IDL.Null,
+  });
+  const EndowmentTransactionStatusResponse = IDL.Record({
+    'transaction_id' : IDL.Nat64,
+    'status' : ExpectedEndowmentStatus,
+    'revision' : IDL.Nat64,
+    'complete_from_genesis' : IDL.Bool,
+    'commitment_index_fault' : IDL.Opt(CommitmentIndexFault),
   });
   const GetCyclesHistoryArgs = IDL.Record({
     'descending' : IDL.Opt(IDL.Bool),
@@ -193,6 +210,7 @@ export const idlFactory = ({ IDL }) => {
     'index_canister_id' : IDL.Opt(IDL.Principal),
     'faucet_canister_id' : IDL.Principal,
     'commitment_index_fault' : IDL.Opt(CommitmentIndexFault),
+    'route_index_fault' : IDL.Opt(IDL.Text),
     'ledger_canister_id' : IDL.Principal,
     'output_account' : IDL.Opt(Account),
     'icp_xdr_rate' : IDL.Opt(IcpXdrRateSnapshot),
@@ -363,6 +381,11 @@ export const idlFactory = ({ IDL }) => {
     'get_commitment_route_summaries' : IDL.Func(
         [GetCommitmentRouteSummariesArgs],
         [GetCommitmentRouteSummariesResponse],
+        ['query'],
+      ),
+    'get_endowment_transaction_status' : IDL.Func(
+        [IDL.Nat64],
+        [EndowmentTransactionStatusResponse],
         ['query'],
       ),
     'get_cycles_history' : IDL.Func(

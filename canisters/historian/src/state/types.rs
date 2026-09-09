@@ -285,6 +285,22 @@ pub(crate) struct StableCanisterMeta {
     pub burned_e8s: Option<u64>,
 }
 
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DescendingIndexCatchUp {
+    /// The fully covered head that this bounded interval must reach.
+    pub boundary_tx_id: u64,
+    /// The newest transaction observed when this interval began.
+    pub observed_head_tx_id: u64,
+    /// Exclusive ICP Index cursor for the next older page.
+    pub next_start_tx_id: Option<u64>,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CommitmentIndexLeaseOwner {
+    Scheduled,
+    EndowmentRefresh,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub(crate) struct StableRootState {
     pub config: StableConfig,
@@ -356,6 +372,24 @@ pub(crate) struct StableRootState {
     pub last_icp_xdr_rate_attempt_ts: Option<u64>,
     #[serde(default)]
     pub last_icp_xdr_rate_error: Option<String>,
+    #[serde(default)]
+    pub active_staking_catch_up: Option<DescendingIndexCatchUp>,
+    #[serde(default)]
+    pub active_output_catch_up: Option<DescendingIndexCatchUp>,
+    #[serde(default)]
+    pub active_rewards_catch_up: Option<DescendingIndexCatchUp>,
+    #[serde(default)]
+    pub commitment_index_lock_expires_at_ts: Option<u64>,
+    #[serde(default)]
+    pub commitment_index_lock_generation: Option<u64>,
+    #[serde(default)]
+    pub commitment_index_lock_owner: Option<CommitmentIndexLeaseOwner>,
+    #[serde(default)]
+    pub endowment_refresh_next_allowed_ts: Option<u64>,
+    #[serde(default)]
+    pub endowment_refresh_ineffective_streak: Option<u8>,
+    #[serde(default)]
+    pub commitment_index_revision: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -998,6 +1032,18 @@ pub(crate) struct State {
     pub last_icp_xdr_rate_attempt_ts: Option<u64>,
     pub last_icp_xdr_rate_error: Option<String>,
     #[serde(default)]
+    pub active_staking_catch_up: Option<DescendingIndexCatchUp>,
+    #[serde(default)]
+    pub active_output_catch_up: Option<DescendingIndexCatchUp>,
+    #[serde(default)]
+    pub active_rewards_catch_up: Option<DescendingIndexCatchUp>,
+    pub commitment_index_lock_expires_at_ts: Option<u64>,
+    pub commitment_index_lock_generation: u64,
+    pub commitment_index_lock_owner: Option<CommitmentIndexLeaseOwner>,
+    pub endowment_refresh_next_allowed_ts: u64,
+    pub endowment_refresh_ineffective_streak: u8,
+    pub commitment_index_revision: u64,
+    #[serde(default)]
     pub canister_module_hash_cache: Vec<crate::CanisterModuleHash>,
     #[serde(default)]
     pub canister_module_hash_cache_updated_ts: Option<u64>,
@@ -1056,6 +1102,15 @@ impl State {
             icp_xdr_rate: None,
             last_icp_xdr_rate_attempt_ts: None,
             last_icp_xdr_rate_error: None,
+            active_staking_catch_up: None,
+            active_output_catch_up: None,
+            active_rewards_catch_up: None,
+            commitment_index_lock_expires_at_ts: None,
+            commitment_index_lock_generation: 0,
+            commitment_index_lock_owner: None,
+            endowment_refresh_next_allowed_ts: 0,
+            endowment_refresh_ineffective_streak: 0,
+            commitment_index_revision: 0,
             canister_module_hash_cache: Vec::new(),
             canister_module_hash_cache_updated_ts: None,
             canister_module_hash_refresh_lock_ts: None,

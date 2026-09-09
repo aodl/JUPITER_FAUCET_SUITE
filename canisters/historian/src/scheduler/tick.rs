@@ -102,6 +102,7 @@ pub async fn main_tick(force: bool) {
         &sns_root,
         &governance,
         &xrc,
+        &|| ic_cdk::api::time() / 1_000_000_000,
     )
     .await;
     if let Err(err) = result {
@@ -193,6 +194,7 @@ pub(super) async fn run_main_tick_with_clients<
     sns_root: &R,
     governance: &G,
     xrc: &X,
+    lease_now_secs: &dyn Fn() -> u64,
 ) -> Result<(), String> {
     if state::with_state(|st| !crate::memo_registered_canister_summary_index_is_valid(st)) {
         state::with_root_state_mut(|st| {
@@ -203,10 +205,27 @@ pub(super) async fn run_main_tick_with_clients<
     if let Err(err) = refresh_icp_xdr_rate_if_due(now_secs, xrc).await {
         log_error(&format!("historian ICP/XDR rate refresh degraded: {err}"));
     }
-    if let Err(err) = process_commitment_indexing(index, now_secs).await {
-        log_error(&format!("historian commitment indexing degraded: {err}"));
+    if let Some(index_guard) = CommitmentIndexGuard::acquire(
+        lease_now_secs(),
+        state::CommitmentIndexLeaseOwner::Scheduled,
+    ) {
+        if let Err(err) = process_commitment_indexing_bounded(
+            index,
+            now_secs,
+            state::with_state(|st| st.config.max_index_pages_per_tick),
+            Some(index_guard.token()),
+            lease_now_secs,
+        )
+        .await
+        {
+            log_error(&format!("historian commitment indexing degraded: {err}"));
+        }
     }
-    process_route_indexing(now_nanos, now_secs, index).await?;
+    if let Err(err) = process_route_indexing(now_nanos, now_secs, index).await {
+        log_error(&format!(
+            "historian output/rewards indexing degraded: {err}"
+        ));
+    }
 
     let (
         enable_sns_tracking,

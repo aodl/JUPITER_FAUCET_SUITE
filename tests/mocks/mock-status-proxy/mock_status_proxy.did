@@ -35,6 +35,35 @@ type ProxyCanisterStatusResult = record {
   };
 };
 type DebugCall = record { canister_id : principal; caller : principal };
+type CommitmentIndexFault = record {
+  observed_at_ts : nat64;
+  last_cursor_tx_id : opt nat64;
+  offending_tx_id : nat64;
+  message : text;
+};
+type RefreshEndowmentsOutcome = variant {
+  Updated;
+  NoQualifyingChange;
+  IncompleteProgress;
+  Busy;
+  RateLimited;
+  UpstreamFailure : record { message : text };
+};
+type EndowmentIndexProgress = record {
+  revision : nat64;
+  newly_indexed_qualifying_endowments : nat64;
+  complete_from_genesis : bool;
+  committed_head_staking_tx_id : opt nat64;
+  oldest_indexed_staking_tx_id : opt nat64;
+  observed_head_staking_tx_id : opt nat64;
+  next_staking_start_tx_id : opt nat64;
+  commitment_index_fault : opt CommitmentIndexFault;
+  retry_after_ts : opt nat64;
+};
+type RefreshEndowmentsResponse = record {
+  outcome : RefreshEndowmentsOutcome;
+  progress : EndowmentIndexProgress;
+};
 service : {
   canister_status : (record { canister_id : principal }) -> (ProxyCanisterStatusResult);
   debug_management_canister_status : (record { canister_id : principal }) -> (variant {
@@ -45,6 +74,19 @@ service : {
     canister_id : principal;
     settings : CanisterSettings;
   }) -> (variant { Ok; Err : text });
+  debug_refresh_endowments : (record {
+    canister_id : principal;
+  }) -> (variant { Ok : RefreshEndowmentsResponse; Err : text });
+  debug_refresh_endowments_oneway_batch : (record {
+    canister_id : principal;
+    call_count : nat32;
+  }) -> (variant { Ok : nat32; Err : text });
+  debug_refresh_endowments_raw_oneway_batch : (record {
+    canister_id : principal;
+    call_count : nat32;
+    raw_args : blob;
+    take_raw_args : bool;
+  }) -> (variant { Ok : nat32; Err : text });
   debug_calls : () -> (vec DebugCall) query;
   debug_reset : () -> ();
 }
