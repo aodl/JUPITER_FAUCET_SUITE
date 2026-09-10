@@ -718,6 +718,10 @@ def validate_historian_upgrade_only_docs() -> None:
         "Memory 29 is ordinary authoritative Historian state",
         "complete_from_genesis = true",
         "commitment_index_fault = null",
+        "route_index_fault = null",
+        "`qualifying_commitment_count` must not decrease across the upgrade",
+        "public queries must already fail closed",
+        "normal initial or forced main tick",
         "Self-service Relay state is legitimate durable production state",
         "Snapshots are risk-based",
         "--identity anonymous",
@@ -729,6 +733,8 @@ def validate_historian_upgrade_only_docs() -> None:
     for phrase in [
         "Stable memory 29 is the authoritative lifetime commitment-route map",
         "complete_from_genesis = true",
+        "route_index_fault = null",
+        "`qualifying_commitment_count` must not decrease across the upgrade",
         "investigate the invariant violation rather than initiating a historical rebuild",
     ]:
         if phrase not in historian_readme_text:
@@ -744,6 +750,10 @@ def validate_historian_upgrade_only_docs() -> None:
         "Stable memory 29 is authoritative Historian state",
         "get_commitment_route_summaries",
         "complete_from_genesis=true and commitment_index_fault=null",
+        "route_index_fault=null",
+        "qualifying_commitment_count must not decrease across the upgrade",
+        "public queries must already fail closed",
+        "normal initial or forced main tick",
         "Preserve memory-26 setup entries",
         "Snapshots are risk-based",
         "--identity anonymous",

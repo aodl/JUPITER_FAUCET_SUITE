@@ -176,7 +176,7 @@ Self-service Relay state is legitimate durable production state. An upgrade must
 After canonical artifacts exist, run `./tools/scripts/preflight-historian-production-upgrade` for a read-only artifact and upgrade-path preflight. Record:
 
 - Historian module hash, controllers, and stable memory size from `icp canister status j5gs6-uiaaa-aaaar-qb5cq-cai -n ic`.
-- `get_public_counts`, `get_public_status`, and the empty-route endowment health query below.
+- `get_public_counts`, `get_public_status`, and the empty-route endowment health query below. Compare the recorded counts and totals before and after the upgrade. `qualifying_commitment_count` must not decrease across the upgrade; an increase after restart/indexing is permitted and may represent newly indexed qualifying endowments. Bounded retained histories must never be used to reconstruct or reduce the lifetime count.
 - All `list_canisters` pages needed to cover tracked targets, canonical Relay, and self-service Relays.
 - Representative endowment/cycles histories, known exact Relay configuration mappings, indexing cursors, fault state, and aggregate totals.
 
@@ -192,15 +192,17 @@ icp canister status jupiter_historian --environment ic --json
 
 Local testing showed that upgrading a stopped canister leaves it stopped, so the explicit start command is required.
 
+Immediately after post-upgrade restore, public queries must already fail closed if persisted index ordering is unsupported. After starting Historian, allow the normal initial or forced main tick to run before making the final assertion that indexing has resumed normally.
+
 After upgrade, verify:
 
 - The module hash matches the canonical `release-artifacts/jupiter_historian.wasm.gz` package hash and controllers are unchanged.
-- Counts, cursors, totals, recent feeds, and representative historical samples are preserved.
+- Counts, cursors, totals, recent feeds, and representative historical samples are preserved. `qualifying_commitment_count` must not decrease across the upgrade; an increase after restart/indexing is permitted and may represent newly indexed qualifying endowments.
 - Memory-26 entries, known exact active configuration mappings, and `RelayTarget`/`RelayInstance` tracking are preserved.
 - Automatic cycles probing and normal staking indexing continue, and new samples/endowments append exactly once.
 - Any setup interrupted after an irreversible spend is `ManualRecoveryRequired`; interrupted `Reserved`/`ProbingTargets` entries are removed, while existing `Active` and `ManualRecoveryRequired` entries are preserved.
 
-### Endowment-route health
+### Historian index health
 
 Memory 29 is ordinary authoritative Historian state and is preserved directly by normal in-place upgrades. Query route metadata anonymously before and after an upgrade; an empty route vector is sufficient:
 
@@ -212,7 +214,7 @@ icp canister call jupiter_historian get_commitment_route_summaries \
   --query
 ```
 
-Normal production is expected to report `complete_from_genesis = true` and `commitment_index_fault = null` before and after a routine upgrade. If completeness unexpectedly becomes false or a fault is present, investigate the invariant violation rather than initiating a historical rebuild.
+Healthy production requires this query to report `complete_from_genesis = true` and `commitment_index_fault = null`, and the already-recorded `get_public_status()` response to report `route_index_fault = null`, before and after a routine upgrade. The first pair verifies staking/endowment indexing; `route_index_fault` verifies output/rewards indexing. If completeness is false or either fault is present, investigate the invariant violation rather than initiating a historical rebuild.
 
 ### High-risk upgrade and rollback
 

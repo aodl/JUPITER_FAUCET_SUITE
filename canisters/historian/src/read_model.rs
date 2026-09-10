@@ -180,9 +180,7 @@ pub(super) fn get_commitment_route_summaries(
     state::with_state(|st| GetCommitmentRouteSummariesResponse {
         items,
         truncated,
-        complete_from_genesis: st.commitment_route_rollups_complete_from_genesis == Some(true)
-            && st.active_staking_catch_up.is_none()
-            && st.commitment_index_fault.is_none(),
+        complete_from_genesis: state::commitment_index_is_complete(st),
         indexed_through_staking_tx_id: st.last_indexed_staking_tx_id,
         oldest_indexed_staking_tx_id: st.oldest_indexed_staking_tx_id,
         last_index_run_ts: st.last_index_run_ts,

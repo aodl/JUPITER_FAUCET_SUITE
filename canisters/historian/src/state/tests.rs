@@ -184,6 +184,34 @@ mod tests {
     }
 
     #[test]
+    fn commitment_index_completeness_requires_authoritative_newest_first_state() {
+        let mut st = State::new(sample_config(), 100);
+        st.commitment_route_rollups_complete_from_genesis = Some(true);
+        st.staking_index_descending = Some(true);
+        assert!(commitment_index_is_complete(&st));
+
+        st.staking_index_descending = Some(false);
+        assert!(!commitment_index_is_complete(&st));
+
+        st.staking_index_descending = Some(true);
+        st.active_staking_catch_up = Some(DescendingIndexCatchUp {
+            boundary_tx_id: 10,
+            observed_head_tx_id: 11,
+            next_start_tx_id: Some(10),
+        });
+        assert!(!commitment_index_is_complete(&st));
+
+        st.active_staking_catch_up = None;
+        st.commitment_index_fault = Some(CommitmentIndexFault {
+            observed_at_ts: 100,
+            last_cursor_tx_id: Some(10),
+            offending_tx_id: 9,
+            message: "test fault".to_string(),
+        });
+        assert!(!commitment_index_is_complete(&st));
+    }
+
+    #[test]
     fn fresh_relay_setup_map_is_empty() {
         reset_test_storage();
         with_relay_setup_entries_map(|map| assert!(map.is_empty()));

@@ -8,7 +8,7 @@ import { createActor as createGovernanceActor } from '../../declarations/nns_gov
 import { createNeuronDetailsController } from '../neuron-details-controller.js';
 import { setText } from '../dom-helpers.js';
 import { readOpt } from '../candid-opt.js';
-import { buildCommitmentIndexFaultBannerText } from '../historian-fault.js';
+import { buildHistorianFaultBannerText } from '../historian-fault.js';
 import { initAdvancedMemoBuilder } from './advanced-memo-controller.js';
 import { GOVERNANCE_CANISTER_ID, JUPITER_NEURON_ID } from './config.js';
 import { dashboardCountDisplays } from './count-displays.js';
@@ -144,7 +144,7 @@ function renderLandingUnavailable(errorMessage = 'Live metrics unavailable') {
 function renderHistorianFaultBanner(data) {
   const banner = document.getElementById('historian-fault-banner');
   if (!banner) return;
-  const text = buildCommitmentIndexFaultBannerText(data?.status, {
+  const text = buildHistorianFaultBannerText(data?.status, {
     formatTimestampSeconds,
     formatInteger,
   });

@@ -101,9 +101,7 @@ pub(crate) fn progress_snapshot(
     state::with_state(|st| EndowmentIndexProgress {
         revision: st.commitment_index_revision,
         newly_indexed_qualifying_endowments,
-        complete_from_genesis: st.commitment_route_rollups_complete_from_genesis == Some(true)
-            && st.active_staking_catch_up.is_none()
-            && st.commitment_index_fault.is_none(),
+        complete_from_genesis: state::commitment_index_is_complete(st),
         committed_head_staking_tx_id: st.last_indexed_staking_tx_id,
         oldest_indexed_staking_tx_id: st.oldest_indexed_staking_tx_id,
         observed_head_staking_tx_id: st
@@ -128,9 +126,7 @@ pub(crate) fn endowment_transaction_status(
         transaction_id,
         status,
         revision: st.commitment_index_revision,
-        complete_from_genesis: st.commitment_route_rollups_complete_from_genesis == Some(true)
-            && st.active_staking_catch_up.is_none()
-            && st.commitment_index_fault.is_none(),
+        complete_from_genesis: state::commitment_index_is_complete(st),
         commitment_index_fault: st.commitment_index_fault.clone(),
     })
 }
@@ -243,11 +239,7 @@ pub(super) async fn refresh_endowments_with_client<I: IndexClient>(
     let newly_indexed = after_count.saturating_sub(before_count);
     let productive = newly_indexed > 0;
     let retry_after_ts = finish_endowment_refresh_attempt(now_secs, productive);
-    let complete = state::with_state(|st| {
-        st.commitment_route_rollups_complete_from_genesis == Some(true)
-            && st.active_staking_catch_up.is_none()
-            && st.commitment_index_fault.is_none()
-    });
+    let complete = state::with_state(state::commitment_index_is_complete);
     let outcome = match result {
         Ok(()) if !complete => RefreshEndowmentsOutcome::IncompleteProgress,
         Ok(()) if productive => RefreshEndowmentsOutcome::Updated,

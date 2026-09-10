@@ -2459,15 +2459,39 @@ mod tests {
     }
 
     #[test]
-    fn persisted_ascending_staking_state_fails_closed_without_an_index_call() {
+    fn restored_ascending_staking_state_is_immediately_incomplete_then_latches_fault() {
         let _staking_id = configure_state(1);
         state::with_state_mut(|st| {
+            st.config.min_tx_e8s = crate::normalization::MIN_MIN_TX_E8S;
             st.last_indexed_staking_tx_id = Some(42);
             st.oldest_indexed_staking_tx_id = Some(42);
             st.staking_index_descending = Some(false);
             st.staking_backfill_complete = Some(true);
             st.commitment_route_rollups_complete_from_genesis = Some(true);
         });
+
+        crate::restore_post_upgrade_state_with_timestamp(None, 200);
+        let summaries =
+            crate::get_commitment_route_summaries(crate::GetCommitmentRouteSummariesArgs {
+                routes: Vec::new(),
+            });
+        assert!(!summaries.complete_from_genesis);
+        assert!(summaries.commitment_index_fault.is_none());
+        let transaction_status = endowment_transaction_status(42);
+        assert!(!transaction_status.complete_from_genesis);
+        assert!(transaction_status.commitment_index_fault.is_none());
+        let refresh_progress = progress_snapshot(0, None);
+        assert!(!refresh_progress.complete_from_genesis);
+        assert!(refresh_progress.commitment_index_fault.is_none());
+        state::with_state(|st| {
+            assert_eq!(st.staking_index_descending, Some(false));
+            assert_eq!(
+                st.commitment_route_rollups_complete_from_genesis,
+                Some(true)
+            );
+            assert!(st.commitment_index_fault.is_none());
+        });
+
         let index = MockIndexClient::new(vec![index_page(Vec::new())]);
         let error = block_on(process_commitment_indexing(&index, 200)).unwrap_err();
         assert!(error.contains("unsupported persisted ascending"));

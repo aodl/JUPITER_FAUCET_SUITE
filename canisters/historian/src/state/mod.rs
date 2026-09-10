@@ -21,3 +21,10 @@ pub(crate) use access::*;
 mod conversions;
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn commitment_index_is_complete(st: &State) -> bool {
+    st.commitment_route_rollups_complete_from_genesis == Some(true)
+        && st.staking_index_descending != Some(false)
+        && st.active_staking_catch_up.is_none()
+        && st.commitment_index_fault.is_none()
+}

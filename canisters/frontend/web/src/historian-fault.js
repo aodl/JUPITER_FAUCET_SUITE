@@ -20,23 +20,36 @@ export function readCommitmentIndexFault(status) {
   };
 }
 
-export function buildCommitmentIndexFaultBannerText(status, {
+export function readRouteIndexFault(status) {
+  const fault = readOpt(status?.route_index_fault);
+  if (typeof fault !== 'string') return null;
+  const message = fault.trim();
+  return message || null;
+}
+
+export function buildHistorianFaultBannerText(status, {
   formatTimestampSeconds,
   formatInteger,
 } = {}) {
-  const fault = readCommitmentIndexFault(status);
-  if (!fault) return null;
-  const observedText = fault.observedAtTs === null ? '—' : formatTimestampSeconds(fault.observedAtTs);
-  const cursorText = fault.lastCursorTxId === null ? 'none' : formatInteger(fault.lastCursorTxId);
-  const offendingText = fault.offendingTxId === null ? '—' : formatInteger(fault.offendingTxId);
-  const parts = [
-    'Historian endowment indexing is degraded.',
-    `First observed at ${observedText}.`,
-    `Last cursor: ${cursorText}.`,
-    `Offending tx: ${offendingText}.`,
-  ];
-  if (fault.message) {
-    parts.push(fault.message);
+  const parts = [];
+  const commitmentFault = readCommitmentIndexFault(status);
+  if (commitmentFault) {
+    const observedText = commitmentFault.observedAtTs === null ? '—' : formatTimestampSeconds(commitmentFault.observedAtTs);
+    const cursorText = commitmentFault.lastCursorTxId === null ? 'none' : formatInteger(commitmentFault.lastCursorTxId);
+    const offendingText = commitmentFault.offendingTxId === null ? '—' : formatInteger(commitmentFault.offendingTxId);
+    parts.push(
+      'Historian endowment indexing is degraded.',
+      `First observed at ${observedText}.`,
+      `Last cursor: ${cursorText}.`,
+      `Offending tx: ${offendingText}.`,
+    );
+    if (commitmentFault.message) {
+      parts.push(commitmentFault.message);
+    }
   }
-  return parts.join(' ');
+  const routeFault = readRouteIndexFault(status);
+  if (routeFault) {
+    parts.push('Historian output/rewards indexing is degraded.', routeFault);
+  }
+  return parts.length > 0 ? parts.join(' ') : null;
 }
