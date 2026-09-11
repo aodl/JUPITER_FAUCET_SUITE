@@ -3807,7 +3807,7 @@ fn real_index_lag_canister_poke_status_and_revision_aware_route_flow() -> Result
 
     for ingress_caller in [
         Principal::anonymous(),
-        Principal::self_authenticating(&[42_u8; 32]),
+        Principal::self_authenticating([42_u8; 32]),
     ] {
         let cycles_before = pic.cycle_balance(historian);
         let rejection = pic.update_call(

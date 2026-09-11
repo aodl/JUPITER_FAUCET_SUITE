@@ -1,8 +1,24 @@
 use super::*;
+#[cfg(test)]
 pub(super) async fn probe_index_health(
     index: &impl IndexClient,
     staking_id: &str,
     denom_balance_e8s: u64,
+) {
+    probe_index_health_with_lease(
+        index,
+        staking_id,
+        denom_balance_e8s,
+        MainLeaseToken::capture_for_test(),
+    )
+    .await;
+}
+
+pub(super) async fn probe_index_health_with_lease(
+    index: &impl IndexClient,
+    staking_id: &str,
+    denom_balance_e8s: u64,
+    lease: MainLeaseToken,
 ) {
     let prev_balance = state::with_state(|st| st.last_observed_staking_balance_e8s);
     let first_page = match index
@@ -12,6 +28,9 @@ pub(super) async fn probe_index_health(
         Ok(resp) => resp,
         Err(_) => {
             state::with_state_mut(|st| {
+                if !lease.is_current_in(st) {
+                    return;
+                }
                 if prev_balance.is_none() {
                     st.last_observed_staking_balance_e8s = Some(denom_balance_e8s);
                     st.last_observed_latest_tx_id = None;
@@ -25,12 +44,22 @@ pub(super) async fn probe_index_health(
         }
     };
 
-    state::with_state_mut(|st| apply_anchor_observation(st, first_page.oldest_tx_id));
+    if !lease.is_current() {
+        return;
+    }
+
+    state::with_state_mut(|st| {
+        if lease.is_current_in(st) {
+            apply_anchor_observation(st, first_page.oldest_tx_id);
+        }
+    });
 
     if prev_balance.is_none() {
         let latest_observation = scan_latest_observation(index, staking_id.to_string(), None).await;
         state::with_state_mut(|st| {
-            apply_latest_observation(st, denom_balance_e8s, latest_observation)
+            if lease.is_current_in(st) {
+                apply_latest_observation(st, denom_balance_e8s, latest_observation);
+            }
         });
         return;
     }
@@ -40,13 +69,33 @@ pub(super) async fn probe_index_health(
     }
 
     let latest_observation = scan_latest_observation(index, staking_id.to_string(), None).await;
-    state::with_state_mut(|st| apply_latest_observation(st, denom_balance_e8s, latest_observation));
+    state::with_state_mut(|st| {
+        if lease.is_current_in(st) {
+            apply_latest_observation(st, denom_balance_e8s, latest_observation);
+        }
+    });
 }
 
+#[cfg(test)]
 pub(super) async fn refresh_index_latest_health_after_payout(
     index: &impl IndexClient,
     staking_id: &str,
     denom_balance_e8s: u64,
+) {
+    refresh_index_latest_health_after_payout_with_lease(
+        index,
+        staking_id,
+        denom_balance_e8s,
+        MainLeaseToken::capture_for_test(),
+    )
+    .await;
+}
+
+pub(super) async fn refresh_index_latest_health_after_payout_with_lease(
+    index: &impl IndexClient,
+    staking_id: &str,
+    denom_balance_e8s: u64,
+    lease: MainLeaseToken,
 ) {
     let prev_balance = state::with_state(|st| st.last_observed_staking_balance_e8s);
     if prev_balance == Some(denom_balance_e8s) {
@@ -54,7 +103,11 @@ pub(super) async fn refresh_index_latest_health_after_payout(
     }
 
     let latest_observation = scan_latest_observation(index, staking_id.to_string(), None).await;
-    state::with_state_mut(|st| apply_latest_observation(st, denom_balance_e8s, latest_observation));
+    state::with_state_mut(|st| {
+        if lease.is_current_in(st) {
+            apply_latest_observation(st, denom_balance_e8s, latest_observation);
+        }
+    });
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

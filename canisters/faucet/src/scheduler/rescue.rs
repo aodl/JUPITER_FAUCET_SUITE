@@ -16,12 +16,7 @@ pub(super) fn desired_rescue_controllers(
     let mut desired = if forced_reason_present || skip_range_fault {
         vec![rescue_controller, self_id]
     } else {
-        let Some(desired) =
-            policy::desired_controllers(now_secs, last_xfer_opt, self_id, rescue_controller)
-        else {
-            return None;
-        };
-        desired
+        policy::desired_controllers(now_secs, last_xfer_opt, self_id, rescue_controller)?
     };
     desired.sort_by_key(|a: &Principal| a.to_text());
     desired.dedup();
@@ -43,6 +38,14 @@ fn controller_update_settings(
 }
 
 pub(super) async fn attempt_rescue(now_secs: u64) {
+    attempt_rescue_with_optional_main_lease(now_secs, None).await;
+}
+
+pub(super) async fn attempt_rescue_with_main_lease(now_secs: u64, lease: MainLeaseToken) {
+    attempt_rescue_with_optional_main_lease(now_secs, Some(lease)).await;
+}
+
+async fn attempt_rescue_with_optional_main_lease(now_secs: u64, lease: Option<MainLeaseToken>) {
     maybe_latch_bootstrap_rescue(now_secs);
     let (
         autonomous_rescue_armed,
@@ -79,6 +82,9 @@ pub(super) async fn attempt_rescue(now_secs: u64) {
         return;
     }
     state::with_state_mut(|st| {
+        if lease.is_some_and(|lease| !lease.is_current_in(st)) {
+            return;
+        }
         st.last_rescue_check_ts = now_secs;
         st.rescue_triggered = rescue_active;
     });

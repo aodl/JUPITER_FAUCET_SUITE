@@ -5,7 +5,7 @@ pub(super) struct MainGuard {
 }
 
 impl MainGuard {
-    fn acquire(now_secs: u64) -> Option<Self> {
+    pub(super) fn acquire(now_secs: u64) -> Option<Self> {
         state::with_state_mut(|st| {
             let inner =
                 TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
@@ -26,10 +26,10 @@ impl MainGuard {
         });
     }
 
-    fn finish(mut self, now_secs: u64, err: Option<u32>) {
+    pub(super) fn finish(mut self, now_secs: u64, err: Option<u32>) {
         state::with_state_mut(|st| {
-            st.last_main_run_ts = now_secs;
             if self.inner.release(st.main_lock_state_ts) == LeaseFinish::Released {
+                st.last_main_run_ts = now_secs;
                 st.main_lock_state_ts = Some(0);
             }
         });
@@ -39,6 +39,28 @@ impl MainGuard {
         log_cycles();
         log_current_state();
         log_current_config();
+    }
+
+    pub(super) fn lease_token(&self) -> MainLeaseToken {
+        MainLeaseToken(Some(self.inner.lease_expires_at_ts()))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct MainLeaseToken(Option<u64>);
+
+impl MainLeaseToken {
+    pub(super) fn is_current(self) -> bool {
+        state::with_state(|st| self.is_current_in(st))
+    }
+
+    pub(super) fn is_current_in(self, st: &state::State) -> bool {
+        st.main_lock_state_ts == self.0
+    }
+
+    #[cfg(test)]
+    pub(super) fn capture_for_test() -> Self {
+        Self(state::with_state(|st| st.main_lock_state_ts))
     }
 }
 
@@ -115,6 +137,7 @@ pub(super) async fn run_main_tick_with_clients<
     let Some(guard) = MainGuard::acquire(now_secs) else {
         return;
     };
+    let lease = guard.lease_token();
     debug_reset_successful_transfer_counter();
     if !force {
         let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
@@ -125,7 +148,7 @@ pub(super) async fn run_main_tick_with_clients<
             return;
         }
     }
-    let ok = process_payout(
+    let ok = process_payout_with_lease(
         ledger,
         index,
         cmc,
@@ -133,10 +156,11 @@ pub(super) async fn run_main_tick_with_clients<
         status_client,
         now_nanos,
         now_secs,
+        lease,
     )
     .await;
-    if ok {
-        attempt_rescue(now_secs).await;
+    if ok && lease.is_current() {
+        attempt_rescue_with_main_lease(now_secs, lease).await;
     }
     guard.finish(now_secs, if ok { None } else { Some(3001) });
 }

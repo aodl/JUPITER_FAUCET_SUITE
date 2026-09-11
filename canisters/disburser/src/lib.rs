@@ -360,9 +360,9 @@ fn debug_config() -> DebugConfig {
     guard_debug_api_not_production();
     crate::state::with_state(|st| DebugConfig {
         neuron_id: st.config.neuron_id,
-        normal_recipient: st.config.normal_recipient.clone(),
-        age_bonus_recipient_1: st.config.age_bonus_recipient_1.clone(),
-        age_bonus_recipient_2: st.config.age_bonus_recipient_2.clone(),
+        normal_recipient: st.config.normal_recipient,
+        age_bonus_recipient_1: st.config.age_bonus_recipient_1,
+        age_bonus_recipient_2: st.config.age_bonus_recipient_2,
         ledger_canister_id: st.config.ledger_canister_id,
         governance_canister_id: st.config.governance_canister_id,
         rescue_controller: st.config.rescue_controller,

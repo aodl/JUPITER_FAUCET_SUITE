@@ -566,7 +566,7 @@ fn debug_accounts() -> DebugAccounts {
             owner: ic_cdk::api::canister_self(),
             subaccount: st.config.payout_subaccount,
         },
-        staking: st.config.staking_account.clone(),
+        staking: st.config.staking_account,
     })
 }
 
@@ -575,7 +575,7 @@ fn debug_accounts() -> DebugAccounts {
 fn debug_config() -> DebugConfig {
     guard_debug_api_not_production();
     crate::state::with_state(|st| DebugConfig {
-        staking_account: st.config.staking_account.clone(),
+        staking_account: st.config.staking_account,
         payout_subaccount: st.config.payout_subaccount.map(|bytes| bytes.to_vec()),
         ledger_canister_id: st.config.ledger_canister_id,
         index_canister_id: st.config.index_canister_id,
@@ -625,7 +625,7 @@ fn debug_footprint() -> DebugFootprint {
 #[ic_cdk::update]
 fn debug_reset_runtime_state() {
     guard_debug_api_not_production();
-    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    let now_secs = ic_cdk::api::time() / 1_000_000_000;
     crate::state::with_state_mut(|st| {
         st.last_summary = None;
         st.last_successful_transfer_ts = None;
@@ -667,7 +667,7 @@ fn debug_set_last_successful_transfer_ts(ts: Option<u64>) {
 #[ic_cdk::update]
 fn debug_set_autonomous_rescue_armed(v: Option<bool>) {
     guard_debug_api_not_production();
-    let now_secs = (ic_cdk::api::time() / 1_000_000_000) as u64;
+    let now_secs = ic_cdk::api::time() / 1_000_000_000;
     crate::state::with_state_mut(|st| {
         st.config.autonomous_rescue_armed = v;
         st.autonomous_rescue_armed_since_ts = v.unwrap_or(false).then_some(now_secs);

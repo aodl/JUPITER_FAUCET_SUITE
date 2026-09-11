@@ -3,9 +3,9 @@ use std::cell::RefCell;
 
 #[cfg(feature = "debug_api")]
 thread_local! {
-    static DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS: RefCell<Option<u32>> = RefCell::new(None);
-    static DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS: RefCell<Option<u32>> = RefCell::new(None);
-    static DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK: RefCell<u32> = RefCell::new(0);
+    static DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS: RefCell<Option<u32>> = const { RefCell::new(None) };
+    static DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS: RefCell<Option<u32>> = const { RefCell::new(None) };
+    static DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK: RefCell<u32> = const { RefCell::new(0) };
 }
 
 #[cfg(feature = "debug_api")]

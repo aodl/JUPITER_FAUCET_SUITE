@@ -30,6 +30,10 @@ mod tests {
         }
     }
 
+    fn main_lease() -> MainLeaseToken {
+        MainLeaseToken::capture_for_test().expect("test main lease must be installed")
+    }
+
     fn configure_state(max_index_pages_per_tick: u32) -> String {
         state::clear_commitment_route_rollups();
         let account = sample_account();
@@ -116,6 +120,7 @@ mod tests {
             &sns_root,
             &governance,
             &xrc,
+            main_lease(),
             &|| 100,
         ))
         .unwrap();
@@ -544,6 +549,41 @@ mod tests {
         calls: Mutex<Vec<Principal>>,
     }
 
+    struct DelayedSnsRootClient {
+        response: Mutex<
+            Option<
+                oneshot::Receiver<
+                    Result<
+                        jupiter_ic_clients::sns::ListSnsCanistersResponse,
+                        crate::clients::ClientError,
+                    >,
+                >,
+            >,
+        >,
+        calls: Mutex<Vec<Principal>>,
+    }
+
+    impl DelayedSnsRootClient {
+        fn new() -> (
+            Self,
+            oneshot::Sender<
+                Result<
+                    jupiter_ic_clients::sns::ListSnsCanistersResponse,
+                    crate::clients::ClientError,
+                >,
+            >,
+        ) {
+            let (sender, receiver) = oneshot::channel();
+            (
+                Self {
+                    response: Mutex::new(Some(receiver)),
+                    calls: Mutex::new(Vec::new()),
+                },
+                sender,
+            )
+        }
+    }
+
     impl MockSnsRootClient {
         fn new(
             responses: BTreeMap<Principal, jupiter_ic_clients::sns::ListSnsCanistersResponse>,
@@ -578,6 +618,26 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl SnsRootClient for DelayedSnsRootClient {
+        async fn list_sns_canisters(
+            &self,
+            root_id: Principal,
+        ) -> Result<jupiter_ic_clients::sns::ListSnsCanistersResponse, crate::clients::ClientError>
+        {
+            self.calls.lock().unwrap().push(root_id);
+            let receiver = self
+                .response
+                .lock()
+                .unwrap()
+                .take()
+                .expect("one delayed SNS Root response");
+            receiver
+                .await
+                .expect("delayed SNS Root sender must resolve")
+        }
+    }
+
     #[derive(Clone)]
     enum ProbeResponse {
         Ok(u128),
@@ -593,6 +653,96 @@ mod tests {
         blackhole_calls: Mutex<Vec<(Principal, Principal)>>,
         root_calls: Mutex<Vec<(Principal, Principal)>>,
         swap_calls: Mutex<Vec<Principal>>,
+    }
+
+    struct DelayedSelfCyclesProbeClient {
+        response: Mutex<Option<oneshot::Receiver<Option<u128>>>>,
+        calls: Mutex<Vec<Principal>>,
+    }
+
+    impl DelayedSelfCyclesProbeClient {
+        fn new() -> (Self, oneshot::Sender<Option<u128>>) {
+            let (sender, receiver) = oneshot::channel();
+            (
+                Self {
+                    response: Mutex::new(Some(receiver)),
+                    calls: Mutex::new(Vec::new()),
+                },
+                sender,
+            )
+        }
+    }
+
+    impl CyclesProbeClient for DelayedSelfCyclesProbeClient {
+        async fn self_cycles(&self, target: Principal) -> Option<u128> {
+            self.calls.lock().unwrap().push(target);
+            let receiver = self
+                .response
+                .lock()
+                .unwrap()
+                .take()
+                .expect("one delayed cycles response");
+            receiver.await.expect("delayed cycles sender must resolve")
+        }
+
+        async fn direct_canister_status(
+            &self,
+            _target: Principal,
+        ) -> Result<
+            jupiter_ic_clients::cycles_probe::DirectCanisterStatusObservation,
+            jupiter_ic_clients::ClientError,
+        > {
+            unreachable!("held self-cycle response resolves the probe")
+        }
+
+        async fn blackhole_cycles(
+            &self,
+            _probe_canister_id: Principal,
+            _target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            unreachable!("held self-cycle response resolves the probe")
+        }
+
+        async fn list_deployed_snses(
+            &self,
+        ) -> Result<
+            jupiter_ic_clients::sns::ListDeployedSnsesResponse,
+            jupiter_ic_clients::ClientError,
+        > {
+            unreachable!("held self-cycle response resolves the probe")
+        }
+
+        async fn canister_info_controllers(
+            &self,
+            _target: Principal,
+        ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
+            unreachable!("held self-cycle response resolves the probe")
+        }
+
+        async fn list_sns_canisters(
+            &self,
+            _root_canister_id: Principal,
+        ) -> Result<
+            jupiter_ic_clients::sns::ListSnsCanistersResponse,
+            jupiter_ic_clients::ClientError,
+        > {
+            unreachable!("held self-cycle response resolves the probe")
+        }
+
+        async fn sns_root_cycles(
+            &self,
+            _root_canister_id: Principal,
+            _target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            unreachable!("held self-cycle response resolves the probe")
+        }
+
+        async fn sns_swap_cycles(
+            &self,
+            _swap_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            unreachable!("held self-cycle response resolves the probe")
+        }
     }
 
     impl RecordingCyclesProbeClient {
@@ -1005,7 +1155,14 @@ mod tests {
         );
         let sns_root = MockSnsRootClient::new(summaries);
 
-        block_on(process_sns_discovery(123, 100, &sns_wasm, &sns_root)).unwrap();
+        block_on(process_sns_discovery(
+            123,
+            100,
+            &sns_wasm,
+            &sns_root,
+            main_lease(),
+        ))
+        .unwrap();
         state::with_state(|st| {
             let active = st
                 .active_sns_discovery
@@ -1024,7 +1181,14 @@ mod tests {
         assert_eq!(sns_wasm.calls(), 1);
         assert_eq!(sns_root.calls(), vec![root_a.clone(), root_b.clone()]);
 
-        block_on(process_sns_discovery(456, 101, &sns_wasm, &sns_root)).unwrap();
+        block_on(process_sns_discovery(
+            456,
+            101,
+            &sns_wasm,
+            &sns_root,
+            main_lease(),
+        ))
+        .unwrap();
         state::with_state(|st| {
             assert!(st.active_sns_discovery.is_none());
             assert_eq!(st.last_sns_discovery_ts, 101);
@@ -1104,6 +1268,7 @@ mod tests {
                 &sns_root,
                 &governance,
                 &xrc,
+                main_lease(),
                 &|| now_secs,
             ))
             .unwrap();
@@ -1162,7 +1327,14 @@ mod tests {
         );
         let sns_root = MockSnsRootClient::new(summaries);
 
-        block_on(process_sns_discovery(123, 100, &sns_wasm, &sns_root)).unwrap();
+        block_on(process_sns_discovery(
+            123,
+            100,
+            &sns_wasm,
+            &sns_root,
+            main_lease(),
+        ))
+        .unwrap();
 
         state::with_state(|st| {
             assert!(st.active_sns_discovery.is_none());
@@ -1245,6 +1417,7 @@ mod tests {
             &sns_root,
             &governance,
             &xrc,
+            main_lease(),
             &|| 123,
         ))
         .unwrap();
@@ -1348,6 +1521,7 @@ mod tests {
                 &sns_root,
                 &governance,
                 &xrc,
+                main_lease(),
                 &|| 123,
             ))
             .unwrap_or_else(|err| panic!("{route_name} degradation aborted the tick: {err}"));
@@ -1407,6 +1581,7 @@ mod tests {
                 &sns_root,
                 &governance,
                 &xrc,
+                main_lease(),
                 &|| 133,
             ))
             .unwrap_or_else(|err| {
@@ -1474,6 +1649,7 @@ mod tests {
             &sns_root,
             &governance,
             &xrc,
+            main_lease(),
             &|| 10_000,
         ))
         .unwrap();
@@ -1602,6 +1778,7 @@ mod tests {
             999,
             &cycles_probe,
             &governance,
+            main_lease(),
         ))
         .unwrap();
 
@@ -1650,9 +1827,16 @@ mod tests {
             124,
             &cycles_probe,
             &governance,
+            main_lease(),
         ))
         .unwrap();
-        block_on(process_cycles_sweep(124_000_000_000, 124, &cycles_probe)).unwrap();
+        block_on(process_cycles_sweep(
+            124_000_000_000,
+            124,
+            &cycles_probe,
+            main_lease(),
+        ))
+        .unwrap();
 
         state::with_state(|st| {
             assert_eq!(cycles_probe.blackhole_targets(), vec![target]);
@@ -1684,6 +1868,7 @@ mod tests {
             999,
             &cycles_probe,
             &governance,
+            main_lease(),
         ))
         .unwrap();
 
@@ -1713,6 +1898,7 @@ mod tests {
             999,
             &cycles_probe,
             &governance,
+            main_lease(),
         ))
         .unwrap();
 
@@ -1742,6 +1928,7 @@ mod tests {
             999,
             &cycles_probe,
             &governance,
+            main_lease(),
         ))
         .unwrap();
 
@@ -1766,7 +1953,13 @@ mod tests {
             .with_blackhole_target_response(target_a, ProbeResponse::Err("target a down".into()))
             .with_blackhole_target_response(target_b, ProbeResponse::Ok(222));
 
-        block_on(process_cycles_sweep(999_000_000_000, 999, &cycles_probe)).unwrap();
+        block_on(process_cycles_sweep(
+            999_000_000_000,
+            999,
+            &cycles_probe,
+            main_lease(),
+        ))
+        .unwrap();
 
         state::with_state(|st| {
             assert!(st.active_cycles_sweep.is_none());
@@ -2144,6 +2337,7 @@ mod tests {
             123,
             &cycles_probe,
             &governance,
+            main_lease(),
         ))
         .unwrap();
 
@@ -2518,7 +2712,8 @@ mod tests {
                 next_index: 0,
             });
         });
-        let output_error = block_on(process_route_indexing(100, 200, &index)).unwrap_err();
+        let output_error =
+            block_on(process_route_indexing(100, 200, &index, main_lease())).unwrap_err();
         assert!(output_error.contains("unsupported persisted ascending output"));
         assert!(index.calls().is_empty());
 
@@ -2530,7 +2725,8 @@ mod tests {
                 next_index: 1,
             });
         });
-        let rewards_error = block_on(process_route_indexing(100, 201, &index)).unwrap_err();
+        let rewards_error =
+            block_on(process_route_indexing(100, 201, &index, main_lease())).unwrap_err();
         assert!(rewards_error.contains("unsupported persisted ascending rewards"));
         assert!(index.calls().is_empty());
     }
@@ -3283,6 +3479,7 @@ mod tests {
             &sns_root,
             &governance,
             &xrc,
+            main_lease(),
             &|| clock.load(Ordering::SeqCst),
         ))
         .unwrap();
@@ -3589,7 +3786,7 @@ mod tests {
             },
         ]);
 
-        block_on(process_route_indexing(100, 200, &mock)).unwrap();
+        block_on(process_route_indexing(100, 200, &mock, main_lease())).unwrap();
         state::with_state(|st| {
             assert_eq!(st.total_output_e8s, Some(111_000_000));
             assert_eq!(st.total_rewards_e8s, Some(0));
@@ -3602,7 +3799,7 @@ mod tests {
             assert_eq!(active.next_index, 1);
         });
 
-        block_on(process_route_indexing(101, 201, &mock)).unwrap();
+        block_on(process_route_indexing(101, 201, &mock, main_lease())).unwrap();
         state::with_state(|st| {
             assert_eq!(st.total_output_e8s, Some(111_000_000));
             assert_eq!(st.total_rewards_e8s, Some(22_000_000));
@@ -3649,7 +3846,7 @@ mod tests {
         )]);
         let index = MockIndexClient::new(vec![newest_page, older_page, oldest_page]);
 
-        block_on(process_route_indexing(100, 200, &index)).unwrap();
+        block_on(process_route_indexing(100, 200, &index, main_lease())).unwrap();
 
         assert_eq!(index.calls()[0].1, None);
         assert_eq!(index.calls()[1].1, Some(512));
@@ -3688,7 +3885,7 @@ mod tests {
                 "transient second output page failure".into(),
             )),
         ]);
-        let error = block_on(process_route_indexing(100, 200, &failing)).unwrap_err();
+        let error = block_on(process_route_indexing(100, 200, &failing, main_lease())).unwrap_err();
         assert!(error.contains("transient second output page failure"));
         state::with_state(|st| {
             assert_eq!(st.total_output_e8s, Some(500));
@@ -3714,7 +3911,7 @@ mod tests {
                 11, &source_id, &output_id, 1, 11,
             )]),
         ]);
-        block_on(process_route_indexing(101, 201, &retry)).unwrap();
+        block_on(process_route_indexing(101, 201, &retry, main_lease())).unwrap();
         assert_eq!(retry.calls()[0].1, Some(512));
         assert_eq!(retry.calls()[1].1, Some(12));
         state::with_state(|st| {
@@ -3756,7 +3953,7 @@ mod tests {
                 "transient second rewards page failure".into(),
             )),
         ]);
-        let error = block_on(process_route_indexing(100, 200, &failing)).unwrap_err();
+        let error = block_on(process_route_indexing(100, 200, &failing, main_lease())).unwrap_err();
         assert!(error.contains("transient second rewards page failure"));
         assert_eq!(state::with_state(|st| st.total_rewards_e8s), Some(500));
 
@@ -3777,7 +3974,7 @@ mod tests {
                 11,
             )]),
         ]);
-        block_on(process_route_indexing(101, 201, &retry)).unwrap();
+        block_on(process_route_indexing(101, 201, &retry, main_lease())).unwrap();
         assert_eq!(retry.calls()[0].1, Some(512));
         assert_eq!(retry.calls()[1].1, Some(12));
         state::with_state(|st| {
@@ -3785,6 +3982,279 @@ mod tests {
             assert_eq!(st.last_indexed_rewards_tx_id, Some(1_011));
             assert!(st.active_rewards_catch_up.is_none());
         });
+    }
+
+    #[test]
+    fn superseded_route_page_cannot_double_count_or_regress_successor_progress() {
+        configure_state(1);
+        let (source_id, output_id) = state::with_state(|st| {
+            (
+                account_identifier_text_for_account(&st.config.output_source_account),
+                account_identifier_text_for_account(&st.config.output_account),
+            )
+        });
+        let page = index_page(vec![transfer_between_accounts_tx(
+            10, &source_id, &output_id, 55_000_000, 10,
+        )]);
+        state::with_state_mut(|st| st.main_lock_state_ts = Some(0));
+        let old = MainGuard::acquire(10).expect("old main lease");
+        let old_expiry = old.lease_expires_at_ts();
+        let (delayed, sender) = DelayedIndexClient::new();
+        let mut old_driver = Box::pin(process_route_indexing(
+            100_000_000_000,
+            100,
+            &delayed,
+            old.lease_token(),
+        ));
+        assert!(old_driver.as_mut().now_or_never().is_none());
+
+        let successor = MainGuard::acquire(old_expiry).expect("successor main lease");
+        let successor_index = MockIndexClient::new(vec![page.clone()]);
+        block_on(process_route_indexing(
+            101_000_000_000,
+            101,
+            &successor_index,
+            successor.lease_token(),
+        ))
+        .unwrap();
+        let successor_state = state::with_state(|st| {
+            (
+                st.total_output_e8s,
+                st.last_indexed_output_tx_id,
+                st.oldest_indexed_output_tx_id,
+                st.output_route_backfill_complete,
+                st.active_route_sweep.clone(),
+                st.last_completed_route_sweep_ts,
+            )
+        });
+        assert_eq!(successor_state.0, Some(55_000_000));
+
+        sender.send(Ok(page)).unwrap();
+        block_on(old_driver).unwrap();
+        state::with_state(|st| {
+            assert_eq!(
+                (
+                    st.total_output_e8s,
+                    st.last_indexed_output_tx_id,
+                    st.oldest_indexed_output_tx_id,
+                    st.output_route_backfill_complete,
+                    st.active_route_sweep.clone(),
+                    st.last_completed_route_sweep_ts,
+                ),
+                successor_state
+            );
+        });
+        drop(successor);
+    }
+
+    #[test]
+    fn superseded_sns_root_response_cannot_change_successor_discovery() {
+        configure_state(1);
+        let root = Principal::from_slice(&[1]);
+        let successor_member = Principal::from_slice(&[2]);
+        let stale_member = Principal::from_slice(&[3]);
+        state::with_state_mut(|st| {
+            st.main_lock_state_ts = Some(0);
+            st.active_sns_discovery = Some(ActiveSnsDiscovery {
+                started_at_ts_nanos: 100_000_000_000,
+                root_canister_ids: vec![root],
+                next_index: 0,
+            });
+        });
+        let old = MainGuard::acquire(10).expect("old main lease");
+        let old_expiry = old.lease_expires_at_ts();
+        let sns_wasm = MockSnsWasmClient::new(Vec::new());
+        let (delayed_root, sender) = DelayedSnsRootClient::new();
+        let mut old_driver = Box::pin(process_sns_discovery(
+            100_000_000_000,
+            100,
+            &sns_wasm,
+            &delayed_root,
+            old.lease_token(),
+        ));
+        assert!(old_driver.as_mut().now_or_never().is_none());
+
+        let successor = MainGuard::acquire(old_expiry).expect("successor main lease");
+        let successor_root = MockSnsRootClient::new(BTreeMap::from([(
+            root,
+            jupiter_ic_clients::sns::ListSnsCanistersResponse {
+                root: Some(root),
+                dapps: vec![successor_member],
+                ..Default::default()
+            },
+        )]));
+        block_on(process_sns_discovery(
+            101_000_000_000,
+            101,
+            &sns_wasm,
+            &successor_root,
+            successor.lease_token(),
+        ))
+        .unwrap();
+        let successor_progress =
+            state::with_state(|st| (st.active_sns_discovery.clone(), st.last_sns_discovery_ts));
+
+        sender
+            .send(Ok(jupiter_ic_clients::sns::ListSnsCanistersResponse {
+                root: Some(root),
+                dapps: vec![stale_member],
+                ..Default::default()
+            }))
+            .unwrap();
+        block_on(old_driver).unwrap();
+        state::with_state(|st| {
+            assert_eq!(
+                (st.active_sns_discovery.clone(), st.last_sns_discovery_ts,),
+                successor_progress
+            );
+            assert!(st.distinct_canisters.contains(&successor_member));
+            assert!(!st.distinct_canisters.contains(&stale_member));
+        });
+        drop(successor);
+    }
+
+    #[test]
+    fn superseded_cycles_probe_cannot_overwrite_newer_successor_observation() {
+        configure_state(1);
+        let target = Principal::from_slice(&[4]);
+        state::with_state_mut(|st| {
+            st.main_lock_state_ts = Some(0);
+            st.distinct_canisters.insert(target);
+            st.canister_tracking_reasons.insert(
+                target,
+                std::iter::once(CanisterTrackingReason::RelayTarget).collect(),
+            );
+            st.active_cycles_sweep = Some(ActiveCyclesSweep {
+                started_at_ts_nanos: 100_000_000_000,
+                canisters: vec![target],
+                next_index: 0,
+            });
+        });
+        let old = MainGuard::acquire(10).expect("old main lease");
+        let old_expiry = old.lease_expires_at_ts();
+        let (delayed_probe, sender) = DelayedSelfCyclesProbeClient::new();
+        let mut old_driver = Box::pin(process_cycles_sweep(
+            100_000_000_000,
+            100,
+            &delayed_probe,
+            old.lease_token(),
+        ));
+        assert!(old_driver.as_mut().now_or_never().is_none());
+
+        let successor = MainGuard::acquire(old_expiry).expect("successor main lease");
+        state::with_state_mut(|st| {
+            st.active_cycles_sweep = Some(ActiveCyclesSweep {
+                started_at_ts_nanos: 200_000_000_000,
+                canisters: vec![target],
+                next_index: 0,
+            });
+        });
+        let successor_probe =
+            RecordingCyclesProbeClient::blackhole(0).with_self_cycles(target, 222);
+        block_on(process_cycles_sweep(
+            200_000_000_000,
+            200,
+            &successor_probe,
+            successor.lease_token(),
+        ))
+        .unwrap();
+        let successor_observation = state::with_state(|st| {
+            (
+                st.cycles_history.get(&target).cloned(),
+                st.per_canister_meta.get(&target).cloned(),
+                st.active_cycles_sweep.clone(),
+                st.last_completed_cycles_sweep_ts,
+            )
+        });
+
+        sender.send(Some(111)).unwrap();
+        block_on(old_driver).unwrap();
+        state::with_state(|st| {
+            assert_eq!(
+                (
+                    st.cycles_history.get(&target).cloned(),
+                    st.per_canister_meta.get(&target).cloned(),
+                    st.active_cycles_sweep.clone(),
+                    st.last_completed_cycles_sweep_ts,
+                ),
+                successor_observation
+            );
+            assert_eq!(
+                st.per_canister_meta
+                    .get(&target)
+                    .and_then(|meta| meta.last_cycles_probe_ts),
+                Some(200)
+            );
+            assert_eq!(
+                st.cycles_history
+                    .get(&target)
+                    .and_then(|history| history.last())
+                    .map(|sample| sample.cycles),
+                Some(222)
+            );
+        });
+        drop(successor);
+    }
+
+    #[test]
+    fn superseded_initial_cycles_probe_preserves_selected_queue_for_successor() {
+        configure_state(1);
+        let first = Principal::from_slice(&[5]);
+        let second = Principal::from_slice(&[6]);
+        state::with_state_mut(|st| {
+            st.main_lock_state_ts = Some(0);
+            st.config.max_canisters_per_cycles_tick = 2;
+            for target in [first, second] {
+                st.distinct_canisters.insert(target);
+                st.canister_tracking_reasons.insert(
+                    target,
+                    std::iter::once(CanisterTrackingReason::RelayTarget).collect(),
+                );
+                st.initial_cycles_probe_queue.push(target);
+            }
+        });
+        let old = MainGuard::acquire(10).expect("old main lease");
+        let old_expiry = old.lease_expires_at_ts();
+        let (delayed_probe, sender) = DelayedSelfCyclesProbeClient::new();
+        let governance = RecordingGovernanceClient::new();
+        let mut old_driver = Box::pin(process_initial_cycles_probe_queue(
+            100_000_000_000,
+            100,
+            &delayed_probe,
+            &governance,
+            old.lease_token(),
+        ));
+        assert!(old_driver.as_mut().now_or_never().is_none());
+        assert_eq!(delayed_probe.calls.lock().unwrap().as_slice(), &[first]);
+
+        let successor = MainGuard::acquire(old_expiry).expect("successor main lease");
+        sender.send(Some(111)).unwrap();
+        block_on(old_driver).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.initial_cycles_probe_queue, vec![first, second]);
+            assert!(!st.cycles_history.contains_key(&first));
+            assert!(!st.cycles_history.contains_key(&second));
+        });
+
+        let successor_probe = RecordingCyclesProbeClient::blackhole(0)
+            .with_self_cycles(first, 222)
+            .with_self_cycles(second, 333);
+        block_on(process_initial_cycles_probe_queue(
+            200_000_000_000,
+            200,
+            &successor_probe,
+            &governance,
+            successor.lease_token(),
+        ))
+        .unwrap();
+        state::with_state(|st| {
+            assert!(st.initial_cycles_probe_queue.is_empty());
+            assert_eq!(st.cycles_history.get(&first).map(Vec::len), Some(1));
+            assert_eq!(st.cycles_history.get(&second).map(Vec::len), Some(1));
+            assert_eq!(st.cycles_history[&first][0].cycles, 222);
+            assert_eq!(st.cycles_history[&second][0].cycles, 333);
+        });
+        drop(successor);
     }
 
     #[test]
@@ -3845,7 +4315,7 @@ mod tests {
             },
         ]);
 
-        block_on(process_route_indexing(100, 200, &mock)).unwrap();
+        block_on(process_route_indexing(100, 200, &mock, main_lease())).unwrap();
         state::with_state(|st| {
             assert_eq!(st.total_output_e8s, Some(111_000_000));
             assert_eq!(st.last_indexed_output_tx_id, Some(10));
@@ -3857,14 +4327,14 @@ mod tests {
             );
         });
 
-        block_on(process_route_indexing(101, 201, &mock)).unwrap();
+        block_on(process_route_indexing(101, 201, &mock, main_lease())).unwrap();
         state::with_state(|st| {
             assert_eq!(st.total_output_e8s, Some(111_000_000));
             assert_eq!(st.total_rewards_e8s, Some(5_000_000));
             assert!(st.active_route_sweep.is_none());
         });
 
-        block_on(process_route_indexing(102, 202, &mock)).unwrap();
+        block_on(process_route_indexing(102, 202, &mock, main_lease())).unwrap();
         state::with_state(|st| {
             assert_eq!(st.total_output_e8s, Some(133_000_000), "the repeated boundary transfer is skipped while the new routed transfer is counted once");
             assert_eq!(st.total_rewards_e8s, Some(5_000_000));
@@ -3877,7 +4347,7 @@ mod tests {
             );
         });
 
-        block_on(process_route_indexing(103, 203, &mock)).unwrap();
+        block_on(process_route_indexing(103, 203, &mock, main_lease())).unwrap();
         state::with_state(|st| {
             assert_eq!(st.total_output_e8s, Some(133_000_000));
             assert_eq!(st.total_rewards_e8s, Some(5_000_000));

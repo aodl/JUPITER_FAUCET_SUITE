@@ -39,6 +39,8 @@ The suite overview shows what can be composed: one long-term endowment can produ
 
 The suite turns durable ICP and NNS maturity into durable cycles support. A controlled NNS neuron produces recurring maturity, the disburser stages that maturity as ICP, the faucet allocates the base ICP flow to memo-declared targets, and Relay can keep configured canisters funded before routing safely distributable surplus ICP to configured recipients. Historian and frontend canisters provide public observability, while small recovery/support canisters keep the value-moving path narrow and auditable.
 
+Ordinary Relay infrastructure allocations and SNS reward distributions are perpetual best-effort services. Individual transfers may be abandoned after bounded duplicate-safe attempts when their outcome cannot be determined, preserving bounded state and continued immutable service. Relay carries unmet infrastructure need forward as recovery deficits ahead of future surplus; individual SNS reward discrepancies remain bounded outcomes and never halt later rewards. Finite splitter transfers and irreversible Historian child-creation/controller-removal transitions retain stronger durable, fail-closed semantics.
+
 The operational path is intentionally split across small canisters:
 
 - [`canisters/disburser`](canisters/disburser) controls one NNS neuron, disburses available maturity, and routes staged ICP into the fixed base/age-bonus recipients. 

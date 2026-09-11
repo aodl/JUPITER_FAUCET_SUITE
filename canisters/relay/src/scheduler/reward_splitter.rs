@@ -835,6 +835,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cloned_ref_to_slice_refs, clippy::vec_init_then_push)]
     fn malformed_splitter_debits_pairs_memos_destinations_and_anchors_fail_closed() {
         let (history, anchor) = one_source_job(50, [1; 32], 1_000, 10, 10, 1);
         let (splitter, default, subaccount_one) = split_accounts(50);

@@ -28,8 +28,8 @@ impl MainGuard {
 
     fn finish(mut self, now_secs: u64, err: Option<u32>, log_config: bool) {
         state::with_state_mut(|st| {
-            st.last_main_run_ts = now_secs;
             if self.inner.release(st.main_lock_state_ts) == LeaseFinish::Released {
+                st.last_main_run_ts = now_secs;
                 st.main_lock_state_ts = Some(0);
             }
         });

@@ -15,9 +15,8 @@ use jupiter_ic_clients::sns::{ListSnsCanistersResponse, SnsRootCanister};
 
 use crate::clients::governance::NnsGovernanceCanister;
 use crate::clients::GovernanceClient;
-use crate::reward_state::{
-    self, PendingRewardPayout, PendingRewardRecipient, PendingRewardTransferStatus,
-};
+use crate::reward_state::{self, PendingRewardPayout, PendingRewardRecipient};
+use crate::scheduler::guards::MainLeaseToken;
 use crate::scheduler::reward_history;
 use crate::scheduler::reward_splitter::{self, SplitterFundingCredit};
 use crate::scheduler::reward_token_history;
@@ -148,11 +147,52 @@ enum SweepDisposition {
     RetryNextDailyTick,
 }
 
-fn record_sweep_disposition(disposition: SweepDisposition, now_secs: u64) {
-    if disposition == SweepDisposition::Completed {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SweepGeneration {
+    main_lease: MainLeaseToken,
+    last_completed_sweep_secs: u64,
+}
+
+fn install_pending_if_current(generation: SweepGeneration, pending: PendingRewardPayout) -> bool {
+    if !generation.main_lease.is_current() {
+        return false;
+    }
+    reward_state::mutate(|reward| {
+        if reward.pending_payout.is_some()
+            || reward.last_sweep_attempt_timestamp_seconds != generation.last_completed_sweep_secs
+        {
+            return false;
+        }
+        reward.pending_payout = Some(pending);
+        true
+    })
+}
+
+fn record_sweep_disposition_if_current(
+    disposition: SweepDisposition,
+    now_secs: u64,
+    generation: SweepGeneration,
+) {
+    if disposition == SweepDisposition::Completed && generation.main_lease.is_current() {
         reward_state::mutate(|reward| {
-            reward.last_sweep_attempt_timestamp_seconds = now_secs;
+            if reward.last_sweep_attempt_timestamp_seconds == generation.last_completed_sweep_secs {
+                reward.last_sweep_attempt_timestamp_seconds =
+                    reward.last_sweep_attempt_timestamp_seconds.max(now_secs);
+            }
         });
+    }
+}
+
+fn record_completed_payout_cadence(now_secs: u64) {
+    reward_state::mutate(|reward| {
+        reward.last_sweep_attempt_timestamp_seconds =
+            reward.last_sweep_attempt_timestamp_seconds.max(now_secs);
+    });
+}
+
+fn record_pinned_payout_result(result: PendingDriveResult, now_secs: u64) {
+    if result.sweep_disposition() == SweepDisposition::Completed {
+        record_completed_payout_cadence(now_secs);
     }
 }
 
@@ -246,9 +286,15 @@ async fn resolve_accounts_chunked<R: OwnerResolverClient>(
     Ok(owners)
 }
 
-pub(crate) async fn process(now_nanos: u64, now_secs: u64, force: bool) {
+pub(crate) async fn process(
+    now_nanos: u64,
+    now_secs: u64,
+    force: bool,
+    main_lease: MainLeaseToken,
+) {
     if reward_state::get().pending_payout.is_some() {
         let result = drive_pending(now_nanos).await;
+        record_pinned_payout_result(result, now_secs);
         RewardLog {
             status: result.status(),
             reason: result.reason().map(str::to_string),
@@ -257,18 +303,18 @@ pub(crate) async fn process(now_nanos: u64, now_secs: u64, force: bool) {
         .emit();
         return;
     }
-    if !sweep_is_due(
-        reward_state::get().last_sweep_attempt_timestamp_seconds,
-        now_secs,
-        force,
-    ) {
+    let generation = SweepGeneration {
+        main_lease,
+        last_completed_sweep_secs: reward_state::get().last_sweep_attempt_timestamp_seconds,
+    };
+    if !sweep_is_due(generation.last_completed_sweep_secs, now_secs, force) {
         return;
     }
     let mut log = RewardLog {
         status: "held",
         ..Default::default()
     };
-    let disposition = match adjudicate(now_nanos, &mut log).await {
+    let disposition = match adjudicate(now_nanos, now_secs, generation, &mut log).await {
         Ok(disposition) => disposition,
         Err(reason) => {
             log.status = "failed";
@@ -276,11 +322,16 @@ pub(crate) async fn process(now_nanos: u64, now_secs: u64, force: bool) {
             SweepDisposition::RetryNextDailyTick
         }
     };
-    record_sweep_disposition(disposition, now_secs);
+    record_sweep_disposition_if_current(disposition, now_secs, generation);
     log.emit();
 }
 
-async fn adjudicate(now_nanos: u64, log: &mut RewardLog) -> Result<SweepDisposition, String> {
+async fn adjudicate(
+    now_nanos: u64,
+    now_secs: u64,
+    generation: SweepGeneration,
+    log: &mut RewardLog,
+) -> Result<SweepDisposition, String> {
     let cfg = state::with_state(|st| st.config.clone());
     let Some(context) = reward_context(cfg.sns_rewards_canister_id)
         .await
@@ -448,9 +499,14 @@ async fn adjudicate(now_nanos: u64, log: &mut RewardLog) -> Result<SweepDisposit
                 allocations,
                 now_nanos,
             )?;
-            reward_state::mutate(|state| state.pending_payout = Some(pending));
+            if !install_pending_if_current(generation, pending) {
+                log.status = "stale";
+                log.reason = Some("stale_reward_adjudication".to_string());
+                return Ok(SweepDisposition::RetryNextDailyTick);
+            }
             log.status = "pending";
             let result = drive_pending(now_nanos).await;
+            record_pinned_payout_result(result, now_secs);
             log.status = result.status();
             log.reason = result.reason().map(str::to_string);
             return Ok(result.sweep_disposition());
@@ -594,22 +650,16 @@ fn build_pending_payout(
                 owner: principal,
                 subaccount: None,
             },
-            observed_balance: None,
             amount: amount.clone(),
             memo,
             created_at_time_nanos: now_nanos,
-            attempt_started: false,
-            uncertain_attempt_seen: false,
-            status: PendingRewardTransferStatus::AwaitingTransfer,
         });
     }
     if recipients.is_empty() {
         return Err("reward_plan_has_no_transferable_recipient".to_string());
     }
     Ok(PendingRewardPayout {
-        sns_root_canister_id: context.sns_root_canister_id,
         sns_ledger_canister_id: context.sns_ledger_canister_id,
-        snapshot_id: context.snapshot_id,
         attribution_commitment_tx_id: commitment_tx_id,
         fee,
         recipients,
@@ -821,30 +871,22 @@ fn reward_memo(commitment_tx_id: u64, recipient_index: usize) -> Result<Vec<u8>,
     Ok(memo)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AttemptOutcome {
     Accepted,
-    RetryableExplicit,
-    DefinitiveRejected(&'static str),
+    Retryable,
+    RecipientRejected(&'static str),
+    PlanRejected(&'static str),
     Uncertain,
 }
 
 #[async_trait]
 trait RewardLedgerClient: Send + Sync {
-    async fn balance_of(&self, account: Account) -> Result<Nat, ()>;
-    async fn fee(&self) -> Result<Nat, ()>;
     async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, ()>;
 }
 
 #[async_trait]
 impl RewardLedgerClient for IcrcLedgerCanister {
-    async fn balance_of(&self, account: Account) -> Result<Nat, ()> {
-        self.balance_of(account).await.map_err(|_| ())
-    }
-
-    async fn fee(&self) -> Result<Nat, ()> {
-        self.fee().await.map_err(|_| ())
-    }
-
     async fn transfer(&self, arg: TransferArg) -> Result<Result<BlockIndex, TransferError>, ()> {
         self.transfer(arg).await.map_err(|_| ())
     }
@@ -868,305 +910,162 @@ async fn transfer_once<L: RewardLedgerClient>(
 ) -> AttemptOutcome {
     match ledger.transfer(reward_transfer_arg(recipient, fee)).await {
         Ok(Ok(_)) | Ok(Err(TransferError::Duplicate { .. })) => AttemptOutcome::Accepted,
-        Ok(Err(TransferError::BadFee { .. })) => AttemptOutcome::DefinitiveRejected("bad_fee"),
+        Ok(Err(TransferError::BadFee { .. })) => AttemptOutcome::PlanRejected("bad_fee"),
+        Ok(Err(TransferError::InsufficientFunds { .. })) => {
+            AttemptOutcome::PlanRejected("insufficient_funds")
+        }
         Ok(Err(
             TransferError::TemporarilyUnavailable
             | TransferError::CreatedInFuture { .. }
             | TransferError::GenericError { .. },
-        )) => AttemptOutcome::RetryableExplicit,
-        Ok(Err(
-            TransferError::BadBurn { .. }
-            | TransferError::InsufficientFunds { .. }
-            | TransferError::TooOld,
-        )) => AttemptOutcome::DefinitiveRejected("definitive_rejection"),
+        )) => AttemptOutcome::Retryable,
+        Ok(Err(TransferError::BadBurn { .. })) => AttemptOutcome::RecipientRejected("bad_burn"),
+        Ok(Err(TransferError::TooOld)) => AttemptOutcome::RecipientRejected("identity_expired"),
         Err(_) => AttemptOutcome::Uncertain,
     }
 }
 
-fn accept_current_recipient() -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AdvanceResult {
+    More,
+    Cleared,
+    Stale,
+}
+
+fn advance_expected_payout(expected: &PendingRewardPayout) -> AdvanceResult {
     reward_state::mutate(|state| {
-        let Some(payout) = state.pending_payout.as_mut() else {
-            return true;
-        };
+        if state.pending_payout.as_ref() != Some(expected) {
+            return AdvanceResult::Stale;
+        }
+        let payout = state
+            .pending_payout
+            .as_mut()
+            .expect("matched reward payout");
         let next = usize::try_from(payout.next_recipient_index)
             .expect("validated reward recipient index")
             + 1;
         if next == payout.recipients.len() {
             state.pending_payout = None;
-            true
+            AdvanceResult::Cleared
         } else {
             payout.next_recipient_index = u32::try_from(next).expect("bounded reward recipients");
-            false
+            AdvanceResult::More
         }
     })
 }
 
-fn clear_rejected() {
-    reward_state::mutate(|state| state.pending_payout = None);
-}
-
-fn mark_ambiguous() {
+fn clear_expected_payout(expected: &PendingRewardPayout) -> bool {
     reward_state::mutate(|state| {
-        if let Some(payout) = state.pending_payout.as_mut() {
-            let index = usize::try_from(payout.next_recipient_index)
-                .expect("validated reward recipient index");
-            let recipient = &mut payout.recipients[index];
-            recipient.uncertain_attempt_seen = true;
-            recipient.status = PendingRewardTransferStatus::Ambiguous;
+        if state.pending_payout.as_ref() != Some(expected) {
+            return false;
         }
-    });
-}
-
-fn mark_retryable_explicit() {
-    reward_state::mutate(|state| {
-        if let Some(payout) = state.pending_payout.as_mut() {
-            let index = usize::try_from(payout.next_recipient_index)
-                .expect("validated reward recipient index");
-            let recipient = &mut payout.recipients[index];
-            recipient.observed_balance = None;
-            recipient.attempt_started = false;
-            recipient.status = PendingRewardTransferStatus::AwaitingTransfer;
-        }
-    });
-}
-
-fn reject_current(reason: &'static str) -> PendingDriveResult {
-    let completed_recipients = reward_state::get()
-        .pending_payout
-        .as_ref()
-        .map_or(0, |payout| payout.next_recipient_index);
-    if completed_recipients == 0 {
-        clear_rejected();
-        PendingDriveResult::Rejected(reason)
-    } else {
-        reward_state::mutate(|state| {
-            let payout = state
-                .pending_payout
-                .as_mut()
-                .expect("pending reward payout");
-            let index = usize::try_from(payout.next_recipient_index)
-                .expect("validated reward recipient index");
-            let recipient = &mut payout.recipients[index];
-            recipient.observed_balance = None;
-            recipient.attempt_started = false;
-            recipient.status = PendingRewardTransferStatus::NeedsFreshIdentity;
-        });
-        PendingDriveResult::Repricing
-    }
+        state.pending_payout = None;
+        true
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingDriveResult {
-    Accepted,
-    Rejected(&'static str),
-    Ambiguous,
-    Repricing,
-    WaitingForBalance,
-    Held,
+    Completed,
+    CompletedWithAbandonment(&'static str),
+    Stale,
 }
 
 impl PendingDriveResult {
     fn status(self) -> &'static str {
         match self {
-            Self::Accepted => "accepted",
-            Self::Rejected(_) => "failed",
-            Self::Ambiguous => "ambiguous",
-            Self::Repricing | Self::WaitingForBalance | Self::Held => "held",
+            Self::Completed => "accepted",
+            Self::CompletedWithAbandonment(_) => "best_effort_complete",
+            Self::Stale => "stale",
         }
     }
 
     fn reason(self) -> Option<&'static str> {
         match self {
-            Self::Rejected(reason) => Some(reason),
-            Self::Ambiguous => Some("reward_payout_ambiguous"),
-            Self::Repricing => Some("reward_payout_repricing"),
-            Self::WaitingForBalance => Some("reward_payout_waiting_for_balance"),
-            Self::Held => Some("reward_payout_pending"),
-            Self::Accepted => None,
+            Self::Completed => None,
+            Self::CompletedWithAbandonment(reason) => Some(reason),
+            Self::Stale => Some("stale_reward_payout_continuation"),
         }
     }
 
     fn sweep_disposition(self) -> SweepDisposition {
         match self {
-            Self::Accepted
-            | Self::Ambiguous
-            | Self::Repricing
-            | Self::WaitingForBalance
-            | Self::Held => SweepDisposition::Completed,
-            Self::Rejected(_) => SweepDisposition::RetryNextDailyTick,
+            Self::Completed | Self::CompletedWithAbandonment(_) => SweepDisposition::Completed,
+            Self::Stale => SweepDisposition::RetryNextDailyTick,
         }
     }
-}
-
-async fn reprice_unpaid_remainder<L: RewardLedgerClient>(
-    now_nanos: u64,
-    relay_account_owner: Principal,
-    ledger: &L,
-) -> PendingDriveResult {
-    let Some(payout) = reward_state::get().pending_payout else {
-        return PendingDriveResult::Accepted;
-    };
-    let fee = match ledger.fee().await {
-        Ok(fee) => fee,
-        Err(()) => return PendingDriveResult::Repricing,
-    };
-    let balance = match ledger
-        .balance_of(Account {
-            owner: relay_account_owner,
-            subaccount: None,
-        })
-        .await
-    {
-        Ok(balance) => balance,
-        Err(()) => return PendingDriveResult::Repricing,
-    };
-    let start =
-        usize::try_from(payout.next_recipient_index).expect("validated reward recipient index");
-    let remaining_amounts = payout.recipients[start..]
-        .iter()
-        .fold(Nat::from(0u8).0, |total, recipient| {
-            total + recipient.amount.0.clone()
-        });
-    let remaining_fees = fee.0.clone() * (payout.recipients.len() - start);
-    let enough_for_promises = balance.0 >= remaining_amounts.clone() + remaining_fees.clone();
-    // A fresh plan still uses the strict fee-to-distributable guard. Once some recipients have
-    // been paid, their fixed entitlements cannot be rebuilt. Repricing therefore waits until the
-    // live balance supplies both the promised remainder and fee headroom, and until the remaining
-    // fees are at most ten percent of the currently spendable post-fee balance. Extra accrual is
-    // headroom only; it is not redistributed into this already-fixed payout.
-    let economical_with_current_balance = balance.0 > remaining_fees
-        && remaining_fees.clone() * 10u8 <= balance.0.clone() - remaining_fees.clone();
-    if !enough_for_promises || !economical_with_current_balance {
-        reward_state::mutate(|state| {
-            if let Some(payout) = state.pending_payout.as_mut() {
-                let index = usize::try_from(payout.next_recipient_index)
-                    .expect("validated reward recipient index");
-                payout.recipients[index].status = PendingRewardTransferStatus::WaitingForBalance;
-            }
-        });
-        return PendingDriveResult::WaitingForBalance;
-    }
-
-    reward_state::mutate(|state| {
-        let payout = state
-            .pending_payout
-            .as_mut()
-            .expect("pending reward payout");
-        payout.fee = fee;
-        let start =
-            usize::try_from(payout.next_recipient_index).expect("validated reward recipient index");
-        for (offset, recipient) in payout.recipients[start..].iter_mut().enumerate() {
-            let offset = u64::try_from(offset).expect("bounded reward recipients");
-            recipient.created_at_time_nanos = now_nanos
-                .saturating_add(offset)
-                .max(recipient.created_at_time_nanos.saturating_add(1));
-            recipient.observed_balance = None;
-            recipient.attempt_started = false;
-            recipient.uncertain_attempt_seen = false;
-            recipient.status = PendingRewardTransferStatus::AwaitingTransfer;
-        }
-    });
-    PendingDriveResult::Held
 }
 
 async fn drive_pending(now_nanos: u64) -> PendingDriveResult {
     let Some(payout) = reward_state::get().pending_payout else {
-        return PendingDriveResult::Held;
+        return PendingDriveResult::Completed;
     };
     let ledger = IcrcLedgerCanister::new(payout.sns_ledger_canister_id);
-    drive_pending_with_ledger(now_nanos, ic_cdk::api::canister_self(), &ledger).await
+    drive_pending_with_ledger(now_nanos, &ledger).await
 }
 
 async fn drive_pending_with_ledger<L: RewardLedgerClient>(
     now_nanos: u64,
-    relay_account_owner: Principal,
     ledger: &L,
 ) -> PendingDriveResult {
+    let mut last_abandonment = None;
     loop {
         let Some(payout) = reward_state::get().pending_payout else {
-            return PendingDriveResult::Accepted;
+            return last_abandonment.map_or(
+                PendingDriveResult::Completed,
+                PendingDriveResult::CompletedWithAbandonment,
+            );
         };
         let index =
             usize::try_from(payout.next_recipient_index).expect("validated reward recipient index");
-        let recipient = payout.recipients[index].clone();
-        if matches!(
-            recipient.status,
-            PendingRewardTransferStatus::NeedsFreshIdentity
-                | PendingRewardTransferStatus::WaitingForBalance
-        ) {
-            match reprice_unpaid_remainder(now_nanos, relay_account_owner, ledger).await {
-                PendingDriveResult::Held => continue,
-                result => return result,
+        let recipient = &payout.recipients[index];
+
+        if !created_at_time_is_valid(recipient.created_at_time_nanos, now_nanos) {
+            last_abandonment = Some("reward_identity_expired");
+            match advance_expected_payout(&payout) {
+                AdvanceResult::More => continue,
+                AdvanceResult::Cleared => continue,
+                AdvanceResult::Stale => return PendingDriveResult::Stale,
             }
         }
 
-        if recipient.status == PendingRewardTransferStatus::Ambiguous || recipient.attempt_started {
-            if recipient.status != PendingRewardTransferStatus::Ambiguous {
-                mark_ambiguous();
-            }
-            let relay_account = Account {
-                owner: relay_account_owner,
-                subaccount: None,
-            };
-            if let (Some(observed), Ok(current)) = (
-                recipient.observed_balance.as_ref(),
-                ledger.balance_of(relay_account).await,
-            ) {
-                if current.0 < observed.0 {
-                    if accept_current_recipient() {
-                        return PendingDriveResult::Accepted;
-                    }
-                    continue;
-                }
-            }
-            if !created_at_time_is_valid(recipient.created_at_time_nanos, now_nanos) {
-                return PendingDriveResult::Ambiguous;
-            }
-            match transfer_once(ledger, &recipient, &payout.fee).await {
-                AttemptOutcome::Accepted => {
-                    if accept_current_recipient() {
-                        return PendingDriveResult::Accepted;
-                    }
-                    continue;
-                }
-                _ => return PendingDriveResult::Ambiguous,
-            }
+        let first = transfer_once(ledger, recipient, &payout.fee).await;
+        if reward_state::get().pending_payout.as_ref() != Some(&payout) {
+            return PendingDriveResult::Stale;
         }
-
-        let observed_balance = match ledger
-            .balance_of(Account {
-                owner: relay_account_owner,
-                subaccount: None,
-            })
-            .await
-        {
-            Ok(balance) => balance,
-            Err(()) => return PendingDriveResult::Held,
+        let outcome = match first {
+            AttemptOutcome::Retryable | AttemptOutcome::Uncertain => {
+                let second = transfer_once(ledger, recipient, &payout.fee).await;
+                if reward_state::get().pending_payout.as_ref() != Some(&payout) {
+                    return PendingDriveResult::Stale;
+                }
+                second
+            }
+            outcome => outcome,
         };
-        reward_state::mutate(|state| {
-            if let Some(payout) = state.pending_payout.as_mut() {
-                let index = usize::try_from(payout.next_recipient_index)
-                    .expect("validated reward recipient index");
-                let recipient = &mut payout.recipients[index];
-                recipient.observed_balance = Some(observed_balance);
-                recipient.attempt_started = true;
+
+        match outcome {
+            AttemptOutcome::Accepted => match advance_expected_payout(&payout) {
+                AdvanceResult::More | AdvanceResult::Cleared => {}
+                AdvanceResult::Stale => return PendingDriveResult::Stale,
+            },
+            AttemptOutcome::PlanRejected(reason) => {
+                if clear_expected_payout(&payout) {
+                    return PendingDriveResult::CompletedWithAbandonment(reason);
+                }
+                return PendingDriveResult::Stale;
             }
-        });
-        let first = transfer_once(ledger, &recipient, &payout.fee).await;
-        match first {
-            AttemptOutcome::Accepted => {
-                if accept_current_recipient() {
-                    return PendingDriveResult::Accepted;
+            AttemptOutcome::RecipientRejected(reason) => {
+                last_abandonment = Some(reason);
+                if advance_expected_payout(&payout) == AdvanceResult::Stale {
+                    return PendingDriveResult::Stale;
                 }
             }
-            AttemptOutcome::DefinitiveRejected(reason) => return reject_current(reason),
-            AttemptOutcome::RetryableExplicit => {
-                mark_retryable_explicit();
-                return PendingDriveResult::Held;
-            }
-            AttemptOutcome::Uncertain => {
-                mark_ambiguous();
-                return PendingDriveResult::Ambiguous;
+            AttemptOutcome::Retryable | AttemptOutcome::Uncertain => {
+                last_abandonment = Some("reward_transfer_uncertain_after_bounded_retry");
+                if advance_expected_payout(&payout) == AdvanceResult::Stale {
+                    return PendingDriveResult::Stale;
+                }
             }
         }
     }
@@ -1179,10 +1078,33 @@ mod tests {
         GetAccountIdentifierTransactionsResponse, IndexTimeStamp, IndexTransaction, Tokens,
     };
     use std::collections::VecDeque;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::Notify;
 
     fn principal(byte: u8) -> Principal {
         Principal::from_slice(&[byte])
+    }
+
+    fn initialize_relay_state() {
+        state::set_state(state::State::new(
+            state::Config {
+                managed_canisters: Vec::new(),
+                ledger_canister_id: principal(10),
+                cmc_canister_id: principal(11),
+                governance_canister_id: principal(12),
+                blackhole_canister_id: principal(13),
+                sns_rewards_canister_id: principal(14),
+                icp_index_canister_id: principal(15),
+                cycles_probe_policy:
+                    jupiter_ic_clients::cycles_probe::CyclesProbePolicy::FixedBlackhole {
+                        canister_id: principal(13),
+                    },
+                main_interval_seconds: 60,
+                max_transfers_per_tick: None,
+                surplus_recipients: Vec::new(),
+            },
+            0,
+        ));
     }
 
     fn tx(id: u64, timestamp: u64, operation: IndexOperation) -> IndexTransactionWithId {
@@ -2250,22 +2172,12 @@ mod tests {
     }
 
     struct MockLedger {
-        balances: Mutex<VecDeque<Result<Nat, ()>>>,
-        fees: Mutex<VecDeque<Result<Nat, ()>>>,
         transfers: Mutex<VecDeque<Result<Result<BlockIndex, TransferError>, ()>>>,
         args: Mutex<Vec<TransferArg>>,
     }
 
     #[async_trait]
     impl RewardLedgerClient for MockLedger {
-        async fn balance_of(&self, _account: Account) -> Result<Nat, ()> {
-            self.balances.lock().unwrap().pop_front().unwrap_or(Err(()))
-        }
-
-        async fn fee(&self) -> Result<Nat, ()> {
-            self.fees.lock().unwrap().pop_front().unwrap_or(Err(()))
-        }
-
         async fn transfer(
             &self,
             arg: TransferArg,
@@ -2281,9 +2193,7 @@ mod tests {
 
     fn payout() -> PendingRewardPayout {
         PendingRewardPayout {
-            sns_root_canister_id: principal(7),
             sns_ledger_canister_id: principal(8),
-            snapshot_id: 9,
             attribution_commitment_tx_id: 10,
             fee: Nat::from(1_u64),
             recipients: (0..3)
@@ -2292,13 +2202,9 @@ mod tests {
                         owner: principal(index + 1),
                         subaccount: None,
                     },
-                    observed_balance: None,
                     amount: Nat::from(19_u64),
                     memo: reward_memo(10, usize::from(index)).unwrap(),
                     created_at_time_nanos: 55,
-                    attempt_started: false,
-                    uncertain_attempt_seen: false,
-                    status: PendingRewardTransferStatus::AwaitingTransfer,
                 })
                 .collect(),
             next_recipient_index: 0,
@@ -2314,36 +2220,12 @@ mod tests {
     }
 
     #[test]
-    fn multi_recipient_progress_survives_ambiguity_and_duplicate_without_double_pay() {
+    fn success_and_duplicate_each_advance_exactly_once() {
         reward_state::reset_for_test();
         reward_state::mutate(|state| state.pending_payout = Some(payout()));
-        let first = MockLedger {
-            balances: Mutex::new(VecDeque::from([
-                Ok(Nat::from(100_u64)),
-                Ok(Nat::from(80_u64)),
-            ])),
-            fees: Mutex::new(VecDeque::new()),
-            transfers: Mutex::new(VecDeque::from([Ok(Ok(Nat::from(1_u64))), Err(())])),
-            args: Mutex::new(Vec::new()),
-        };
-        assert_eq!(
-            block_on(drive_pending_with_ledger(56, principal(99), &first)),
-            PendingDriveResult::Ambiguous
-        );
-        let durable = reward_state::get().pending_payout.unwrap();
-        assert_eq!(durable.next_recipient_index, 1);
-        assert_eq!(
-            durable.recipients[1].status,
-            PendingRewardTransferStatus::Ambiguous
-        );
-
-        let second = MockLedger {
-            balances: Mutex::new(VecDeque::from([
-                Ok(Nat::from(100_u64)),
-                Ok(Nat::from(60_u64)),
-            ])),
-            fees: Mutex::new(VecDeque::new()),
+        let ledger = MockLedger {
             transfers: Mutex::new(VecDeque::from([
+                Ok(Ok(Nat::from(1_u64))),
                 Ok(Err(TransferError::Duplicate {
                     duplicate_of: Nat::from(2_u64),
                 })),
@@ -2352,25 +2234,298 @@ mod tests {
             args: Mutex::new(Vec::new()),
         };
         assert_eq!(
-            block_on(drive_pending_with_ledger(57, principal(99), &second)),
-            PendingDriveResult::Accepted
+            block_on(drive_pending_with_ledger(56, &ledger)),
+            PendingDriveResult::Completed
         );
         assert!(reward_state::get().pending_payout.is_none());
-        assert_eq!(first.args.lock().unwrap().len(), 2);
-        assert_eq!(second.args.lock().unwrap().len(), 2);
+        assert_eq!(ledger.args.lock().unwrap().len(), 3);
     }
 
     #[test]
-    fn successful_multi_recipient_payout_pins_actual_balances_and_pays_once() {
+    fn uncertain_recipient_is_bounded_then_abandoned_without_blocking_later_recipients() {
         reward_state::reset_for_test();
         reward_state::mutate(|state| state.pending_payout = Some(payout()));
         let ledger = MockLedger {
-            balances: Mutex::new(VecDeque::from([
-                Ok(Nat::from(100_u64)),
-                Ok(Nat::from(80_u64)),
-                Ok(Nat::from(60_u64)),
+            transfers: Mutex::new(VecDeque::from([
+                Err(()),
+                Err(()),
+                Ok(Ok(Nat::from(2_u64))),
+                Ok(Ok(Nat::from(3_u64))),
             ])),
-            fees: Mutex::new(VecDeque::new()),
+            args: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(drive_pending_with_ledger(56, &ledger)),
+            PendingDriveResult::CompletedWithAbandonment(
+                "reward_transfer_uncertain_after_bounded_retry"
+            )
+        );
+        assert!(reward_state::get().pending_payout.is_none());
+        let args = ledger.args.lock().unwrap();
+        assert_eq!(args.len(), 4);
+        assert_eq!(
+            args.iter().map(|arg| arg.to.owner).collect::<Vec<_>>(),
+            [principal(1), principal(1), principal(2), principal(3)]
+        );
+        assert_eq!(args[0], args[1]);
+    }
+
+    #[test]
+    fn callback_loss_then_duplicate_does_not_double_pay() {
+        reward_state::reset_for_test();
+        reward_state::mutate(|state| state.pending_payout = Some(payout()));
+        let ledger = MockLedger {
+            transfers: Mutex::new(VecDeque::from([
+                Err(()),
+                Ok(Err(TransferError::Duplicate {
+                    duplicate_of: Nat::from(1_u64),
+                })),
+                Ok(Ok(Nat::from(2_u64))),
+                Ok(Ok(Nat::from(3_u64))),
+            ])),
+            args: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(drive_pending_with_ledger(56, &ledger)),
+            PendingDriveResult::Completed
+        );
+        assert!(reward_state::get().pending_payout.is_none());
+        let args = ledger.args.lock().unwrap();
+        assert_eq!(args.len(), 4);
+        assert_eq!(args[0], args[1]);
+    }
+
+    #[test]
+    fn expired_identity_is_abandoned_without_repinning() {
+        reward_state::reset_for_test();
+        let mut pending = payout();
+        let now = 24 * 60 * 60 * 1_000_000_000_u64 + 2;
+        pending.recipients[0].created_at_time_nanos = 1;
+        pending.recipients[1].created_at_time_nanos = now;
+        pending.recipients[2].created_at_time_nanos = now;
+        reward_state::mutate(|state| state.pending_payout = Some(pending));
+        let ledger = MockLedger {
+            transfers: Mutex::new(VecDeque::from([
+                Ok(Ok(Nat::from(2_u64))),
+                Ok(Ok(Nat::from(3_u64))),
+            ])),
+            args: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(drive_pending_with_ledger(now, &ledger)),
+            PendingDriveResult::CompletedWithAbandonment("reward_identity_expired")
+        );
+        let args = ledger.args.lock().unwrap();
+        assert_eq!(
+            args.iter().map(|arg| arg.to.owner).collect::<Vec<_>>(),
+            [principal(2), principal(3)]
+        );
+    }
+
+    #[test]
+    fn unusable_partial_plan_is_cleared_instead_of_waiting_for_fee_or_balance() {
+        reward_state::reset_for_test();
+        let mut pending = payout();
+        pending.next_recipient_index = 1;
+        reward_state::mutate(|state| state.pending_payout = Some(pending));
+        let ledger = MockLedger {
+            transfers: Mutex::new(VecDeque::from([Ok(Err(TransferError::BadFee {
+                expected_fee: Nat::from(2_u64),
+            }))])),
+            args: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(drive_pending_with_ledger(56, &ledger)),
+            PendingDriveResult::CompletedWithAbandonment("bad_fee")
+        );
+        assert!(reward_state::get().pending_payout.is_none());
+    }
+
+    #[test]
+    fn later_adjudication_can_run_after_bounded_abandonment() {
+        reward_state::reset_for_test();
+        let mut first = payout();
+        first.recipients.truncate(1);
+        reward_state::mutate(|state| state.pending_payout = Some(first));
+        let uncertain = MockLedger {
+            transfers: Mutex::new(VecDeque::from([Err(()), Err(())])),
+            args: Mutex::new(Vec::new()),
+        };
+        assert!(matches!(
+            block_on(drive_pending_with_ledger(56, &uncertain)),
+            PendingDriveResult::CompletedWithAbandonment(_)
+        ));
+
+        let mut next = payout();
+        next.recipients.truncate(1);
+        next.attribution_commitment_tx_id = 11;
+        next.recipients[0].memo = reward_memo(11, 0).unwrap();
+        reward_state::mutate(|state| state.pending_payout = Some(next));
+        let accepted = MockLedger {
+            transfers: Mutex::new(VecDeque::from([Ok(Ok(Nat::from(4_u64)))])),
+            args: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(drive_pending_with_ledger(56, &accepted)),
+            PendingDriveResult::Completed
+        );
+        assert!(reward_state::get().pending_payout.is_none());
+    }
+
+    struct HeldLedger {
+        started: Notify,
+        release: Notify,
+    }
+
+    struct HeldOwnerResolver {
+        started: Notify,
+        release: Notify,
+        owner: Principal,
+    }
+
+    #[async_trait]
+    impl OwnerResolverClient for HeldOwnerResolver {
+        async fn resolve(
+            &self,
+            _snapshot_id: u64,
+            accounts: Vec<Vec<u8>>,
+        ) -> Result<ResolveDefaultIcpAccountsResult, String> {
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok(ResolveDefaultIcpAccountsResult::Ok(
+                accounts.iter().map(|_| Some(self.owner)).collect(),
+            ))
+        }
+    }
+
+    #[async_trait]
+    impl RewardLedgerClient for HeldLedger {
+        async fn transfer(
+            &self,
+            _arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ()> {
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok(Ok(Nat::from(1_u64)))
+        }
+    }
+
+    #[test]
+    fn stale_reward_callback_cannot_advance_replacement_payout() {
+        block_on(async {
+            reward_state::reset_for_test();
+            initialize_relay_state();
+            let original = payout();
+            reward_state::mutate(|state| state.pending_payout = Some(original));
+            let ledger = Arc::new(HeldLedger {
+                started: Notify::new(),
+                release: Notify::new(),
+            });
+            let task_ledger = Arc::clone(&ledger);
+            let task =
+                tokio::spawn(
+                    async move { drive_pending_with_ledger(56, task_ledger.as_ref()).await },
+                );
+            ledger.started.notified().await;
+
+            let mut replacement = payout();
+            replacement.attribution_commitment_tx_id = 99;
+            replacement.recipients[0].memo = reward_memo(99, 0).unwrap();
+            reward_state::mutate(|state| state.pending_payout = Some(replacement.clone()));
+            ledger.release.notify_one();
+
+            assert_eq!(task.await.unwrap(), PendingDriveResult::Stale);
+            assert_eq!(reward_state::get().pending_payout, Some(replacement));
+        });
+    }
+
+    #[test]
+    fn stale_owner_resolution_cannot_install_after_successor_sweep_completed() {
+        block_on(async {
+            reward_state::reset_for_test();
+            initialize_relay_state();
+            reward_state::mutate(|reward| reward.last_sweep_attempt_timestamp_seconds = 7);
+            state::with_state_mut(|state| state.main_lock_state_ts = Some(100));
+            let old_generation = SweepGeneration {
+                main_lease: MainLeaseToken::capture_for_test().unwrap(),
+                last_completed_sweep_secs: 7,
+            };
+            let resolver = Arc::new(HeldOwnerResolver {
+                started: Notify::new(),
+                release: Notify::new(),
+                owner: principal(42),
+            });
+            let task_resolver = Arc::clone(&resolver);
+            let mut old_payout = payout();
+            old_payout.attribution_commitment_tx_id = 10;
+            let task = tokio::spawn(async move {
+                let accounts = BTreeMap::from([([1; 32], 100)]);
+                let owners = resolve_accounts_chunked(task_resolver.as_ref(), 1, &accounts)
+                    .await
+                    .unwrap();
+                assert_eq!(owners, vec![Some(principal(42))]);
+                install_pending_if_current(old_generation, old_payout)
+            });
+            resolver.started.notified().await;
+
+            state::with_state_mut(|state| state.main_lock_state_ts = Some(200));
+            let successor_generation = SweepGeneration {
+                main_lease: MainLeaseToken::capture_for_test().unwrap(),
+                last_completed_sweep_secs: 7,
+            };
+            let mut successor_payout = payout();
+            successor_payout.attribution_commitment_tx_id = 99;
+            successor_payout.recipients[0].memo = reward_memo(99, 0).unwrap();
+            assert!(install_pending_if_current(
+                successor_generation,
+                successor_payout.clone(),
+            ));
+            assert!(clear_expected_payout(&successor_payout));
+            record_completed_payout_cadence(500);
+
+            resolver.release.notify_one();
+            assert!(!task.await.unwrap());
+            assert!(reward_state::get().pending_payout.is_none());
+            assert_eq!(
+                reward_state::get().last_sweep_attempt_timestamp_seconds,
+                500
+            );
+        });
+    }
+
+    #[test]
+    fn cadence_records_only_completed_or_durable_adjudication() {
+        reward_state::reset_for_test();
+        initialize_relay_state();
+        reward_state::mutate(|state| state.last_sweep_attempt_timestamp_seconds = 7);
+        state::with_state_mut(|state| state.main_lock_state_ts = Some(1_000));
+        let generation = SweepGeneration {
+            main_lease: MainLeaseToken::capture_for_test().unwrap(),
+            last_completed_sweep_secs: 7,
+        };
+        record_sweep_disposition_if_current(SweepDisposition::RetryNextDailyTick, 100, generation);
+        assert_eq!(reward_state::get().last_sweep_attempt_timestamp_seconds, 7);
+        record_sweep_disposition_if_current(SweepDisposition::Completed, 100, generation);
+        assert_eq!(
+            reward_state::get().last_sweep_attempt_timestamp_seconds,
+            100
+        );
+        assert_eq!(
+            PendingDriveResult::CompletedWithAbandonment("bounded").sweep_disposition(),
+            SweepDisposition::Completed
+        );
+        assert_eq!(
+            PendingDriveResult::Stale.sweep_disposition(),
+            SweepDisposition::RetryNextDailyTick
+        );
+        assert!(sweep_is_due(99, 100, true));
+    }
+
+    #[test]
+    fn resumed_pinned_payout_completion_consumes_weekly_cadence() {
+        reward_state::reset_for_test();
+        reward_state::mutate(|state| state.pending_payout = Some(payout()));
+        let ledger = MockLedger {
             transfers: Mutex::new(VecDeque::from([
                 Ok(Ok(Nat::from(1_u64))),
                 Ok(Ok(Nat::from(2_u64))),
@@ -2378,259 +2533,22 @@ mod tests {
             ])),
             args: Mutex::new(Vec::new()),
         };
-        assert_eq!(
-            block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
-            PendingDriveResult::Accepted
-        );
-        assert!(reward_state::get().pending_payout.is_none());
-        let args = ledger.args.lock().unwrap();
-        assert_eq!(args.len(), 3);
-        assert_eq!(
-            args.iter().map(|arg| arg.to.owner).collect::<Vec<_>>(),
-            [principal(1), principal(2), principal(3),]
-        );
-        assert!(args.iter().all(|arg| arg.amount == Nat::from(19_u64)));
-    }
 
-    #[test]
-    fn bad_fee_before_first_recipient_clears_fresh_plan_without_uncertainty() {
-        reward_state::reset_for_test();
-        reward_state::mutate(|state| state.pending_payout = Some(payout()));
-        let ledger = MockLedger {
-            balances: Mutex::new(VecDeque::from([Ok(Nat::from(100_u64))])),
-            fees: Mutex::new(VecDeque::new()),
-            transfers: Mutex::new(VecDeque::from([Ok(Err(TransferError::BadFee {
-                expected_fee: Nat::from(2_u64),
-            }))])),
-            args: Mutex::new(Vec::new()),
-        };
-        assert_eq!(
-            block_on(drive_pending_with_ledger(56, principal(99), &ledger)),
-            PendingDriveResult::Rejected("bad_fee")
-        );
-        assert!(reward_state::get().pending_payout.is_none());
-    }
+        let now_secs = 1_000;
+        let result = block_on(drive_pending_with_ledger(56, &ledger));
+        assert_eq!(result, PendingDriveResult::Completed);
+        record_pinned_payout_result(result, now_secs);
+        record_completed_payout_cadence(now_secs - 1);
 
-    #[test]
-    fn partial_bad_fee_reprices_only_unpaid_recipients_and_completes() {
-        reward_state::reset_for_test();
-        let mut pending = payout();
-        pending.next_recipient_index = 1;
-        let completed = pending.recipients[0].clone();
-        reward_state::mutate(|state| state.pending_payout = Some(pending));
-        let rejected = MockLedger {
-            balances: Mutex::new(VecDeque::from([Ok(Nat::from(80_u64))])),
-            fees: Mutex::new(VecDeque::new()),
-            transfers: Mutex::new(VecDeque::from([Ok(Err(TransferError::BadFee {
-                expected_fee: Nat::from(2_u64),
-            }))])),
-            args: Mutex::new(Vec::new()),
-        };
-        assert_eq!(
-            block_on(drive_pending_with_ledger(56, principal(99), &rejected)),
-            PendingDriveResult::Repricing
-        );
-
-        let resumed = MockLedger {
-            balances: Mutex::new(VecDeque::from([
-                Ok(Nat::from(60_u64)),
-                Ok(Nat::from(60_u64)),
-                Ok(Nat::from(39_u64)),
-            ])),
-            fees: Mutex::new(VecDeque::from([Ok(Nat::from(2_u64))])),
-            transfers: Mutex::new(VecDeque::from([
-                Ok(Ok(Nat::from(2_u64))),
-                Ok(Ok(Nat::from(3_u64))),
-            ])),
-            args: Mutex::new(Vec::new()),
-        };
-        assert_eq!(
-            block_on(drive_pending_with_ledger(100, principal(99), &resumed)),
-            PendingDriveResult::Accepted
-        );
-        assert!(reward_state::get().pending_payout.is_none());
-        let args = resumed.args.lock().unwrap();
-        assert_eq!(
-            args.iter().map(|arg| arg.to.owner).collect::<Vec<_>>(),
-            [principal(2), principal(3),]
-        );
-        assert!(args.iter().all(|arg| arg.fee == Some(Nat::from(2_u64))));
-        assert!(!args.iter().any(|arg| arg.to == completed.recipient));
-        assert!(args
-            .iter()
-            .all(|arg| arg.created_at_time.is_some_and(|created| created >= 100)));
-    }
-
-    #[test]
-    fn partial_fee_increase_waits_for_accrual_then_resumes_same_entitlements() {
-        reward_state::reset_for_test();
-        let mut pending = payout();
-        pending.next_recipient_index = 1;
-        pending.recipients[1].status = PendingRewardTransferStatus::NeedsFreshIdentity;
-        let promised = pending.recipients[1..]
-            .iter()
-            .map(|recipient| recipient.amount.clone())
-            .collect::<Vec<_>>();
-        reward_state::mutate(|state| state.pending_payout = Some(pending));
-
-        let insufficient = MockLedger {
-            balances: Mutex::new(VecDeque::from([Ok(Nat::from(50_u64))])),
-            fees: Mutex::new(VecDeque::from([Ok(Nat::from(10_u64))])),
-            transfers: Mutex::new(VecDeque::new()),
-            args: Mutex::new(Vec::new()),
-        };
-        assert_eq!(
-            block_on(drive_pending_with_ledger(100, principal(99), &insufficient)),
-            PendingDriveResult::WaitingForBalance
-        );
-        let waiting = reward_state::get().pending_payout.unwrap();
-        assert_eq!(waiting.next_recipient_index, 1);
-        assert_eq!(
-            waiting.recipients[1..]
-                .iter()
-                .map(|recipient| recipient.amount.clone())
-                .collect::<Vec<_>>(),
-            promised
-        );
-
-        let funded = MockLedger {
-            balances: Mutex::new(VecDeque::from([
-                Ok(Nat::from(300_u64)),
-                Ok(Nat::from(300_u64)),
-                Ok(Nat::from(271_u64)),
-            ])),
-            fees: Mutex::new(VecDeque::from([Ok(Nat::from(10_u64))])),
-            transfers: Mutex::new(VecDeque::from([
-                Ok(Ok(Nat::from(2_u64))),
-                Ok(Ok(Nat::from(3_u64))),
-            ])),
-            args: Mutex::new(Vec::new()),
-        };
-        assert_eq!(
-            block_on(drive_pending_with_ledger(200, principal(99), &funded)),
-            PendingDriveResult::Accepted
-        );
-        let args = funded.args.lock().unwrap();
-        assert_eq!(
-            args.iter()
-                .map(|arg| arg.amount.clone())
-                .collect::<Vec<_>>(),
-            promised
-        );
-    }
-
-    #[test]
-    fn lower_fee_and_expired_definitive_identity_can_be_safely_repinned() {
-        reward_state::reset_for_test();
-        let mut pending = payout();
-        pending.next_recipient_index = 2;
-        pending.fee = Nat::from(10_u64);
-        pending.recipients[2].status = PendingRewardTransferStatus::WaitingForBalance;
-        pending.recipients[2].created_at_time_nanos = 1;
-        reward_state::mutate(|state| state.pending_payout = Some(pending));
-        let ledger = MockLedger {
-            balances: Mutex::new(VecDeque::from([
-                Ok(Nat::from(30_u64)),
-                Ok(Nat::from(30_u64)),
-            ])),
-            fees: Mutex::new(VecDeque::from([Ok(Nat::from(1_u64))])),
-            transfers: Mutex::new(VecDeque::from([Ok(Ok(Nat::from(3_u64)))])),
-            args: Mutex::new(Vec::new()),
-        };
-        assert_eq!(
-            block_on(drive_pending_with_ledger(
-                1_000_000_000_000,
-                principal(99),
-                &ledger
-            )),
-            PendingDriveResult::Accepted
-        );
-        let args = ledger.args.lock().unwrap();
-        assert_eq!(args[0].fee, Some(Nat::from(1_u64)));
-        assert_eq!(args[0].created_at_time, Some(1_000_000_000_000));
-    }
-
-    #[test]
-    fn expired_ambiguous_identity_is_never_replaced() {
-        reward_state::reset_for_test();
-        let mut pending = payout();
-        pending.next_recipient_index = 1;
-        pending.recipients[1].status = PendingRewardTransferStatus::Ambiguous;
-        pending.recipients[1].attempt_started = true;
-        pending.recipients[1].uncertain_attempt_seen = true;
-        pending.recipients[1].observed_balance = Some(Nat::from(80_u64));
-        pending.recipients[1].created_at_time_nanos = 1;
-        let identity = pending.recipients[1].clone();
-        reward_state::mutate(|state| state.pending_payout = Some(pending));
-        let ledger = MockLedger {
-            balances: Mutex::new(VecDeque::from([Ok(Nat::from(80_u64))])),
-            fees: Mutex::new(VecDeque::from([Ok(Nat::from(1_u64))])),
-            transfers: Mutex::new(VecDeque::new()),
-            args: Mutex::new(Vec::new()),
-        };
-        assert_eq!(
-            block_on(drive_pending_with_ledger(u64::MAX, principal(99), &ledger)),
-            PendingDriveResult::Ambiguous
-        );
-        let durable = reward_state::get().pending_payout.unwrap();
-        assert_eq!(durable.recipients[1], identity);
-        assert!(ledger.args.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn rejection_after_partial_completion_retains_the_exact_remaining_plan() {
-        reward_state::reset_for_test();
-        let mut pinned = payout();
-        pinned.next_recipient_index = 1;
-        let expected = pinned.clone();
-        reward_state::mutate(|state| state.pending_payout = Some(pinned));
-        let rejected = MockLedger {
-            balances: Mutex::new(VecDeque::from([Ok(Nat::from(80_u64))])),
-            fees: Mutex::new(VecDeque::new()),
-            transfers: Mutex::new(VecDeque::from([Ok(Err(TransferError::BadFee {
-                expected_fee: Nat::from(2_u64),
-            }))])),
-            args: Mutex::new(Vec::new()),
-        };
-        assert_eq!(
-            block_on(drive_pending_with_ledger(56, principal(99), &rejected)),
-            PendingDriveResult::Repricing
-        );
-        let pending = reward_state::get().pending_payout.unwrap();
-        assert_eq!(pending.next_recipient_index, 1);
-        assert_eq!(pending.recipients[0], expected.recipients[0]);
-        assert_eq!(pending.recipients[1].amount, expected.recipients[1].amount);
-        assert_eq!(pending.recipients[1].memo, expected.recipients[1].memo);
-        assert_eq!(
-            pending.recipients[1].created_at_time_nanos,
-            expected.recipients[1].created_at_time_nanos
-        );
-        assert_eq!(
-            pending.recipients[1].status,
-            PendingRewardTransferStatus::NeedsFreshIdentity
-        );
-        assert!(!pending.recipients[1].uncertain_attempt_seen);
-    }
-
-    #[test]
-    fn cadence_records_only_completed_or_durable_adjudication() {
-        reward_state::reset_for_test();
-        reward_state::mutate(|state| state.last_sweep_attempt_timestamp_seconds = 7);
-        record_sweep_disposition(SweepDisposition::RetryNextDailyTick, 100);
-        assert_eq!(reward_state::get().last_sweep_attempt_timestamp_seconds, 7);
-        record_sweep_disposition(SweepDisposition::Completed, 100);
-        assert_eq!(
+        assert!(!sweep_is_due(
             reward_state::get().last_sweep_attempt_timestamp_seconds,
-            100
-        );
-        assert_eq!(
-            PendingDriveResult::Ambiguous.sweep_disposition(),
-            SweepDisposition::Completed
-        );
-        assert_eq!(
-            PendingDriveResult::Rejected("bad_fee").sweep_disposition(),
-            SweepDisposition::RetryNextDailyTick
-        );
-        assert!(sweep_is_due(99, 100, true));
+            now_secs + 24 * 60 * 60,
+            false,
+        ));
+        assert!(sweep_is_due(
+            reward_state::get().last_sweep_attempt_timestamp_seconds,
+            now_secs + REWARD_SWEEP_INTERVAL_SECONDS,
+            false,
+        ));
     }
 }

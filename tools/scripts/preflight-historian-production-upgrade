@@ -6,7 +6,6 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "$REPO_ROOT"
 
 artifact="release-artifacts/jupiter_historian.wasm.gz"
-deprecated_artifact="release-artifacts/jupiter_historian_with_relay.wasm.gz"
 manifest="release-artifacts/release-artifacts.sha256"
 
 if [[ ! -f "$manifest" ]]; then
@@ -45,15 +44,6 @@ echo "Artifact hashes:"
 cat release-artifacts/jupiter_historian.reviewed-relay-wasm-raw.sha256
 cat release-artifacts/jupiter_historian.embedded-relay-wasm-gz.sha256
 sha256sum "$artifact"
-
-if [[ -f "$deprecated_artifact" ]]; then
-  deprecated_hash="$(sha256sum "$deprecated_artifact" | awk '{print $1}')"
-  canonical_hash="$(sha256sum "$artifact" | awk '{print $1}')"
-  if [[ "$deprecated_hash" != "$canonical_hash" ]]; then
-    echo "refusing preflight: deprecated historian-with-relay artifact exists with different bytes: ${deprecated_artifact}" >&2
-    exit 1
-  fi
-fi
 
 echo
 echo "Read-only preflight only. Existing production Historian must be upgraded in place."

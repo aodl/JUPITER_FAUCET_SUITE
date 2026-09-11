@@ -24,47 +24,51 @@ pub(super) fn allocate_created_at_time_nanos(now_nanos: u64) -> u64 {
         created_at_time_nanos
     })
 }
-pub(super) fn increment_cmc_attempts(pending: &PendingNotification) {
-    if !pending.kind.requires_cmc_notify() {
+pub(super) fn increment_cmc_attempts(job_id: u64, expected: &PendingTransfer) {
+    if !expected.notification.kind.requires_cmc_notify() {
         return;
     }
     state::with_state_mut(|st| {
         if let Some(job) = st.active_payout_job.as_mut() {
-            job.cmc_attempt_count = Some(job.cmc_attempt_count.unwrap_or(0).saturating_add(1));
-        }
-    });
-}
-
-pub(super) fn note_attempted_beneficiary(pending: &PendingNotification) {
-    if !pending.kind.requires_cmc_notify() {
-        return;
-    }
-    state::with_state_mut(|st| {
-        if let Some(job) = st.active_payout_job.as_mut() {
-            let beneficiaries = job.cmc_attempted_beneficiaries.get_or_insert_with(Vec::new);
-            if !beneficiaries.contains(&pending.beneficiary) {
-                beneficiaries.push(pending.beneficiary);
+            if job.id == job_id && job.pending_transfer.as_ref() == Some(expected) {
+                job.cmc_attempt_count = Some(job.cmc_attempt_count.unwrap_or(0).saturating_add(1));
             }
         }
     });
 }
 
-pub(super) fn increment_cmc_successes(pending: &PendingNotification) {
-    if !pending.kind.requires_cmc_notify() {
+pub(super) fn note_attempted_beneficiary(job_id: u64, expected: &PendingTransfer) {
+    if !expected.notification.kind.requires_cmc_notify() {
         return;
     }
     state::with_state_mut(|st| {
         if let Some(job) = st.active_payout_job.as_mut() {
-            job.cmc_success_count = Some(job.cmc_success_count.unwrap_or(0).saturating_add(1));
+            if job.id != job_id || job.pending_transfer.as_ref() != Some(expected) {
+                return;
+            }
+            let beneficiaries = job.cmc_attempted_beneficiaries.get_or_insert_with(Vec::new);
+            if !beneficiaries.contains(&expected.notification.beneficiary) {
+                beneficiaries.push(expected.notification.beneficiary);
+            }
         }
     });
 }
 
-pub(super) fn current_pending_transfer() -> Option<PendingTransfer> {
+pub(super) fn current_pending_transfer() -> Option<(u64, PendingTransfer)> {
+    state::with_state(|st| {
+        st.active_payout_job.as_ref().and_then(|job| {
+            job.pending_transfer
+                .clone()
+                .map(|pending| (job.id, pending))
+        })
+    })
+}
+
+pub(super) fn pending_transfer_matches(job_id: u64, expected: &PendingTransfer) -> bool {
     state::with_state(|st| {
         st.active_payout_job
             .as_ref()
-            .and_then(|job| job.pending_transfer.clone())
+            .is_some_and(|job| job.id == job_id && job.pending_transfer.as_ref() == Some(expected))
     })
 }
 
@@ -80,15 +84,22 @@ pub(super) fn stage_pending_transfer(pending: PendingNotification, created_at_ti
     });
 }
 
-pub(super) fn mark_pending_transfer_accepted(block_index: u64) -> Option<PendingNotification> {
+pub(super) fn mark_pending_transfer_accepted(
+    job_id: u64,
+    expected: &PendingTransfer,
+    block_index: u64,
+) -> Option<PendingTransfer> {
     state::with_state_mut(|st| {
         let job = st.active_payout_job.as_mut()?;
+        if job.id != job_id || job.pending_transfer.as_ref() != Some(expected) {
+            return None;
+        }
         let pending = job.pending_transfer.as_mut()?;
         pending.notification.block_index = block_index;
         pending.phase = PendingTransferPhase::TransferAccepted;
         let accepted = pending.notification.clone();
         logic::record_ledger_accepted_transfer(job, &accepted);
-        Some(accepted)
+        job.pending_transfer.clone()
     })
 }
 
@@ -98,9 +109,16 @@ pub(super) enum PendingTransferTerminalStatus {
     Ambiguous,
 }
 
-pub(super) fn clear_pending_transfer(status: PendingTransferTerminalStatus) {
+pub(super) fn clear_pending_transfer(
+    job_id: u64,
+    expected: &PendingTransfer,
+    status: PendingTransferTerminalStatus,
+) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_payout_job.as_mut() {
+            if job.id != job_id || job.pending_transfer.as_ref() != Some(expected) {
+                return;
+            }
             if job
                 .pending_transfer
                 .as_ref()
@@ -122,9 +140,34 @@ pub(super) fn clear_pending_transfer(status: PendingTransferTerminalStatus) {
         }
     });
 }
+#[cfg(test)]
 pub(super) fn note_index_page(resp: &GetAccountIdentifierTransactionsResponse) {
+    let lease = MainLeaseToken::capture_for_test();
+    let Some((job_id, cursor)) = state::with_state(|st| {
+        st.active_payout_job
+            .as_ref()
+            .map(|job| (job.id, job.next_start))
+    }) else {
+        return;
+    };
+    note_index_page_with_lease(resp, lease, job_id, cursor);
+}
+
+pub(super) fn note_index_page_with_lease(
+    resp: &GetAccountIdentifierTransactionsResponse,
+    lease: MainLeaseToken,
+    job_id: u64,
+    expected_cursor: Option<u64>,
+) {
     state::with_state_mut(|st| {
-        if let Some(job) = st.active_payout_job.as_mut() {
+        if !lease.is_current_in(st) {
+            return;
+        }
+        if let Some(job) = st
+            .active_payout_job
+            .as_mut()
+            .filter(|job| job.id == job_id && job.next_start == expected_cursor)
+        {
             if job.observed_oldest_tx_id.is_none() {
                 job.observed_oldest_tx_id = resp.oldest_tx_id;
             }
@@ -182,42 +225,70 @@ pub(super) enum NotifyAttemptOutcome {
 
 pub(super) async fn notify_once(
     cmc: &impl CmcClient,
-    pending: &PendingNotification,
+    job_id: u64,
+    expected: &PendingTransfer,
 ) -> NotifyAttemptOutcome {
     debug_assert!(
         !state::persistence_batch_active(),
         "persistence batch must be dropped before CMC notify"
     );
-    note_attempted_beneficiary(pending);
-    increment_cmc_attempts(pending);
+    note_attempted_beneficiary(job_id, expected);
+    increment_cmc_attempts(job_id, expected);
     match cmc
-        .notify_top_up(pending.beneficiary, pending.block_index)
+        .notify_top_up(
+            expected.notification.beneficiary,
+            expected.notification.block_index,
+        )
         .await
     {
         Ok(_) => NotifyAttemptOutcome::Succeeded,
         Err(err) => NotifyAttemptOutcome::Error(err),
     }
 }
-pub(super) fn record_completed_transfer(now_secs: u64, pending: &PendingNotification) {
+pub(super) fn record_completed_transfer(job_id: u64, expected: &PendingTransfer, now_secs: u64) {
     state::with_state_mut(|st| {
+        let Some(job) = st.active_payout_job.as_mut() else {
+            return;
+        };
+        if job.id != job_id || job.pending_transfer.as_ref() != Some(expected) {
+            return;
+        }
+        let pending = &expected.notification;
         if pending.kind.requires_cmc_notify() {
             st.last_successful_transfer_ts = Some(now_secs);
+            job.cmc_success_count = Some(job.cmc_success_count.unwrap_or(0).saturating_add(1));
         }
-        if let Some(job) = st.active_payout_job.as_mut() {
-            logic::apply_notified_transfer(job, pending);
-            job.pending_transfer = None;
-        }
+        logic::apply_notified_transfer(job, pending);
+        job.pending_transfer = None;
     });
-    if pending.kind.requires_cmc_notify() {
-        increment_cmc_successes(pending);
-    }
 }
-pub(super) async fn finalize_completed_job(status_client: &impl CanisterStatusClient) {
-    let Some(job) = state::with_state_mut(|st| st.active_payout_job.take()) else {
-        return;
+pub(super) async fn finalize_completed_job(
+    status_client: &impl CanisterStatusClient,
+    lease: MainLeaseToken,
+    expected_job_id: u64,
+) -> bool {
+    let Some(job) = state::with_state(|st| {
+        if !lease.is_current_in(st) {
+            return None;
+        }
+        st.active_payout_job
+            .as_ref()
+            .filter(|job| job.id == expected_job_id)
+            .cloned()
+    }) else {
+        return false;
     };
     let zero_success_run_counts = zero_success_run_counts_toward_rescue(status_client, &job).await;
     let summary = state::with_state_mut(|st| {
+        if !lease.is_current_in(st)
+            || st
+                .active_payout_job
+                .as_ref()
+                .is_none_or(|active| active.id != expected_job_id)
+        {
+            return None;
+        }
+        st.active_payout_job = None;
         apply_job_health_observations(st, &job, zero_success_run_counts);
         if let Some(round_end_time_nanos) = job.round_end_time_nanos {
             st.current_round_start_time_nanos = Some(round_end_time_nanos);
@@ -233,7 +304,11 @@ pub(super) async fn finalize_completed_job(status_client: &impl CanisterStatusCl
         }
         let summary = logic::summary_from_job(&job);
         st.last_summary = Some(summary.clone());
-        summary
+        Some(summary)
     });
+    let Some(summary) = summary else {
+        return false;
+    };
     log_summary(&summary);
+    true
 }

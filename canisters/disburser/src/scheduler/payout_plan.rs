@@ -15,31 +15,39 @@ pub(super) async fn process_payout<L: LedgerClient>(
         owner: self_canister_principal(),
         subaccount: None,
     };
+    let (expected_nonce, expected_plan, prev_age) =
+        state::with_state(|st| (st.payout_nonce, st.payout_plan.clone(), st.prev_age_seconds));
 
     let balance = match ledger.balance_of_e8s(staging).await {
         Ok(b) => b,
         Err(_) => return false,
     };
+    if !payout_generation_matches(expected_nonce, expected_plan.as_ref()) {
+        return false;
+    }
 
     // If empty, clear any stale plan and succeed.
     if balance == 0 {
-        state::with_state_mut(|st| st.payout_plan = None);
+        state::with_state_mut(|st| {
+            if st.payout_nonce == expected_nonce && st.payout_plan == expected_plan {
+                st.payout_plan = None;
+            }
+        });
         return true;
     }
 
     // Create plan if none exists.
-    let need_plan = state::with_state(|st| st.payout_plan.is_none());
+    let need_plan = expected_plan.is_none();
     if need_plan {
         let fee = match ledger.fee_e8s().await {
             Ok(f) => f,
             Err(_) => return false,
         };
+        if !payout_generation_matches(expected_nonce, None) {
+            return false;
+        }
 
-        let (payout_id, prev_age) = state::with_state_mut(|st| {
-            let id = st.payout_nonce;
-            st.payout_nonce = st.payout_nonce.saturating_add(1);
-            (id, st.prev_age_seconds)
-        });
+        let payout_id = expected_nonce;
 
         let (_gross, planned) = logic::plan_payout_transfers(
             payout_id,
@@ -64,14 +72,23 @@ pub(super) async fn process_payout<L: LedgerClient>(
             })
             .collect::<Vec<_>>();
 
-        state::with_state_mut(|st| {
-            st.payout_plan = Some(state::PayoutPlan {
-                id: payout_id,
-                fee_e8s: fee,
-                created_at_base_nanos: now_nanos,
-                transfers,
-            });
+        let installed = state::with_state_mut(|st| {
+            if st.payout_nonce == expected_nonce && st.payout_plan.is_none() {
+                st.payout_nonce = st.payout_nonce.saturating_add(1);
+                st.payout_plan = Some(state::PayoutPlan {
+                    id: payout_id,
+                    fee_e8s: fee,
+                    created_at_base_nanos: now_nanos,
+                    transfers,
+                });
+                true
+            } else {
+                false
+            }
         });
+        if !installed {
+            return false;
+        }
     }
 
     #[cfg(feature = "debug_api")]
@@ -91,7 +108,11 @@ pub(super) async fn process_payout<L: LedgerClient>(
             .position(|t| matches!(t.status, state::TransferStatus::Pending));
 
         let Some(i) = next_idx else {
-            state::with_state_mut(|st| st.payout_plan = None);
+            state::with_state_mut(|st| {
+                if st.payout_plan.as_ref() == Some(&plan) {
+                    st.payout_plan = None;
+                }
+            });
             return true;
         };
 
@@ -109,6 +130,9 @@ pub(super) async fn process_payout<L: LedgerClient>(
             Ok(r) => r,
             Err(_) => return false,
         };
+        if state::with_state(|st| st.payout_plan.as_ref() != Some(&plan)) {
+            return false;
+        }
 
         match res {
             Ok(block) => {
@@ -122,14 +146,15 @@ pub(super) async fn process_payout<L: LedgerClient>(
                 };
                 let block_str = block.to_string();
                 state::with_state_mut(|st| {
-                    if let Some(p) = st.payout_plan.as_mut() {
+                    if st.payout_plan.as_ref() == Some(&plan) {
+                        let p = st.payout_plan.as_mut().expect("matched payout plan");
                         if let Some(tt) = p.transfers.get_mut(i) {
                             tt.status = state::TransferStatus::Sent {
                                 block_index: block_str,
                             };
                         }
+                        st.last_successful_transfer_ts = Some(now_secs);
                     }
-                    st.last_successful_transfer_ts = Some(now_secs);
                 });
             }
             Err(TransferError::Duplicate { duplicate_of }) => {
@@ -143,22 +168,36 @@ pub(super) async fn process_payout<L: LedgerClient>(
                 };
                 let block_str = duplicate_of.to_string();
                 state::with_state_mut(|st| {
-                    if let Some(p) = st.payout_plan.as_mut() {
+                    if st.payout_plan.as_ref() == Some(&plan) {
+                        let p = st.payout_plan.as_mut().expect("matched payout plan");
                         if let Some(tt) = p.transfers.get_mut(i) {
                             tt.status = state::TransferStatus::Sent {
                                 block_index: block_str,
                             };
                         }
+                        st.last_successful_transfer_ts = Some(now_secs);
                     }
-                    st.last_successful_transfer_ts = Some(now_secs);
                 });
             }
             Err(err) => {
                 if should_clear_payout_plan_on_transfer_error(&err) {
-                    state::with_state_mut(|st| st.payout_plan = None);
+                    state::with_state_mut(|st| {
+                        if st.payout_plan.as_ref() == Some(&plan) {
+                            st.payout_plan = None;
+                        }
+                    });
                 }
                 return false;
             }
         }
     }
+}
+
+fn payout_generation_matches(
+    expected_nonce: u64,
+    expected_plan: Option<&state::PayoutPlan>,
+) -> bool {
+    state::with_state(|st| {
+        st.payout_nonce == expected_nonce && st.payout_plan.as_ref() == expected_plan
+    })
 }

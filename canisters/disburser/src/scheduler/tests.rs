@@ -12,7 +12,7 @@ mod tests {
     use std::future::{pending, Future};
     use std::pin::Pin;
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     };
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
@@ -66,6 +66,41 @@ mod tests {
     struct CountingLedger {
         balance: u64,
         transfer_calls: AtomicUsize,
+    }
+
+    struct HeldTransferLedger {
+        started: AtomicBool,
+        release: AtomicBool,
+    }
+
+    #[async_trait]
+    impl LedgerClient for HeldTransferLedger {
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> {
+            Ok(10_000)
+        }
+
+        async fn balance_of_e8s(
+            &self,
+            _account: Account,
+        ) -> Result<u64, crate::clients::ClientError> {
+            Ok(50_000_000)
+        }
+
+        async fn transfer(
+            &self,
+            _arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+            self.started.store(true, Ordering::SeqCst);
+            std::future::poll_fn(|_| {
+                if self.release.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+            Ok(Ok(Nat::from(77_u64)))
+        }
     }
 
     impl CountingLedger {
@@ -838,6 +873,39 @@ mod tests {
             state::with_state(|st| st.payout_plan.is_none()),
             "successful retry should clear the completed plan"
         );
+    }
+
+    #[test]
+    fn stale_ledger_callback_cannot_mark_replacement_plan_transfer_sent() {
+        let now_secs = 2_238_u64;
+        state::set_state(state::State::new(test_config(), now_secs));
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = HeldTransferLedger {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+        };
+        let mut future = Box::pin(process_payout(
+            &ledger,
+            &cfg,
+            now_secs * 1_000_000_000,
+            now_secs,
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(ledger.started.load(Ordering::SeqCst));
+
+        let replacement = state::with_state_mut(|st| {
+            let mut replacement = st.payout_plan.clone().expect("planned payout");
+            replacement.id = replacement.id.saturating_add(100);
+            replacement.transfers[0].memo.push(99);
+            st.payout_plan = Some(replacement.clone());
+            replacement
+        });
+        ledger.release.store(true, Ordering::SeqCst);
+        assert!(matches!(poll_once(future.as_mut()), Poll::Ready(false)));
+        state::with_state(|st| {
+            assert_eq!(st.payout_plan.as_ref(), Some(&replacement));
+            assert_eq!(st.last_successful_transfer_ts, None);
+        });
     }
 
     #[test]

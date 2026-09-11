@@ -66,8 +66,12 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
     now_secs: u64,
     sns_wasm: &W,
     sns_root: &R,
+    lease: MainLeaseToken,
 ) -> Result<(), String> {
-    let (snapshot, max_per_tick) = state::with_root_state_mut(|st| {
+    let Some((snapshot, max_per_tick)) = state::with_root_state_mut(|st| {
+        if !lease.is_current_in(st) {
+            return None;
+        }
         if st.active_sns_discovery.is_none() {
             st.active_sns_discovery = Some(ActiveSnsDiscovery {
                 started_at_ts_nanos: timestamp_nanos,
@@ -75,19 +79,22 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
                 next_index: 0,
             });
         }
-        (
+        Some((
             st.active_sns_discovery
                 .clone()
                 .expect("active sns discovery"),
             st.config.max_canisters_per_cycles_tick.max(1),
-        )
-    });
+        ))
+    }) else {
+        return Ok(());
+    };
 
     let snapshot = if snapshot.root_canister_ids.is_empty() && snapshot.next_index == 0 {
-        let deployed = sns_wasm
-            .list_deployed_snses()
-            .await
-            .map_err(|e| format!("list_deployed_snses failed: {e}"))?;
+        let result = sns_wasm.list_deployed_snses().await;
+        if !sns_work_is_current_now(lease, &snapshot) {
+            return Ok(());
+        }
+        let deployed = result.map_err(|e| format!("list_deployed_snses failed: {e}"))?;
         let mut root_canister_ids: Vec<_> = deployed
             .instances
             .into_iter()
@@ -95,11 +102,21 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
             .collect();
         root_canister_ids.sort();
         root_canister_ids.dedup();
-        state::with_root_state_mut(|st| {
-            if let Some(active) = st.active_sns_discovery.as_mut() {
+        let installed = state::with_root_state_mut(|st| {
+            if sns_work_is_current(st, lease, &snapshot) {
+                let active = st
+                    .active_sns_discovery
+                    .as_mut()
+                    .expect("matched SNS discovery");
                 active.root_canister_ids = root_canister_ids.clone();
+                true
+            } else {
+                false
             }
         });
+        if !installed {
+            return Ok(());
+        }
         ActiveSnsDiscovery {
             started_at_ts_nanos: snapshot.started_at_ts_nanos,
             root_canister_ids,
@@ -113,8 +130,15 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
     let end = (snapshot.next_index + max_per_tick as u64)
         .min(snapshot.root_canister_ids.len() as u64) as usize;
     for root_id in snapshot.root_canister_ids[start..end].iter().copied() {
+        if !sns_work_is_current_now(lease, &snapshot) {
+            return Ok(());
+        }
         register_sns_membership(BTreeSet::from([root_id]), now_secs);
-        let response = match sns_root.list_sns_canisters(root_id).await {
+        let result = sns_root.list_sns_canisters(root_id).await;
+        if !sns_work_is_current_now(lease, &snapshot) {
+            return Ok(());
+        }
+        let response = match result {
             Ok(response) => response,
             Err(err) => {
                 log_error(&format!(
@@ -133,7 +157,11 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
     }
 
     state::with_root_state_mut(|st| {
-        if let Some(active) = st.active_sns_discovery.as_mut() {
+        if sns_work_is_current(st, lease, &snapshot) {
+            let active = st
+                .active_sns_discovery
+                .as_mut()
+                .expect("matched SNS discovery");
             active.next_index = end as u64;
             if active.next_index >= active.root_canister_ids.len() as u64 {
                 st.active_sns_discovery = None;
@@ -142,6 +170,18 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
         }
     });
     Ok(())
+}
+
+fn sns_work_is_current(
+    st: &state::State,
+    lease: MainLeaseToken,
+    expected: &ActiveSnsDiscovery,
+) -> bool {
+    lease.is_current_in(st) && st.active_sns_discovery.as_ref() == Some(expected)
+}
+
+fn sns_work_is_current_now(lease: MainLeaseToken, expected: &ActiveSnsDiscovery) -> bool {
+    state::with_state(|st| sns_work_is_current(st, lease, expected))
 }
 
 #[cfg(test)]

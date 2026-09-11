@@ -10,7 +10,7 @@ use crate::clients::ledger::IcrcLedgerCanister;
 use crate::clients::{CmcClient, GovernanceClient, LedgerClient};
 use crate::logic::{self, ResolvedSurplusRecipient};
 use crate::scheduler::cycles_probe::{probe_cycles_batch, RelayCyclesProbeClient};
-use crate::scheduler::guards::MainGuard;
+use crate::scheduler::guards::{MainGuard, MainLeaseToken};
 #[cfg(test)]
 use crate::scheduler::ledger_fee::ICP_LEDGER_FEE_BOOTSTRAP_FALLBACK_E8S;
 use crate::scheduler::ledger_fee::{resolve_icp_ledger_fee_e8s, LedgerFeeResolutionContext};
@@ -190,6 +190,7 @@ async fn run_main_tick_with_clients_for_relay<
     let Some(guard) = MainGuard::acquire(now_secs) else {
         return MainTickOutcome::MainGuardBusy;
     };
+    let lease = guard.lease_token();
     if !force {
         let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
         let recently_ran =
@@ -203,8 +204,16 @@ async fn run_main_tick_with_clients_for_relay<
     #[cfg(not(test))]
     log_cycles_and_config();
     #[cfg(not(test))]
-    super::reward_sweep::process(now_nanos, now_secs, false).await;
-    match super::splitter::process_main_stage(now_nanos, now_secs, relay_id, ledger).await {
+    super::reward_sweep::process(now_nanos, now_secs, false, lease).await;
+    if !guard.is_current() {
+        return MainTickOutcome::Completed;
+    }
+    let splitter_result =
+        super::splitter::process_main_stage(now_nanos, now_secs, relay_id, ledger).await;
+    if !guard.is_current() {
+        return MainTickOutcome::Completed;
+    }
+    match splitter_result {
         super::splitter::MainStageResult::Ready => {}
         super::splitter::MainStageResult::GuardBusy => {
             log_error("relay tick paused while another splitter driver holds the lease");
@@ -226,9 +235,14 @@ async fn run_main_tick_with_clients_for_relay<
             return MainTickOutcome::SplitterPaused;
         }
     }
-    if !resume_or_start_faucet_commitment_with_self(now_nanos, relay_id, ledger, governance).await {
+    if !resume_or_start_faucet_commitment_with_self(now_nanos, relay_id, ledger, governance, lease)
+        .await
+    {
         log_error("relay tick stopped after debug faucet commitment transfer injection");
         guard.finish(now_secs);
+        return MainTickOutcome::Completed;
+    }
+    if !guard.is_current() {
         return MainTickOutcome::Completed;
     }
     if !resume_or_start_job_with_self(
@@ -239,6 +253,7 @@ async fn run_main_tick_with_clients_for_relay<
         cmc,
         governance,
         cycles_probe,
+        lease,
     )
     .await
     {
@@ -246,11 +261,15 @@ async fn run_main_tick_with_clients_for_relay<
         guard.finish(now_secs);
         return MainTickOutcome::Completed;
     }
+    if !guard.is_current() {
+        return MainTickOutcome::Completed;
+    }
     clear_splitter_main_continuation_request();
     guard.finish(now_secs);
     MainTickOutcome::Completed
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn resume_or_start_job_with_self<
     L: LedgerClient,
     C: CmcClient,
@@ -264,11 +283,24 @@ async fn resume_or_start_job_with_self<
     cmc: &C,
     governance: &G,
     cycles_probe: &P,
+    lease: MainLeaseToken,
 ) -> bool {
     if state::with_state(|st| st.active_job.is_none()) {
-        start_job_with_self(now_nanos, relay_id, relay_cycles, ledger, cmc, cycles_probe).await;
+        start_job_with_self_with_lease(
+            now_nanos,
+            relay_id,
+            relay_cycles,
+            ledger,
+            cmc,
+            cycles_probe,
+            lease,
+        )
+        .await;
     }
-    drive_active_job(now_nanos, ledger, cmc, governance).await
+    if !lease.is_current() {
+        return true;
+    }
+    drive_active_job(now_nanos, ledger, cmc, governance, lease).await
 }
 
 async fn resume_or_start_faucet_commitment_with_self<L: LedgerClient, G: GovernanceClient>(
@@ -276,20 +308,44 @@ async fn resume_or_start_faucet_commitment_with_self<L: LedgerClient, G: Governa
     relay_id: Principal,
     ledger: &L,
     governance: &G,
+    lease: MainLeaseToken,
 ) -> bool {
     if state::with_state(|st| st.active_faucet_commitment_transfer.is_none()) {
-        plan_faucet_commitment_with_self(now_nanos, relay_id, ledger, governance).await;
+        plan_faucet_commitment_with_self_with_lease(now_nanos, relay_id, ledger, governance, lease)
+            .await;
+    }
+    if !lease.is_current() {
+        return true;
     }
     drive_pending_faucet_commitment_transfer(ledger, governance, now_nanos).await
 }
 
+#[cfg(test)]
 async fn plan_faucet_commitment_with_self<L: LedgerClient, G: GovernanceClient>(
     now_nanos: u64,
     self_id: candid::Principal,
     ledger: &L,
     governance: &G,
 ) {
-    let cfg = state::with_state(|st| st.config.clone());
+    let lease = MainLeaseToken::capture_for_test().expect("test main lease must be installed");
+    plan_faucet_commitment_with_self_with_lease(now_nanos, self_id, ledger, governance, lease)
+        .await;
+}
+
+async fn plan_faucet_commitment_with_self_with_lease<L: LedgerClient, G: GovernanceClient>(
+    now_nanos: u64,
+    self_id: candid::Principal,
+    ledger: &L,
+    governance: &G,
+    lease: MainLeaseToken,
+) {
+    let Some((cfg, expected_next_job_id)) = state::with_state(|st| {
+        st.active_faucet_commitment_transfer
+            .is_none()
+            .then(|| (st.config.clone(), st.next_job_id))
+    }) else {
+        return;
+    };
     let source = logic::relay_subaccount_one_account(self_id);
     let fee = resolve_icp_ledger_fee_e8s(ledger, LedgerFeeResolutionContext::SubaccountOne).await;
     let balance = match ledger.balance_of_e8s(source).await {
@@ -338,6 +394,12 @@ async fn plan_faucet_commitment_with_self<L: LedgerClient, G: GovernanceClient>(
     };
 
     state::with_state_mut(|st| {
+        if !lease.is_current_in(st)
+            || st.active_faucet_commitment_transfer.is_some()
+            || st.next_job_id != expected_next_job_id
+        {
+            return;
+        }
         st.active_faucet_commitment_transfer = Some(PendingFaucetCommitmentTransfer {
             transfer: PendingTransfer {
                 kind: PendingTransferKind::FaucetCommitment {
@@ -357,6 +419,7 @@ async fn plan_faucet_commitment_with_self<L: LedgerClient, G: GovernanceClient>(
     });
 }
 
+#[cfg(test)]
 async fn start_job_with_self<L: LedgerClient, C: CmcClient, P: CyclesProbeClient>(
     now_nanos: u64,
     self_id: candid::Principal,
@@ -365,7 +428,35 @@ async fn start_job_with_self<L: LedgerClient, C: CmcClient, P: CyclesProbeClient
     cmc: &C,
     cycles_probe: &P,
 ) {
-    let cfg = state::with_state(|st| st.config.clone());
+    let lease = MainLeaseToken::capture_for_test().expect("test main lease must be installed");
+    start_job_with_self_with_lease(
+        now_nanos,
+        self_id,
+        self_cycles,
+        ledger,
+        cmc,
+        cycles_probe,
+        lease,
+    )
+    .await;
+}
+
+async fn start_job_with_self_with_lease<L: LedgerClient, C: CmcClient, P: CyclesProbeClient>(
+    now_nanos: u64,
+    self_id: candid::Principal,
+    self_cycles: u128,
+    ledger: &L,
+    cmc: &C,
+    cycles_probe: &P,
+    lease: MainLeaseToken,
+) {
+    let Some((cfg, expected_next_job_id)) = state::with_state(|st| {
+        st.active_job
+            .is_none()
+            .then(|| (st.config.clone(), st.next_job_id))
+    }) else {
+        return;
+    };
     let managed = logic::effective_managed_canisters(&cfg.managed_canisters, self_id);
     let cached_routes = state::with_state(|st| {
         managed
@@ -382,6 +473,9 @@ async fn start_job_with_self<L: LedgerClient, C: CmcClient, P: CyclesProbeClient
     let client = RelayCyclesProbeClient::new(cycles_probe, self_id, self_cycles);
     let probe_batch =
         probe_cycles_batch(&managed, &policy, cached_routes, now_nanos, &client).await;
+    if !job_generation_matches(expected_next_job_id, lease) {
+        return;
+    }
     state::with_state_mut(|st| {
         for (target, route) in &probe_batch.route_updates {
             match route {
@@ -476,7 +570,13 @@ async fn start_job_with_self<L: LedgerClient, C: CmcClient, P: CyclesProbeClient
             return;
         }
     };
+    if !job_generation_matches(expected_next_job_id, lease) {
+        return;
+    }
     let fee = resolve_icp_ledger_fee_e8s(ledger, LedgerFeeResolutionContext::DefaultAccount).await;
+    if !job_generation_matches(expected_next_job_id, lease) {
+        return;
+    }
 
     if balance == 0 {
         let has_raw_icp_recipients = !cfg.surplus_recipients.is_empty();
@@ -510,7 +610,10 @@ async fn start_job_with_self<L: LedgerClient, C: CmcClient, P: CyclesProbeClient
     }
 
     let has_raw_icp_recipients = !cfg.surplus_recipients.is_empty();
-    refresh_conversion_estimate_if_needed(has_raw_icp_recipients, cmc).await;
+    refresh_conversion_estimate_if_needed_with_lease(has_raw_icp_recipients, cmc, lease).await;
+    if !job_generation_matches(expected_next_job_id, lease) {
+        return;
+    }
 
     let (previous, relay_minted, recovery_deficits, conversion_estimate) =
         state::with_state(|st| {
@@ -554,11 +657,7 @@ async fn start_job_with_self<L: LedgerClient, C: CmcClient, P: CyclesProbeClient
         .collect::<Vec<_>>();
     let total_burn_cycles = canisters.iter().map(|sample| sample.burn_cycles).sum();
 
-    let id = state::with_state_mut(|st| {
-        let id = st.next_job_id;
-        st.next_job_id = st.next_job_id.saturating_add(1);
-        id
-    });
+    let id = expected_next_job_id;
 
     let mut summary =
         RelaySummary::started(RelayMode::TopUpThenSurplus, now_nanos, managed.len() as u32);
@@ -597,7 +696,21 @@ async fn start_job_with_self<L: LedgerClient, C: CmcClient, P: CyclesProbeClient
         next_created_at_time_nanos: now_nanos,
         summary,
     };
-    state::with_state_mut(|st| st.active_job = Some(job));
+    state::with_state_mut(|st| {
+        if lease.is_current_in(st)
+            && st.active_job.is_none()
+            && st.next_job_id == expected_next_job_id
+        {
+            st.next_job_id = st.next_job_id.saturating_add(1);
+            st.active_job = Some(job);
+        }
+    });
+}
+
+fn job_generation_matches(expected_next_job_id: u64, lease: MainLeaseToken) -> bool {
+    state::with_state(|st| {
+        lease.is_current_in(st) && st.active_job.is_none() && st.next_job_id == expected_next_job_id
+    })
 }
 
 struct ProbeUpdate {
@@ -724,23 +837,40 @@ fn build_no_funds_summary(
     summary
 }
 
+#[cfg(test)]
 async fn refresh_conversion_estimate_if_needed<C: CmcClient>(
     has_raw_icp_recipients: bool,
     cmc: &C,
 ) {
+    if !has_raw_icp_recipients {
+        return;
+    }
+    let lease = MainLeaseToken::capture_for_test().expect("test main lease must be installed");
+    refresh_conversion_estimate_if_needed_with_lease(has_raw_icp_recipients, cmc, lease).await;
+}
+
+async fn refresh_conversion_estimate_if_needed_with_lease<C: CmcClient>(
+    has_raw_icp_recipients: bool,
+    cmc: &C,
+    lease: MainLeaseToken,
+) {
     if has_raw_icp_recipients {
-        refresh_conversion_estimate_from_cmc(cmc).await;
+        refresh_conversion_estimate_from_cmc(cmc, lease).await;
     }
 }
 
-async fn refresh_conversion_estimate_from_cmc<C: CmcClient>(cmc: &C) {
+async fn refresh_conversion_estimate_from_cmc<C: CmcClient>(cmc: &C, lease: MainLeaseToken) {
     match cmc.get_icp_xdr_conversion_rate().await {
         Ok(rate) => match logic::conversion_estimate_from_cmc_rate(
             rate.xdr_permyriad_per_icp,
             rate.timestamp_seconds,
         ) {
             Ok(estimate) => {
-                state::with_state_mut(|st| st.conversion_estimate = Some(estimate));
+                state::with_state_mut(|st| {
+                    if lease.is_current_in(st) {
+                        st.conversion_estimate = Some(estimate);
+                    }
+                });
             }
             Err(err) => {
                 log_error(&format!(
@@ -793,10 +923,14 @@ async fn drive_active_job<L: LedgerClient, C: CmcClient, G: GovernanceClient>(
     ledger: &L,
     cmc: &C,
     governance: &G,
+    lease: MainLeaseToken,
 ) -> bool {
     let max_transfers_this_tick = state::with_state(|st| st.config.max_transfers_per_tick);
     let mut transfers_started_this_tick = 0_u32;
     loop {
+        if !lease.is_current() {
+            return true;
+        }
         if state::with_state(|st| st.active_job.is_none()) {
             return true;
         }
@@ -805,10 +939,13 @@ async fn drive_active_job<L: LedgerClient, C: CmcClient, G: GovernanceClient>(
             if !drive_pending_transfer(ledger, cmc, cmc_id, now_nanos).await {
                 return false;
             }
+            if !lease.is_current() {
+                return true;
+            }
             continue;
         }
         if topup_phase_done_and_surplus_unplanned() {
-            plan_surplus_phase(now_nanos, governance).await;
+            plan_surplus_phase(now_nanos, governance, lease).await;
             continue;
         }
         let plan_step = state::with_state_mut(|st| {
@@ -829,6 +966,9 @@ async fn drive_active_job<L: LedgerClient, C: CmcClient, G: GovernanceClient>(
         }
         if topup_phase_done_and_surplus_unplanned() && topup_phase_had_activity() {
             continue;
+        }
+        if !lease.is_current() {
+            return true;
         }
         complete_job(now_nanos);
         return true;
@@ -863,19 +1003,30 @@ fn topup_phase_had_activity() -> bool {
     })
 }
 
-async fn plan_surplus_phase<G: GovernanceClient>(now_nanos: u64, governance: &G) {
-    let (cfg, clean_topup_phase, known_unspent_e8s, fee_e8s) = state::with_state(|st| {
-        let job = st.active_job.as_ref().expect("active job");
-        (
-            st.config.clone(),
-            surplus_allowed_after_topups(job),
-            job.summary.known_unspent_e8s,
-            job.fee_e8s,
-        )
-    });
+async fn plan_surplus_phase<G: GovernanceClient>(
+    now_nanos: u64,
+    governance: &G,
+    lease: MainLeaseToken,
+) {
+    let Some((expected_job_id, cfg, clean_topup_phase, known_unspent_e8s, fee_e8s)) =
+        state::with_state(|st| {
+            let job = st.active_job.as_ref()?;
+            (!job.surplus_phase_planned).then(|| {
+                (
+                    job.id,
+                    st.config.clone(),
+                    surplus_allowed_after_topups(job),
+                    job.summary.known_unspent_e8s,
+                    job.fee_e8s,
+                )
+            })
+        })
+    else {
+        return;
+    };
 
     if let Err(reason) = clean_topup_phase {
-        disable_surplus(reason);
+        disable_surplus(expected_job_id, lease, reason);
         return;
     }
 
@@ -883,7 +1034,7 @@ async fn plan_surplus_phase<G: GovernanceClient>(now_nanos: u64, governance: &G)
         Ok(recipients) => recipients,
         Err(err) => {
             log_error(&format!("surplus recipient resolution failed: {err}"));
-            disable_surplus("recipient_resolution_failed");
+            disable_surplus(expected_job_id, lease, "recipient_resolution_failed");
             return;
         }
     };
@@ -901,7 +1052,16 @@ async fn plan_surplus_phase<G: GovernanceClient>(now_nanos: u64, governance: &G)
         .collect::<Vec<_>>();
 
     state::with_state_mut(|st| {
-        let job = st.active_job.as_mut().expect("active job");
+        if !lease.is_current_in(st) {
+            return;
+        }
+        let Some(job) = st
+            .active_job
+            .as_mut()
+            .filter(|job| job.id == expected_job_id && !job.surplus_phase_planned)
+        else {
+            return;
+        };
         job.surplus_transfers = surplus;
         job.surplus_memos = memos;
         job.surplus_transfer_index = 0;
@@ -945,9 +1105,16 @@ fn surplus_allowed_after_topups(job: &ActiveRelayJob) -> Result<(), &'static str
     Ok(())
 }
 
-fn disable_surplus(reason: &'static str) {
+fn disable_surplus(expected_job_id: u64, lease: MainLeaseToken, reason: &'static str) {
     state::with_state_mut(|st| {
-        if let Some(job) = st.active_job.as_mut() {
+        if !lease.is_current_in(st) {
+            return;
+        }
+        if let Some(job) = st
+            .active_job
+            .as_mut()
+            .filter(|job| job.id == expected_job_id && !job.surplus_phase_planned)
+        {
             job.surplus_transfers.clear();
             job.surplus_memos.clear();
             job.surplus_transfer_index = 0;
@@ -1219,7 +1386,7 @@ mod tests {
     use std::collections::{BTreeMap, VecDeque};
     use std::future::Future;
     use std::pin::Pin;
-    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::sync::Mutex;
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
@@ -1317,6 +1484,111 @@ mod tests {
                 Poll::Ready(value) => return value,
                 Poll::Pending => std::thread::yield_now(),
             }
+        }
+    }
+
+    fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
+        fn no_op(_: *const ()) {}
+        fn clone(_: *const ()) -> RawWaker {
+            RawWaker::new(std::ptr::null(), &VTABLE)
+        }
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, no_op, no_op, no_op);
+        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+        let mut cx = Context::from_waker(&waker);
+        future.poll(&mut cx)
+    }
+
+    struct HeldBalanceLedger {
+        started: AtomicBool,
+        release: AtomicBool,
+    }
+
+    struct HeldTransferLedger {
+        started: AtomicBool,
+        release: AtomicBool,
+        transfers: Mutex<Vec<TransferArg>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LedgerClient for HeldBalanceLedger {
+        async fn fee_e8s(&self) -> Result<u64, ClientError> {
+            Ok(10_000)
+        }
+
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, ClientError> {
+            self.started.store(true, Ordering::SeqCst);
+            std::future::poll_fn(|_| {
+                if self.release.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+            Ok(1_000_000_000)
+        }
+
+        async fn transfer(
+            &self,
+            _arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+            unreachable!("stale planning test does not execute transfers")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LedgerClient for HeldTransferLedger {
+        async fn fee_e8s(&self) -> Result<u64, ClientError> {
+            Ok(10)
+        }
+
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, ClientError> {
+            Ok(0)
+        }
+
+        async fn transfer(
+            &self,
+            arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+            self.transfers.lock().unwrap().push(arg);
+            self.started.store(true, Ordering::SeqCst);
+            std::future::poll_fn(|_| {
+                if self.release.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+            Ok(Ok(Nat::from(1_u64)))
+        }
+    }
+
+    struct HeldGovernance {
+        started: AtomicBool,
+        release: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl GovernanceClient for HeldGovernance {
+        async fn neuron_staking_subaccount(
+            &self,
+            _neuron_id: u64,
+        ) -> Result<[u8; 32], ClientError> {
+            self.started.store(true, Ordering::SeqCst);
+            std::future::poll_fn(|_| {
+                if self.release.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+            Ok([7; 32])
+        }
+
+        async fn claim_or_refresh_neuron(&self, _neuron_id: u64) -> Result<(), ClientError> {
+            Ok(())
         }
     }
 
@@ -1846,7 +2118,10 @@ mod tests {
 
             let governance = MockSchedulerGovernance;
             if state::with_state(|st| st.active_job.is_some()) {
-                assert!(drive_active_job(now_nanos, ledger, cmc, &governance).await);
+                assert!(
+                    drive_active_job(now_nanos, ledger, cmc, &governance, guard.lease_token())
+                        .await
+                );
             }
             guard.finish(now_secs);
             (self_id, self_cycles)
@@ -1890,6 +2165,221 @@ mod tests {
             next_created_at_time_nanos: 10,
             summary,
         }
+    }
+
+    #[test]
+    fn stale_job_planning_cannot_overwrite_later_job_generation() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let mut st = State::new(config_with_managed(vec![target]), 0);
+        st.last_completed_cycles.insert(target, snapshot(9_000_000));
+        st.last_completed_cycles
+            .insert(relay_self(), snapshot(9_000_000));
+        state::set_state(st);
+        let ledger = HeldBalanceLedger {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+        };
+        let cmc = MockSchedulerCmc::new(10_000_000_000_000);
+        let cycles_probe = MockSchedulerCyclesProbe::new(BTreeMap::from([(target, 5_000_000)]));
+        let mut future = Box::pin(start_job_with_self(
+            10_000_000_000,
+            relay_self(),
+            9_000_000,
+            &ledger,
+            &cmc,
+            &cycles_probe,
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(ledger.started.load(Ordering::SeqCst));
+
+        let replacement = state::with_state_mut(|st| {
+            let mut replacement = job_with_three_topups();
+            replacement.id = 99;
+            st.next_job_id = 100;
+            st.active_job = Some(replacement.clone());
+            replacement
+        });
+        ledger.release.store(true, Ordering::SeqCst);
+        assert!(poll_once(future.as_mut()).is_ready());
+        state::with_state(|st| {
+            assert_eq!(st.next_job_id, 100);
+            assert_eq!(st.active_job.as_ref(), Some(&replacement));
+        });
+    }
+
+    #[test]
+    fn superseded_main_guard_finish_cannot_complete_or_release_successor_lease() {
+        state::set_state(State::new(base_config(), 0));
+        let old = MainGuard::acquire(10).expect("old main lease");
+        let old_expiry = old.lease_expires_at_ts();
+        state::with_state_mut(|st| st.last_main_run_ts = 777);
+
+        let successor = MainGuard::acquire(old_expiry).expect("successor main lease");
+        let successor_expiry = state::with_state(|st| st.main_lock_state_ts);
+        old.finish(100);
+
+        state::with_state(|st| {
+            assert_eq!(st.main_lock_state_ts, successor_expiry);
+            assert_eq!(st.last_main_run_ts, 777);
+        });
+        drop(successor);
+    }
+
+    #[test]
+    fn superseded_driver_finishes_awaited_transfer_without_staging_the_next_one() {
+        state::set_state(State::new(base_config(), 0));
+        let old = MainGuard::acquire(10).expect("old main lease");
+        let old_expiry = old.lease_expires_at_ts();
+        let lease = old.lease_token();
+        state::with_state_mut(|st| {
+            let mut job = job_with_three_topups();
+            job.surplus_phase_planned = true;
+            st.active_job = Some(job);
+        });
+        let ledger = HeldTransferLedger {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+            transfers: Mutex::new(Vec::new()),
+        };
+        let cmc = MockSchedulerCmc::new(10_000_000_000_000);
+        let mut future = Box::pin(drive_active_job(
+            10_000_000_000,
+            &ledger,
+            &cmc,
+            &MockSchedulerGovernance,
+            lease,
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(ledger.started.load(Ordering::SeqCst));
+
+        let successor = MainGuard::acquire(old_expiry).expect("successor main lease");
+        ledger.release.store(true, Ordering::SeqCst);
+        assert!(poll_once(future.as_mut()).is_ready());
+
+        state::with_state(|st| {
+            let job = st
+                .active_job
+                .as_ref()
+                .expect("successor retains active job");
+            assert_eq!(job.next_transfer_index, 1);
+            assert!(job.pending_transfer.is_none());
+            assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
+        });
+        drop(successor);
+    }
+
+    #[test]
+    fn superseded_surplus_resolution_cannot_replace_successor_plan_or_cursor() {
+        let mut config = base_config();
+        config.surplus_recipients = vec![crate::state::SurplusRecipient {
+            target: SurplusTarget::Neuron(42),
+            memo: Some(vec![4, 2]),
+        }];
+        state::set_state(State::new(config, 0));
+        let old = MainGuard::acquire(10).expect("old main lease");
+        let old_expiry = old.lease_expires_at_ts();
+        let lease = old.lease_token();
+        state::with_state_mut(|st| {
+            let mut job = job_with_three_topups();
+            job.canisters.clear();
+            job.summary.canisters.clear();
+            job.summary.known_unspent_e8s = 100_000_000;
+            job.surplus_phase_planned = false;
+            st.active_job = Some(job);
+            st.conversion_estimate = Some(crate::state::ConversionEstimate {
+                cycles_per_e8: 1_000,
+                timestamp_nanos: 1,
+            });
+        });
+        let governance = HeldGovernance {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+        };
+        let mut future = Box::pin(plan_surplus_phase(10_000_000_000, &governance, lease));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(governance.started.load(Ordering::SeqCst));
+
+        let successor = MainGuard::acquire(old_expiry).expect("successor main lease");
+        let replacement = state::with_state_mut(|st| {
+            let job = st.active_job.as_mut().expect("active job");
+            job.surplus_phase_planned = true;
+            job.surplus_transfers = vec![crate::state::SurplusTransferSample {
+                target: SurplusTarget::Canister(relay_self()),
+                account: Account {
+                    owner: relay_self(),
+                    subaccount: None,
+                },
+                gross_share_e8s: 50,
+                amount_e8s: 40,
+                memo_len: None,
+                skipped_reason: None,
+            }];
+            job.surplus_memos = vec![None];
+            job.surplus_transfer_index = 1;
+            job.clone()
+        });
+        governance.release.store(true, Ordering::SeqCst);
+        assert!(poll_once(future.as_mut()).is_ready());
+
+        state::with_state(|st| assert_eq!(st.active_job.as_ref(), Some(&replacement)));
+        drop(successor);
+    }
+
+    #[test]
+    fn superseded_driver_cannot_install_commitment_after_successor_completed_one() {
+        state::set_state(State::new(base_config(), 0));
+        let ledger = HeldBalanceLedger {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+        };
+        let old = MainGuard::acquire(10).expect("old main lease");
+        let lease = old.lease_token();
+        let old_expiry = old.lease_expires_at_ts();
+        let expected_next_job_id = state::with_state(|st| st.next_job_id);
+        let mut future = Box::pin(plan_faucet_commitment_with_self_with_lease(
+            10_000_000_000,
+            relay_self(),
+            &ledger,
+            &MockSchedulerGovernance,
+            lease,
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(ledger.started.load(Ordering::SeqCst));
+
+        let successor = MainGuard::acquire(old_expiry).expect("successor main lease");
+        state::with_state_mut(|st| {
+            st.active_faucet_commitment_transfer = Some(PendingFaucetCommitmentTransfer {
+                transfer: PendingTransfer {
+                    kind: PendingTransferKind::FaucetCommitment {
+                        neuron_id: logic::JUPITER_FAUCET_NEURON_ID,
+                        account: Account {
+                            owner: st.config.governance_canister_id,
+                            subaccount: Some([9; 32]),
+                        },
+                        from_subaccount: logic::relay_subaccount_one(),
+                        memo: logic::relay_faucet_commitment_memo(relay_self()).unwrap(),
+                    },
+                    gross_share_e8s: 100_010_000,
+                    amount_e8s: 100_000_000,
+                    created_at_time_nanos: 20_000_000_000,
+                    phase: PendingTransferPhase::AwaitingTransfer,
+                },
+                fee_e8s: 10_000,
+                balance_start_e8s: 100_010_000,
+            });
+            // Model the successor completing its commitment before the old balance read returns.
+            st.active_faucet_commitment_transfer = None;
+        });
+        ledger.release.store(true, Ordering::SeqCst);
+        assert!(poll_once(future.as_mut()).is_ready());
+
+        state::with_state(|st| {
+            assert!(st.active_faucet_commitment_transfer.is_none());
+            assert_eq!(st.next_job_id, expected_next_job_id);
+        });
+        drop(future);
+        drop(old);
+        drop(successor);
     }
 
     struct MockCmcConversionClient {
@@ -2457,6 +2947,7 @@ mod tests {
             &ledger,
             &cmc,
             &MockSchedulerGovernance,
+            MainLeaseToken::capture_for_test().unwrap(),
         ));
 
         assert_eq!(ledger.transfer_count(), 1);
@@ -2786,14 +3277,20 @@ mod tests {
     fn failed_or_ambiguous_topup_boundaries_persist_full_target_deficit() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         for mark_failure in [
-            crate::scheduler::transfer::mark_pending_failed as fn(),
-            crate::scheduler::transfer::mark_pending_failed_after_acceptance as fn(),
-            crate::scheduler::transfer::mark_pending_ambiguous_after_acceptance as fn(),
+            crate::scheduler::transfer::mark_pending_failed as fn(u64, &PendingTransfer),
+            crate::scheduler::transfer::mark_pending_failed_after_acceptance,
+            crate::scheduler::transfer::mark_pending_ambiguous_after_acceptance,
         ] {
             let mut st = State::new(base_config(), 0);
-            st.active_job = Some(job_with_three_topups());
+            let mut job = job_with_three_topups();
+            assert_eq!(next_topup_pending(&mut job), Some(()));
+            st.active_job = Some(job);
             state::set_state(st);
-            mark_failure();
+            let (job_id, pending) = state::with_state(|st| {
+                let job = st.active_job.as_ref().unwrap();
+                (job.id, job.pending_transfer.clone().unwrap())
+            });
+            mark_failure(job_id, &pending);
             complete_job(2);
             state::with_state(|st| {
                 assert_eq!(st.recovery_deficit_cycles.get(&canister), Some(&101));

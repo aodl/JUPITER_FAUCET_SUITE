@@ -181,10 +181,12 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
     cmc_id: Principal,
     now_nanos: u64,
 ) -> bool {
-    let Some(staged) = state::with_state(|st| {
-        st.active_job
-            .as_ref()
-            .and_then(|job| job.pending_transfer.clone())
+    let Some((job_id, planned_fee_e8s, staged)) = state::with_state(|st| {
+        st.active_job.as_ref().and_then(|job| {
+            job.pending_transfer
+                .clone()
+                .map(|pending| (job.id, job.fee_e8s, pending))
+        })
     }) else {
         return true;
     };
@@ -192,7 +194,7 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
     let accepted = match staged.phase {
         PendingTransferPhase::AwaitingTransfer => {
             if !created_at_time_is_valid(staged.created_at_time_nanos, now_nanos) {
-                mark_pending_ambiguous();
+                mark_pending_ambiguous(job_id, &staged);
                 return true;
             }
             let destination = destination_for_pending(cmc_id, &staged);
@@ -201,7 +203,7 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
                 from_subaccount_for_pending(&staged),
                 destination,
                 staged.amount_e8s,
-                state::with_state(|st| st.active_job.as_ref().unwrap().fee_e8s),
+                planned_fee_e8s,
                 staged.created_at_time_nanos,
                 memo.clone(),
             );
@@ -209,40 +211,57 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
                 from_subaccount_for_pending(&staged),
                 destination,
                 staged.amount_e8s,
-                state::with_state(|st| st.active_job.as_ref().unwrap().fee_e8s),
+                planned_fee_e8s,
                 staged.created_at_time_nanos,
                 memo,
             );
-            let planned_fee_e8s = state::with_state(|st| st.active_job.as_ref().unwrap().fee_e8s);
             let block_index = match transfer_once(ledger, first_arg).await {
                 TransferAttemptOutcome::Accepted(v) => v,
                 TransferAttemptOutcome::ImmediateRetryable => {
+                    if !pending_matches(job_id, &staged) {
+                        return false;
+                    }
                     match transfer_once(ledger, second_arg).await {
                         TransferAttemptOutcome::Accepted(v) => v,
                         TransferAttemptOutcome::BadFee(expected_fee) => {
+                            if !pending_matches(job_id, &staged) {
+                                return false;
+                            }
                             record_bad_fee("default_account", planned_fee_e8s, &expected_fee);
-                            mark_pending_ambiguous();
+                            mark_pending_ambiguous(job_id, &staged);
                             super::tick::stop_active_job_for_ledger_fee_change(now_nanos);
                             return true;
                         }
                         TransferAttemptOutcome::ImmediateRetryable
                         | TransferAttemptOutcome::Failed => {
-                            mark_pending_ambiguous();
+                            if !pending_matches(job_id, &staged) {
+                                return false;
+                            }
+                            mark_pending_ambiguous(job_id, &staged);
                             return true;
                         }
                     }
                 }
                 TransferAttemptOutcome::BadFee(expected_fee) => {
+                    if !pending_matches(job_id, &staged) {
+                        return false;
+                    }
                     record_bad_fee("default_account", planned_fee_e8s, &expected_fee);
-                    mark_pending_failed();
+                    mark_pending_failed(job_id, &staged);
                     super::tick::stop_active_job_for_ledger_fee_change(now_nanos);
                     return true;
                 }
                 TransferAttemptOutcome::Failed => {
-                    mark_pending_failed();
+                    if !pending_matches(job_id, &staged) {
+                        return false;
+                    }
+                    mark_pending_failed(job_id, &staged);
                     return true;
                 }
             };
+            if !pending_matches(job_id, &staged) {
+                return false;
+            }
             match debug_successful_transfer_injection() {
                 DebugSuccessfulTransferInjection::None => {}
                 DebugSuccessfulTransferInjection::Abort => return false,
@@ -250,15 +269,10 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
                     ic_cdk::trap("debug trap after successful relay transfer")
                 }
             }
-            mark_pending_ledger_accepted(block_index);
-            state::with_state(|st| {
-                st.active_job
-                    .as_ref()
-                    .unwrap()
-                    .pending_transfer
-                    .clone()
-                    .unwrap()
-            })
+            let Some(accepted) = mark_pending_ledger_accepted(job_id, &staged, block_index) else {
+                return false;
+            };
+            accepted
         }
         PendingTransferPhase::TransferAccepted { .. } => staged,
     };
@@ -269,9 +283,14 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
 
     if let PendingTransferKind::CmcTopUp { canister_id } = accepted.kind {
         let first = notify_once(cmc, canister_id, block_index).await;
+        if !pending_matches(job_id, &accepted) {
+            return false;
+        }
         match first {
             NotifyAttemptOutcome::Succeeded(minted_cycles) => {
                 mark_pending_completed(
+                    job_id,
+                    &accepted,
                     true,
                     Some((canister_id, accepted.amount_e8s, minted_cycles)),
                 );
@@ -280,7 +299,12 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
             NotifyAttemptOutcome::Retryable | NotifyAttemptOutcome::Terminal => {
                 match notify_once(cmc, canister_id, block_index).await {
                     NotifyAttemptOutcome::Succeeded(minted_cycles) => {
+                        if !pending_matches(job_id, &accepted) {
+                            return false;
+                        }
                         mark_pending_completed(
+                            job_id,
+                            &accepted,
                             true,
                             Some((canister_id, accepted.amount_e8s, minted_cycles)),
                         );
@@ -289,11 +313,17 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
                     NotifyAttemptOutcome::Terminal
                         if matches!(first, NotifyAttemptOutcome::Terminal) =>
                     {
-                        mark_pending_failed_after_acceptance();
+                        if !pending_matches(job_id, &accepted) {
+                            return false;
+                        }
+                        mark_pending_failed_after_acceptance(job_id, &accepted);
                         true
                     }
                     NotifyAttemptOutcome::Retryable | NotifyAttemptOutcome::Terminal => {
-                        mark_pending_ambiguous_after_acceptance();
+                        if !pending_matches(job_id, &accepted) {
+                            return false;
+                        }
+                        mark_pending_ambiguous_after_acceptance(job_id, &accepted);
                         true
                     }
                 }
@@ -307,7 +337,7 @@ pub(super) async fn drive_pending_transfer<L: LedgerClient, C: CmcClient>(
             } => Some(*neuron_id),
             _ => None,
         };
-        mark_pending_completed(false, None);
+        mark_pending_completed(job_id, &accepted, false, None);
         if let Some(neuron_id) = refresh_neuron {
             ic_cdk_timers::set_timer(std::time::Duration::from_secs(0), async move {
                 let governance_id = state::with_state(|st| st.config.governance_canister_id);
@@ -345,7 +375,7 @@ pub(super) async fn drive_pending_faucet_commitment_transfer<
     let accepted = match staged.transfer.phase {
         PendingTransferPhase::AwaitingTransfer => {
             if !created_at_time_is_valid(staged.transfer.created_at_time_nanos, now_nanos) {
-                mark_faucet_commitment_ambiguous("subaccount_1_transfer_ambiguous");
+                mark_faucet_commitment_ambiguous(&staged, "subaccount_1_transfer_ambiguous");
                 return true;
             }
             let destination =
@@ -370,30 +400,54 @@ pub(super) async fn drive_pending_faucet_commitment_transfer<
             let block_index = match transfer_once(ledger, first_arg).await {
                 TransferAttemptOutcome::Accepted(v) => v,
                 TransferAttemptOutcome::ImmediateRetryable => {
+                    if !faucet_commitment_matches(&staged) {
+                        return false;
+                    }
                     match transfer_once(ledger, second_arg).await {
                         TransferAttemptOutcome::Accepted(v) => v,
                         TransferAttemptOutcome::BadFee(expected_fee) => {
+                            if !faucet_commitment_matches(&staged) {
+                                return false;
+                            }
                             record_bad_fee("subaccount_1", staged.fee_e8s, &expected_fee);
-                            mark_faucet_commitment_ambiguous("subaccount_1_transfer_ambiguous");
+                            mark_faucet_commitment_ambiguous(
+                                &staged,
+                                "subaccount_1_transfer_ambiguous",
+                            );
                             return true;
                         }
                         TransferAttemptOutcome::ImmediateRetryable
                         | TransferAttemptOutcome::Failed => {
-                            mark_faucet_commitment_ambiguous("subaccount_1_transfer_ambiguous");
+                            if !faucet_commitment_matches(&staged) {
+                                return false;
+                            }
+                            mark_faucet_commitment_ambiguous(
+                                &staged,
+                                "subaccount_1_transfer_ambiguous",
+                            );
                             return true;
                         }
                     }
                 }
                 TransferAttemptOutcome::BadFee(expected_fee) => {
+                    if !faucet_commitment_matches(&staged) {
+                        return false;
+                    }
                     record_bad_fee("subaccount_1", staged.fee_e8s, &expected_fee);
-                    mark_faucet_commitment_failed("subaccount_1_ledger_fee_changed");
+                    mark_faucet_commitment_failed(&staged, "subaccount_1_ledger_fee_changed");
                     return true;
                 }
                 TransferAttemptOutcome::Failed => {
-                    mark_faucet_commitment_failed("subaccount_1_transfer_failed");
+                    if !faucet_commitment_matches(&staged) {
+                        return false;
+                    }
+                    mark_faucet_commitment_failed(&staged, "subaccount_1_transfer_failed");
                     return true;
                 }
             };
+            if !faucet_commitment_matches(&staged) {
+                return false;
+            }
             match debug_successful_transfer_injection() {
                 DebugSuccessfulTransferInjection::None => {}
                 DebugSuccessfulTransferInjection::Abort => return false,
@@ -401,9 +455,12 @@ pub(super) async fn drive_pending_faucet_commitment_transfer<
                     ic_cdk::trap("debug trap after successful relay transfer")
                 }
             }
-            mark_faucet_commitment_ledger_accepted(block_index);
+            let Some(accepted) = mark_faucet_commitment_ledger_accepted(&staged, block_index)
+            else {
+                return false;
+            };
             accepted_this_tick = true;
-            state::with_state(|st| st.active_faucet_commitment_transfer.clone().unwrap())
+            accepted
         }
         PendingTransferPhase::TransferAccepted { .. } => staged,
     };
@@ -424,9 +481,9 @@ pub(super) async fn drive_pending_faucet_commitment_transfer<
             match crate::clients::GovernanceClient::claim_or_refresh_neuron(&governance, neuron_id)
                 .await
             {
-                Ok(()) => mark_faucet_commitment_completed(),
+                Ok(()) => mark_faucet_commitment_completed(&accepted),
                 Err(err) => {
-                    log_active_faucet_commitment(None);
+                    log_expected_faucet_commitment(&accepted, None);
                     log_error(&format!(
                         "faucet commitment neuron refresh failed neuron_id={neuron_id} error={err}"
                     ));
@@ -439,54 +496,75 @@ pub(super) async fn drive_pending_faucet_commitment_transfer<
     #[cfg(not(target_arch = "wasm32"))]
     {
         if let Err(err) = governance.claim_or_refresh_neuron(neuron_id).await {
-            log_active_faucet_commitment(None);
+            if !faucet_commitment_matches(&accepted) {
+                return false;
+            }
+            log_expected_faucet_commitment(&accepted, None);
             log_error(&format!(
                 "faucet commitment neuron refresh failed neuron_id={neuron_id} error={err}"
             ));
             return true;
         }
-        mark_faucet_commitment_completed();
+        if !faucet_commitment_matches(&accepted) {
+            return false;
+        }
+        mark_faucet_commitment_completed(&accepted);
         true
     }
 }
 
-fn mark_pending_ledger_accepted(block_index: u64) {
+fn pending_matches(job_id: u64, expected: &PendingTransfer) -> bool {
+    state::with_state(|st| {
+        st.active_job
+            .as_ref()
+            .is_some_and(|job| job.id == job_id && job.pending_transfer.as_ref() == Some(expected))
+    })
+}
+
+fn mark_pending_ledger_accepted(
+    job_id: u64,
+    expected: &PendingTransfer,
+    block_index: u64,
+) -> Option<PendingTransfer> {
     state::with_state_mut(|st| {
-        if let Some(job) = st.active_job.as_mut() {
-            if let Some(pending) = job.pending_transfer.as_mut() {
-                pending.phase = PendingTransferPhase::TransferAccepted { block_index };
-                if let PendingTransferKind::CmcTopUp { canister_id } = pending.kind {
-                    if let Some(sample) = job
-                        .canisters
-                        .iter_mut()
-                        .find(|sample| sample.canister_id == canister_id)
-                    {
-                        sample.sent_topup_e8s =
-                            sample.sent_topup_e8s.saturating_add(pending.amount_e8s);
-                    }
-                    if let Some(sample) = job
-                        .summary
-                        .canisters
-                        .iter_mut()
-                        .find(|sample| sample.canister_id == canister_id)
-                    {
-                        sample.sent_topup_e8s =
-                            sample.sent_topup_e8s.saturating_add(pending.amount_e8s);
-                    }
-                    job.summary.refresh_canister_totals();
-                }
-                job.summary.transfer_count = job.summary.transfer_count.saturating_add(1);
-                job.summary.ledger_transfer_count =
-                    job.summary.ledger_transfer_count.saturating_add(1);
-                job.summary.ledger_sent_e8s = job
-                    .summary
-                    .ledger_sent_e8s
-                    .saturating_add(pending.amount_e8s);
-                job.summary.ledger_fees_e8s =
-                    job.summary.ledger_fees_e8s.saturating_add(job.fee_e8s);
-            }
+        let job = st.active_job.as_mut()?;
+        if job.id != job_id || job.pending_transfer.as_ref() != Some(expected) {
+            return None;
         }
-    });
+        if let Some(pending) = job.pending_transfer.as_mut() {
+            pending.phase = PendingTransferPhase::TransferAccepted { block_index };
+            if let PendingTransferKind::CmcTopUp { canister_id } = pending.kind {
+                if let Some(sample) = job
+                    .canisters
+                    .iter_mut()
+                    .find(|sample| sample.canister_id == canister_id)
+                {
+                    sample.sent_topup_e8s =
+                        sample.sent_topup_e8s.saturating_add(pending.amount_e8s);
+                }
+                if let Some(sample) = job
+                    .summary
+                    .canisters
+                    .iter_mut()
+                    .find(|sample| sample.canister_id == canister_id)
+                {
+                    sample.sent_topup_e8s =
+                        sample.sent_topup_e8s.saturating_add(pending.amount_e8s);
+                }
+                job.summary.refresh_canister_totals();
+            }
+            job.summary.transfer_count = job.summary.transfer_count.saturating_add(1);
+            job.summary.ledger_transfer_count = job.summary.ledger_transfer_count.saturating_add(1);
+            job.summary.ledger_sent_e8s = job
+                .summary
+                .ledger_sent_e8s
+                .saturating_add(pending.amount_e8s);
+            job.summary.ledger_fees_e8s = job.summary.ledger_fees_e8s.saturating_add(job.fee_e8s);
+            Some(pending.clone())
+        } else {
+            None
+        }
+    })
 }
 
 fn log_faucet_commitment(transfer: &PendingFaucetCommitmentTransfer, skipped_reason: Option<&str>) {
@@ -513,96 +591,138 @@ fn log_faucet_commitment(transfer: &PendingFaucetCommitmentTransfer, skipped_rea
     ));
 }
 
-fn mark_faucet_commitment_ledger_accepted(block_index: u64) {
-    state::with_state_mut(|st| {
-        if let Some(active) = st.active_faucet_commitment_transfer.as_mut() {
-            active.transfer.phase = PendingTransferPhase::TransferAccepted { block_index };
-        }
-    });
+fn faucet_commitment_matches(expected: &PendingFaucetCommitmentTransfer) -> bool {
+    state::with_state(|st| st.active_faucet_commitment_transfer.as_ref() == Some(expected))
 }
 
-fn mark_faucet_commitment_completed() {
+fn mark_faucet_commitment_ledger_accepted(
+    expected: &PendingFaucetCommitmentTransfer,
+    block_index: u64,
+) -> Option<PendingFaucetCommitmentTransfer> {
     state::with_state_mut(|st| {
-        if let Some(active) = st.active_faucet_commitment_transfer.take() {
+        if st.active_faucet_commitment_transfer.as_ref() != Some(expected) {
+            return None;
+        }
+        let active = st.active_faucet_commitment_transfer.as_mut()?;
+        active.transfer.phase = PendingTransferPhase::TransferAccepted { block_index };
+        Some(active.clone())
+    })
+}
+
+fn mark_faucet_commitment_completed(expected: &PendingFaucetCommitmentTransfer) {
+    state::with_state_mut(|st| {
+        if st.active_faucet_commitment_transfer.as_ref() == Some(expected) {
+            let active = st
+                .active_faucet_commitment_transfer
+                .take()
+                .expect("matched faucet commitment");
             log_faucet_commitment(&active, None);
         }
     });
 }
 
-fn log_active_faucet_commitment(skipped_reason: Option<&str>) {
+fn log_expected_faucet_commitment(
+    expected: &PendingFaucetCommitmentTransfer,
+    skipped_reason: Option<&str>,
+) {
     state::with_state(|st| {
-        if let Some(active) = st.active_faucet_commitment_transfer.as_ref() {
-            log_faucet_commitment(active, skipped_reason);
+        if st.active_faucet_commitment_transfer.as_ref() == Some(expected) {
+            log_faucet_commitment(expected, skipped_reason);
         }
     });
 }
 
-fn mark_faucet_commitment_failed(reason: &'static str) {
+fn mark_faucet_commitment_failed(expected: &PendingFaucetCommitmentTransfer, reason: &'static str) {
     state::with_state_mut(|st| {
-        if let Some(active) = st.active_faucet_commitment_transfer.take() {
+        if st.active_faucet_commitment_transfer.as_ref() == Some(expected) {
+            let active = st
+                .active_faucet_commitment_transfer
+                .take()
+                .expect("matched faucet commitment");
             log_faucet_commitment(&active, Some(reason));
         }
     });
 }
 
-fn mark_faucet_commitment_ambiguous(reason: &'static str) {
+fn mark_faucet_commitment_ambiguous(
+    expected: &PendingFaucetCommitmentTransfer,
+    reason: &'static str,
+) {
     state::with_state_mut(|st| {
-        if let Some(active) = st.active_faucet_commitment_transfer.take() {
+        if st.active_faucet_commitment_transfer.as_ref() == Some(expected) {
+            let active = st
+                .active_faucet_commitment_transfer
+                .take()
+                .expect("matched faucet commitment");
             log_faucet_commitment(&active, Some(reason));
         }
     });
 }
 
-fn mark_pending_completed(cmc_notify_succeeded: bool, minted: Option<(Principal, u64, u128)>) {
+fn mark_pending_completed(
+    job_id: u64,
+    expected: &PendingTransfer,
+    cmc_notify_succeeded: bool,
+    minted: Option<(Principal, u64, u128)>,
+) {
     state::with_state_mut(|st| {
-        if let Some(job) = st.active_job.as_mut() {
-            if job.pending_transfer.take().is_some() && cmc_notify_succeeded {
-                job.summary.cmc_notify_success_count =
-                    job.summary.cmc_notify_success_count.saturating_add(1);
+        let Some(job) = st.active_job.as_mut() else {
+            return;
+        };
+        if job.id != job_id || job.pending_transfer.as_ref() != Some(expected) {
+            return;
+        }
+        job.pending_transfer.take();
+        if cmc_notify_succeeded {
+            job.summary.cmc_notify_success_count =
+                job.summary.cmc_notify_success_count.saturating_add(1);
+        }
+        if let Some((canister_id, transferred_e8s, minted_cycles)) = minted {
+            if let Some(sample) = job
+                .canisters
+                .iter_mut()
+                .find(|sample| sample.canister_id == canister_id)
+            {
+                sample.actual_minted_cycles =
+                    sample.actual_minted_cycles.saturating_add(minted_cycles);
+                sample.remaining_deficit_cycles = sample
+                    .target_topup_cycles
+                    .saturating_sub(sample.actual_minted_cycles);
             }
-            if let Some((canister_id, transferred_e8s, minted_cycles)) = minted {
-                if let Some(sample) = job
-                    .canisters
-                    .iter_mut()
-                    .find(|sample| sample.canister_id == canister_id)
-                {
-                    sample.actual_minted_cycles =
-                        sample.actual_minted_cycles.saturating_add(minted_cycles);
-                    sample.remaining_deficit_cycles = sample
-                        .target_topup_cycles
-                        .saturating_sub(sample.actual_minted_cycles);
-                }
-                if let Some(sample) = job
-                    .summary
-                    .canisters
-                    .iter_mut()
-                    .find(|sample| sample.canister_id == canister_id)
-                {
-                    sample.actual_minted_cycles =
-                        sample.actual_minted_cycles.saturating_add(minted_cycles);
-                    sample.remaining_deficit_cycles = sample
-                        .target_topup_cycles
-                        .saturating_sub(sample.actual_minted_cycles);
-                }
-                job.summary.refresh_canister_totals();
-                *st.relay_minted_cycles_since_sample
-                    .entry(canister_id)
-                    .or_insert(0) = st
-                    .relay_minted_cycles_since_sample
-                    .get(&canister_id)
-                    .copied()
-                    .unwrap_or(0)
-                    .saturating_add(minted_cycles);
-                let _ = transferred_e8s;
+            if let Some(sample) = job
+                .summary
+                .canisters
+                .iter_mut()
+                .find(|sample| sample.canister_id == canister_id)
+            {
+                sample.actual_minted_cycles =
+                    sample.actual_minted_cycles.saturating_add(minted_cycles);
+                sample.remaining_deficit_cycles = sample
+                    .target_topup_cycles
+                    .saturating_sub(sample.actual_minted_cycles);
             }
+            job.summary.refresh_canister_totals();
+            *st.relay_minted_cycles_since_sample
+                .entry(canister_id)
+                .or_insert(0) = st
+                .relay_minted_cycles_since_sample
+                .get(&canister_id)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(minted_cycles);
+            let _ = transferred_e8s;
         }
     });
 }
 
-pub(super) fn mark_pending_failed() {
+pub(super) fn mark_pending_failed(job_id: u64, expected: &PendingTransfer) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_job.as_mut() {
-            if let Some(pending) = job.pending_transfer.take() {
+            if job.id == job_id && job.pending_transfer.as_ref() == Some(expected) {
+                let pending = job
+                    .pending_transfer
+                    .take()
+                    .expect("matched pending transfer");
                 job.summary.failed_transfers = job.summary.failed_transfers.saturating_add(1);
                 job.summary.known_unspent_e8s = job
                     .summary
@@ -614,10 +734,11 @@ pub(super) fn mark_pending_failed() {
     });
 }
 
-pub(super) fn mark_pending_failed_after_acceptance() {
+pub(super) fn mark_pending_failed_after_acceptance(job_id: u64, expected: &PendingTransfer) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_job.as_mut() {
-            if job.pending_transfer.take().is_some() {
+            if job.id == job_id && job.pending_transfer.as_ref() == Some(expected) {
+                job.pending_transfer.take();
                 job.summary.failed_transfers = job.summary.failed_transfers.saturating_add(1);
                 job.summary.cmc_notify_failed_count =
                     job.summary.cmc_notify_failed_count.saturating_add(1);
@@ -627,10 +748,14 @@ pub(super) fn mark_pending_failed_after_acceptance() {
     });
 }
 
-fn mark_pending_ambiguous() {
+fn mark_pending_ambiguous(job_id: u64, expected: &PendingTransfer) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_job.as_mut() {
-            if let Some(pending) = job.pending_transfer.take() {
+            if job.id == job_id && job.pending_transfer.as_ref() == Some(expected) {
+                let pending = job
+                    .pending_transfer
+                    .take()
+                    .expect("matched pending transfer");
                 job.summary.ambiguous_transfers = job.summary.ambiguous_transfers.saturating_add(1);
                 job.summary.ambiguous_e8s = job
                     .summary
@@ -642,10 +767,14 @@ fn mark_pending_ambiguous() {
     });
 }
 
-pub(super) fn mark_pending_ambiguous_after_acceptance() {
+pub(super) fn mark_pending_ambiguous_after_acceptance(job_id: u64, expected: &PendingTransfer) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_job.as_mut() {
-            if let Some(pending) = job.pending_transfer.take() {
+            if job.id == job_id && job.pending_transfer.as_ref() == Some(expected) {
+                let pending = job
+                    .pending_transfer
+                    .take()
+                    .expect("matched pending transfer");
                 job.summary.ambiguous_transfers = job.summary.ambiguous_transfers.saturating_add(1);
                 job.summary.cmc_notify_ambiguous_count =
                     job.summary.cmc_notify_ambiguous_count.saturating_add(1);
@@ -665,7 +794,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::future::Future;
     use std::pin::Pin;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     use super::*;
@@ -693,6 +822,96 @@ mod tests {
                 Poll::Ready(value) => return value,
                 Poll::Pending => std::thread::yield_now(),
             }
+        }
+    }
+
+    fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
+        fn no_op(_: *const ()) {}
+        fn clone(_: *const ()) -> RawWaker {
+            RawWaker::new(std::ptr::null(), &VTABLE)
+        }
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, no_op, no_op, no_op);
+        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+        let mut cx = Context::from_waker(&waker);
+        future.poll(&mut cx)
+    }
+
+    async fn wait_for_release(started: &AtomicBool, release: &AtomicBool) {
+        started.store(true, Ordering::SeqCst);
+        std::future::poll_fn(|_| {
+            if release.load(Ordering::SeqCst) {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+    }
+
+    struct HeldLedger {
+        started: AtomicBool,
+        release: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl LedgerClient for HeldLedger {
+        async fn fee_e8s(&self) -> Result<u64, ClientError> {
+            Ok(10)
+        }
+
+        async fn balance_of_e8s(&self, _account: Account) -> Result<u64, ClientError> {
+            Ok(1_000)
+        }
+
+        async fn transfer(
+            &self,
+            _arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+            wait_for_release(&self.started, &self.release).await;
+            Ok(Ok(Nat::from(7_u64)))
+        }
+    }
+
+    struct HeldCmc {
+        started: AtomicBool,
+        release: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl CmcClient for HeldCmc {
+        async fn get_icp_xdr_conversion_rate(
+            &self,
+        ) -> Result<crate::clients::CmcIcpXdrConversionRate, ClientError> {
+            unreachable!("stale notify test does not query conversion rate")
+        }
+
+        async fn notify_top_up(
+            &self,
+            _canister_id: Principal,
+            _block_index: u64,
+        ) -> Result<u128, ClientError> {
+            wait_for_release(&self.started, &self.release).await;
+            Ok(321)
+        }
+    }
+
+    struct HeldGovernance {
+        started: AtomicBool,
+        release: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl GovernanceClient for HeldGovernance {
+        async fn neuron_staking_subaccount(
+            &self,
+            _neuron_id: u64,
+        ) -> Result<[u8; 32], ClientError> {
+            Ok([7; 32])
+        }
+
+        async fn claim_or_refresh_neuron(&self, _neuron_id: u64) -> Result<(), ClientError> {
+            wait_for_release(&self.started, &self.release).await;
+            Ok(())
         }
     }
 
@@ -1137,7 +1356,11 @@ mod tests {
     #[test]
     fn ledger_acceptance_is_counted_before_cmc_notify_finishes() {
         install_pending_job(PendingTransferPhase::AwaitingTransfer);
-        mark_pending_ledger_accepted(7);
+        let (job_id, pending) = state::with_state(|st| {
+            let job = st.active_job.as_ref().unwrap();
+            (job.id, job.pending_transfer.clone().unwrap())
+        });
+        mark_pending_ledger_accepted(job_id, &pending, 7);
         state::with_state(|st| {
             let summary = &st.active_job.as_ref().unwrap().summary;
             assert_eq!(summary.ledger_transfer_count, 1);
@@ -1180,8 +1403,12 @@ mod tests {
     #[test]
     fn cmc_ambiguous_after_acceptance_keeps_ledger_spend_and_marks_ambiguous_gross() {
         install_pending_job(PendingTransferPhase::AwaitingTransfer);
-        mark_pending_ledger_accepted(7);
-        mark_pending_ambiguous_after_acceptance();
+        let (job_id, pending) = state::with_state(|st| {
+            let job = st.active_job.as_ref().unwrap();
+            (job.id, job.pending_transfer.clone().unwrap())
+        });
+        let accepted = mark_pending_ledger_accepted(job_id, &pending, 7).unwrap();
+        mark_pending_ambiguous_after_acceptance(job_id, &accepted);
         state::with_state(|st| {
             let summary = &st.active_job.as_ref().unwrap().summary;
             assert_eq!(summary.ledger_transfer_count, 1);
@@ -1195,7 +1422,11 @@ mod tests {
     #[test]
     fn failed_before_acceptance_is_known_unspent_not_ledger_spend() {
         install_pending_job(PendingTransferPhase::AwaitingTransfer);
-        mark_pending_failed();
+        let (job_id, pending) = state::with_state(|st| {
+            let job = st.active_job.as_ref().unwrap();
+            (job.id, job.pending_transfer.clone().unwrap())
+        });
+        mark_pending_failed(job_id, &pending);
         state::with_state(|st| {
             let summary = &st.active_job.as_ref().unwrap().summary;
             assert_eq!(summary.ledger_transfer_count, 0);
@@ -1375,9 +1606,130 @@ mod tests {
     }
 
     #[test]
+    fn stale_ledger_acceptance_cannot_mutate_replacement_job() {
+        install_pending_job(PendingTransferPhase::AwaitingTransfer);
+        let ledger = HeldLedger {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+        };
+        let mut future = Box::pin(drive_pending_transfer(
+            &ledger,
+            &MintingCmc { minted_cycles: 321 },
+            principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            2,
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(ledger.started.load(Ordering::SeqCst));
+        let replacement = state::with_state_mut(|st| {
+            let mut replacement = st.active_job.clone().unwrap();
+            replacement.id = 2;
+            replacement.pending_transfer.as_mut().unwrap().amount_e8s = 777;
+            st.active_job = Some(replacement.clone());
+            replacement
+        });
+        ledger.release.store(true, Ordering::SeqCst);
+        assert!(!block_on(future));
+        state::with_state(|st| assert_eq!(st.active_job.as_ref(), Some(&replacement)));
+    }
+
+    #[test]
+    fn stale_cmc_notification_cannot_mutate_replacement_job() {
+        install_pending_job(PendingTransferPhase::TransferAccepted { block_index: 7 });
+        let cmc = HeldCmc {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+        };
+        let mut future = Box::pin(drive_pending_transfer(
+            &AcceptingLedger,
+            &cmc,
+            principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            2,
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(cmc.started.load(Ordering::SeqCst));
+        let replacement = state::with_state_mut(|st| {
+            let mut replacement = st.active_job.clone().unwrap();
+            replacement.id = 2;
+            replacement.pending_transfer.as_mut().unwrap().amount_e8s = 777;
+            st.active_job = Some(replacement.clone());
+            replacement
+        });
+        cmc.release.store(true, Ordering::SeqCst);
+        assert!(!block_on(future));
+        state::with_state(|st| assert_eq!(st.active_job.as_ref(), Some(&replacement)));
+    }
+
+    #[test]
+    fn stale_commitment_ledger_acceptance_cannot_mutate_replacement_commitment() {
+        install_pending_faucet_commitment(PendingTransferPhase::AwaitingTransfer);
+        let ledger = HeldLedger {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+        };
+        let governance = RefreshGovernance::fail_times(0);
+        let mut future = Box::pin(drive_pending_faucet_commitment_transfer(
+            &ledger,
+            &governance,
+            2,
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(ledger.started.load(Ordering::SeqCst));
+        let replacement = state::with_state_mut(|st| {
+            let mut replacement = st.active_faucet_commitment_transfer.clone().unwrap();
+            replacement.transfer.amount_e8s = 777;
+            st.active_faucet_commitment_transfer = Some(replacement.clone());
+            replacement
+        });
+        ledger.release.store(true, Ordering::SeqCst);
+        assert!(!block_on(future));
+        state::with_state(|st| {
+            assert_eq!(
+                st.active_faucet_commitment_transfer.as_ref(),
+                Some(&replacement)
+            );
+        });
+    }
+
+    #[test]
+    fn stale_commitment_refresh_cannot_clear_replacement_commitment() {
+        install_pending_faucet_commitment(PendingTransferPhase::TransferAccepted {
+            block_index: 7,
+        });
+        let governance = HeldGovernance {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+        };
+        let mut future = Box::pin(drive_pending_faucet_commitment_transfer(
+            &AcceptingLedger,
+            &governance,
+            2,
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(governance.started.load(Ordering::SeqCst));
+        let replacement = state::with_state_mut(|st| {
+            let mut replacement = st.active_faucet_commitment_transfer.clone().unwrap();
+            replacement.transfer.amount_e8s = 777;
+            st.active_faucet_commitment_transfer = Some(replacement.clone());
+            replacement
+        });
+        governance.release.store(true, Ordering::SeqCst);
+        assert!(!block_on(future));
+        state::with_state(|st| {
+            assert_eq!(
+                st.active_faucet_commitment_transfer.as_ref(),
+                Some(&replacement)
+            );
+        });
+    }
+
+    #[test]
     fn terminal_cmc_failure_after_acceptance_keeps_ledger_spend_separate_from_unspent() {
         install_pending_job(PendingTransferPhase::TransferAccepted { block_index: 7 });
-        mark_pending_failed_after_acceptance();
+        let (job_id, pending) = state::with_state(|st| {
+            let job = st.active_job.as_ref().unwrap();
+            (job.id, job.pending_transfer.clone().unwrap())
+        });
+        mark_pending_failed_after_acceptance(job_id, &pending);
         state::with_state(|st| {
             let summary = &st.active_job.as_ref().unwrap().summary;
             assert_eq!(summary.cmc_notify_failed_count, 1);

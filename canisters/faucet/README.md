@@ -421,7 +421,7 @@ Production canister: `jupiter_faucet` / `acjuz-liaaa-aaaar-qb4qq-cai`
 
 The production faucet has completed a payout. Use upgrade for the production path so stable summaries, funding cursors, and recovery state are preserved. Upgrades require `active_payout_job = None`.
 
-Before stopping, snapshotting, or upgrading the Faucet, inspect the public `STATE` log and require `active_payout_job_present=false`. The post-upgrade guard traps if this precondition is missed. The pre-Relay stable schema is decode-compatible only for quiescent state. Upgrades with an active payout job are deliberately rejected rather than carrying retired payout-route execution code.
+Before stopping, snapshotting, or upgrading the Faucet, inspect the public `STATE` log and require `active_payout_job_present=false`. The post-upgrade guard traps if this precondition is missed. This is the current lifecycle quiescence rule; upgrades with an active payout job are deliberately rejected. The live `07a01016...fa91af` module's recurring `CONFIG` contains the Relay markers introduced by commit `0c9a7a26765eb72a606593199caf141521a73126`, which also introduced the post-Relay-remainder stable fields; the temporary controller-separation bridge therefore does not need the older pre-Relay stable decoder.
 
 The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
 

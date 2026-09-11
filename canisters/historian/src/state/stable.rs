@@ -323,11 +323,12 @@ mod stable_memory_id_tests {
     use super::*;
 
     #[test]
-    fn commitment_route_rollups_do_not_reuse_historical_relay_memories() {
-        const RETIRED_RELAY_MEMORY_IDS: [u8; 7] = [22, 23, 24, 25, 26, 27, 28];
+    fn current_relay_memories_do_not_reuse_retired_relay_memories() {
+        const RETIRED_RELAY_MEMORY_IDS: [u8; 6] = [22, 23, 24, 25, 27, 28];
 
-        assert_eq!(COMMITMENT_ROUTE_ROLLUPS_MEMORY_ID, 29);
-        assert!(!RETIRED_RELAY_MEMORY_IDS.contains(&COMMITMENT_ROUTE_ROLLUPS_MEMORY_ID));
         assert_eq!(RELAY_SETUP_ENTRIES_MEMORY_ID, 26);
+        assert_eq!(COMMITMENT_ROUTE_ROLLUPS_MEMORY_ID, 29);
+        assert!(!RETIRED_RELAY_MEMORY_IDS.contains(&RELAY_SETUP_ENTRIES_MEMORY_ID));
+        assert!(!RETIRED_RELAY_MEMORY_IDS.contains(&COMMITMENT_ROUTE_ROLLUPS_MEMORY_ID));
     }
 }

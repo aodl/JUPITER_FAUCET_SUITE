@@ -147,26 +147,14 @@ type DebugConfig = record {
   surplus_canister_recipients : opt vec SurplusCanisterRecipient;
   surplus_neuron_recipients : vec SurplusNeuronRecipient;
 };
-type PendingRewardTransferStatus = variant {
-  AwaitingTransfer;
-  Ambiguous;
-  NeedsFreshIdentity;
-  WaitingForBalance;
-};
 type PendingRewardRecipient = record {
   recipient : Account;
-  observed_balance : opt nat;
   amount : nat;
   memo : blob;
   created_at_time_nanos : nat64;
-  attempt_started : bool;
-  uncertain_attempt_seen : bool;
-  status : PendingRewardTransferStatus;
 };
 type PendingRewardPayout = record {
-  sns_root_canister_id : principal;
   sns_ledger_canister_id : principal;
-  snapshot_id : nat64;
   attribution_commitment_tx_id : nat64;
   fee : nat;
   recipients : vec PendingRewardRecipient;

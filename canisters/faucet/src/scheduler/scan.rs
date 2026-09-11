@@ -110,6 +110,9 @@ pub(super) fn flush_scan_progress(
     ignored_bad_memo_delta: &mut u64,
     next_start: Option<u64>,
     skip_candidate: &LocalSkipCandidate,
+    lease: MainLeaseToken,
+    job_id: u64,
+    expected_cursor: Option<u64>,
 ) {
     if *ignored_under_threshold_delta == 0
         && *ignored_bad_memo_delta == 0
@@ -119,7 +122,14 @@ pub(super) fn flush_scan_progress(
         return;
     }
     state::with_state_mut(|st| {
-        if let Some(job) = st.active_payout_job.as_mut() {
+        if !lease.is_current_in(st) {
+            return;
+        }
+        if let Some(job) = st
+            .active_payout_job
+            .as_mut()
+            .filter(|job| job.id == job_id && job.next_start == expected_cursor)
+        {
             job.ignored_under_threshold = job
                 .ignored_under_threshold
                 .saturating_add(*ignored_under_threshold_delta);

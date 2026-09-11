@@ -4,8 +4,26 @@ pub(super) struct MainGuard {
     inner: TimerLeaseGuard,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct MainLeaseToken(u64);
+
+impl MainLeaseToken {
+    pub(super) fn is_current(self) -> bool {
+        state::with_state(|st| st.main_lock_state_ts == Some(self.0))
+    }
+
+    pub(super) fn is_current_in(self, st: &state::State) -> bool {
+        st.main_lock_state_ts == Some(self.0)
+    }
+
+    #[cfg(test)]
+    pub(super) fn capture_for_test() -> Option<Self> {
+        state::with_state(|st| st.main_lock_state_ts.map(Self))
+    }
+}
+
 impl MainGuard {
-    fn acquire(now_secs: u64) -> Option<Self> {
+    pub(super) fn acquire(now_secs: u64) -> Option<Self> {
         state::with_root_state_mut(|st| {
             let inner =
                 TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
@@ -26,13 +44,25 @@ impl MainGuard {
         });
     }
 
-    fn finish(mut self, now_secs: u64) {
+    pub(super) fn lease_token(&self) -> MainLeaseToken {
+        MainLeaseToken(self.inner.lease_expires_at_ts())
+    }
+
+    #[cfg(test)]
+    pub(super) fn lease_expires_at_ts(&self) -> u64 {
+        self.inner.lease_expires_at_ts()
+    }
+
+    fn finish(mut self, now_secs: u64) -> bool {
         state::with_root_state_mut(|st| {
-            st.last_main_run_ts = now_secs;
             if self.inner.release(st.main_lock_state_ts) == LeaseFinish::Released {
+                st.last_main_run_ts = now_secs;
                 st.main_lock_state_ts = Some(0);
+                true
+            } else {
+                false
             }
-        });
+        })
     }
 }
 
@@ -69,6 +99,7 @@ pub async fn main_tick(force: bool) {
     let Some(guard) = MainGuard::acquire(now_secs) else {
         return;
     };
+    let lease = guard.lease_token();
     if !force {
         let min_gap = state::with_state(|st| st.config.scan_interval_seconds.saturating_sub(5));
         let recently_ran =
@@ -102,6 +133,7 @@ pub async fn main_tick(force: bool) {
         &sns_root,
         &governance,
         &xrc,
+        lease,
         &|| ic_cdk::api::time() / 1_000_000_000,
     )
     .await;
@@ -110,9 +142,10 @@ pub async fn main_tick(force: bool) {
         guard.finish(now_secs);
         return;
     }
-    guard.finish(now_secs);
-    state::persist_dirty_state();
-    state::clear_loaded_history_caches_after_flush();
+    if guard.finish(now_secs) {
+        state::persist_dirty_state();
+        state::clear_loaded_history_caches_after_flush();
+    }
 }
 
 pub(super) async fn refresh_icp_xdr_rate<X: ExchangeRateClient>(
@@ -194,8 +227,12 @@ pub(super) async fn run_main_tick_with_clients<
     sns_root: &R,
     governance: &G,
     xrc: &X,
+    lease: MainLeaseToken,
     lease_now_secs: &dyn Fn() -> u64,
 ) -> Result<(), String> {
+    if !lease.is_current() {
+        return Ok(());
+    }
     if state::with_state(|st| !crate::memo_registered_canister_summary_index_is_valid(st)) {
         state::with_root_state_mut(|st| {
             crate::repair_memo_registered_canister_summaries_if_invalid(st);
@@ -204,6 +241,9 @@ pub(super) async fn run_main_tick_with_clients<
 
     if let Err(err) = refresh_icp_xdr_rate_if_due(now_secs, xrc).await {
         log_error(&format!("historian ICP/XDR rate refresh degraded: {err}"));
+    }
+    if !lease.is_current() {
+        return Ok(());
     }
     if let Some(index_guard) = CommitmentIndexGuard::acquire(
         lease_now_secs(),
@@ -221,10 +261,16 @@ pub(super) async fn run_main_tick_with_clients<
             log_error(&format!("historian commitment indexing degraded: {err}"));
         }
     }
-    if let Err(err) = process_route_indexing(now_nanos, now_secs, index).await {
+    if !lease.is_current() {
+        return Ok(());
+    }
+    if let Err(err) = process_route_indexing(now_nanos, now_secs, index, lease).await {
         log_error(&format!(
             "historian output/rewards indexing degraded: {err}"
         ));
+    }
+    if !lease.is_current() {
+        return Ok(());
     }
 
     let (
@@ -248,22 +294,36 @@ pub(super) async fn run_main_tick_with_clients<
     let sns_due = enable_sns_tracking
         && (active_sns_present || now_secs.saturating_sub(last_sns_discovery_ts) >= interval_secs);
     if sns_due {
-        if let Err(err) = process_sns_discovery(now_nanos, now_secs, sns_wasm, sns_root).await {
+        if let Err(err) =
+            process_sns_discovery(now_nanos, now_secs, sns_wasm, sns_root, lease).await
+        {
             log_error(&format!("historian SNS discovery degraded: {err}"));
         }
+    }
+    if !lease.is_current() {
+        return Ok(());
     }
 
     let initial_cycles_probe_queue_present =
         state::with_state(|st| !st.initial_cycles_probe_queue.is_empty());
     if initial_cycles_probe_queue_present {
-        process_initial_cycles_probe_queue(now_nanos, now_secs, cycles_probe_client, governance)
-            .await?;
+        process_initial_cycles_probe_queue(
+            now_nanos,
+            now_secs,
+            cycles_probe_client,
+            governance,
+            lease,
+        )
+        .await?;
+    }
+    if !lease.is_current() {
+        return Ok(());
     }
 
     let cycles_due = active_cycles_present
         || now_secs.saturating_sub(last_completed_cycles_sweep_ts) >= interval_secs;
     if cycles_due {
-        process_cycles_sweep(now_nanos, now_secs, cycles_probe_client).await?;
+        process_cycles_sweep(now_nanos, now_secs, cycles_probe_client, lease).await?;
     }
 
     Ok(())

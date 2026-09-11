@@ -22,7 +22,7 @@ pub(crate) async fn debug_reward_sweep_impl() {
     let Some(guard) = guards::MainGuard::acquire(now_secs) else {
         return;
     };
-    reward_sweep::process(now_nanos, now_secs, true).await;
+    reward_sweep::process(now_nanos, now_secs, true, guard.lease_token()).await;
     guard.release_without_finishing();
 }
 

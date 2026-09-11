@@ -1,5 +1,41 @@
 use super::*;
 
+#[derive(Clone)]
+enum CyclesProbeFence {
+    Initial {
+        lease: MainLeaseToken,
+    },
+    Sweep {
+        lease: MainLeaseToken,
+        expected: ActiveCyclesSweep,
+        target: candid::Principal,
+        target_index: u64,
+    },
+}
+
+impl CyclesProbeFence {
+    fn is_current_in(&self, st: &state::State, canister_id: candid::Principal) -> bool {
+        match self {
+            Self::Initial { lease } => lease.is_current_in(st),
+            Self::Sweep {
+                lease,
+                expected,
+                target,
+                target_index,
+            } => {
+                lease.is_current_in(st)
+                    && *target == canister_id
+                    && st.active_cycles_sweep.as_ref() == Some(expected)
+                    && expected.canisters.get(*target_index as usize) == Some(target)
+            }
+        }
+    }
+
+    fn is_current(&self, canister_id: candid::Principal) -> bool {
+        state::with_state(|st| self.is_current_in(st, canister_id))
+    }
+}
+
 fn cycles_sample_source_for_route(route: Option<&CyclesProbeRoute>) -> CyclesSampleSource {
     match route {
         None => CyclesSampleSource::SelfCanister,
@@ -10,12 +46,13 @@ fn cycles_sample_source_for_route(route: Option<&CyclesProbeRoute>) -> CyclesSam
     }
 }
 
-pub(super) async fn probe_and_record_cycles<C: CyclesProbeClient>(
+async fn probe_and_record_cycles_with_fence<C: CyclesProbeClient>(
     timestamp_nanos: u64,
     now_secs: u64,
     canister_id: candid::Principal,
     max_entries: u32,
     cycles_probe_client: &C,
+    fence: CyclesProbeFence,
 ) -> Result<(), String> {
     let policy = CyclesProbePolicy::Auto;
     let cached_route =
@@ -23,6 +60,9 @@ pub(super) async fn probe_and_record_cycles<C: CyclesProbeClient>(
 
     let outcome =
         shared_probe_cycles(&policy, canister_id, cached_route, cycles_probe_client).await;
+    if !fence.is_current(canister_id) {
+        return Ok(());
+    }
     match outcome {
         Ok(CyclesProbeSuccess { cycles, route }) => {
             if route.is_none() {
@@ -31,6 +71,9 @@ pub(super) async fn probe_and_record_cycles<C: CyclesProbeClient>(
             }
             let source = cycles_sample_source_for_route(route.as_ref());
             state::with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
+                if !fence.is_current_in(st, canister_id) {
+                    return;
+                }
                 if let Some(route) = route.clone() {
                     st.cached_cycles_probe_routes.insert(canister_id, route);
                 } else {
@@ -63,6 +106,9 @@ pub(super) async fn probe_and_record_cycles<C: CyclesProbeClient>(
         Err(err) => {
             let message = err.message;
             state::with_root_and_registry_canister_state_mut(canister_id, |st| {
+                if !fence.is_current_in(st, canister_id) {
+                    return;
+                }
                 st.cached_cycles_probe_routes.remove(&canister_id);
                 let meta = st
                     .per_canister_meta
@@ -83,6 +129,26 @@ pub(super) async fn probe_and_record_cycles<C: CyclesProbeClient>(
     Ok(())
 }
 
+#[cfg(test)]
+pub(super) async fn probe_and_record_cycles<C: CyclesProbeClient>(
+    timestamp_nanos: u64,
+    now_secs: u64,
+    canister_id: candid::Principal,
+    max_entries: u32,
+    cycles_probe_client: &C,
+) -> Result<(), String> {
+    let lease = MainLeaseToken::capture_for_test().expect("test main lease must be installed");
+    probe_and_record_cycles_with_fence(
+        timestamp_nanos,
+        now_secs,
+        canister_id,
+        max_entries,
+        cycles_probe_client,
+        CyclesProbeFence::Initial { lease },
+    )
+    .await
+}
+
 pub(super) async fn process_initial_cycles_probe_queue<
     C: CyclesProbeClient,
     G: GovernanceClient,
@@ -91,46 +157,54 @@ pub(super) async fn process_initial_cycles_probe_queue<
     now_secs: u64,
     cycles_probe_client: &C,
     governance: &G,
+    lease: MainLeaseToken,
 ) -> Result<(), String> {
-    let (targets, max_entries, should_refresh_stake) = state::with_root_state_mut(|st| {
+    let Some((targets, max_entries, should_refresh_stake)) = state::with_root_state_mut(|st| {
+        if !lease.is_current_in(st) {
+            return None;
+        }
         let max_per_tick = st.config.max_canisters_per_cycles_tick.max(1) as usize;
-        let mut pending = std::mem::take(&mut st.initial_cycles_probe_queue);
-        let mut selected = Vec::new();
+        let pending = std::mem::take(&mut st.initial_cycles_probe_queue);
+        st.initial_cycles_probe_queue = pending
+            .into_iter()
+            .filter(|canister_id| {
+                let already_probed = st
+                    .per_canister_meta
+                    .get(canister_id)
+                    .and_then(|meta| meta.last_cycles_probe_ts)
+                    .is_some();
+                !already_probed && should_probe_tracked_canister(st, *canister_id)
+            })
+            .collect();
+        let selected = st
+            .initial_cycles_probe_queue
+            .iter()
+            .copied()
+            .take(max_per_tick)
+            .collect::<Vec<_>>();
         let mut should_refresh_stake = false;
-
-        while selected.len() < max_per_tick && !pending.is_empty() {
-            let canister_id = pending.remove(0);
-            let already_probed = st
-                .per_canister_meta
-                .get(&canister_id)
-                .and_then(|meta| meta.last_cycles_probe_ts)
-                .is_some();
-            if already_probed {
-                continue;
-            }
-            if should_probe_tracked_canister(st, canister_id) {
-                if should_refresh_staking_neuron_for_canister(st, &canister_id) {
-                    should_refresh_stake = true;
-                }
-                selected.push(canister_id);
+        for canister_id in &selected {
+            if should_refresh_staking_neuron_for_canister(st, canister_id) {
+                should_refresh_stake = true;
             }
         }
-
-        st.initial_cycles_probe_queue = pending;
-        (
+        Some((
             selected,
             st.config.max_cycles_entries_per_canister,
             should_refresh_stake,
-        )
-    });
+        ))
+    }) else {
+        return Ok(());
+    };
 
     for canister_id in targets {
-        if let Err(err) = probe_and_record_cycles(
+        if let Err(err) = probe_and_record_cycles_with_fence(
             timestamp_nanos,
             now_secs,
             canister_id,
             max_entries,
             cycles_probe_client,
+            CyclesProbeFence::Initial { lease },
         )
         .await
         {
@@ -139,9 +213,24 @@ pub(super) async fn process_initial_cycles_probe_queue<
                 canister_id.to_text()
             ));
         }
+        if !lease.is_current() {
+            return Ok(());
+        }
+        state::with_root_state_mut(|st| {
+            if !lease.is_current_in(st) {
+                return;
+            }
+            if let Some(index) = st
+                .initial_cycles_probe_queue
+                .iter()
+                .position(|queued| *queued == canister_id)
+            {
+                st.initial_cycles_probe_queue.remove(index);
+            }
+        });
     }
 
-    if should_refresh_stake {
+    if should_refresh_stake && lease.is_current() {
         refresh_staking_neuron_after_registration(governance).await;
     }
 
@@ -172,8 +261,12 @@ pub(super) async fn process_cycles_sweep<C: CyclesProbeClient>(
     timestamp_nanos: u64,
     now_secs: u64,
     cycles_probe_client: &C,
+    lease: MainLeaseToken,
 ) -> Result<(), String> {
-    let (snapshot, max_per_tick, max_entries) = state::with_root_state_mut(|st| {
+    let Some((snapshot, max_per_tick, max_entries)) = state::with_root_state_mut(|st| {
+        if !lease.is_current_in(st) {
+            return None;
+        }
         if st.active_cycles_sweep.is_none() {
             let self_id = ic_cdk::api::canister_self();
             let canisters = build_cycles_sweep_canisters(st, self_id, now_secs);
@@ -183,19 +276,22 @@ pub(super) async fn process_cycles_sweep<C: CyclesProbeClient>(
                 next_index: 0,
             });
         }
-        (
+        Some((
             st.active_cycles_sweep.clone().expect("active sweep"),
             st.config.max_canisters_per_cycles_tick.max(1),
             st.config.max_cycles_entries_per_canister,
-        )
-    });
+        ))
+    }) else {
+        return Ok(());
+    };
 
     let started_at_ts_nanos = snapshot.started_at_ts_nanos;
     let started_at_secs = started_at_ts_nanos / 1_000_000_000;
     let start = snapshot.next_index as usize;
     let end =
         (snapshot.next_index + max_per_tick as u64).min(snapshot.canisters.len() as u64) as usize;
-    for canister_id in snapshot.canisters[start..end].iter().copied() {
+    for (offset, canister_id) in snapshot.canisters[start..end].iter().copied().enumerate() {
+        let target_index = snapshot.next_index + offset as u64;
         let probed_since_sweep_started = state::with_state(|st| {
             st.per_canister_meta
                 .get(&canister_id)
@@ -205,12 +301,18 @@ pub(super) async fn process_cycles_sweep<C: CyclesProbeClient>(
         if probed_since_sweep_started {
             continue;
         }
-        if let Err(err) = probe_and_record_cycles(
+        if let Err(err) = probe_and_record_cycles_with_fence(
             started_at_ts_nanos,
             now_secs,
             canister_id,
             max_entries,
             cycles_probe_client,
+            CyclesProbeFence::Sweep {
+                lease,
+                expected: snapshot.clone(),
+                target: canister_id,
+                target_index,
+            },
         )
         .await
         {
@@ -219,10 +321,19 @@ pub(super) async fn process_cycles_sweep<C: CyclesProbeClient>(
                 canister_id.to_text()
             ));
         }
+        if !lease.is_current()
+            || !state::with_state(|st| st.active_cycles_sweep.as_ref() == Some(&snapshot))
+        {
+            return Ok(());
+        }
     }
 
     state::with_root_state_mut(|st| {
-        if let Some(active) = st.active_cycles_sweep.as_mut() {
+        if lease.is_current_in(st) && st.active_cycles_sweep.as_ref() == Some(&snapshot) {
+            let active = st
+                .active_cycles_sweep
+                .as_mut()
+                .expect("matched cycles sweep");
             active.next_index = end as u64;
             if active.next_index >= active.canisters.len() as u64 {
                 st.active_cycles_sweep = None;

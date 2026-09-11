@@ -615,15 +615,10 @@ pub(super) fn memo_registered_canister_summaries_total_desc_page(
     page: u32,
     page_size: u32,
 ) -> Option<ListMemoRegisteredCanisterSummariesResponse> {
-    let Some(cache) = st.memo_registered_canister_summaries_cache.as_ref() else {
-        return None;
-    };
-    let Some(index) = st
+    let cache = st.memo_registered_canister_summaries_cache.as_ref()?;
+    let index = st
         .memo_registered_canister_summaries_total_desc_index
-        .as_ref()
-    else {
-        return None;
-    };
+        .as_ref()?;
     if cache.len() != index.len() {
         return None;
     }

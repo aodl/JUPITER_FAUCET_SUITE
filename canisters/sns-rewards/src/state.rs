@@ -81,6 +81,8 @@ impl SnsRewardsState {
     }
 }
 
+// Boxing V1 would change the stable Candid representation.
+#[allow(clippy::large_enum_variant)]
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 enum VersionedStableState {
     Uninitialized,

@@ -21,6 +21,14 @@ Each selected principal is indexed once under its default ICP AccountIdentifier 
 
 There is no registration API, owner-list API, production force-scan method, or token-distribution method.
 
+Relay uses this conservative snapshot only to decide attribution. The resulting SNS
+reward distributions are a separate perpetual best-effort service: an individual
+transfer may be abandoned after bounded duplicate-safe attempts when its outcome
+cannot be determined. Such a discrepancy is not an indefinite recovery obligation
+and cannot halt later distributions. Fixed splitter transfers and irreversible
+canister-creation/controller-removal operations retain stronger durable semantics
+because their finite economics and security boundaries differ.
+
 ## Stable lifecycle
 
 Configuration, active snapshot metadata, scan cursor, and both owner maps are stable. An ordinary no-argument upgrade preserves them and resumes an incomplete scan. `post_upgrade` accepts `Option<UpgradeArgs>`:
@@ -45,4 +53,4 @@ The periodic configuration record reads the current runtime state and is emitted
 
 Observe `SNS_REWARD_SCAN`, `SNS_REWARDS_CONFIG`, and lifecycle logs. Before relying on a snapshot, verify the context Root and Root-resolved Ledger, the completion timestamp, and that no scan failure followed the publication log.
 
-Optional OpenChat development verification is read-only: query OpenChat Root, confirm it resolves Root `3e3x2-xyaaa-aaaaq-aaalq-cai`, Governance `2jvtu-yqaaa-aaaaq-aaama-cai`, and CHAT Ledger `2ouva-viaaa-aaaaq-aaamq-cai`; observe a complete snapshot; then query the context. Any real CHAT transfer belongs only in a separately reviewed, controlled deployment with an explicitly reviewed amount. Do not use an immutable production Relay for the first real-value smoke test without reviewing ambiguity recovery.
+Optional OpenChat development verification is read-only: query OpenChat Root, confirm it resolves Root `3e3x2-xyaaa-aaaaq-aaalq-cai`, Governance `2jvtu-yqaaa-aaaaq-aaama-cai`, and CHAT Ledger `2ouva-viaaa-aaaaq-aaamq-cai`; observe a complete snapshot; then query the context. Any real CHAT transfer belongs only in a separately reviewed, controlled deployment with an explicitly reviewed amount. Do not use an immutable production Relay for the first real-value smoke test without reviewing its bounded ambiguity policy.

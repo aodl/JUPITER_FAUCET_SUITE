@@ -13,6 +13,10 @@ The narrow-canister decomposition implements that model; it is not the purpose b
 
 These canisters are deliberately conservative about public production APIs. Most verification happens through source review, logs, module hashes, Candid files, and the historian/frontend read surfaces.
 
+Ordinary Relay infrastructure allocations and SNS reward distributions are perpetual best-effort services. Individual transfers may be abandoned after bounded duplicate-safe attempts when their outcome cannot be determined. The design deliberately prefers bounded state, continued liveness, auditability and confidence in an immutable implementation over exact recovery of every individual payment. Infrastructure shortfalls remain economic obligations only through Relay's recovery deficits, which are prioritized against future funding before normal surplus. For SNS rewards, exact duplicate execution of each pinned transfer identity remains prevented, but a plan-level fee or balance failure can abandon the unpaid remainder. Residual tokens then participate in a fresh adjudication from current Ledger/history state without excluding recipients already paid by the abandoned plan, so cumulative amounts across that boundary are best-effort rather than a guarantee of the original pot's ideal pro-rata split. This bounded-liveness tradeoff is deliberate, and individual discrepancies never halt later distributions.
+
+Finite and irreversible flows use stronger rules. Fixed splitter transfers retain durable duplicate-safe fencing because they divide finite one-shot funds. Historian child creation, installation and controller removal remain strongly journalled and fail closed because those transitions cross irreversible security boundaries.
+
 ## Observability Path
 
 - [`canisters/historian`](../../canisters/historian) maintains the public read model for endowments, tracked canisters, output and reward flows, cycles samples, SNS discovery, and dashboard status.

@@ -23,7 +23,7 @@ mod tests {
     use std::future::{pending, Future};
     use std::pin::Pin;
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     };
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
@@ -36,6 +36,34 @@ mod tests {
     }
 
     struct UnexpectedIndex;
+
+    struct HeldIndex {
+        started: AtomicBool,
+        release: AtomicBool,
+        response: GetAccountIdentifierTransactionsResponse,
+    }
+
+    #[async_trait]
+    impl IndexClient for HeldIndex {
+        async fn get_account_identifier_transactions(
+            &self,
+            _account_identifier: String,
+            _start: Option<u64>,
+            _max_results: u64,
+        ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            assert_no_persistence_batch();
+            self.started.store(true, Ordering::SeqCst);
+            std::future::poll_fn(|_| {
+                if self.release.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+            Ok(self.response.clone())
+        }
+    }
 
     #[async_trait]
     impl IndexClient for UnexpectedIndex {
@@ -124,8 +152,92 @@ mod tests {
         calls: Arc<AtomicUsize>,
     }
 
+    struct HeldCmc {
+        started: AtomicBool,
+        release: AtomicBool,
+    }
+
+    #[async_trait]
+    impl CmcClient for HeldCmc {
+        async fn notify_top_up(
+            &self,
+            _canister_id: Principal,
+            _block_index: u64,
+        ) -> Result<u128, NotifyTopUpError> {
+            self.started.store(true, Ordering::SeqCst);
+            std::future::poll_fn(|_| {
+                if self.release.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+            Ok(123)
+        }
+    }
+
+    struct HeldLedger {
+        started: AtomicBool,
+        release: AtomicBool,
+    }
+
+    #[async_trait]
+    impl LedgerClient for HeldLedger {
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> {
+            Ok(10_000)
+        }
+
+        async fn balance_of_e8s(
+            &self,
+            _account: Account,
+        ) -> Result<u64, crate::clients::ClientError> {
+            Ok(100_000_000)
+        }
+
+        async fn transfer(
+            &self,
+            _arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+            self.started.store(true, Ordering::SeqCst);
+            std::future::poll_fn(|_| {
+                if self.release.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+            Ok(Ok(Nat::from(77_u64)))
+        }
+    }
+
     struct ExistingCanisterStatus {
         existing: Vec<Principal>,
+    }
+
+    struct HeldCanisterStatus {
+        started: AtomicBool,
+        release: AtomicBool,
+    }
+
+    #[async_trait]
+    impl CanisterStatusClient for HeldCanisterStatus {
+        async fn canister_exists(
+            &self,
+            _canister_id: Principal,
+        ) -> Result<bool, crate::clients::ClientError> {
+            self.started.store(true, Ordering::SeqCst);
+            std::future::poll_fn(|_| {
+                if self.release.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+            Ok(true)
+        }
     }
 
     impl ExistingCanisterStatus {
@@ -281,7 +393,7 @@ mod tests {
     #[derive(Clone)]
     struct BalanceRecordingLedger {
         fee_e8s: u64,
-        payout_balance_e8s: u64,
+        payout_balance_e8s: Arc<std::sync::atomic::AtomicU64>,
         staking_balance_e8s: u64,
         transfer_blocks: Arc<Mutex<VecDeque<u64>>>,
         transfer_amounts: Arc<Mutex<Vec<u64>>>,
@@ -296,7 +408,7 @@ mod tests {
         ) -> Self {
             Self {
                 fee_e8s,
-                payout_balance_e8s,
+                payout_balance_e8s: Arc::new(std::sync::atomic::AtomicU64::new(payout_balance_e8s)),
                 staking_balance_e8s,
                 transfer_blocks: Arc::new(Mutex::new(transfer_blocks.into())),
                 transfer_amounts: Arc::new(Mutex::new(Vec::new())),
@@ -305,6 +417,10 @@ mod tests {
 
         fn transfer_amounts(&self) -> Vec<u64> {
             self.transfer_amounts.lock().unwrap().clone()
+        }
+
+        fn set_payout_balance_e8s(&self, balance_e8s: u64) {
+            self.payout_balance_e8s.store(balance_e8s, Ordering::SeqCst);
         }
     }
 
@@ -323,7 +439,7 @@ mod tests {
             if account == staking {
                 Ok(self.staking_balance_e8s)
             } else {
-                Ok(self.payout_balance_e8s)
+                Ok(self.payout_balance_e8s.load(Ordering::SeqCst))
             }
         }
         async fn transfer(
@@ -965,6 +1081,228 @@ mod tests {
     }
 
     #[test]
+    fn superseded_main_guard_finish_cannot_complete_or_release_successor_lease() {
+        let now_secs = 1_000;
+        state::set_state(state::State::new(test_config(), now_secs));
+        let old = MainGuard::acquire(now_secs).expect("old main lease");
+        let old_expiry = state::with_state(|st| st.main_lock_state_ts.unwrap());
+        state::with_state_mut(|st| st.last_main_run_ts = 777);
+
+        let successor = MainGuard::acquire(old_expiry).expect("successor main lease");
+        let successor_expiry = state::with_state(|st| st.main_lock_state_ts);
+        old.finish(100, None);
+
+        state::with_state(|st| {
+            assert_eq!(st.main_lock_state_ts, successor_expiry);
+            assert_eq!(st.last_main_run_ts, 777);
+        });
+        drop(successor);
+    }
+
+    #[test]
+    fn superseded_funding_discovery_cannot_recreate_completed_tranche() {
+        let now_secs = 2_000;
+        let cfg = test_config();
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(cfg.clone(), now_secs));
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
+        let index = HeldIndex {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 100_000_000,
+                oldest_tx_id: Some(20),
+                transactions: vec![funding_tx_at(
+                    20,
+                    &funding_source_id,
+                    &payout_id,
+                    100_000_000,
+                    20_000_000_000,
+                )],
+            },
+        };
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+        let old = MainGuard::acquire(now_secs).expect("old main lease");
+        let lease = old.lease_token();
+        let old_expiry = state::with_state(|st| st.main_lock_state_ts.unwrap());
+        let mut future = Box::pin(process_payout_with_lease(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs,
+            lease,
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(index.started.load(Ordering::SeqCst));
+
+        let successor = MainGuard::acquire(old_expiry).expect("successor main lease");
+        state::with_state_mut(|st| {
+            st.active_funding_scan = None;
+            st.active_payout_job = None;
+            st.last_processed_funding_tx_id = Some(20);
+            st.current_round_start_time_nanos = Some(20_000_000_000);
+            st.current_round_start_staking_balance_e8s = Some(200_000_000);
+            st.current_round_start_latest_tx_id = Some(20);
+        });
+        ledger.set_payout_balance_e8s(200_000_000);
+        index.release.store(true, Ordering::SeqCst);
+        assert!(matches!(poll_once(future.as_mut()), Poll::Ready(true)));
+
+        state::with_state(|st| {
+            assert!(st.active_funding_scan.is_none());
+            assert!(st.active_payout_job.is_none());
+            assert_eq!(st.last_processed_funding_tx_id, Some(20));
+            assert_eq!(st.current_round_start_time_nanos, Some(20_000_000_000));
+            assert_eq!(
+                st.current_round_start_staking_balance_e8s,
+                Some(200_000_000)
+            );
+            assert_eq!(st.current_round_start_latest_tx_id, Some(20));
+        });
+        drop(future);
+        drop(old);
+        drop(successor);
+    }
+
+    #[test]
+    fn superseded_effective_denominator_page_is_not_applied_twice() {
+        let now_secs = 2_100;
+        let mut cfg = test_config();
+        cfg.stake_recognition_delay_seconds = Some(0);
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(cfg.clone(), now_secs));
+        ensure_active_job_with_boundary(
+            now_secs * 1_000_000_000,
+            10_000,
+            100_000_000,
+            200_000_000,
+            20_000_000_000,
+            Some(20),
+            Some(FundingTranche {
+                tx_id: 20,
+                timestamp_nanos: 20_000_000_000,
+                amount_e8s: 100_000_000,
+            }),
+        );
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let index = HeldIndex {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+            response: GetAccountIdentifierTransactionsResponse {
+                balance: 200_000_000,
+                oldest_tx_id: Some(1),
+                transactions: vec![commitment_tx_at(
+                    1,
+                    &staking_id,
+                    100_000_000,
+                    Some(beneficiary.to_text().into_bytes()),
+                    1,
+                )],
+            },
+        };
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+        let old = MainGuard::acquire(now_secs).expect("old main lease");
+        let lease = old.lease_token();
+        let old_expiry = state::with_state(|st| st.main_lock_state_ts.unwrap());
+        let mut future = Box::pin(process_payout_with_lease(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs,
+            lease,
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+
+        let successor = MainGuard::acquire(old_expiry).expect("successor main lease");
+        state::with_state_mut(|st| {
+            let job = st.active_payout_job.as_mut().unwrap();
+            job.effective_denom_staking_balance_e8s = Some(100_000_000);
+            job.round_end_staking_balance_e8s = Some(100_000_000);
+            job.next_start = Some(1);
+        });
+        index.release.store(true, Ordering::SeqCst);
+        assert!(matches!(poll_once(future.as_mut()), Poll::Ready(true)));
+
+        state::with_state(|st| {
+            let job = st.active_payout_job.as_ref().unwrap();
+            assert_eq!(job.effective_denom_staking_balance_e8s, Some(100_000_000));
+            assert_eq!(job.round_end_staking_balance_e8s, Some(100_000_000));
+            assert_eq!(job.next_start, Some(1));
+        });
+        drop(future);
+        drop(old);
+        drop(successor);
+    }
+
+    #[test]
+    fn superseded_finalizer_cannot_apply_old_round_or_funding_boundary() {
+        let now_secs = 2_200;
+        let mut job = ActivePayoutJob::new(
+            1,
+            10_000,
+            100_000_000,
+            200_000_000,
+            now_secs * 1_000_000_000,
+        );
+        job.scan_complete = true;
+        job.cmc_attempt_count = Some(1);
+        job.cmc_success_count = Some(0);
+        job.cmc_attempted_beneficiaries = Some(vec![Principal::management_canister()]);
+        job.funding_tx_id = Some(10);
+        job.round_end_time_nanos = Some(10_000_000_000);
+        job.round_end_staking_balance_e8s = Some(100_000_000);
+        job.round_end_latest_tx_id = Some(10);
+        let _cfg = set_active_job(now_secs, job);
+        let status = HeldCanisterStatus {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+        };
+        let old = MainGuard::acquire(now_secs).expect("old main lease");
+        let lease = old.lease_token();
+        let old_expiry = state::with_state(|st| st.main_lock_state_ts.unwrap());
+        let mut future = Box::pin(finalize_completed_job(&status, lease, 1));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(status.started.load(Ordering::SeqCst));
+
+        let successor = MainGuard::acquire(old_expiry).expect("successor main lease");
+        state::with_state_mut(|st| {
+            st.active_payout_job = None;
+            st.last_processed_funding_tx_id = Some(20);
+            st.current_round_start_time_nanos = Some(20_000_000_000);
+            st.current_round_start_staking_balance_e8s = Some(300_000_000);
+            st.current_round_start_latest_tx_id = Some(20);
+            st.consecutive_cmc_zero_success_runs = Some(9);
+        });
+        status.release.store(true, Ordering::SeqCst);
+        assert!(matches!(poll_once(future.as_mut()), Poll::Ready(false)));
+
+        state::with_state(|st| {
+            assert!(st.active_payout_job.is_none());
+            assert_eq!(st.last_processed_funding_tx_id, Some(20));
+            assert_eq!(st.current_round_start_time_nanos, Some(20_000_000_000));
+            assert_eq!(
+                st.current_round_start_staking_balance_e8s,
+                Some(300_000_000)
+            );
+            assert_eq!(st.current_round_start_latest_tx_id, Some(20));
+            assert_eq!(st.consecutive_cmc_zero_success_runs, Some(9));
+        });
+        drop(future);
+        drop(old);
+        drop(successor);
+    }
+
+    #[test]
     fn transfer_arg_uses_little_endian_top_up_memo() {
         state::clear_skip_ranges();
         state::set_state(state::State::new(test_config(), 0));
@@ -1023,6 +1361,104 @@ mod tests {
         });
         set_active_job(now_nanos / 1_000_000_000, job);
         beneficiary
+    }
+
+    #[test]
+    fn stale_ledger_callback_cannot_mutate_replacement_payout_job() {
+        let now_nanos = 9_000_000_000;
+        set_pending_cycles_transfer(
+            now_nanos,
+            100_000_000,
+            PendingTransferPhase::AwaitingTransfer,
+        );
+        let ledger = HeldLedger {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+        };
+        let cmc = ScriptedCmc::new(vec![]);
+        let mut future = Box::pin(drive_pending_transfer(
+            &ledger,
+            &cmc,
+            &NoopGovernance,
+            test_config().cmc_canister_id,
+            10_000,
+            now_nanos,
+            9,
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(ledger.started.load(Ordering::SeqCst));
+
+        let (replacement_id, replacement_pending) = state::with_state_mut(|st| {
+            let job = st.active_payout_job.as_mut().unwrap();
+            job.id = job.id.saturating_add(1);
+            job.pending_transfer
+                .as_mut()
+                .unwrap()
+                .notification
+                .amount_e8s = 777;
+            (job.id, job.pending_transfer.clone().unwrap())
+        });
+        ledger.release.store(true, Ordering::SeqCst);
+        assert!(matches!(poll_once(future.as_mut()), Poll::Ready(false)));
+        state::with_state(|st| {
+            let job = st.active_payout_job.as_ref().unwrap();
+            assert_eq!(job.id, replacement_id);
+            assert_eq!(job.pending_transfer.as_ref(), Some(&replacement_pending));
+            assert_eq!(job.gross_outflow_e8s, 0);
+            assert_eq!(job.topped_up_count, 0);
+        });
+    }
+
+    #[test]
+    fn stale_cmc_callback_cannot_mutate_replacement_payout_job() {
+        let now_nanos = 9_100_000_000;
+        set_pending_cycles_transfer(
+            now_nanos,
+            100_000_000,
+            PendingTransferPhase::TransferAccepted,
+        );
+        let cmc = HeldCmc {
+            started: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+        };
+        let ledger = ScriptedLedger::new(vec![]);
+        let mut future = Box::pin(drive_pending_transfer(
+            &ledger,
+            &cmc,
+            &NoopGovernance,
+            test_config().cmc_canister_id,
+            10_000,
+            now_nanos,
+            9,
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert!(cmc.started.load(Ordering::SeqCst));
+
+        let (replacement_id, replacement_pending, attempts, successes) =
+            state::with_state_mut(|st| {
+                let job = st.active_payout_job.as_mut().unwrap();
+                job.id = job.id.saturating_add(1);
+                job.pending_transfer
+                    .as_mut()
+                    .unwrap()
+                    .notification
+                    .amount_e8s = 777;
+                (
+                    job.id,
+                    job.pending_transfer.clone().unwrap(),
+                    job.cmc_attempt_count,
+                    job.cmc_success_count,
+                )
+            });
+        cmc.release.store(true, Ordering::SeqCst);
+        assert!(matches!(poll_once(future.as_mut()), Poll::Ready(false)));
+        state::with_state(|st| {
+            let job = st.active_payout_job.as_ref().unwrap();
+            assert_eq!(job.id, replacement_id);
+            assert_eq!(job.pending_transfer.as_ref(), Some(&replacement_pending));
+            assert_eq!(job.cmc_attempt_count, attempts);
+            assert_eq!(job.cmc_success_count, successes);
+        });
     }
 
     #[test]

@@ -58,6 +58,8 @@ Jupiter Faucet is a set of composable primitives rather than a monolithic servic
 
 These pieces reduce duplicated infrastructure; they do not guarantee a funding outcome. Payouts, cycles conversion, fees, target observability, and delivery remain subject to the component rules and external IC services described in the authoritative READMEs.
 
+Relay infrastructure allocation and SNS reward distribution are perpetual best-effort streams. A transfer with an irreducibly uncertain outcome may be abandoned after bounded duplicate-safe attempts so one item cannot sacrifice the liveness of the immutable service. Infrastructure need is not forgotten: recovery deficits carry it into future funding rounds ahead of normal surplus. For SNS rewards, exact duplicate execution of a pinned transfer identity is prevented, but a material fee change or insufficient balance may abandon a partially completed plan. Its residual tokens can be adjudicated later from current Ledger/history state with no exclusion for recipients paid by the abandoned plan; cumulative amounts across that boundary therefore need not equal the original pot's ideal pro-rata split. This bounded-liveness policy is deliberate, and those discrepancies do not become indefinite recovery obligations. Fixed splitters use stronger durable semantics because they divide finite one-shot funds, while Historian child creation and controller removal remain fail-closed because they are irreversible security transitions.
+
 ## Common project patterns
 
 ### Single-canister long-term funding

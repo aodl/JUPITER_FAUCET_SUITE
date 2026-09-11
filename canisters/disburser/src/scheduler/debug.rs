@@ -5,18 +5,18 @@ use std::cell::RefCell;
 thread_local! {
     // Debug-only fault injection used by PocketIC E2E tests.
     // These are intentionally *not* persisted in stable memory.
-    static DEBUG_PAUSE_AFTER_PLANNING: RefCell<bool> = RefCell::new(false);
-    static DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS: RefCell<Option<u32>> = RefCell::new(None);
-    static DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS: RefCell<Option<u32>> = RefCell::new(None);
-    static DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK: RefCell<u32> = RefCell::new(0);
+    static DEBUG_PAUSE_AFTER_PLANNING: RefCell<bool> = const { RefCell::new(false) };
+    static DEBUG_TRAP_AFTER_SUCCESSFUL_TRANSFERS: RefCell<Option<u32>> = const { RefCell::new(None) };
+    static DEBUG_REAL_TRAP_AFTER_SUCCESSFUL_TRANSFERS: RefCell<Option<u32>> = const { RefCell::new(None) };
+    static DEBUG_SUCCESSFUL_TRANSFERS_THIS_TICK: RefCell<u32> = const { RefCell::new(0) };
 
     // Simulates "canister too low on cycles" without depending on PocketIC cycle accounting.
     // When enabled, main tick will refuse to perform any external calls.
-    static DEBUG_SIMULATE_LOW_CYCLES: RefCell<bool> = RefCell::new(false);
+    static DEBUG_SIMULATE_LOW_CYCLES: RefCell<bool> = const { RefCell::new(false) };
 
     // Allows payout-only cycles in PocketIC without constantly initiating new maturity disbursements.
     // Useful for state-size regression tests.
-    static DEBUG_SKIP_MATURITY_INITIATION: RefCell<bool> = RefCell::new(false);
+    static DEBUG_SKIP_MATURITY_INITIATION: RefCell<bool> = const { RefCell::new(false) };
 }
 
 #[cfg(feature = "debug_api")]

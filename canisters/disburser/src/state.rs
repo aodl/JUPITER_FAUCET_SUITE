@@ -60,7 +60,7 @@ pub(crate) enum TransferStatus {
     Sent { block_index: String },
 }
 
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PlannedTransfer {
     pub to: Account,
     pub gross_share_e8s: u64,
@@ -70,7 +70,7 @@ pub(crate) struct PlannedTransfer {
     pub status: TransferStatus,
 }
 
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PayoutPlan {
     pub id: u64,
     pub fee_e8s: u64,
@@ -161,9 +161,10 @@ fn idl_value_contains_field(value: &IDLValue, field_id: u32) -> bool {
     }
 }
 
-// Upgrade-compatibility boundary only: retired blackhole-policy fields identify an old
-// stable record. Durable payout/failure evidence decodes through the current shape, while
-// the old controller-authority fields and reconciliation latch are deliberately neutralized.
+// One-hop pre-launch bridge for the live af801944...99af2 module, whose CONFIG log still exposes
+// blackhole_armed. Delete this isolated detection immediately after that canister has upgraded and
+// persisted the current controller shape. Durable payout evidence still decodes through the
+// current record while the retired authority fields are neutralized.
 fn decode_versioned_stable_state(bytes: &[u8]) -> candid::Result<VersionedStableState> {
     let idl = IDLArgs::from_bytes(bytes)?;
     let legacy_controller_state = [

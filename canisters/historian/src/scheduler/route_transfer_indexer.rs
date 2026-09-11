@@ -3,22 +3,31 @@ pub(super) async fn process_route_indexing<I: IndexClient>(
     started_at_ts_nanos: u64,
     now_secs: u64,
     index: &I,
+    lease: MainLeaseToken,
 ) -> Result<(), String> {
     let cfg = state::with_state(|st| st.config.clone());
     let routes = indexed_route_kinds();
     let active = state::with_root_state_mut(|st| {
+        if !lease.is_current_in(st) {
+            return None;
+        }
         if st.active_route_sweep.is_none() {
             st.active_route_sweep = Some(ActiveRouteSweep {
                 started_at_ts_nanos,
                 next_index: 0,
             });
         }
-        st.active_route_sweep.clone().expect("active route sweep")
+        st.active_route_sweep.clone()
     });
+    let Some(active) = active else {
+        return Ok(());
+    };
     if active.next_index as usize >= routes.len() {
         state::with_root_state_mut(|st| {
-            st.active_route_sweep = None;
-            st.last_completed_route_sweep_ts = Some(now_secs);
+            if route_work_is_current(st, lease, &active) {
+                st.active_route_sweep = None;
+                st.last_completed_route_sweep_ts = Some(now_secs);
+            }
         });
         return Ok(());
     }
@@ -44,7 +53,9 @@ pub(super) async fn process_route_indexing<I: IndexClient>(
     if backfill_complete && latest_cursor.is_none() {
         backfill_complete = false;
         state::with_root_state_mut(|st| {
-            set_indexed_route_descending_progress(st, kind, None, None, false)
+            if route_work_is_current(st, lease, &active) {
+                set_indexed_route_descending_progress(st, kind, None, None, false);
+            }
         });
     }
 
@@ -59,18 +70,20 @@ pub(super) async fn process_route_indexing<I: IndexClient>(
     // Route indexing uses the same two-cursor model as commitment indexing in
     // descending mode: the latest cursor detects newer routed transfers, and the
     // oldest cursor continues the historical backfill through newest-first pages.
-    let mut first_page = if order_descending.is_none() {
-        Some(
-            index
+    let mut first_page =
+        if order_descending.is_none() {
+            let result = index
                 .get_account_identifier_transactions(route_id.clone(), None, PAGE_SIZE)
-                .await
-                .map_err(|e| {
-                    format!("{} route index call failed: {e}", indexed_route_name(kind))
-                })?,
-        )
-    } else {
-        None
-    };
+                .await;
+            if !route_work_is_current_now(lease, &active) {
+                return Ok(());
+            }
+            Some(result.map_err(|e| {
+                format!("{} route index call failed: {e}", indexed_route_name(kind))
+            })?)
+        } else {
+            None
+        };
 
     let mut remaining_pages = cfg.max_index_pages_per_tick.max(1);
 
@@ -89,16 +102,21 @@ pub(super) async fn process_route_indexing<I: IndexClient>(
             };
             let page = match first_page.take() {
                 Some(page) => page,
-                None => index
-                    .get_account_identifier_transactions(
-                        route_id.clone(),
-                        progress.next_start_tx_id,
-                        PAGE_SIZE,
-                    )
-                    .await
-                    .map_err(|e| {
+                None => {
+                    let result = index
+                        .get_account_identifier_transactions(
+                            route_id.clone(),
+                            progress.next_start_tx_id,
+                            PAGE_SIZE,
+                        )
+                        .await;
+                    if !route_work_is_current_now(lease, &active) {
+                        return Ok(());
+                    }
+                    result.map_err(|e| {
                         format!("{} route index call failed: {e}", indexed_route_name(kind))
-                    })?,
+                    })?
+                }
             };
             remaining_pages = remaining_pages.saturating_sub(1);
             if page.transactions.is_empty() {
@@ -173,12 +191,21 @@ pub(super) async fn process_route_indexing<I: IndexClient>(
         while remaining_pages > 0 && !backfill_complete {
             let page = match first_page.take() {
                 Some(page) => page,
-                None => index
-                    .get_account_identifier_transactions(route_id.clone(), oldest_cursor, PAGE_SIZE)
-                    .await
-                    .map_err(|e| {
+                None => {
+                    let result = index
+                        .get_account_identifier_transactions(
+                            route_id.clone(),
+                            oldest_cursor,
+                            PAGE_SIZE,
+                        )
+                        .await;
+                    if !route_work_is_current_now(lease, &active) {
+                        return Ok(());
+                    }
+                    result.map_err(|e| {
                         format!("{} route index call failed: {e}", indexed_route_name(kind))
-                    })?,
+                    })?
+                }
             };
             remaining_pages = remaining_pages.saturating_sub(1);
             if page.transactions.is_empty() {
@@ -242,21 +269,24 @@ pub(super) async fn process_route_indexing<I: IndexClient>(
             }
         }
         state::with_root_state_mut(|st| {
-            set_indexed_route_descending_progress(
-                st,
-                kind,
-                latest_cursor,
-                oldest_cursor,
-                backfill_complete,
-            )
+            if route_work_is_current(st, lease, &active) {
+                set_indexed_route_descending_progress(
+                    st,
+                    kind,
+                    latest_cursor,
+                    oldest_cursor,
+                    backfill_complete,
+                );
+            }
         });
     }
 
     if completed_route {
         state::with_root_state_mut(|st| {
-            if let Some(active) = st.active_route_sweep.as_mut() {
-                active.next_index = active.next_index.saturating_add(1);
-                if active.next_index as usize >= indexed_route_kinds().len() {
+            if route_work_is_current(st, lease, &active) {
+                let current = st.active_route_sweep.as_mut().expect("matched route sweep");
+                current.next_index = current.next_index.saturating_add(1);
+                if current.next_index as usize >= indexed_route_kinds().len() {
                     st.active_route_sweep = None;
                     st.last_completed_route_sweep_ts = Some(now_secs);
                 }
@@ -264,4 +294,16 @@ pub(super) async fn process_route_indexing<I: IndexClient>(
         });
     }
     Ok(())
+}
+
+fn route_work_is_current(
+    st: &state::State,
+    lease: MainLeaseToken,
+    expected: &ActiveRouteSweep,
+) -> bool {
+    lease.is_current_in(st) && st.active_route_sweep.as_ref() == Some(expected)
+}
+
+fn route_work_is_current_now(lease: MainLeaseToken, expected: &ActiveRouteSweep) -> bool {
+    state::with_state(|st| route_work_is_current(st, lease, expected))
 }
