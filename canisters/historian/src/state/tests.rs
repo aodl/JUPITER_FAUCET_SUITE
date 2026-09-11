@@ -457,6 +457,7 @@ mod tests {
         increment_commitment_route_rollup(raw_key.clone(), 456_000_000);
 
         let mut state = State::new(sample_config(), 100);
+        state.config.cmc_canister_id = Some(principal(&[40]));
         state.config.relay_factory_enabled = true;
         state.commitment_route_rollups_complete_from_genesis = Some(true);
         state.last_indexed_staking_tx_id = Some(38_079_042);
@@ -482,6 +483,8 @@ mod tests {
             message: "representative deployed fault".to_string(),
         });
         state.initial_cycles_probe_queue = vec![principal(&[31])];
+        crate::ensure_canonical_relay_tracking(&mut state);
+        set_state(state.clone());
         let mut expected = build_root_snapshot(&state);
         // This fixture predates the bounded catch-up/endowment-refresh fields. The
         // compatibility contract is that every deployed field survives exactly,
@@ -497,6 +500,7 @@ mod tests {
         expected.endowment_refresh_ineffective_streak = None;
         expected.commitment_index_revision = None;
         let expected_config = expected.config.clone();
+        let expected_probe_queue = expected.initial_cycles_probe_queue.clone();
         let deployed_root = DeployedStableRootState::from(expected.clone());
         assert!(deployed_root
             .active_commitment_route_rollup_backfill
@@ -534,7 +538,7 @@ mod tests {
         assert_eq!(root.total_rewards_e8s, Some(99));
         assert_eq!(root.last_index_run_ts, Some(123_456));
         assert_eq!(root.commitment_index_fault, expected.commitment_index_fault);
-        assert_eq!(root.initial_cycles_probe_queue, vec![principal(&[31])]);
+        assert_eq!(root.initial_cycles_probe_queue, expected_probe_queue);
         assert!(root.active_staking_catch_up.is_none());
         assert!(root.active_output_catch_up.is_none());
         assert!(root.active_rewards_catch_up.is_none());
@@ -550,6 +554,11 @@ mod tests {
         unsupported.staking_index_descending = Some(false);
         unsupported.output_route_index_descending = Some(false);
         unsupported.rewards_route_index_descending = Some(false);
+        unsupported.active_route_sweep = Some(ActiveRouteSweep {
+            started_at_ts_nanos: 123_000_000_000,
+            next_index: 1,
+        });
+        unsupported.last_completed_route_sweep_ts = Some(123);
         let bytes = candid::encode_one(DeployedVersionedStableState::Current(
             DeployedStableRootState::from(unsupported),
         ))
@@ -579,6 +588,77 @@ mod tests {
                 total_qualifying_committed_e8s: 456_000_000,
             }
         );
+
+        with_root_stable_cell(|cell| {
+            cell.set(VersionedStableState::Current(root));
+        });
+        crate::restore_post_upgrade_state_with_timestamp(None, 200);
+        with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(0));
+            assert_eq!(st.last_indexed_output_tx_id, None);
+            assert_eq!(st.oldest_indexed_output_tx_id, None);
+            assert_eq!(st.output_route_index_descending, Some(true));
+            assert_eq!(st.output_route_backfill_complete, Some(false));
+            assert!(st.active_output_catch_up.is_none());
+            assert_eq!(st.total_rewards_e8s, Some(0));
+            assert_eq!(st.last_indexed_rewards_tx_id, None);
+            assert_eq!(st.oldest_indexed_rewards_tx_id, None);
+            assert_eq!(st.rewards_route_index_descending, Some(true));
+            assert_eq!(st.rewards_route_backfill_complete, Some(false));
+            assert!(st.active_rewards_catch_up.is_none());
+            assert!(st.active_route_sweep.is_none());
+            assert_eq!(st.last_completed_route_sweep_ts, Some(0));
+            let expected_runtime_config: Config = expected_config.clone().into();
+            assert_eq!(
+                candid::encode_one(&st.config).unwrap(),
+                candid::encode_one(expected_runtime_config).unwrap()
+            );
+            assert_eq!(st.qualifying_commitment_count, Some(77));
+            assert_eq!(st.last_indexed_staking_tx_id, Some(38_079_042));
+            assert_eq!(st.oldest_indexed_staking_tx_id, Some(1));
+            assert_eq!(st.staking_index_descending, Some(false));
+            assert_eq!(st.initial_cycles_probe_queue, expected_probe_queue);
+        });
+        assert_eq!(
+            get_commitment_route_rollup(&cycles_key),
+            CommitmentRouteRollup {
+                qualifying_commitment_count: 1,
+                total_qualifying_committed_e8s: 123_000_000,
+            },
+            "memory 29 must survive the route repair unchanged"
+        );
+        assert_eq!(
+            get_commitment_route_rollup(&raw_key),
+            CommitmentRouteRollup {
+                qualifying_commitment_count: 1,
+                total_qualifying_committed_e8s: 456_000_000,
+            },
+            "memory 29 must survive the route repair unchanged"
+        );
+
+        with_root_state_mut(|st| {
+            st.total_output_e8s = Some(12_345);
+            st.last_indexed_output_tx_id = Some(999);
+            st.oldest_indexed_output_tx_id = Some(750);
+            st.output_route_backfill_complete = Some(false);
+            st.total_rewards_e8s = Some(67_890);
+            st.last_indexed_rewards_tx_id = Some(888);
+            st.oldest_indexed_rewards_tx_id = Some(700);
+            st.rewards_route_backfill_complete = Some(false);
+        });
+        crate::restore_post_upgrade_state_with_timestamp(None, 201);
+        with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(12_345));
+            assert_eq!(st.last_indexed_output_tx_id, Some(999));
+            assert_eq!(st.oldest_indexed_output_tx_id, Some(750));
+            assert_eq!(st.output_route_index_descending, Some(true));
+            assert_eq!(st.output_route_backfill_complete, Some(false));
+            assert_eq!(st.total_rewards_e8s, Some(67_890));
+            assert_eq!(st.last_indexed_rewards_tx_id, Some(888));
+            assert_eq!(st.oldest_indexed_rewards_tx_id, Some(700));
+            assert_eq!(st.rewards_route_index_descending, Some(true));
+            assert_eq!(st.rewards_route_backfill_complete, Some(false));
+        });
     }
 
     #[test]

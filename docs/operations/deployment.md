@@ -194,12 +194,12 @@ icp canister status jupiter_historian --environment ic --json
 
 Local testing showed that upgrading a stopped canister leaves it stopped, so the explicit start command is required.
 
-Immediately after post-upgrade restore, public queries must already fail closed if persisted index ordering is unsupported. After starting Historian, allow the normal initial or forced main tick to run before making the final assertion that indexing has resumed normally.
+Immediately after post-upgrade restore, public queries must already fail closed when historical index coverage is unsupported and must remain degraded while historical route backfill is incomplete. After starting Historian, allow the normal initial or forced main tick to run before making the final assertion that indexing has resumed normally.
 
 After upgrade, verify:
 
 - The module hash matches the canonical `release-artifacts/jupiter_historian.wasm.gz` package hash and controllers are unchanged.
-- Counts, cursors, totals, recent feeds, and representative historical samples are preserved. `qualifying_commitment_count` must not decrease across the upgrade; an increase after restart/indexing is permitted and may represent newly indexed qualifying endowments.
+- Unrelated counts, cursors, totals, recent feeds, and representative historical samples are preserved. The one-hop route repair described below deliberately resets only an output/rewards aggregate whose persisted ordering marker is exactly `Some(false)`. `qualifying_commitment_count` must not decrease across the upgrade; an increase after restart/indexing is permitted and may represent newly indexed qualifying endowments.
 - Memory-26 entries, known exact active configuration mappings, and `RelayTarget`/`RelayInstance` tracking are preserved.
 - Automatic cycles probing and normal staking indexing continue, and new samples/endowments append exactly once.
 - Any setup interrupted after an irreversible spend is `ManualRecoveryRequired`; interrupted `Reserved`/`ProbingTargets` entries are removed, while existing `Active` and `ManualRecoveryRequired` entries are preserved.
@@ -216,7 +216,11 @@ icp canister call jupiter_historian get_commitment_route_summaries \
   --query
 ```
 
-Healthy production requires this query to report `complete_from_genesis = true` and `commitment_index_fault = null`, and the already-recorded `get_public_status()` response to report `route_index_fault = null`, before and after a routine upgrade. The first pair verifies staking/endowment indexing; `route_index_fault` verifies output/rewards indexing. If completeness is false or either fault is present, investigate the invariant violation rather than initiating a historical rebuild.
+Healthy production requires this query to report `complete_from_genesis = true` and `commitment_index_fault = null`, and the already-recorded `get_public_status()` response to report `route_index_fault = null`, before and after a routine upgrade. The first pair verifies staking/endowment indexing; `route_index_fault` verifies output/rewards indexing.
+
+Production on 2026-09-11 exposed persisted legacy ascending output/rewards pagination metadata after the Historian was upgraded to module `fc4c9014615b26d58b127332a25750d53ad272500dfa6f322d0bc61a7b82ee49`; the reviewed code correctly failed closed because complete historical coverage could not be proved under the real newest-first ICP Index contract. The isolated one-hop repair runs only during `post_upgrade` and only for a route marked exactly `Some(false)`. For each affected route it logs and discards the derived aggregate total, latest/oldest cursors, and catch-up continuation, records current newest-first ordering with incomplete backfill, and rebuilds from zero using authoritative ICP Ledger/Index history. It does not reset or reconstruct staking/endowment state, histories, tracking, cycles/SNS/XRC state, Relay setup memory 26, or lifetime route rollups in memory 29. Output/rewards totals may therefore be lower or partial while bounded backfill proceeds, and `route_index_fault` must remain non-null until both routes have established historical coverage. The final rebuilt total is authoritative even if it differs from the pre-repair aggregate.
+
+Do not reinstall Historian for this repair. Keep production paused until the corrective artifact is independently reviewed, then upgrade in place. After restart, require `complete_from_genesis = true`, `commitment_index_fault = null`, and `route_index_fault = null` before treating Historian as healthy.
 
 ### High-risk upgrade and rollback
 

@@ -240,10 +240,9 @@ pub(super) fn get_public_counts() -> PublicCounts {
 }
 
 pub(crate) fn route_index_fault(st: &state::State) -> Option<String> {
-    match (
-        st.output_route_index_descending == Some(false),
-        st.rewards_route_index_descending == Some(false),
-    ) {
+    let output_ascending = st.output_route_index_descending == Some(false);
+    let rewards_ascending = st.rewards_route_index_descending == Some(false);
+    match (output_ascending, rewards_ascending) {
         (true, true) => {
             Some("unsupported persisted ascending output and rewards pagination state".to_string())
         }
@@ -253,7 +252,20 @@ pub(crate) fn route_index_fault(st: &state::State) -> Option<String> {
         (false, true) => {
             Some("unsupported persisted ascending rewards pagination state".to_string())
         }
-        (false, false) => None,
+        (false, false) => {
+            let output_incomplete = st.output_route_backfill_complete != Some(true);
+            let rewards_incomplete = st.rewards_route_backfill_complete != Some(true);
+            match (output_incomplete, rewards_incomplete) {
+                (true, true) => {
+                    Some("output and rewards historical route backfills are incomplete".to_string())
+                }
+                (true, false) => Some("output historical route backfill is incomplete".to_string()),
+                (false, true) => {
+                    Some("rewards historical route backfill is incomplete".to_string())
+                }
+                (false, false) => None,
+            }
+        }
     }
 }
 

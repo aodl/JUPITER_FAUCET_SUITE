@@ -3816,6 +3816,162 @@ mod tests {
     }
 
     #[test]
+    fn repaired_routes_rebuild_newest_first_across_ticks_without_double_counting() {
+        let _staking_id = configure_state(1);
+        let (source_id, output_id, rewards_id) = state::with_state(|st| {
+            (
+                account_identifier_text_for_account(&st.config.output_source_account),
+                account_identifier_text_for_account(&st.config.output_account),
+                account_identifier_text_for_account(&st.config.rewards_account),
+            )
+        });
+        state::with_state_mut(|st| {
+            st.total_output_e8s = Some(91_000_000);
+            st.last_indexed_output_tx_id = Some(91);
+            st.oldest_indexed_output_tx_id = Some(9);
+            st.output_route_index_descending = Some(false);
+            st.output_route_backfill_complete = Some(true);
+            st.total_rewards_e8s = Some(82_000_000);
+            st.last_indexed_rewards_tx_id = Some(82);
+            st.oldest_indexed_rewards_tx_id = Some(8);
+            st.rewards_route_index_descending = Some(false);
+            st.rewards_route_backfill_complete = Some(true);
+        });
+        state::with_root_state_mut(crate::repair_legacy_ascending_route_indexes_after_upgrade);
+
+        let route_pages = |route_id: &str| {
+            let from_for = |id| {
+                if id == 250 || id == 750 {
+                    "unrelated-source"
+                } else {
+                    source_id.as_str()
+                }
+            };
+            vec![
+                index_page(
+                    (501..=1_000)
+                        .rev()
+                        .map(|id| transfer_between_accounts_tx(id, from_for(id), route_id, 1, id))
+                        .collect(),
+                ),
+                index_page(
+                    std::iter::once(501)
+                        .chain((2..=500).rev())
+                        .map(|id| transfer_between_accounts_tx(id, from_for(id), route_id, 1, id))
+                        .collect(),
+                ),
+                index_page(vec![
+                    transfer_between_accounts_tx(2, &source_id, route_id, 1, 2),
+                    transfer_between_accounts_tx(1, &source_id, route_id, 1, 1),
+                ]),
+            ]
+        };
+        let mut responses = route_pages(&output_id);
+        responses.extend(route_pages(&rewards_id));
+        responses.extend([
+            index_page(vec![
+                transfer_between_accounts_tx(1_001, &source_id, &output_id, 7, 1_001),
+                transfer_between_accounts_tx(1_000, &source_id, &output_id, 1, 1_000),
+            ]),
+            index_page(vec![
+                transfer_between_accounts_tx(1_001, &source_id, &rewards_id, 11, 1_001),
+                transfer_between_accounts_tx(1_000, &source_id, &rewards_id, 1, 1_000),
+            ]),
+            index_page(vec![transfer_between_accounts_tx(
+                1_001, &source_id, &output_id, 7, 1_001,
+            )]),
+            index_page(vec![transfer_between_accounts_tx(
+                1_001,
+                &source_id,
+                &rewards_id,
+                11,
+                1_001,
+            )]),
+        ]);
+        let index = MockIndexClient::new(responses);
+
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(0));
+            assert_eq!(st.total_rewards_e8s, Some(0));
+            assert_eq!(
+                crate::read_model::route_index_fault(st).as_deref(),
+                Some("output and rewards historical route backfills are incomplete")
+            );
+        });
+
+        block_on(process_route_indexing(100, 200, &index, main_lease())).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(499));
+            assert_eq!(st.oldest_indexed_output_tx_id, Some(501));
+            assert_eq!(st.output_route_backfill_complete, Some(false));
+        });
+        let restored = state::restore_state_from_stable().expect("output progress persisted");
+        state::set_state_root_only(restored);
+
+        block_on(process_route_indexing(101, 201, &index, main_lease())).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(997));
+            assert_eq!(st.oldest_indexed_output_tx_id, Some(2));
+            assert_eq!(st.output_route_backfill_complete, Some(false));
+        });
+        block_on(process_route_indexing(102, 202, &index, main_lease())).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(998));
+            assert_eq!(st.last_indexed_output_tx_id, Some(1_000));
+            assert_eq!(st.oldest_indexed_output_tx_id, Some(1));
+            assert_eq!(st.output_route_backfill_complete, Some(true));
+            assert_eq!(
+                crate::read_model::route_index_fault(st).as_deref(),
+                Some("rewards historical route backfill is incomplete")
+            );
+        });
+
+        block_on(process_route_indexing(103, 203, &index, main_lease())).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_rewards_e8s, Some(499));
+            assert_eq!(st.oldest_indexed_rewards_tx_id, Some(501));
+            assert_eq!(st.rewards_route_backfill_complete, Some(false));
+        });
+        let restored = state::restore_state_from_stable().expect("rewards progress persisted");
+        state::set_state_root_only(restored);
+
+        block_on(process_route_indexing(104, 204, &index, main_lease())).unwrap();
+        block_on(process_route_indexing(105, 205, &index, main_lease())).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_rewards_e8s, Some(998));
+            assert_eq!(st.last_indexed_rewards_tx_id, Some(1_000));
+            assert_eq!(st.oldest_indexed_rewards_tx_id, Some(1));
+            assert_eq!(st.rewards_route_backfill_complete, Some(true));
+            assert!(crate::read_model::route_index_fault(st).is_none());
+            assert!(st.active_route_sweep.is_none());
+        });
+
+        block_on(process_route_indexing(106, 206, &index, main_lease())).unwrap();
+        block_on(process_route_indexing(107, 207, &index, main_lease())).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(1_005));
+            assert_eq!(st.total_rewards_e8s, Some(1_009));
+        });
+        block_on(process_route_indexing(108, 208, &index, main_lease())).unwrap();
+        block_on(process_route_indexing(109, 209, &index, main_lease())).unwrap();
+        state::with_state(|st| {
+            assert_eq!(st.total_output_e8s, Some(1_005));
+            assert_eq!(st.total_rewards_e8s, Some(1_009));
+            assert!(crate::read_model::route_index_fault(st).is_none());
+        });
+
+        let calls = index.calls();
+        assert_eq!(
+            calls
+                .iter()
+                .take(6)
+                .map(|(_, start, _)| *start)
+                .collect::<Vec<_>>(),
+            vec![None, Some(501), Some(2), None, Some(501), Some(2)]
+        );
+    }
+
+    #[test]
     fn descending_output_catch_up_uses_original_boundary_across_multiple_pages() {
         let _staking_id = configure_state(3);
         let (source, output) =
