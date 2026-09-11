@@ -351,16 +351,16 @@ Relay upgrades are replacement-style and non-resumable. Relay does not support n
 
 Install, reinstall and upgrade all initialize ordinary heap state from full `InitArgs`. An upgrade therefore resets ordinary cycle samples, deficits, cached fee/conversion state, default-account allocation work and subaccount-1 forwarding state.
 
-Two versioned stable journals survive ordinary same-canister upgrades:
+Relay preserves two independent stable state areas across ordinary same-canister upgrades:
 
-- stable memory 0 contains the timestamp of the latest reward adjudication that consumed the weekly cadence (retained under its existing stable field name) and any fully pinned multi-recipient reward payout with its per-recipient progress;
-- stable memory 1 independently stores splitter execution transactions, driver-fencing revisions and quarantine evidence.
+- stable memory 0 contains the timestamp of the latest reward adjudication that consumed the weekly cadence (retained under its existing stable field name) and compact, self-consuming pending reward payout state with its per-recipient progress;
+- stable memory 1 independently stores the durable fixed-splitter execution journal, including transfer identities, driver-fencing revisions and quarantine evidence.
 
 Memory 0 keeps its deployed V3 variant label and stores only the completed cadence timestamp plus a compact, self-consuming payout. Removed record fields from the earlier wider V3 payload are ignored through Candid record-width compatibility; there is no V1/V2 migration implementation. Reward attribution reconstructs provenance and its temporal cutoff from ICP and reward Ledger/Index history; neither side has a stable attribution cursor, and attribution does not derive from the mutable splitter execution journal in memory 1.
 
 Fixed splitter transfers are intentionally different from perpetual best-effort streams: they divide finite one-shot funds, so memory 1 retains stronger durable duplicate-safe fencing and fail-closed quarantine semantics. Historian canister creation and controller removal likewise remain strongly journalled because those are irreversible security boundaries.
 
-An active splitter requires the replacement args to retain the same ICP Ledger, otherwise the upgrade fails closed. A reinstall clears both journals with the canister's stable memory. Avoid controller-managed upgrades during active value-moving work where practical, especially ICP top-ups, ambiguous ordinary ICP transfers, CMC notify sequences, active splitter work, or pending reward transfers. After upgrade, verify the fresh `CONFIG` log, stable-journal continuation where applicable, the first successful `BaselineOnly` ordinary allocation tick, and managed-canister cycle balances. Controllerless self-service Relays cannot be upgraded and are not reconstructed by Historian.
+An active splitter requires the replacement args to retain the same ICP Ledger, otherwise the upgrade fails closed. A reinstall clears both stable state areas with the canister's stable memory. Avoid controller-managed upgrades during active value-moving work where practical, especially ICP top-ups, ambiguous ordinary ICP transfers, CMC notify sequences, active splitter work, or pending reward transfers. After upgrade, verify the fresh `CONFIG` log, stable-state continuation where applicable, the first successful `BaselineOnly` ordinary allocation tick, and managed-canister cycle balances. Controllerless self-service Relays cannot be upgraded and are not reconstructed by Historian.
 
 The suite-wide lifecycle matrix and deployment cautions live in [`../../docs/operations/deployment.md`](../../docs/operations/deployment.md).
 
@@ -439,7 +439,7 @@ cargo run -p xtask -- relay_pocketic_integration
 cargo run -p xtask -- relay_all
 ```
 
-The Relay integration suite covers configuration wiring, cycles probes, CMC top-ups, equal surplus routing, all-cycles mode, live-fee handling, duplicate-safe transfer recovery, transfer caps, subaccount-1 forwarding, fixed splitters, upgrade/stable-journal behavior, production/debug API boundaries, and SNS reward attribution. See [`../../tools/xtask/README.md`](../../tools/xtask/README.md) for the suite-wide matrix.
+The Relay integration suite covers configuration wiring, cycles probes, CMC top-ups, equal surplus routing, all-cycles mode, live-fee handling, duplicate-safe transfer recovery, transfer caps, subaccount-1 forwarding, fixed splitters, upgrade/stable-state behavior, production/debug API boundaries, and SNS reward attribution. See [`../../tools/xtask/README.md`](../../tools/xtask/README.md) for the suite-wide matrix.
 
 For canonical release artifacts and module-hash verification, use the pinned Docker build:
 
@@ -464,7 +464,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
 
 After an upgrade, verify the fresh `CONFIG` log, expect the first successful complete ordinary allocation sample to be `BaselineOnly`, inspect managed-canister cycles balances, and reconcile any externally ambiguous pre-upgrade ordinary work before increasing funding.
 
-Fresh install and destructive reinstall use the same checked-in args with `--mode install` or `--mode reinstall`. Reinstall also clears the stable journals and should be used only for an intentionally fresh deployment.
+Fresh install and destructive reinstall use the same checked-in args with `--mode install` or `--mode reinstall`. Reinstall also clears the compact reward state and splitter journal and should be used only for an intentionally fresh deployment.
 
 Useful production checks:
 
