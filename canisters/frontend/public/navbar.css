@@ -307,6 +307,14 @@ button {
   .nav-panel-scroll-region {
     max-height: none;
   }
+
+  /* Extra scrollable clearance, once per pane even when pages nest scroll regions. */
+  :is(.nav-panel-scroll-region, .nav-panel-page):not(:has(.nav-panel-scroll-region, .nav-panel-page))::after {
+    content: "";
+    display: block;
+    height: 12px;
+    flex: 0 0 12px;
+  }
 }
 
 .domain-pane-list {

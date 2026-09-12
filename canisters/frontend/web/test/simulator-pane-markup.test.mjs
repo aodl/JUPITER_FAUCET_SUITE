@@ -1038,6 +1038,13 @@ test('Tracker results render chart controls and graphs before explanatory text',
 
 
 
+test('mobile panes add one non-shrinking trailing scroll spacer without enlarging the shell', () => {
+  const mobileCss = navbarCss.slice(navbarCss.indexOf('@media (max-width: 720px)'));
+  assert.match(mobileCss, /\.nav-panel \{[^}]*padding: 20px 18px 18px;/);
+  assert.doesNotMatch(navbarCss, /padding: 20px 18px 30px;/);
+  assert.match(mobileCss, /:is\(\.nav-panel-scroll-region, \.nav-panel-page\):not\(:has\(\.nav-panel-scroll-region, \.nav-panel-page\)\)::after \{\s*content: "";\s*display: block;\s*height: 12px;\s*flex: 0 0 12px;\s*\}/);
+});
+
 test('paged nav panel content keeps a stable panel height while preserving overflow scrolling', () => {
   assert.match(navbarCss, /\.nav-panel \{[\s\S]*height: min\(720px, calc\(100dvh - 112px\)\);[\s\S]*overflow: hidden;[\s\S]*\}/);
   assert.match(navbarCss, /\.nav-panel-page\.is-active \{[\s\S]*display: flex;[\s\S]*flex: 1;[\s\S]*overflow: auto;[\s\S]*\}/);
