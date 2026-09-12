@@ -326,7 +326,7 @@ Routine upgrades pass no argument and preserve configuration, active/staging map
 | outer `opt record { reward_sns_root_canister_id = opt null }` | clear Root and invalidate both owner maps |
 | outer `opt record { reward_sns_root_canister_id = opt opt principal "..." }` | replace Root and invalidate both owner maps |
 
-For the first upgrade from the former empty placeholder, prepare a temporary reviewed argument file containing:
+During the 2026-09-11 rollout, the former empty production placeholder was configured with the temporary OpenChat Root using a reviewed argument file containing:
 
 ```did
 (opt record {
@@ -334,7 +334,7 @@ For the first upgrade from the former empty placeholder, prepare a temporary rev
 })
 ```
 
-Then use the ordinary canonical deployment workflow with that temporary file as `--args-file`. Codex must not perform this production upgrade. After completion, wait for `SNS_REWARD_SCAN status=completed` and query `get_relay_reward_context`; confirm the Root, Root-resolved Governance/Ledger, snapshot ID, and scan timestamps. Relay `CONFIG` logs must show canonical SNS-rewards canister `alk7f-5aaaa-aaaar-qb4ra-cai` and ICP Index `qhbym-qaaaa-aaaaa-aaafq-cai`.
+That first configuration is complete. OpenChat remains the temporary development configuration; the later switch to the reviewed jUP SNS Root is a separate future operation. Operational verification still requires `SNS_REWARD_SCAN status=completed` and `get_relay_reward_context` to confirm the Root, Root-resolved Governance/Ledger, snapshot ID, and scan timestamps. Relay `CONFIG` logs must show canonical SNS-rewards canister `alk7f-5aaaa-aaaar-qb4ra-cai` and ICP Index `qhbym-qaaaa-aaaaa-aaafq-cai`.
 
 Before switching from OpenChat to jUP:
 

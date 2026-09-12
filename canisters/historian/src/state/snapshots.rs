@@ -28,7 +28,6 @@ pub(super) fn build_root_snapshot(st: &State) -> StableRootState {
         qualifying_commitment_count: st.qualifying_commitment_count,
         total_output_e8s: st.total_output_e8s,
         total_rewards_e8s: st.total_rewards_e8s,
-        icp_burned_e8s: st.icp_burned_e8s,
         recent_commitments: st.recent_commitments.clone(),
         recent_under_threshold_commitments: st.recent_under_threshold_commitments.clone(),
         recent_neuron_commitments: st.recent_neuron_commitments.clone(),
@@ -36,7 +35,6 @@ pub(super) fn build_root_snapshot(st: &State) -> StableRootState {
             .recent_under_threshold_neuron_commitments
             .clone(),
         recent_invalid_commitments: st.recent_invalid_commitments.clone(),
-        recent_burns: st.recent_burns.clone(),
         last_index_run_ts: st.last_index_run_ts,
         commitment_index_fault: st.commitment_index_fault.clone(),
         icp_xdr_rate: st.icp_xdr_rate.clone(),

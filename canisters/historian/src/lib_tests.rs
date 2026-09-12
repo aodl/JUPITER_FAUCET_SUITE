@@ -214,13 +214,11 @@ mod tests {
             neuron_commitment_history: BTreeMap::new(),
             total_output_e8s: None,
             total_rewards_e8s: None,
-            icp_burned_e8s: None,
             recent_commitments: None,
             recent_under_threshold_commitments: None,
             recent_neuron_commitments: None,
             recent_under_threshold_neuron_commitments: None,
             recent_invalid_commitments: None,
-            recent_burns: None,
             last_index_run_ts: None,
             commitment_index_fault: None,
             icp_xdr_rate: None,
@@ -2615,7 +2613,6 @@ mod tests {
                 last_commitment_ts: Some(3),
                 last_cycles_probe_ts: Some(9),
                 last_cycles_probe_result: None,
-                ..Default::default()
             },
         );
 

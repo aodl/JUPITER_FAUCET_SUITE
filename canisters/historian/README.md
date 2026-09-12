@@ -267,6 +267,8 @@ Stable memory 29 is the authoritative lifetime commitment-route map (the public 
 
 Healthy production requires the commitment-route health query to report `complete_from_genesis = true` and `commitment_index_fault = null`, and `get_public_status()` to report `route_index_fault = null`, before and after a routine upgrade. A current newest-first output/rewards route reports an incomplete route fault until its authoritative historical backfill completes. After Historian is started, allow bounded main ticks to finish any such backfill before asserting that output/rewards indexing is healthy. `qualifying_commitment_count` must not decrease across the upgrade; an increase after restart/indexing is permitted and may represent newly indexed qualifying endowments. Bounded retained histories must never be used to reconstruct or reduce the lifetime count. Outside the completed 2026-09-11 repair, investigate the invariant violation rather than initiating a historical rebuild; that includes any staking completeness regression, commitment fault, unsupported route ordering, or route fault that does not clear after authoritative backfill. Existing production Historian must be upgraded in place and must not be reinstalled.
 
+Older stable root and metadata records may contain retired ICP-burn accounting fields, superseded by Total Output / Total Rewards. Current code ignores those extra fields through ordinary Candid record compatibility; no burn-state migration or recovery mechanism is needed.
+
 ### Init args
 
 Required:

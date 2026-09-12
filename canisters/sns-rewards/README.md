@@ -39,7 +39,7 @@ Configuration, active snapshot metadata, scan cursor, and both owner maps are st
 
 Clearing or changing Root immediately clears both maps, the active snapshot, and any in-progress scan. Ownership from OpenChat therefore cannot remain active after switching to jUP.
 
-Fresh install arguments are checked in at [`mainnet-install-args.did`](mainnet-install-args.did). Because the existing production principal was previously an empty placeholder, the first configuration uses a temporary nested upgrade argument rather than the fresh-install file; see [deployment operations](../../docs/operations/deployment.md).
+Fresh install arguments are checked in at [`mainnet-install-args.did`](mainnet-install-args.did). During the 2026-09-11 rollout, the former empty production placeholder was configured with the temporary OpenChat Root using a reviewed nested upgrade argument. That first configuration is complete; OpenChat remains the development configuration until the future switch to the reviewed jUP SNS Root; see [deployment operations](../../docs/operations/deployment.md).
 
 ## Operations
 

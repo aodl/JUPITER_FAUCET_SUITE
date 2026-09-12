@@ -206,8 +206,8 @@ pub(super) fn debug_set_last_indexed_staking_tx_id(tx_id: Option<u64>) {
         // This debug hook seeds only the public/latest staking cursor. Reset the
         // derived ordering/backfill metadata so the next driver tick redetects
         // the real index ordering and, for newest-first indexes, resumes older
-        // backfill from the seeded cursor instead of staying in legacy ascending
-        // mode.
+        // backfill from the seeded cursor instead of retaining unsupported
+        // ascending ordering.
         st.oldest_indexed_staking_tx_id = tx_id;
         st.staking_index_descending = None;
         st.staking_backfill_complete = Some(false);

@@ -978,39 +978,6 @@ mod tests {
     }
 
     #[test]
-    fn pending_notification_decodes_legacy_state_without_transfer_memo() {
-        #[derive(CandidType, Deserialize)]
-        enum LegacyTransferKind {
-            Beneficiary,
-        }
-
-        #[derive(CandidType, Deserialize)]
-        struct LegacyPendingNotification {
-            kind: LegacyTransferKind,
-            beneficiary: Principal,
-            gross_share_e8s: u64,
-            amount_e8s: u64,
-            block_index: u64,
-            next_start: Option<u64>,
-        }
-
-        let legacy = LegacyPendingNotification {
-            kind: LegacyTransferKind::Beneficiary,
-            beneficiary: principal(&[8]),
-            gross_share_e8s: 50,
-            amount_e8s: 40,
-            block_index: 9,
-            next_start: Some(10),
-        };
-        let bytes = candid::encode_one(legacy).expect("encode legacy pending notification");
-        let decoded: PendingNotification =
-            candid::decode_one(&bytes).expect("decode legacy pending notification");
-        assert_eq!(decoded.kind, TransferKind::Beneficiary);
-        assert_eq!(decoded.beneficiary, principal(&[8]));
-        assert_eq!(decoded.transfer_memo, None);
-    }
-
-    #[test]
     fn current_state_roundtrip_preserves_nonzero_remainder_to_relay_e8s() {
         let mut st = State::new(sample_config(), 1_000);
         st.last_summary = Some(Summary {

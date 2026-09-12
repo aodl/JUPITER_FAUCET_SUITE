@@ -84,24 +84,4 @@ pub(crate) fn approved_relay_onchain_module_hash() -> Option<[u8; 32]> {
     approved_self_service_relay_wasm().map(|bytes| Sha256::digest(bytes).into())
 }
 
-#[allow(dead_code)]
-pub(crate) fn approved_self_service_relay_wasm_hash_hex() -> Option<String> {
-    approved_relay_raw_wasm_hash_hex()
-}
-
-#[allow(dead_code)]
-pub(crate) fn approved_relay_wasm_hash() -> Option<[u8; 32]> {
-    #[cfg(test)]
-    {
-        use sha2::{Digest, Sha256};
-        Some(Sha256::digest(b"jupiter-historian-test-relay-raw-wasm").into())
-    }
-    #[cfg(not(test))]
-    {
-        let hash = approved_relay_raw_wasm_hash_hex()?;
-        let bytes = hex::decode(hash).ok()?;
-        bytes.try_into().ok()
-    }
-}
-
 ic_cdk::export_candid!();

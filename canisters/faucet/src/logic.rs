@@ -61,11 +61,6 @@ impl PayoutTarget {
     }
 }
 
-#[allow(dead_code)]
-fn parse_beneficiary_from_memo(memo: &[u8]) -> Option<Principal> {
-    jupiter_memo_policy::parse_target_canister_principal_from_memo(memo)
-}
-
 fn parse_payout_target_from_memo(memo: &[u8]) -> Option<PayoutTarget> {
     match jupiter_memo_policy::parse_memo_directive(memo)? {
         MemoDirective::TopUp { canister_id } => Some(PayoutTarget::CyclesTopUp { canister_id }),

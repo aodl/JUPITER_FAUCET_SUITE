@@ -157,14 +157,6 @@ pub(crate) struct RecentNeuronCommitment {
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RecentBurn {
-    pub canister_id: Principal,
-    pub tx_id: u64,
-    pub timestamp_nanos: Option<u64>,
-    pub amount_e8s: u64,
-}
-
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct CommitmentIndexFault {
     pub observed_at_ts: u64,
     pub last_cursor_tx_id: Option<u64>,
@@ -193,12 +185,6 @@ pub struct CanisterMeta {
     pub last_commitment_ts: Option<u64>,
     pub last_cycles_probe_ts: Option<u64>,
     pub last_cycles_probe_result: Option<CyclesProbeResult>,
-    #[serde(default)]
-    pub last_burn_tx_id: Option<u64>,
-    #[serde(default)]
-    pub last_burn_scan_tx_id: Option<u64>,
-    #[serde(default)]
-    pub burned_e8s: u64,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -277,12 +263,6 @@ pub(crate) struct StableCanisterMeta {
     pub last_commitment_ts: Option<u64>,
     pub last_cycles_probe_ts: Option<u64>,
     pub last_cycles_probe_result: Option<CyclesProbeResult>,
-    #[serde(default)]
-    pub last_burn_tx_id: Option<u64>,
-    #[serde(default)]
-    pub last_burn_scan_tx_id: Option<u64>,
-    #[serde(default)]
-    pub burned_e8s: Option<u64>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -349,8 +329,6 @@ pub(crate) struct StableRootState {
     #[serde(default)]
     pub total_rewards_e8s: Option<u64>,
     #[serde(default)]
-    pub icp_burned_e8s: Option<u64>,
-    #[serde(default)]
     pub recent_commitments: Option<Vec<RecentCommitment>>,
     #[serde(default)]
     pub recent_under_threshold_commitments: Option<Vec<RecentCommitment>>,
@@ -360,8 +338,6 @@ pub(crate) struct StableRootState {
     pub recent_under_threshold_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
     #[serde(default)]
     pub recent_invalid_commitments: Option<Vec<InvalidCommitment>>,
-    #[serde(default)]
-    pub recent_burns: Option<Vec<RecentBurn>>,
     #[serde(default)]
     pub last_index_run_ts: Option<u64>,
     #[serde(default)]
@@ -1017,7 +993,6 @@ pub(crate) struct State {
     pub neuron_commitment_history: BTreeMap<u64, Vec<CommitmentSample>>,
     pub total_output_e8s: Option<u64>,
     pub total_rewards_e8s: Option<u64>,
-    pub icp_burned_e8s: Option<u64>,
     pub recent_commitments: Option<Vec<RecentCommitment>>,
     pub recent_under_threshold_commitments: Option<Vec<RecentCommitment>>,
     #[serde(default)]
@@ -1025,7 +1000,6 @@ pub(crate) struct State {
     #[serde(default)]
     pub recent_under_threshold_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
     pub recent_invalid_commitments: Option<Vec<InvalidCommitment>>,
-    pub recent_burns: Option<Vec<RecentBurn>>,
     pub last_index_run_ts: Option<u64>,
     pub commitment_index_fault: Option<CommitmentIndexFault>,
     pub icp_xdr_rate: Option<IcpXdrRateSnapshot>,
@@ -1090,13 +1064,11 @@ impl State {
             neuron_commitment_history: BTreeMap::new(),
             total_output_e8s: Some(0),
             total_rewards_e8s: Some(0),
-            icp_burned_e8s: Some(0),
             recent_commitments: Some(Vec::new()),
             recent_under_threshold_commitments: Some(Vec::new()),
             recent_neuron_commitments: Some(Vec::new()),
             recent_under_threshold_neuron_commitments: Some(Vec::new()),
             recent_invalid_commitments: Some(Vec::new()),
-            recent_burns: Some(Vec::new()),
             last_index_run_ts: Some(0),
             commitment_index_fault: None,
             icp_xdr_rate: None,

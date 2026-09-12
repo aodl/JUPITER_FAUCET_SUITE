@@ -23,6 +23,14 @@ mod tests {
     }
 
     #[derive(CandidType, Serialize)]
+    struct FrozenRecentBurn {
+        canister_id: Principal,
+        tx_id: u64,
+        timestamp_nanos: Option<u64>,
+        amount_e8s: u64,
+    }
+
+    #[derive(CandidType, Serialize)]
     struct DeployedStableRootState {
         config: StableConfig,
         last_indexed_staking_tx_id: Option<u64>,
@@ -58,12 +66,21 @@ mod tests {
         recent_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
         recent_under_threshold_neuron_commitments: Option<Vec<RecentNeuronCommitment>>,
         recent_invalid_commitments: Option<Vec<InvalidCommitment>>,
-        recent_burns: Option<Vec<RecentBurn>>,
+        recent_burns: Option<Vec<FrozenRecentBurn>>,
         last_index_run_ts: Option<u64>,
         commitment_index_fault: Option<CommitmentIndexFault>,
         icp_xdr_rate: Option<IcpXdrRateSnapshot>,
         last_icp_xdr_rate_attempt_ts: Option<u64>,
         last_icp_xdr_rate_error: Option<String>,
+        active_staking_catch_up: Option<DescendingIndexCatchUp>,
+        active_output_catch_up: Option<DescendingIndexCatchUp>,
+        active_rewards_catch_up: Option<DescendingIndexCatchUp>,
+        commitment_index_lock_expires_at_ts: Option<u64>,
+        commitment_index_lock_generation: Option<u64>,
+        commitment_index_lock_owner: Option<CommitmentIndexLeaseOwner>,
+        endowment_refresh_next_allowed_ts: Option<u64>,
+        endowment_refresh_ineffective_streak: Option<u8>,
+        commitment_index_revision: Option<u64>,
     }
 
     // Frozen test-only shapes for values that may remain independently persisted in
@@ -141,19 +158,33 @@ mod tests {
                 qualifying_commitment_count: value.qualifying_commitment_count,
                 total_output_e8s: value.total_output_e8s,
                 total_rewards_e8s: value.total_rewards_e8s,
-                icp_burned_e8s: value.icp_burned_e8s,
+                icp_burned_e8s: Some(123_456_789),
                 recent_commitments: value.recent_commitments,
                 recent_under_threshold_commitments: value.recent_under_threshold_commitments,
                 recent_neuron_commitments: value.recent_neuron_commitments,
                 recent_under_threshold_neuron_commitments: value
                     .recent_under_threshold_neuron_commitments,
                 recent_invalid_commitments: value.recent_invalid_commitments,
-                recent_burns: value.recent_burns,
+                recent_burns: Some(vec![FrozenRecentBurn {
+                    canister_id: principal(&[42]),
+                    tx_id: 456,
+                    timestamp_nanos: Some(789),
+                    amount_e8s: 123_456,
+                }]),
                 last_index_run_ts: value.last_index_run_ts,
                 commitment_index_fault: value.commitment_index_fault,
                 icp_xdr_rate: value.icp_xdr_rate,
                 last_icp_xdr_rate_attempt_ts: value.last_icp_xdr_rate_attempt_ts,
                 last_icp_xdr_rate_error: value.last_icp_xdr_rate_error,
+                active_staking_catch_up: value.active_staking_catch_up,
+                active_output_catch_up: value.active_output_catch_up,
+                active_rewards_catch_up: value.active_rewards_catch_up,
+                commitment_index_lock_expires_at_ts: value.commitment_index_lock_expires_at_ts,
+                commitment_index_lock_generation: value.commitment_index_lock_generation,
+                commitment_index_lock_owner: value.commitment_index_lock_owner,
+                endowment_refresh_next_allowed_ts: value.endowment_refresh_next_allowed_ts,
+                endowment_refresh_ineffective_streak: value.endowment_refresh_ineffective_streak,
+                commitment_index_revision: value.commitment_index_revision,
             }
         }
     }
@@ -483,10 +514,9 @@ mod tests {
         });
         state.initial_cycles_probe_queue = vec![principal(&[31])];
         let mut expected = build_root_snapshot(&state);
-        // This fixture predates the bounded catch-up/endowment-refresh fields. The
-        // compatibility contract is that every deployed field survives exactly,
-        // while fields introduced later decode as absent and are materialized by
-        // restore_state_current.
+        // Exercise absent continuation/refresh values alongside the wider deployed
+        // record. Supported fields must survive exactly; ordinary restoration
+        // materializes the existing defaults for absent optional values.
         expected.active_staking_catch_up = None;
         expected.active_output_catch_up = None;
         expected.active_rewards_catch_up = None;
@@ -579,6 +609,97 @@ mod tests {
                 total_qualifying_committed_e8s: 456_000_000,
             }
         );
+    }
+
+    #[test]
+    fn old_wider_root_restores_and_persists_without_burn_state() {
+        reset_test_storage();
+        let mut state = State::new(sample_config(), 1_000);
+        state.last_indexed_staking_tx_id = Some(100);
+        state.oldest_indexed_staking_tx_id = Some(1);
+        state.staking_index_descending = Some(true);
+        state.staking_backfill_complete = Some(true);
+        state.commitment_route_rollups_complete_from_genesis = Some(true);
+        state.last_indexed_output_tx_id = Some(200);
+        state.oldest_indexed_output_tx_id = Some(2);
+        state.output_route_index_descending = Some(true);
+        state.output_route_backfill_complete = Some(false);
+        state.last_indexed_rewards_tx_id = Some(300);
+        state.oldest_indexed_rewards_tx_id = Some(3);
+        state.rewards_route_index_descending = Some(true);
+        state.rewards_route_backfill_complete = Some(false);
+        state.total_output_e8s = Some(123_456);
+        state.total_rewards_e8s = Some(654_321);
+        state.qualifying_commitment_count = Some(56);
+        state.commitment_index_fault = Some(CommitmentIndexFault {
+            observed_at_ts: 900,
+            last_cursor_tx_id: Some(99),
+            offending_tx_id: 100,
+            message: "preserve existing fault".into(),
+        });
+        state.last_sns_discovery_ts = 800;
+        state.last_completed_cycles_sweep_ts = 700;
+        state.last_completed_route_sweep_ts = Some(600);
+        state.active_cycles_sweep = Some(ActiveCyclesSweep {
+            started_at_ts_nanos: 650,
+            canisters: vec![principal(&[34])],
+            next_index: 0,
+        });
+        state.icp_xdr_rate = Some(IcpXdrRateSnapshot {
+            rate: 400_000,
+            decimals: 4,
+            timestamp: 750,
+            fetched_at_ts: 760,
+        });
+        state.initial_cycles_probe_queue = vec![principal(&[31]), principal(&[32])];
+        state.active_sns_discovery = Some(ActiveSnsDiscovery {
+            started_at_ts_nanos: 500,
+            root_canister_ids: vec![principal(&[33])],
+            next_index: 0,
+        });
+        state.active_route_sweep = Some(ActiveRouteSweep {
+            started_at_ts_nanos: 400,
+            next_index: 1,
+        });
+        let continuation = DescendingIndexCatchUp {
+            boundary_tx_id: 10,
+            observed_head_tx_id: 300,
+            next_start_tx_id: Some(250),
+        };
+        state.active_staking_catch_up = Some(continuation.clone());
+        state.active_output_catch_up = Some(continuation.clone());
+        state.active_rewards_catch_up = Some(continuation);
+        let expected = build_root_snapshot(&state);
+        let expected_bytes = candid::encode_one(&expected).unwrap();
+        let wider = DeployedStableRootState::from(expected);
+        assert_eq!(wider.icp_burned_e8s, Some(123_456_789));
+        assert_eq!(wider.recent_burns.as_ref().unwrap()[0].amount_e8s, 123_456);
+        let old_bytes = candid::encode_one(DeployedVersionedStableState::Current(wider)).unwrap();
+
+        // Seed only the root cell with the old wire payload, then use the ordinary
+        // production stable-cell decoder and restoration/persistence path.
+        STABLE_ROOT_STATE.with(|cell| *cell.borrow_mut() = None);
+        MEMORY_MANAGER.with(|manager| {
+            let memory = manager.borrow().get(MemoryId::new(0));
+            let mut cell = StableCell::init(memory, Vec::<u8>::new());
+            cell.set(old_bytes.clone());
+        });
+        for _ in 0..2 {
+            let restored = restore_state_from_stable().expect("old wider root must restore");
+            assert_eq!(
+                candid::encode_one(build_root_snapshot(&restored)).unwrap(),
+                expected_bytes
+            );
+            set_state(restored);
+            with_root_stable_cell(|cell| {
+                let VersionedStableState::Current(root) = cell.get() else {
+                    panic!("expected current root");
+                };
+                assert_eq!(candid::encode_one(root).unwrap(), expected_bytes);
+                assert_ne!(cell.get().to_bytes().as_ref(), old_bytes.as_slice());
+            });
+            STABLE_ROOT_STATE.with(|cell| *cell.borrow_mut() = None);
+        }
     }
 
     #[test]
@@ -776,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_canister_meta_with_probe_result_decodes() {
+    fn old_wider_canister_meta_decodes_without_burn_state() {
         let frozen = FrozenMapCanisterMeta {
             first_seen_ts: Some(1),
             last_commitment_ts: Some(2),
@@ -789,7 +910,7 @@ mod tests {
             burned_e8s: Some(6),
         };
         let bytes = candid::encode_one(frozen).unwrap();
-        let decoded = StableCanisterMeta::from_bytes(Cow::Owned(bytes));
+        let decoded = StableCanisterMeta::from_bytes(Cow::Borrowed(&bytes));
         assert_eq!(decoded.first_seen_ts, Some(1));
         assert_eq!(decoded.last_commitment_ts, Some(2));
         assert_eq!(decoded.last_cycles_probe_ts, Some(3));
@@ -797,9 +918,8 @@ mod tests {
             decoded.last_cycles_probe_result,
             Some(CyclesProbeResult::Ok(CyclesSampleSource::SnsRootSummary))
         );
-        assert_eq!(decoded.last_burn_tx_id, Some(4));
-        assert_eq!(decoded.last_burn_scan_tx_id, Some(5));
-        assert_eq!(decoded.burned_e8s, Some(6));
+        assert_ne!(decoded.to_bytes().as_ref(), bytes.as_slice());
+        assert_eq!(StableCanisterMeta::from_bytes(decoded.to_bytes()), decoded);
     }
 
     #[test]
@@ -1049,9 +1169,6 @@ mod tests {
                 last_cycles_probe_result: Some(CyclesProbeResult::Ok(
                     CyclesSampleSource::BlackholeStatus,
                 )),
-                last_burn_tx_id: Some(11),
-                last_burn_scan_tx_id: Some(12),
-                burned_e8s: 42,
             },
         );
         let mut cache = BTreeMap::new();
@@ -1099,8 +1216,8 @@ mod tests {
                 .per_canister_meta
                 .get(&canister_id)
                 .expect("missing canister meta")
-                .burned_e8s,
-            42
+                .last_cycles_probe_ts,
+            Some(88)
         );
         assert!(restored.memo_registered_canister_summaries_cache.is_none());
         assert!(restored
@@ -1111,7 +1228,6 @@ mod tests {
     #[test]
     fn with_state_mut_persists_recent_feeds_to_stable_storage() {
         reset_test_storage();
-        let canister_id = principal(&[10]);
         set_state(State::new(sample_config(), 6_000));
 
         with_state_mut(|st| {
@@ -1120,12 +1236,6 @@ mod tests {
                 timestamp_nanos: Some(120),
                 amount_e8s: 99,
                 memo_text: "<invalid memo>".to_string(),
-            }]);
-            st.recent_burns = Some(vec![RecentBurn {
-                canister_id,
-                tx_id: 13,
-                timestamp_nanos: Some(130),
-                amount_e8s: 55,
             }]);
             st.main_lock_state_ts = Some(66);
         });
@@ -1140,14 +1250,6 @@ mod tests {
                 .expect("missing invalid commitments")[0]
                 .tx_id,
             12
-        );
-        assert_eq!(
-            restored
-                .recent_burns
-                .as_ref()
-                .expect("missing recent burns")[0]
-                .canister_id,
-            canister_id
         );
     }
 
@@ -1228,9 +1330,6 @@ mod tests {
                 last_cycles_probe_result: Some(CyclesProbeResult::Ok(
                     CyclesSampleSource::SelfCanister,
                 )),
-                last_burn_tx_id: Some(4),
-                last_burn_scan_tx_id: Some(5),
-                burned_e8s: 6,
             },
         );
         set_state(st);

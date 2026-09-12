@@ -601,9 +601,6 @@ struct CanisterMeta {
     last_commitment_ts: Option<u64>,
     last_cycles_probe_ts: Option<u64>,
     last_cycles_probe_result: Option<CyclesProbeResult>,
-    last_burn_tx_id: Option<u64>,
-    last_burn_scan_tx_id: Option<u64>,
-    burned_e8s: u64,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
