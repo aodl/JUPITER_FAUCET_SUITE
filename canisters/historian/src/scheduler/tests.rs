@@ -3816,7 +3816,7 @@ mod tests {
     }
 
     #[test]
-    fn repaired_routes_rebuild_newest_first_across_ticks_without_double_counting() {
+    fn current_routes_backfill_newest_first_across_ticks_without_double_counting() {
         let _staking_id = configure_state(1);
         let (source_id, output_id, rewards_id) = state::with_state(|st| {
             (
@@ -3826,18 +3826,17 @@ mod tests {
             )
         });
         state::with_state_mut(|st| {
-            st.total_output_e8s = Some(91_000_000);
-            st.last_indexed_output_tx_id = Some(91);
-            st.oldest_indexed_output_tx_id = Some(9);
-            st.output_route_index_descending = Some(false);
-            st.output_route_backfill_complete = Some(true);
-            st.total_rewards_e8s = Some(82_000_000);
-            st.last_indexed_rewards_tx_id = Some(82);
-            st.oldest_indexed_rewards_tx_id = Some(8);
-            st.rewards_route_index_descending = Some(false);
-            st.rewards_route_backfill_complete = Some(true);
+            st.total_output_e8s = Some(0);
+            st.last_indexed_output_tx_id = None;
+            st.oldest_indexed_output_tx_id = None;
+            st.output_route_index_descending = Some(true);
+            st.output_route_backfill_complete = Some(false);
+            st.total_rewards_e8s = Some(0);
+            st.last_indexed_rewards_tx_id = None;
+            st.oldest_indexed_rewards_tx_id = None;
+            st.rewards_route_index_descending = Some(true);
+            st.rewards_route_backfill_complete = Some(false);
         });
-        state::with_root_state_mut(crate::repair_legacy_ascending_route_indexes_after_upgrade);
 
         let route_pages = |route_id: &str| {
             let from_for = |id| {

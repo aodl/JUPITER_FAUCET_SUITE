@@ -512,117 +512,6 @@ impl State {
     }
 }
 
-// One-hop pre-launch bridge for the live 07a01016...fa91af module, whose CONFIG log still exposes
-// blackhole_armed. Delete this isolated bridge immediately after that canister has upgraded and
-// persisted the current controller shape. The legacy authority fields are deliberately discarded.
-#[allow(dead_code)]
-#[derive(CandidType, Deserialize, Serialize, Clone)]
-struct LegacyControllerConfig {
-    staking_account: Account,
-    payout_subaccount: Option<[u8; 32]>,
-    ledger_canister_id: Principal,
-    index_canister_id: Principal,
-    cmc_canister_id: Principal,
-    governance_canister_id: Option<Principal>,
-    funding_source_account: Account,
-    rescue_controller: Principal,
-    blackhole_controller: Option<Principal>,
-    blackhole_armed: Option<bool>,
-    expected_first_staking_tx_id: Option<u64>,
-    main_interval_seconds: u64,
-    rescue_interval_seconds: u64,
-    min_tx_e8s: u64,
-    stake_recognition_delay_seconds: Option<u64>,
-}
-
-impl From<LegacyControllerConfig> for Config {
-    fn from(value: LegacyControllerConfig) -> Self {
-        Self {
-            staking_account: value.staking_account,
-            payout_subaccount: value.payout_subaccount,
-            ledger_canister_id: value.ledger_canister_id,
-            index_canister_id: value.index_canister_id,
-            cmc_canister_id: value.cmc_canister_id,
-            governance_canister_id: value.governance_canister_id,
-            funding_source_account: value.funding_source_account,
-            rescue_controller: value.rescue_controller,
-            autonomous_rescue_armed: None,
-            expected_first_staking_tx_id: value.expected_first_staking_tx_id,
-            main_interval_seconds: value.main_interval_seconds,
-            rescue_interval_seconds: value.rescue_interval_seconds,
-            min_tx_e8s: value.min_tx_e8s,
-            stake_recognition_delay_seconds: value.stake_recognition_delay_seconds,
-        }
-    }
-}
-
-#[allow(dead_code)]
-#[derive(CandidType, Deserialize, Serialize, Clone)]
-struct LegacyControllerState {
-    config: LegacyControllerConfig,
-    last_summary: Option<Summary>,
-    last_successful_transfer_ts: Option<u64>,
-    last_rescue_check_ts: u64,
-    rescue_triggered: bool,
-    blackhole_armed_since_ts: Option<u64>,
-    forced_rescue_reason: Option<ForcedRescueReason>,
-    skip_range_invariant_fault: Option<bool>,
-    consecutive_index_anchor_failures: Option<u8>,
-    consecutive_index_latest_invariant_failures: Option<u8>,
-    consecutive_index_latest_unreadable_failures: Option<u8>,
-    consecutive_cmc_zero_success_runs: Option<u8>,
-    last_observed_staking_balance_e8s: Option<u64>,
-    last_observed_latest_tx_id: Option<u64>,
-    main_lock_state_ts: Option<u64>,
-    payout_nonce: u64,
-    active_payout_job: Option<ActivePayoutJob>,
-    last_main_run_ts: u64,
-    current_round_start_time_nanos: Option<u64>,
-    current_round_start_staking_balance_e8s: Option<u64>,
-    current_round_start_latest_tx_id: Option<u64>,
-    last_processed_funding_tx_id: Option<u64>,
-    active_funding_scan: Option<FundingScanState>,
-}
-
-impl From<LegacyControllerState> for State {
-    fn from(value: LegacyControllerState) -> Self {
-        Self {
-            config: value.config.into(),
-            last_summary: value.last_summary,
-            last_successful_transfer_ts: value.last_successful_transfer_ts,
-            last_rescue_check_ts: value.last_rescue_check_ts,
-            rescue_triggered: false,
-            autonomous_rescue_armed_since_ts: None,
-            forced_rescue_reason: value.forced_rescue_reason,
-            skip_range_invariant_fault: value.skip_range_invariant_fault,
-            consecutive_index_anchor_failures: value.consecutive_index_anchor_failures,
-            consecutive_index_latest_invariant_failures: value
-                .consecutive_index_latest_invariant_failures,
-            consecutive_index_latest_unreadable_failures: value
-                .consecutive_index_latest_unreadable_failures,
-            consecutive_cmc_zero_success_runs: value.consecutive_cmc_zero_success_runs,
-            last_observed_staking_balance_e8s: value.last_observed_staking_balance_e8s,
-            last_observed_latest_tx_id: value.last_observed_latest_tx_id,
-            main_lock_state_ts: value.main_lock_state_ts,
-            payout_nonce: value.payout_nonce,
-            active_payout_job: value.active_payout_job,
-            last_main_run_ts: value.last_main_run_ts,
-            current_round_start_time_nanos: value.current_round_start_time_nanos,
-            current_round_start_staking_balance_e8s: value.current_round_start_staking_balance_e8s,
-            current_round_start_latest_tx_id: value.current_round_start_latest_tx_id,
-            last_processed_funding_tx_id: value.last_processed_funding_tx_id,
-            active_funding_scan: value.active_funding_scan,
-        }
-    }
-}
-
-#[allow(clippy::large_enum_variant)]
-#[derive(CandidType, Deserialize, Serialize, Clone)]
-enum LegacyControllerVersionedStableState {
-    Uninitialized,
-    V1(LegacyControllerState),
-}
-
 pub(crate) const UPGRADE_QUIESCENCE_ERROR: &str =
     "faucet upgrade requires no active payout job; allow the payout to finish before upgrading";
 
@@ -635,47 +524,20 @@ pub(crate) enum VersionedStableState {
 }
 
 pub(crate) fn decode_versioned_stable_state(bytes: &[u8]) -> Result<VersionedStableState, String> {
-    let current_decode = candid::decode_one::<VersionedStableState>(bytes).and_then(|current| {
-        let canonical_current = candid::encode_one(&current)?;
-        if canonical_current == bytes {
-            Ok(current)
-        } else {
-            // Candid may coerce an incompatible `opt record` payload to `null`. Requiring the
-            // stable cell's canonical current encoding makes the current-path decode lossless.
-            Err(candid::Error::msg(
-                "current faucet stable state did not decode losslessly",
-            ))
-        }
-    });
-    match current_decode {
-        Ok(current) => Ok(current),
-        Err(current_error) => {
-            let legacy_controller_decode =
-                candid::decode_one::<LegacyControllerVersionedStableState>(bytes).and_then(
-                    |legacy| {
-                        let canonical_legacy = candid::encode_one(&legacy)?;
-                        if canonical_legacy == bytes {
-                            Ok(legacy)
-                        } else {
-                            Err(candid::Error::msg(
-                                "legacy-controller faucet stable state did not decode losslessly",
-                            ))
-                        }
-                    },
-                );
-            match legacy_controller_decode {
-                Ok(LegacyControllerVersionedStableState::Uninitialized) => {
-                    Ok(VersionedStableState::Uninitialized)
-                }
-                Ok(LegacyControllerVersionedStableState::V1(state)) => {
-                    Ok(VersionedStableState::V1(state.into()))
-                }
-                Err(legacy_controller_error) => Err(format!(
-                    "failed to decode current or legacy-controller faucet stable state: current={current_error}; legacy_controller={legacy_controller_error}"
-                )),
+    candid::decode_one::<VersionedStableState>(bytes)
+        .and_then(|current| {
+            let canonical_current = candid::encode_one(&current)?;
+            if canonical_current == bytes {
+                Ok(current)
+            } else {
+                // Candid may coerce an incompatible `opt record` payload to `null`. Requiring the
+                // stable cell's canonical current encoding makes the current-path decode lossless.
+                Err(candid::Error::msg(
+                    "current faucet stable state did not decode losslessly",
+                ))
             }
-        }
-    }
+        })
+        .map_err(|error| format!("failed to decode current faucet stable state: {error}"))
 }
 
 impl Storable for VersionedStableState {
@@ -964,27 +826,6 @@ mod tests {
         }
     }
 
-    fn legacy_controller_config(blackhole_armed: Option<bool>) -> LegacyControllerConfig {
-        let current = sample_config();
-        LegacyControllerConfig {
-            staking_account: current.staking_account,
-            payout_subaccount: current.payout_subaccount,
-            ledger_canister_id: current.ledger_canister_id,
-            index_canister_id: current.index_canister_id,
-            cmc_canister_id: current.cmc_canister_id,
-            governance_canister_id: current.governance_canister_id,
-            funding_source_account: current.funding_source_account,
-            rescue_controller: current.rescue_controller,
-            blackhole_controller: Some(principal(&[7])),
-            blackhole_armed,
-            expected_first_staking_tx_id: current.expected_first_staking_tx_id,
-            main_interval_seconds: current.main_interval_seconds,
-            rescue_interval_seconds: current.rescue_interval_seconds,
-            min_tx_e8s: current.min_tx_e8s,
-            stake_recognition_delay_seconds: current.stake_recognition_delay_seconds,
-        }
-    }
-
     #[test]
     fn runtime_config_log_line_includes_all_config_fields() {
         let line = runtime_config_log_line(&sample_config());
@@ -1075,201 +916,47 @@ mod tests {
     }
 
     #[test]
-    fn set_state_round_trips_through_stable_storage() {
+    fn current_v1_state_round_trips_through_stable_storage() {
         reset_test_storage();
         let mut st = State::new(sample_config(), 1_000);
         st.last_successful_transfer_ts = Some(77);
         st.main_lock_state_ts = Some(33);
+        st.payout_nonce = 19;
+        st.config.autonomous_rescue_armed = Some(true);
+        st.autonomous_rescue_armed_since_ts = Some(999);
+        st.rescue_triggered = true;
+        st.last_summary = Some(Summary {
+            pot_start_e8s: 300_000_000,
+            pot_remaining_e8s: 12_345_678,
+            funding_tx_id: Some(41),
+            funding_amount_e8s: Some(300_000_000),
+            last_processed_funding_tx_id: Some(41),
+            remainder_to_relay_e8s: 12_345_678,
+            ..Summary::default()
+        });
+        st.last_processed_funding_tx_id = Some(41);
+        st.active_funding_scan = Some(FundingScanState {
+            anchor_last_processed_funding_tx_id: Some(41),
+            cursor: Some(500),
+            candidate: Some(FundingTrancheState {
+                tx_id: 42,
+                timestamp_nanos: 123,
+                amount_e8s: 400_000_000,
+            }),
+        });
         set_state(st.clone());
 
         let restored = restore_state_from_stable().expect("expected persisted faucet state");
         assert_eq!(restored.last_successful_transfer_ts, Some(77));
         assert_eq!(restored.main_lock_state_ts, Some(33));
-        assert_eq!(restored.payout_nonce, st.payout_nonce);
+        assert_eq!(restored.payout_nonce, 19);
         assert_eq!(restored.config.min_tx_e8s, st.config.min_tx_e8s);
-    }
-
-    #[test]
-    fn deployed_unarmed_controller_state_upgrades_without_restoring_blackhole_policy() {
-        let summary = Summary {
-            pot_start_e8s: 900_000_000,
-            pot_remaining_e8s: 123_000_000,
-            funding_tx_id: Some(88),
-            funding_amount_e8s: Some(900_000_000),
-            topped_up_count: 4,
-            topped_up_sum_e8s: 777_000_000,
-            remainder_to_relay_e8s: 123_000_000,
-            ..Summary::default()
-        };
-        let funding_scan = FundingScanState {
-            anchor_last_processed_funding_tx_id: Some(86),
-            cursor: Some(87),
-            candidate: Some(FundingTrancheState {
-                tx_id: 88,
-                timestamp_nanos: 9_000,
-                amount_e8s: 900_000_000,
-            }),
-        };
-        let legacy = LegacyControllerVersionedStableState::V1(LegacyControllerState {
-            config: legacy_controller_config(Some(false)),
-            last_summary: Some(summary.clone()),
-            last_successful_transfer_ts: Some(1_000),
-            last_rescue_check_ts: 2_000,
-            rescue_triggered: true,
-            blackhole_armed_since_ts: None,
-            forced_rescue_reason: Some(ForcedRescueReason::FundingDiscoveryUnreadable),
-            skip_range_invariant_fault: Some(true),
-            consecutive_index_anchor_failures: Some(2),
-            consecutive_index_latest_invariant_failures: Some(3),
-            consecutive_index_latest_unreadable_failures: Some(4),
-            consecutive_cmc_zero_success_runs: Some(5),
-            last_observed_staking_balance_e8s: Some(600_000_000),
-            last_observed_latest_tx_id: Some(89),
-            main_lock_state_ts: Some(2_001),
-            payout_nonce: 42,
-            active_payout_job: None,
-            last_main_run_ts: 2_002,
-            current_round_start_time_nanos: Some(8_000),
-            current_round_start_staking_balance_e8s: Some(700_000_000),
-            current_round_start_latest_tx_id: Some(87),
-            last_processed_funding_tx_id: Some(86),
-            active_funding_scan: Some(funding_scan.clone()),
-        });
-        let bytes = candid::encode_one(legacy).expect("encode deployed faucet controller state");
-
-        let VersionedStableState::V1(restored) =
-            decode_versioned_stable_state(&bytes).expect("decode deployed faucet controller state")
-        else {
-            panic!("expected restored V1 faucet state");
-        };
-
-        assert_eq!(restored.config.autonomous_rescue_armed, None);
-        assert_eq!(restored.autonomous_rescue_armed_since_ts, None);
-        assert!(!restored.rescue_triggered);
-        assert_eq!(restored.last_summary, Some(summary));
-        assert_eq!(restored.payout_nonce, 42);
-        assert_eq!(restored.last_processed_funding_tx_id, Some(86));
-        assert_eq!(restored.active_funding_scan, Some(funding_scan));
-        assert_eq!(
-            restored.forced_rescue_reason,
-            Some(ForcedRescueReason::FundingDiscoveryUnreadable)
-        );
-        assert_eq!(restored.skip_range_invariant_fault, Some(true));
-        assert_eq!(restored.consecutive_index_anchor_failures, Some(2));
-        assert_eq!(
-            restored.consecutive_index_latest_invariant_failures,
-            Some(3)
-        );
-        assert_eq!(
-            restored.consecutive_index_latest_unreadable_failures,
-            Some(4)
-        );
-        assert_eq!(restored.consecutive_cmc_zero_success_runs, Some(5));
-
-        let blackhole = principal(&[7]);
-        let self_id = principal(&[10]);
-        let desired = crate::policy::desired_controllers(
-            1_000 + 15 * 86_400,
-            restored.last_successful_transfer_ts,
-            self_id,
-            restored.config.rescue_controller,
-        )
-        .expect("broken state should request recovery controllers");
-        assert_eq!(desired, vec![restored.config.rescue_controller, self_id]);
-        assert!(!desired.contains(&blackhole));
-    }
-
-    #[test]
-    fn deployed_armed_controller_state_cannot_authorize_autonomous_rescue_after_upgrade() {
-        let summary = Summary {
-            pot_start_e8s: 1_200_000_000,
-            pot_remaining_e8s: 345_000_000,
-            funding_tx_id: Some(98),
-            funding_amount_e8s: Some(1_200_000_000),
-            topped_up_count: 6,
-            topped_up_sum_e8s: 855_000_000,
-            remainder_to_relay_e8s: 345_000_000,
-            ..Summary::default()
-        };
-        let funding_scan = FundingScanState {
-            anchor_last_processed_funding_tx_id: Some(96),
-            cursor: Some(97),
-            candidate: Some(FundingTrancheState {
-                tx_id: 98,
-                timestamp_nanos: 10_000,
-                amount_e8s: 1_200_000_000,
-            }),
-        };
-        let legacy = LegacyControllerVersionedStableState::V1(LegacyControllerState {
-            config: legacy_controller_config(Some(true)),
-            last_summary: Some(summary.clone()),
-            last_successful_transfer_ts: Some(1_000),
-            last_rescue_check_ts: 2_000,
-            rescue_triggered: true,
-            blackhole_armed_since_ts: Some(500),
-            forced_rescue_reason: Some(ForcedRescueReason::FundingDiscoveryUnreadable),
-            skip_range_invariant_fault: Some(true),
-            consecutive_index_anchor_failures: Some(2),
-            consecutive_index_latest_invariant_failures: Some(3),
-            consecutive_index_latest_unreadable_failures: Some(4),
-            consecutive_cmc_zero_success_runs: Some(5),
-            last_observed_staking_balance_e8s: Some(700_000_000),
-            last_observed_latest_tx_id: Some(99),
-            main_lock_state_ts: Some(2_001),
-            payout_nonce: 52,
-            active_payout_job: None,
-            last_main_run_ts: 2_002,
-            current_round_start_time_nanos: Some(9_000),
-            current_round_start_staking_balance_e8s: Some(800_000_000),
-            current_round_start_latest_tx_id: Some(97),
-            last_processed_funding_tx_id: Some(96),
-            active_funding_scan: Some(funding_scan.clone()),
-        });
-        let bytes = candid::encode_one(legacy).expect("encode armed legacy faucet state");
-
-        let VersionedStableState::V1(mut restored) =
-            VersionedStableState::from_bytes(Cow::Owned(bytes))
-        else {
-            panic!("expected restored V1 faucet state");
-        };
-
-        assert_eq!(restored.config.autonomous_rescue_armed, None);
-        assert_eq!(restored.autonomous_rescue_armed_since_ts, None);
-        assert!(!restored.rescue_triggered);
-        assert_eq!(restored.last_summary, Some(summary));
-        assert_eq!(restored.payout_nonce, 52);
-        assert_eq!(restored.last_processed_funding_tx_id, Some(96));
-        assert_eq!(restored.active_funding_scan, Some(funding_scan));
-        assert_eq!(
-            restored.forced_rescue_reason,
-            Some(ForcedRescueReason::FundingDiscoveryUnreadable)
-        );
-        assert_eq!(restored.skip_range_invariant_fault, Some(true));
-        assert_eq!(restored.consecutive_index_anchor_failures, Some(2));
-        assert_eq!(
-            restored.consecutive_index_latest_invariant_failures,
-            Some(3)
-        );
-        assert_eq!(
-            restored.consecutive_index_latest_unreadable_failures,
-            Some(4)
-        );
-        assert_eq!(restored.consecutive_cmc_zero_success_runs, Some(5));
-
-        let actions = crate::apply_upgrade_args_to_state(&mut restored, None, 3_000);
-        assert_eq!(actions, crate::PostUpgradeActions::default());
-
-        let blackhole = principal(&[7]);
-        let self_id = principal(&[10]);
-        let desired = crate::policy::desired_controllers(
-            1_000 + 15 * 86_400,
-            restored.last_successful_transfer_ts,
-            self_id,
-            restored.config.rescue_controller,
-        )
-        .expect("broken state should request recovery controllers");
-        assert_eq!(desired, vec![restored.config.rescue_controller, self_id]);
-        assert!(!desired.contains(&blackhole));
+        assert_eq!(restored.config.autonomous_rescue_armed, Some(true));
+        assert_eq!(restored.autonomous_rescue_armed_since_ts, Some(999));
+        assert!(restored.rescue_triggered);
+        assert_eq!(restored.last_summary, st.last_summary);
+        assert_eq!(restored.last_processed_funding_tx_id, Some(41));
+        assert_eq!(restored.active_funding_scan, st.active_funding_scan);
     }
 
     #[test]

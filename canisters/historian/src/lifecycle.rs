@@ -878,7 +878,6 @@ pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs
         .expect("stable state missing during historian post_upgrade");
     initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
-    repair_legacy_ascending_route_indexes_after_upgrade(&mut st);
     let registry_principals = st.canister_tracking_reasons.keys().copied().collect();
     // Persist only small upgrade-normalized sections. Commitment/cycles histories
     // are restored lazily from stable entry/index maps, so rewriting all durable
@@ -886,74 +885,6 @@ pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs
     // heap view.
     state::set_state_after_upgrade(st, &registry_principals);
     crate::relay_setup::reconcile_interrupted_creating_entries_after_upgrade();
-}
-
-pub(crate) fn repair_legacy_ascending_route_indexes_after_upgrade(st: &mut State) {
-    // One-hop pre-launch repair for the live Historian state observed on 2026-09-11
-    // after upgrading to fc4c9014615b26d58b127332a25750d53ad272500dfa6f322d0bc61a7b82ee49.
-    // Production correctly failed closed with "unsupported persisted ascending output
-    // route-index pagination state; historical coverage cannot be proven under the
-    // configured newest-first ICP Index contract". Remove this isolated bridge after
-    // production has crossed it and completed the current newest-first route backfill.
-    let mut repaired_any_route = false;
-
-    if st.output_route_index_descending == Some(false) {
-        log_route_index_repair(
-            "output",
-            st.total_output_e8s,
-            st.last_indexed_output_tx_id,
-            st.oldest_indexed_output_tx_id,
-        );
-        st.total_output_e8s = Some(0);
-        st.last_indexed_output_tx_id = None;
-        st.oldest_indexed_output_tx_id = None;
-        st.active_output_catch_up = None;
-        st.output_route_backfill_complete = Some(false);
-        st.output_route_index_descending = Some(true);
-        repaired_any_route = true;
-    }
-
-    if st.rewards_route_index_descending == Some(false) {
-        log_route_index_repair(
-            "rewards",
-            st.total_rewards_e8s,
-            st.last_indexed_rewards_tx_id,
-            st.oldest_indexed_rewards_tx_id,
-        );
-        st.total_rewards_e8s = Some(0);
-        st.last_indexed_rewards_tx_id = None;
-        st.oldest_indexed_rewards_tx_id = None;
-        st.active_rewards_catch_up = None;
-        st.rewards_route_backfill_complete = Some(false);
-        st.rewards_route_index_descending = Some(true);
-        repaired_any_route = true;
-    }
-
-    if repaired_any_route {
-        st.active_route_sweep = None;
-        st.last_completed_route_sweep_ts = Some(0);
-    }
-}
-
-fn log_route_index_repair(
-    route: &str,
-    old_total_e8s: Option<u64>,
-    old_latest_tx_id: Option<u64>,
-    old_oldest_tx_id: Option<u64>,
-) {
-    fn display_optional_tx_id(value: Option<u64>) -> String {
-        value
-            .map(|tx_id| tx_id.to_string())
-            .unwrap_or_else(|| "none".to_string())
-    }
-
-    ic_cdk::println!(
-        "historian ROUTE_INDEX_REPAIR route={} reason=legacy_ascending_pagination old_total_e8s={} old_latest_tx_id={} old_oldest_tx_id={}",
-        route,
-        old_total_e8s.unwrap_or(0),
-        display_optional_tx_id(old_latest_tx_id),
-        display_optional_tx_id(old_oldest_tx_id),
-    );
 }
 
 #[ic_cdk::inspect_message]

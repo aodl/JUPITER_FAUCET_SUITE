@@ -331,6 +331,8 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_disburser \
 
 ### Production upgrades
 
+The one-hop old-controller-state bridge completed in production on 2026-09-11 and its compatibility decoder is retired. Current source decodes only the current V1 stable representation; this stable-state cleanup is separate from the future live controller/settings migration.
+
 The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
 
 Normal production upgrades preserve stable state and must use the disburser `post_upgrade` argument shape, not the fresh-install `InitArgs` shape.
