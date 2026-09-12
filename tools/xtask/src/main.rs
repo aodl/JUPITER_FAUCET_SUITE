@@ -1950,45 +1950,6 @@ fn install_with_argument_file(canister: &str, relative_path: &str) -> Result<()>
     Ok(())
 }
 
-fn get_canister_controllers(canister: &str) -> Result<BTreeSet<String>> {
-    // Example output typically contains a line like:
-    //   Controllers: <principal1> <principal2>
-    // We parse that line and return a deterministic set of principal text values.
-    let out = run_icp_with_identity(&[
-        "canister",
-        "status",
-        "--environment",
-        LOCAL_ENVIRONMENT,
-        canister,
-    ])?;
-
-    for line in out.lines() {
-        let l = line.trim();
-        if l.to_ascii_lowercase().starts_with("controllers:") {
-            let rest = l.splitn(2, ':').nth(1).unwrap_or("").trim();
-
-            let mut set = BTreeSet::new();
-            for raw in rest.split_whitespace() {
-                // strip common punctuation that sometimes appears in output
-                let tok = raw.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '-'));
-                if tok.is_empty() {
-                    continue;
-                }
-                if let Ok(p) = Principal::from_text(tok) {
-                    set.insert(p.to_text());
-                }
-            }
-
-            if set.is_empty() {
-                bail!("parsed Controllers line but found no principals: '{l}'");
-            }
-            return Ok(set);
-        }
-    }
-
-    bail!("could not find Controllers line in `icp canister status {canister}` output");
-}
-
 fn get_canister_controllers_via_mock_blackhole(canister: &str) -> Result<BTreeSet<String>> {
     use jupiter_ic_clients::management::CanisterStatusResult;
 
@@ -3549,6 +3510,20 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "rescue: before first successful top-up it stays on current controllers",
         ),
         || {
+            // Before rescue has ever run, status is still controller-only. Authorize
+            // the typed observer without invoking rescue or changing its preconditions.
+            let observer = canister_id("mock_blackhole")?;
+            run_icp_with_identity(&[
+                "canister",
+                "settings",
+                "update",
+                "--environment",
+                LOCAL_ENVIRONMENT,
+                "jupiter_faucet_dbg",
+                "--add-controller",
+                observer.trim(),
+                "--force",
+            ])?;
             let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_reset_runtime_state")?;
             let _: () = call_raw(
                 "jupiter_faucet_dbg",
@@ -3561,9 +3536,9 @@ fn run_local_faucet_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
                 "(null)",
             )?;
 
-            let before = get_canister_controllers("jupiter_faucet_dbg")?;
+            let before = get_canister_controllers_via_mock_blackhole("jupiter_faucet_dbg")?;
             let _: () = call_raw_noargs::<()>("jupiter_faucet_dbg", "debug_rescue_tick")?;
-            let after = get_canister_controllers("jupiter_faucet_dbg")?;
+            let after = get_canister_controllers_via_mock_blackhole("jupiter_faucet_dbg")?;
             if before != after {
                 bail!("expected rescue to remain inactive before any successful top-up, before={before:?} after={after:?}");
             }
