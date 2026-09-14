@@ -134,8 +134,8 @@ pub(super) fn clear_pending_transfer(
                     }
                 }
             }
-            // Remainder-to-self top-ups are intentional best-effort cleanup only. They are not
-            // counted as beneficiary failures or ambiguities and should not bias rescue / summary policy.
+            // Remainder-to-Relay transfers are not beneficiary payouts and do not
+            // increment beneficiary failure or ambiguity counters.
             job.pending_transfer = None;
         }
     });
