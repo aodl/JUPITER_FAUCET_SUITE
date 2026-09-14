@@ -73,31 +73,21 @@ pub(super) fn ensure_active_job_with_boundary(
         ) {
             (
                 Some(round_start_time_nanos),
-                Some(round_start_staking_balance_e8s),
+                round_start_staking_balance_e8s,
                 round_start_latest_tx_id,
             ) => {
-                let stake_unchanged_since_round_start =
-                    round_start_staking_balance_e8s == denom_e8s;
-                let effective_round_end_latest_tx_id = if stake_unchanged_since_round_start {
-                    round_start_latest_tx_id
-                } else {
-                    round_end_latest_tx_id
-                };
+                // The carried scalar is historical information, not an accounting input.
+                // Policy changes and delayed recognition require the same full-history scan
+                // even when the live account balance happens to equal that scalar.
                 job.configure_round_accounting(
                     Some(round_start_time_nanos),
-                    Some(round_start_staking_balance_e8s),
+                    round_start_staking_balance_e8s,
                     round_start_latest_tx_id,
                     round_end_time_nanos,
-                    effective_round_end_latest_tx_id,
-                    round_start_staking_balance_e8s,
-                    stake_unchanged_since_round_start,
+                    round_end_latest_tx_id,
+                    0,
+                    false,
                 );
-                if !stake_unchanged_since_round_start {
-                    // Recognition delay means tx id alone cannot prove baseline membership.
-                    // Re-scan staking history and let recognition timestamps decide whether
-                    // each commitment is baseline, current-round delta, or still unrecognized.
-                    job.next_start = None;
-                }
             }
             _ => {
                 // Fresh strict-tranche installs start from genesis. The first round must still

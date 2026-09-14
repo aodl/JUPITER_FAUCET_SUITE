@@ -113,56 +113,77 @@ The patron does not need to control the declared canister. Endowments are declar
 
 ## Important payout semantics
 
-### 1) Every new payout job rescans the full history
+### 1) Every new payout job evaluates complete history with exclusion caching
 
-The faucet does **not** permanently checkpoint “already attributed” staking transfers across jobs.
+Each job re-evaluates qualifying endowments against its pinned funding/time boundaries. It does not permanently checkpoint already-paid staking transfers across jobs. Both the authoritative denominator pass and beneficiary pass traverse native newest-first, exclusive-cursor Index history and reuse validated negative classification evidence.
 
-Instead, each new payout job rescans the staking account history from the beginning and re-evaluates endowments against the new payout-pot snapshot.
+A `SkipRange` stores inclusive low/high global Ledger block IDs. Every account-history record covered by the interval has been examined under the current account, Index and eligibility policy, or covered by valid existing exclusion evidence; none qualifies. The denominator pass learns an interval after at least `10_000` actual nonqualifying account records in one uninterrupted validated span. Numeric gaps do not count as records. Qualifying commitments terminate the span regardless of recognition time, funding boundary, current weight, allocation size, delivery failure or raw-ICP fallback.
 
-That replay is intentionally streaming and page-bounded rather than history-buffering. The design prefers constant resident attribution state in the canister over a permanently growing durable attribution set, so the accepted growth vector is replay work and cycles consumption over time rather than unbounded attribution memory.
+A cached jump starts only when the next possible unread ID lies inside the known interval. Its next exclusive cursor is the lower endpoint, never one less. Unverified gaps remain reachable. The first validated page supplies the oldest anchor, including when a later jump covers that oldest record. Cached coverage can complete traversal without rereading its interior. Both pages and jumps consume the 64-step payout-driver budget; short pages never prove exhaustion.
 
-To cap repeated replay cost on obviously barren history, the faucet also persists large tx-id skip ranges for spans with no transactions worth revisiting under the active attribution rules. This is a replay-work cache, not a new source of truth. For safety and simplicity, every upgrade clears the persisted skip-range cache before the faucet resumes. That behavior is unconditional by design: skip ranges are only valid under the active endowment-classification rules, so retaining them across a future code/config change risks trusting stale replay hints. In practice upgrades are expected to be exceptional governance-directed recovery events, so conservative re-evaluation of historical staking activity is preferable to preserving cache warmth.
+The cache uses the existing stable B-tree map with bounded neighbour lookups and idempotent insertion. No payout amount comes from it. Learning persists valid exclusions before advancing denominator sums/cursor; the beneficiary pass only consumes them. Every upgrade unconditionally clears the map in place before resuming, invalidating account, Index, parser and threshold assumptions without retaining policy-version machinery.
 
-The `10_000`-transaction persistence threshold is also intentional. The goal is to avoid repeated replay work for clearly barren history without turning skip-range storage into its own durable indexing system. Below-threshold barren spans can therefore be shaped and replayed, but the chosen threshold was set conservatively below the estimated economic break-even point where repeated replay would become more expensive for the faucet than periodically inserting fresh qualifying stake to prevent larger cached spans from forming. That keeps the durable cache small, keeps the implementation simple, and still makes large barren spans worth caching.
+The `10_000`-record threshold limits storage to sufficiently large spans. New history still requires initial classification; subthreshold fragments and every qualifying record remain replay work. A page budget bounds each invocation but does not replace this amortised mitigation.
 
-Only the **active** job persists the scan cursor, partial skip-span state, and aggregate counters.
+Only the active job persists the cursor, partial span and aggregate counters. Ignored-record summary counters describe records inspected during the beneficiary pass; cached exclusions are not recounted as newly inspected records.
+
 ### 2) Endowments are not aggregated
 
 Each eligible endowment is processed independently, even when multiple endowments map to the same beneficiary.
 
-So if the same beneficiary appears twice in staking-account history, the faucet treats those as two distinct endowment records for payout purposes. That is an intentional trade-off of the single-pass streaming model, and it means repeated qualifying endowments for the same beneficiary may incur repeated outbound ledger fees.
+So if the same beneficiary appears twice in staking-account history, the faucet treats those as two distinct endowment records for payout purposes. That is an intentional trade-off of the streaming model, and it means repeated qualifying endowments for the same beneficiary may incur repeated outbound ledger fees.
 
-### 3) The denominator is a round-effective staking snapshot
+### 3) The denominator is derived from qualifying commitment history
 
-A payout job snapshots the payout pot exactly once at job start and uses a round-effective staking denominator for the completed reward round.
+Before sending any beneficiary funds, each job uses the bounded Index pre-scan to
+sum qualifying incoming commitments at its pinned funding transaction boundary.
+The carried balance is retained for stable compatibility and observability; it is
+not an input to either authoritative sum. Equal live and carried balances do not
+skip reconstruction. The scan must establish coverage through the Index's advertised oldest transaction,
+using validated descending pages and eligible exclusion ranges with a consistent configured oldest anchor.
+Incomplete, malformed, repeated or failed pages cannot authorize a payment from
+partial totals. The beneficiary scan validates each entire page before transferring from it and
+continues across capped pages and validated exclusions to the same oldest anchor. Funding discovery likewise
+continues to the processed-funding boundary or payout-account history exhaustion,
+so a newer tranche cannot hide an older unprocessed one behind a short page.
 
-Instead, the faucet carries forward a **round-start staking snapshot** and builds a **round-effective denominator** for the round that just finished:
+For a non-genesis round `(S, E]`, each individually qualifying incoming Transfer
+with block ID at or below the funding boundary has weight:
 
-- stake already present at the start of the round counts at full weight
-- valid in-round endowments are added with a conservative time weight
-- endowments whose tx id is beyond the round-end snapshot are excluded from the current round entirely
+- effective time at or before `S`: full amount;
+- effective time strictly between `S` and `E`: `floor(amount * (E - effective) / (E - S))`;
+- effective time at or after `E`: zero.
 
-The time weight is intentionally conservative. The faucet uses the endowment timestamp plus a configured stake-recognition delay before treating that endowment as effective for the current round. The committed production install args set `stake_recognition_delay_seconds = 604800` (7 days). This is faucet-side accounting only: it does not change when NNS maturity accrues, when maturity can be spawned, or when the disburser runs. It approximates the fact that the staking neuron only begins earning the larger maturity stream after later NNS-side recognition, and it biases against over-crediting very recent stake.
+Effective time is the Index timestamp (falling back to sender `created_at_time`)
+plus the configured recognition delay. Missing timestamps remain unrecognised.
+The denominator equals the sum of those same beneficiary weights, including
+weights whose eventual allocation is too small to pay after fees. Delivery failure,
+cycles-to-raw-ICP fallback, neuron resolution and fee deductions do not redefine
+recognised stake. Undeliverable allocations follow the existing remainder rules.
 
-An endowment's effective time is:
+The independently computed ending recognised balance includes each qualifying
+amount in full when its effective time is at or before `E`, subject to the same
+transaction boundary. Thus a commitment effective exactly at `E` has zero weight
+in a non-genesis payout and full membership in the next baseline. Genesis retains
+its separate full-amount recognition-at-`E` rule.
+
+At boundary `(S, J)`, the qualifying-only baseline invariant is:
 
 ```text
-commitment_time + stake_recognition_delay_seconds
+B(S, J, P) = sum(amount for qualifying incoming commitments under policy P
+                where block_id <= J and effective_timestamp <= S)
 ```
 
-Round weighting uses inclusive/exclusive boundaries:
-
-- effective at or before round start => full weight
-- effective during the round => linearly prorated weight
-- effective at or after round end => zero weight in that round
-
-The funding cursor and staking-history scan are separate: the funding cursor selects consumed payout-account funding tranches, while staking-account history remains replayable so older endowments continue contributing according to the recognition-delay and round-weighting rules. Deployments that introduce new tranche semantics should ensure cursor/config alignment before opening multi-user participation.
-
-The tx-id boundaries are more authoritative than timestamps for inclusion. The faucet captures the latest staking-account tx id at the end of each completed round and uses that as the inclusive upper bound for the next payout job, so equal timestamps do not create ambiguity.
+Delay or minimum-threshold changes cause the next ordinary job to recompute from
+history under the new policy, preserving its true time and funding boundaries.
+No synchronous upgrade-time history calls or per-commitment registry are needed.
+Each completed job replaces the carried scalar with the independently reconstructed
+ending balance; between jobs that scalar remains informational and cannot influence
+an allocation.
 
 ### 4) The payout pot is snapshotted once per job
 
-A job uses the payout-account balance captured at the beginning of the job. It does not dynamically rescale shares mid-run based on whatever later transfers may have arrived. The same job-start moment also becomes the stored start boundary for the following reward round.
+A job uses the selected funding tranche amount as its fixed payout pot. Later transfers do not rescale shares mid-run. The funding transaction timestamp and global block ID pin the ending boundary, which becomes the next round's start boundary on completion. The later job execution time does not replace the funding timestamp.
 
 ### 4a) Timing-aware payout fairness
 
@@ -174,11 +195,11 @@ The faucet explicitly addresses the case where the same additional stake amount 
 
 Operationally, the mitigation strategy is therefore:
 
-1. persist the round-start staking balance, latest tx id, and timestamp at the end of each completed payout round
-2. snapshot the next round's payout pot and latest tx id exactly once at job start
-3. build the current round's effective denominator as `round_start_balance + weighted valid in-round endowments`
-4. use the same weighted amount for each in-round endowment's numerator and for the round-effective denominator
-5. ignore invalid memo endowments in the weighting adjustment path so adversaries cannot force large numbers of pointless weighting calculations with malformed deposits
+1. retain the completed funding timestamp/block boundary and independently calculated recognised ending balance
+2. pin the next funding tranche's amount, timestamp and global block ID once
+3. reconstruct the denominator from all qualifying commitments under those time/block boundaries
+4. use each commitment's identical weight for its numerator and the denominator, and separately sum recognised ending amounts
+5. exclude invalid memos and below-threshold transfers individually
 
 The repo covers this in three layers:
 
@@ -268,7 +289,7 @@ Each interval timer is clamped to at least 60 seconds by the runtime code. There
 
 ### Runtime config verification
 
-After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits `STATE ...` and `CONFIG ...` lines on every completed main-tick cadence, alongside its regular `Cycles: ...` health line. Forced scheduler ticks can emit additional state/config lines outside the regular cadence. The `CONFIG` line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, the embedded canonical Relay canister ID, funding source account, rescue controller, autonomous-rescue state, expected first staking transaction ID, timer intervals, minimum tracked endowment, and stake-recognition delay. The `STATE` line includes the funding cursor, active funding-scan cursor/candidate/anchor, `active_payout_job_present`, active payout funding tranche, forced rescue reason, last observed staking balance and latest transaction ID, and the Index anchor/latest-invariant/latest-unreadable failure counters.
+After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits `STATE ...` and `CONFIG ...` lines on every completed main-tick cadence, alongside its regular `Cycles: ...` health line. Forced scheduler ticks can emit additional state/config lines outside the regular cadence. The `CONFIG` line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, the embedded canonical Relay canister ID, funding source account, rescue controller, autonomous-rescue state, expected first staking transaction ID, timer intervals, minimum tracked endowment, and stake-recognition delay. The `STATE` line includes the funding cursor, active funding-scan cursor/candidate/anchor, `active_payout_job_present`, active payout funding tranche, forced rescue reason, last observed staking balance and latest transaction ID, and the Index anchor/latest-invariant/latest-unreadable failure counters. It also labels the carried recognised balance and its associated time/block boundary separately; a STATE record emitted after finalisation reports the independently computed recognised ending balance that was just carried forward.
 
 ### Main tick sequence
 
@@ -281,9 +302,9 @@ On each successful main tick, the canister:
    - payout-account balance
    - staking-account balance
 4. selects the oldest unprocessed Disburser-to-Faucet funding transfer as the payout pot
-5. if there is no unprocessed funding transfer, the payout pot is too small, or the denominator is zero, it performs only index-health probing and bootstrap-rescue checks
+5. if there is no unprocessed funding transfer, the payout pot is too small, or the live staking-account balance is zero, it performs only index-health probing and bootstrap-rescue checks
 6. otherwise, creates an `ActivePayoutJob`
-7. scans the staking account through the ICP index canister, page by page
+7. completes the authoritative denominator/ending-balance scan, then traverses history for beneficiaries; both passes reuse validated nonqualifying exclusions
 8. evaluates each eligible incoming transfer independently
 9. for each eligible beneficiary endowment, performs ledger transfer then `notify_top_up`
 10. if a beneficiary CMC-deposit transfer is conclusively rejected, completes one raw fallback before scanning another beneficiary; ambiguous transfer outcomes do not fallback
@@ -705,7 +726,7 @@ cargo run -p xtask -- faucet_all
 Those cover, among other things:
 
 - immediate duplicate-safe retry for ambiguous transfer and notify failures
-- full-history replay on each new job
+- complete-history accounting with cold classification and warm exclusion reuse
 - page-boundary scanning across large histories
 - same-beneficiary endowments staying separate
 - bounded state footprint across repeated runs

@@ -111,7 +111,12 @@ pub(crate) fn compute_raw_share_e8s(amount_e8s: u64, pot_start_e8s: u64, denom_e
     raw.min(u64::MAX as u128) as u64
 }
 
+#[cfg(test)]
+thread_local! { pub(crate) static TEST_COMMITMENT_CLASSIFICATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
 pub(crate) fn classify_commitment(min_tx_e8s: u64, commitment: &Commitment) -> CommitmentValidity {
+    #[cfg(test)]
+    TEST_COMMITMENT_CLASSIFICATIONS.with(|count| count.set(count.get() + 1));
     if commitment.amount_e8s < min_tx_e8s {
         return CommitmentValidity::IgnoreUnderThreshold;
     }
@@ -181,6 +186,7 @@ fn effective_commitment_timestamp_nanos(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn commitment_delta_for_effective_denominator_e8s(
     commitment: &Commitment,
     tx_id: u64,
@@ -229,6 +235,7 @@ pub(crate) fn commitment_delta_for_effective_denominator_e8s(
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn commitment_round_end_staking_delta_e8s(
     commitment: &Commitment,
     tx_id: u64,

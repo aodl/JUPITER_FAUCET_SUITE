@@ -5,6 +5,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+use jupiter_ic_clients::account::principal_to_subaccount;
 use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResult,
 };
@@ -3075,7 +3076,7 @@ fn faucet_correct_first_tx_anchor_stays_healthy() -> Result<()> {
 
 #[test]
 #[ignore]
-fn faucet_wrong_first_tx_anchor_latches_rescue_after_real_first_transfer() -> Result<()> {
+fn faucet_wrong_first_tx_anchor_latches_rescue_before_any_payment() -> Result<()> {
     require_ignored_flag()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
@@ -3103,6 +3104,10 @@ fn faucet_wrong_first_tx_anchor_latches_rescue_after_real_first_transfer() -> Re
     if st2.forced_rescue_reason != Some(ForcedRescueReason::IndexAnchorMissing) {
         bail!("expected wrong first tx anchor to latch forced rescue after the second observation, got {:?}", st2);
     }
+    assert!(
+        env.ledger_transfers()?.is_empty(),
+        "invalid history must not pay"
+    );
     let mut controllers = env.controllers();
     controllers.sort_by_key(|p| p.to_text());
     let mut expected = vec![env.lifeline, env.faucet];
@@ -3575,5 +3580,283 @@ fn faucet_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+fn faucet_stable_payload(env: &FaucetEnv) -> Vec<u8> {
+    use ic_stable_structures::{
+        memory_manager::{MemoryId, MemoryManager},
+        StableCell,
+    };
+    let memory = std::rc::Rc::new(RefCell::new(env.pic.get_stable_memory(env.faucet)));
+    let manager = MemoryManager::init(memory);
+    StableCell::<Vec<u8>, _>::init(manager.get(MemoryId::new(0)), Vec::new())
+        .get()
+        .clone()
+}
+
+fn faucet_stable_field(bytes: &[u8], name: &str) -> Result<candid::types::value::IDLValue> {
+    use candid::types::value::IDLValue;
+    let args = candid::IDLArgs::from_bytes(bytes)?;
+    let IDLValue::Variant(version) = &args.args[0] else {
+        bail!("expected stable version");
+    };
+    let IDLValue::Record(fields) = &version.0.val else {
+        bail!("expected V1 record");
+    };
+    fields
+        .iter()
+        .find(|field| field.id.get_id() == candid::idl_hash(name))
+        .map(|field| field.val.clone())
+        .ok_or_else(|| anyhow!("missing stable field {name}"))
+}
+
+#[test]
+#[ignore]
+fn faucet_current_state_upgrade_reconstructs_without_replaying_funding() -> Result<()> {
+    require_ignored_flag()?;
+    use candid::types::value::IDLValue;
+    const COMMITMENT_E8S: u64 = 100_000_000;
+    const INITIAL_POT_E8S: u64 = 100_000_000;
+    const WEIGHTED_POT_E8S: u64 = 150_000_000;
+    const FULL_POT_E8S: u64 = 200_000_000;
+
+    let funding_source = strict_funding_source_account()?;
+    let env = FaucetEnv::new_with_init_overrides(|init| {
+        init.funding_source_account = funding_source.clone();
+        init.autonomous_rescue_armed = Some(true);
+        init.expected_first_staking_tx_id = Some(1);
+        init.main_interval_seconds = Some(365 * 24 * 60 * 60);
+        init.rescue_interval_seconds = Some(365 * 24 * 60 * 60);
+        init.stake_recognition_delay_seconds = Some(10);
+    })?;
+    let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    let beneficiary_b = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")?;
+
+    env.append_transfer(COMMITMENT_E8S, Some(beneficiary_a.to_text().into_bytes()))?;
+    env.credit_staking(COMMITMENT_E8S)?;
+    env.advance_time_and_tick(12, 2);
+    let initial_funding = append_funding_tranche(&env, &funding_source, INITIAL_POT_E8S)?;
+    let initial_round_end = env.pic.get_time().as_nanos_since_unix_epoch();
+    env.main_tick()?;
+    assert_eq!(env.ledger_transfers()?.len(), 1);
+    assert_eq!(
+        env.summary()?.effective_denom_staking_balance_e8s,
+        Some(COMMITMENT_E8S)
+    );
+
+    // This commitment is added at the prior round boundary. Once its ten-second
+    // recognition delay elapses, the persisted 1 ICP carried scalar is deliberately
+    // stale; the next job must reconstruct 1 ICP plus the commitment's time weight.
+    env.append_transfer(COMMITMENT_E8S, Some(beneficiary_b.to_text().into_bytes()))?;
+    env.credit_staking(COMMITMENT_E8S)?;
+    env.advance_time_and_tick(28, 2);
+
+    let before_upgrade = faucet_stable_payload(&env);
+    assert_eq!(
+        faucet_stable_field(&before_upgrade, "current_round_start_time_nanos")?,
+        IDLValue::Opt(Box::new(IDLValue::Nat64(initial_round_end)))
+    );
+    assert_eq!(
+        faucet_stable_field(&before_upgrade, "current_round_start_staking_balance_e8s")?,
+        IDLValue::Opt(Box::new(IDLValue::Nat64(COMMITMENT_E8S)))
+    );
+    assert_eq!(
+        faucet_stable_field(&before_upgrade, "current_round_start_latest_tx_id")?,
+        IDLValue::Opt(Box::new(IDLValue::Nat64(initial_funding)))
+    );
+    assert_eq!(
+        faucet_stable_field(&before_upgrade, "last_processed_funding_tx_id")?,
+        IDLValue::Opt(Box::new(IDLValue::Nat64(initial_funding)))
+    );
+    assert_eq!(
+        faucet_stable_field(&before_upgrade, "payout_nonce")?,
+        IDLValue::Nat64(2)
+    );
+
+    env.upgrade()?;
+    let restored = faucet_stable_payload(&env);
+    for field in [
+        "config",
+        "current_round_start_time_nanos",
+        "current_round_start_staking_balance_e8s",
+        "current_round_start_latest_tx_id",
+        "last_processed_funding_tx_id",
+        "payout_nonce",
+        "last_summary",
+        "last_successful_transfer_ts",
+        "last_rescue_check_ts",
+        "rescue_triggered",
+        "autonomous_rescue_armed_since_ts",
+        "forced_rescue_reason",
+        "active_funding_scan",
+    ] {
+        assert_eq!(
+            faucet_stable_field(&restored, field)?,
+            faucet_stable_field(&before_upgrade, field)?,
+            "{field}"
+        );
+    }
+
+    let first_funding = append_funding_tranche(&env, &funding_source, WEIGHTED_POT_E8S)?;
+    env.main_tick()?;
+    assert!(!env.state()?.active_payout_job_present);
+    let completed = faucet_stable_payload(&env);
+    assert_eq!(
+        faucet_stable_field(&completed, "current_round_start_staking_balance_e8s")?,
+        IDLValue::Opt(Box::new(IDLValue::Nat64(200_000_000)))
+    );
+    assert_eq!(
+        faucet_stable_field(&completed, "last_processed_funding_tx_id")?,
+        IDLValue::Opt(Box::new(IDLValue::Nat64(first_funding)))
+    );
+    assert_eq!(
+        faucet_stable_field(&completed, "payout_nonce")?,
+        IDLValue::Nat64(3)
+    );
+    let summary = env.summary()?;
+    assert_eq!(
+        summary.effective_denom_staking_balance_e8s,
+        Some(166_666_666)
+    );
+    assert_eq!(summary.topped_up_count, 2);
+    assert_eq!(summary.topped_up_sum_e8s, 149_979_999);
+    assert_eq!(summary.remainder_to_relay_e8s, 0);
+    let transfers = env.ledger_transfers()?;
+    assert_eq!(
+        transfers
+            .iter()
+            .map(|tx| nat_to_u64(&tx.amount))
+            .collect::<Vec<_>>(),
+        vec![99_990_000, 59_989_999, 89_990_000]
+    );
+    assert_eq!(
+        transfers[1].to,
+        Account {
+            owner: env.cmc,
+            subaccount: Some(principal_to_subaccount(beneficiary_b)),
+        }
+    );
+    assert_eq!(
+        transfers[2].to,
+        Account {
+            owner: env.cmc,
+            subaccount: Some(principal_to_subaccount(beneficiary_a)),
+        }
+    );
+    let count = env.ledger_transfers()?.len();
+    assert_eq!(count, 3);
+    env.main_tick()?;
+    assert_eq!(env.ledger_transfers()?.len(), count);
+    env.upgrade()?;
+    env.main_tick()?;
+    assert_eq!(
+        env.ledger_transfers()?.len(),
+        count,
+        "second upgrade cannot replay settled funding"
+    );
+    let second_funding = append_funding_tranche(&env, &funding_source, FULL_POT_E8S)?;
+    env.main_tick()?;
+    let transfers = env.ledger_transfers()?;
+    assert_eq!(transfers.len(), count + 2);
+    assert_eq!(
+        transfers[count..]
+            .iter()
+            .map(|tx| nat_to_u64(&tx.amount))
+            .collect::<Vec<_>>(),
+        vec![99_990_000, 99_990_000]
+    );
+    assert_eq!(
+        transfers[count].to,
+        Account {
+            owner: env.cmc,
+            subaccount: Some(principal_to_subaccount(beneficiary_b)),
+        }
+    );
+    assert_eq!(
+        transfers[count + 1].to,
+        Account {
+            owner: env.cmc,
+            subaccount: Some(principal_to_subaccount(beneficiary_a)),
+        }
+    );
+    assert_eq!(
+        env.summary()?.effective_denom_staking_balance_e8s,
+        Some(200_000_000)
+    );
+    let second = faucet_stable_payload(&env);
+    assert_eq!(
+        faucet_stable_field(&second, "payout_nonce")?,
+        IDLValue::Nat64(4)
+    );
+    assert_eq!(
+        faucet_stable_field(&second, "last_processed_funding_tx_id")?,
+        IDLValue::Opt(Box::new(IDLValue::Nat64(second_funding)))
+    );
+    env.main_tick()?;
+    assert_eq!(env.ledger_transfers()?.len(), count + 2);
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_skip_cache_cold_warm_and_upgrade_relearn_preserve_allocations() -> Result<()> {
+    require_ignored_flag()?;
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    env.append_repeated_transfer(15_000, 1, None)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_staking(200_015_000)?;
+    let mut cold_calls = 0;
+    for round in 0..4 {
+        if round == 3 {
+            env.upgrade()?;
+        }
+        env.credit_payout(100_000_000)?;
+        env.append_pending_funding_tranches()?;
+        let first = env.index_get_calls()?.len();
+        let faucet_before = env.pic.cycle_balance(env.faucet);
+        let index_before = env.pic.cycle_balance(env.index);
+        env.main_tick()?;
+        let mut driver_calls = 1;
+        while env.state()?.active_payout_job_present {
+            if driver_calls >= 20 {
+                bail!("cache round failed bounded completion");
+            }
+            env.main_tick()?;
+            driver_calls += 1;
+        }
+        let faucet_cycles = faucet_before.saturating_sub(env.pic.cycle_balance(env.faucet));
+        let index_cycles = index_before.saturating_sub(env.pic.cycle_balance(env.index));
+        let calls = env.index_get_calls()?;
+        let staking: Vec<_> = calls[first..]
+            .iter()
+            .filter(|c| c.account_identifier == env.staking_id)
+            .collect();
+        let records: u64 = staking.iter().map(|c| c.returned_count).sum();
+        let summary = env.summary()?;
+        assert_eq!(
+            summary.effective_denom_staking_balance_e8s,
+            Some(200_000_000)
+        );
+        assert_eq!(summary.topped_up_count, 2);
+        assert_eq!(summary.topped_up_sum_e8s, 99_980_000);
+        assert_eq!(summary.remainder_to_relay_e8s, 0);
+        assert_eq!(env.ledger_transfers()?.len(), (round + 1) * 2);
+        if round == 0 {
+            cold_calls = staking.len();
+            assert!(cold_calls >= 30);
+        } else if round < 3 {
+            assert!(staking.len() < 10);
+            assert!(staking.len() * 3 < cold_calls);
+        } else {
+            assert!(
+                staking.len() >= 30,
+                "upgrade must clear exclusions and relearn"
+            );
+        }
+        println!("SKIP_WASM round={round} staking_calls={} returned_records={records} driver_calls={driver_calls} faucet_cycles={faucet_cycles} index_cycles={index_cycles} stable_bytes={} state_candid_bytes={}",staking.len(),env.pic.get_stable_memory(env.faucet).len(),env.footprint()?.state_candid_bytes);
+    }
     Ok(())
 }

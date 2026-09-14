@@ -393,6 +393,8 @@ mod tests {
     #[derive(Clone)]
     struct BalanceRecordingLedger {
         fee_e8s: u64,
+        transfer_args: Arc<Mutex<Vec<TransferArg>>>,
+        read_calls: Arc<AtomicUsize>,
         payout_balance_e8s: Arc<std::sync::atomic::AtomicU64>,
         staking_balance_e8s: u64,
         transfer_blocks: Arc<Mutex<VecDeque<u64>>>,
@@ -408,6 +410,8 @@ mod tests {
         ) -> Self {
             Self {
                 fee_e8s,
+                transfer_args: Arc::new(Mutex::new(Vec::new())),
+                read_calls: Arc::new(AtomicUsize::new(0)),
                 payout_balance_e8s: Arc::new(std::sync::atomic::AtomicU64::new(payout_balance_e8s)),
                 staking_balance_e8s,
                 transfer_blocks: Arc::new(Mutex::new(transfer_blocks.into())),
@@ -428,6 +432,7 @@ mod tests {
     impl LedgerClient for BalanceRecordingLedger {
         async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> {
             assert_no_persistence_batch();
+            self.read_calls.fetch_add(1, Ordering::SeqCst);
             Ok(self.fee_e8s)
         }
         async fn balance_of_e8s(
@@ -435,6 +440,7 @@ mod tests {
             account: Account,
         ) -> Result<u64, crate::clients::ClientError> {
             assert_no_persistence_batch();
+            self.read_calls.fetch_add(1, Ordering::SeqCst);
             let staking = state::with_state(|st| st.config.staking_account.clone());
             if account == staking {
                 Ok(self.staking_balance_e8s)
@@ -447,6 +453,7 @@ mod tests {
             arg: TransferArg,
         ) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
             assert_no_persistence_batch();
+            self.transfer_args.lock().unwrap().push(arg.clone());
             let amount_u64 = arg.amount.0.to_string().parse::<u64>().unwrap_or(0);
             self.transfer_amounts.lock().unwrap().push(amount_u64);
             let block = self
@@ -595,7 +602,7 @@ mod tests {
             }
             Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 0,
-                oldest_tx_id: self.txs.first().map(|tx| tx.id),
+                oldest_tx_id: self.txs.iter().map(|tx| tx.id).min(),
                 transactions: out,
             })
         }
@@ -606,15 +613,22 @@ mod tests {
     struct NewestFirstExclusiveIndex {
         txs: Vec<IndexTransactionWithId>,
         balance_e8s: u64,
+        cap: usize,
         starts: Arc<Mutex<Vec<Option<u64>>>>,
     }
 
     impl NewestFirstExclusiveIndex {
+        fn from_history(mut txs: Vec<IndexTransactionWithId>) -> Self {
+            txs.sort_by_key(|tx| std::cmp::Reverse(tx.id));
+            Self::new(txs, 0)
+        }
+
         fn new(txs: Vec<IndexTransactionWithId>, balance_e8s: u64) -> Self {
             assert!(txs.windows(2).all(|pair| pair[0].id > pair[1].id));
             Self {
                 txs,
                 balance_e8s,
+                cap: PAGE_SIZE as usize,
                 starts: Arc::new(Mutex::new(Vec::new())),
             }
         }
@@ -648,15 +662,17 @@ mod tests {
                 .filter(|tx| {
                     matches!(
                         &tx.transaction.operation,
-                        IndexOperation::Transfer { to, .. } if to == &account_identifier
+                        IndexOperation::Transfer { from, to, .. } if from == &account_identifier || to == &account_identifier
                     )
                 })
-                .take(max_results as usize)
+                .take((max_results as usize).min(self.cap))
                 .cloned()
                 .collect();
             Ok(GetAccountIdentifierTransactionsResponse {
                 balance: self.balance_e8s,
-                oldest_tx_id: self.txs.last().map(|tx| tx.id),
+                oldest_tx_id: self.txs.iter().rev().find(|tx| matches!(
+                    &tx.transaction.operation, IndexOperation::Transfer { from, to, .. } if from == &account_identifier || to == &account_identifier
+                )).map(|tx| tx.id),
                 transactions,
             })
         }
@@ -668,7 +684,8 @@ mod tests {
     }
 
     impl RecordingIndex {
-        fn new(txs: Vec<IndexTransactionWithId>) -> Self {
+        fn new(mut txs: Vec<IndexTransactionWithId>) -> Self {
+            txs.sort_by_key(|tx| std::cmp::Reverse(tx.id));
             Self {
                 txs,
                 starts: Arc::new(Mutex::new(Vec::new())),
@@ -693,13 +710,13 @@ mod tests {
             let transactions = self
                 .txs
                 .iter()
-                .filter(|tx| start.map(|last_seen| tx.id > last_seen).unwrap_or(true))
+                .filter(|tx| start.map(|last_seen| tx.id < last_seen).unwrap_or(true))
                 .take(max_results as usize)
                 .cloned()
                 .collect();
             Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 0,
-                oldest_tx_id: self.txs.first().map(|tx| tx.id),
+                oldest_tx_id: self.txs.last().map(|tx| tx.id),
                 transactions,
             })
         }
@@ -735,19 +752,13 @@ mod tests {
         ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
             assert_no_persistence_batch();
             self.starts.lock().unwrap().push(start);
-            let page_idx = start.map(|last_seen| last_seen / PAGE_SIZE).unwrap_or(0);
-            if page_idx >= self.page_count {
-                return Ok(GetAccountIdentifierTransactionsResponse {
-                    balance: 0,
-                    oldest_tx_id: Some(1),
-                    transactions: Vec::new(),
-                });
-            }
-            let first_id = page_idx * PAGE_SIZE + 1;
-            let transactions = (0..max_results)
+            let first_id = start
+                .unwrap_or(self.page_count * PAGE_SIZE + 1)
+                .saturating_sub(1);
+            let transactions = (0..max_results.min(first_id))
                 .map(|offset| {
                     commitment_tx(
-                        first_id + offset,
+                        first_id - offset,
                         &self.staking_id,
                         crate::MIN_MIN_TX_E8S.saturating_sub(1),
                         None,
@@ -1242,6 +1253,79 @@ mod tests {
         drop(future);
         drop(old);
         drop(successor);
+    }
+
+    #[test]
+    fn authoritative_page_requires_job_cursor_and_phase_ownership() {
+        for changed_field in ["job", "cursor", "phase"] {
+            let mut cfg = test_config();
+            cfg.stake_recognition_delay_seconds = Some(0);
+            let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+            state::clear_skip_ranges();
+            state::set_state(state::State::new(cfg, 40));
+            ensure_active_job_with_boundary(
+                40_000_000_000,
+                10_000,
+                100_000_000,
+                100_000_000,
+                40_000_000_000,
+                Some(10),
+                None,
+            );
+            let index = HeldIndex {
+                started: AtomicBool::new(false),
+                release: AtomicBool::new(false),
+                response: GetAccountIdentifierTransactionsResponse {
+                    balance: 100_000_000,
+                    oldest_tx_id: Some(1),
+                    transactions: vec![commitment_tx_at(
+                        1,
+                        &staking_id,
+                        100_000_000,
+                        Some(b"22255-zqaaa-aaaas-qf6uq-cai".to_vec()),
+                        1,
+                    )],
+                },
+            };
+            let ledger = ScriptedLedger::new(vec![]);
+            let cmc = ScriptedCmc::new(vec![]);
+            let status = crate::clients::canister_info::NoopCanisterStatusClient;
+            let guard = MainGuard::acquire(40).unwrap();
+            let mut future = Box::pin(process_payout_with_lease(
+                &ledger,
+                &index,
+                &cmc,
+                &NoopGovernance,
+                &status,
+                40_000_000_000,
+                40,
+                guard.lease_token(),
+            ));
+            assert!(poll_once(future.as_mut()).is_pending());
+            let expected = state::with_state_mut(|st| {
+                let job = st.active_payout_job.as_mut().unwrap();
+                match changed_field {
+                    "job" => job.id += 1,
+                    "cursor" => job.next_start = Some(1),
+                    "phase" => job.effective_denom_scan_complete = Some(true),
+                    _ => unreachable!(),
+                }
+                job.effective_denom_staking_balance_e8s = Some(44);
+                job.round_end_staking_balance_e8s = Some(55);
+                candid::encode_one(&*job).unwrap()
+            });
+            index.release.store(true, Ordering::SeqCst);
+            assert!(matches!(poll_once(future.as_mut()), Poll::Ready(true)));
+            state::with_state(|st| {
+                assert_eq!(
+                    candid::encode_one(st.active_payout_job.as_ref().unwrap()).unwrap(),
+                    expected
+                );
+            });
+            assert_eq!(ledger.transfer_calls(), 0);
+            drop(future);
+            drop(guard);
+        }
     }
 
     #[test]
@@ -2390,13 +2474,13 @@ mod tests {
         let compact_raw = raw_target.to_text().replace('-', "");
         let index = ExclusiveIndex::new(vec![
             commitment_tx(
-                10,
+                11,
                 &staking_id,
                 100_000_000,
                 Some(format!("{compact_raw}.route1").into_bytes()),
             ),
             commitment_tx(
-                11,
+                10,
                 &staking_id,
                 100_000_000,
                 Some(topup_target.to_text().into_bytes()),
@@ -2578,9 +2662,9 @@ mod tests {
         let neuron_subaccount = [10u8; 32];
         let canister_id = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
-            commitment_tx(10, &staking_id, 100_000_000, Some(b"42".to_vec())),
+            commitment_tx(11, &staking_id, 100_000_000, Some(b"42".to_vec())),
             commitment_tx(
-                11,
+                10,
                 &staking_id,
                 100_000_000,
                 Some(canister_id.to_text().into_bytes()),
@@ -2640,9 +2724,9 @@ mod tests {
         let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let canister_id = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
-            commitment_tx(10, &staking_id, 80_000_000, Some(b"42".to_vec())),
+            commitment_tx(11, &staking_id, 80_000_000, Some(b"42".to_vec())),
             commitment_tx(
-                11,
+                10,
                 &staking_id,
                 80_000_000,
                 Some(canister_id.to_text().into_bytes()),
@@ -2834,13 +2918,13 @@ mod tests {
         let beneficiary_b = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             commitment_tx(
-                10,
+                11,
                 &staking_id,
                 50_000_000,
                 Some(beneficiary_a.to_text().into_bytes()),
             ),
             commitment_tx(
-                11,
+                10,
                 &staking_id,
                 60_000_000,
                 Some(beneficiary_b.to_text().into_bytes()),
@@ -3391,13 +3475,13 @@ mod tests {
         let beneficiary_b = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
         let index = ExclusiveIndex::new(vec![
             commitment_tx(
-                10,
+                11,
                 &staking_id,
                 50_000_000,
                 Some(beneficiary_a.to_text().into_bytes()),
             ),
             commitment_tx(
-                11,
+                10,
                 &staking_id,
                 60_000_000,
                 Some(beneficiary_b.to_text().into_bytes()),
@@ -4061,7 +4145,7 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_index_pages_do_not_double_count_the_last_seen_tx() {
+    fn overlapping_index_pages_reject_before_extra_payment_and_resume_once() {
         let now_secs = 4_300_u64;
         let cfg = set_active_job(
             now_secs,
@@ -4077,42 +4161,33 @@ mod tests {
         let first = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let second = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
 
-        let mut first_page = Vec::new();
-        for id in 1..500u64 {
-            first_page.push(commitment_tx(id, &staking_id, 1, None));
-        }
-        first_page.push(commitment_tx(
+        let first_page: Vec<_> = (501..=1000)
+            .rev()
+            .map(|id| {
+                commitment_tx(
+                    id,
+                    &staking_id,
+                    if id == 1000 { 50_000_000 } else { 1 },
+                    (id == 1000).then(|| first.to_text().into_bytes()),
+                )
+            })
+            .collect();
+        let older = commitment_tx(
             500,
             &staking_id,
             50_000_000,
-            Some(first.to_text().into_bytes()),
-        ));
-
-        let second_page = vec![
-            commitment_tx(
-                500,
-                &staking_id,
-                50_000_000,
-                Some(first.to_text().into_bytes()),
-            ),
-            commitment_tx(
-                501,
-                &staking_id,
-                50_000_000,
-                Some(second.to_text().into_bytes()),
-            ),
-        ];
-
+            Some(second.to_text().into_bytes()),
+        );
         let index = ScriptedIndex::new(vec![
             IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 0,
-                oldest_tx_id: Some(1),
+                oldest_tx_id: Some(500),
                 transactions: first_page,
             }),
             IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 0,
-                oldest_tx_id: Some(1),
-                transactions: second_page,
+                oldest_tx_id: Some(500),
+                transactions: vec![commitment_tx(501, &staking_id, 1, None), older.clone()],
             }),
         ]);
         let ledger = ScriptedLedger::new(vec![
@@ -4122,9 +4197,28 @@ mod tests {
         ]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok, CmcStep::Ok]);
 
-        assert!(run_ready(process_payout(
+        assert!(!run_ready(process_payout(
             &ledger,
             &index,
+            &cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs
+        )));
+        assert_eq!(
+            ledger.transfer_calls(),
+            1,
+            "invalid second page cannot pay or sweep"
+        );
+        assert!(state::with_state(|st| st.last_summary.is_none()));
+        let retry = NewestFirstExclusiveIndex::from_history(vec![
+            commitment_tx(501, &staking_id, 1, None),
+            older,
+        ]);
+        assert!(run_ready(process_payout(
+            &ledger,
+            &retry,
             &cmc,
             &NoopGovernance,
             &crate::clients::canister_info::NoopCanisterStatusClient,
@@ -4283,10 +4377,7 @@ mod tests {
         let job = state::with_state(|st| st.active_payout_job.clone())
             .expect("job should remain active after bounded yield");
         assert_eq!(job.scan_complete, false);
-        assert_eq!(
-            job.next_start,
-            Some(MAX_INDEX_PAGES_PER_PAYOUT_TICK * PAGE_SIZE)
-        );
+        assert_eq!(job.next_start, Some(PAGE_SIZE + 1));
         assert_eq!(
             index.starts().len(),
             MAX_INDEX_PAGES_PER_PAYOUT_TICK as usize
@@ -5240,11 +5331,12 @@ mod tests {
     }
 
     #[test]
-    fn large_skippable_history_persists_a_single_skip_range() {
+    fn large_descending_history_persists_normalized_exclusion() {
         let now_secs = 10_000;
         let job =
             ActivePayoutJob::new(100, 10_000, 10_000, 1_000_000_000, now_secs * 1_000_000_000);
         let _cfg = set_active_job(now_secs, job);
+        enable_skip_learning_for_test();
 
         let staking_id = {
             let account = state::with_state(|st| st.config.staking_account.clone());
@@ -5278,12 +5370,12 @@ mod tests {
             state::list_skip_ranges(),
             vec![SkipRange {
                 start_tx_id: 1,
-                end_tx_id: MIN_SKIP_RANGE_TX_COUNT,
+                end_tx_id: MIN_SKIP_RANGE_TX_COUNT
             }]
         );
         let summary =
             state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
-        assert_eq!(summary.ignored_under_threshold, MIN_SKIP_RANGE_TX_COUNT);
+        assert_eq!(summary.ignored_under_threshold, 0);
         assert_eq!(summary.ignored_bad_memo, 0);
         assert_eq!(index.starts().first().copied(), Some(None));
     }
@@ -5399,7 +5491,7 @@ mod tests {
     }
 
     #[test]
-    fn persisted_skip_range_causes_next_run_to_jump_before_fetching_inside_it() {
+    fn persisted_interval_skips_descending_scan_without_hiding_beneficiary() {
         let now_secs = 10_200;
         let mut job = ActivePayoutJob::new(
             7,
@@ -5408,7 +5500,7 @@ mod tests {
             500_000_000,
             now_secs * 1_000_000_000,
         );
-        job.next_start = Some(0);
+        job.next_start = None;
         let _cfg = set_active_job(now_secs, job);
         state::insert_skip_range(SkipRange {
             start_tx_id: 1,
@@ -5421,12 +5513,13 @@ mod tests {
             account_identifier_text_for_account(&account)
         };
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
-        let txs = vec![commitment_tx(
+        let mut txs = vec![commitment_tx(
             MIN_SKIP_RANGE_TX_COUNT + 1,
             &staking_id,
             500_000_000,
             Some(beneficiary.to_text().into_bytes()),
         )];
+        txs.extend((1..=MIN_SKIP_RANGE_TX_COUNT).map(|id| commitment_tx(id, &staking_id, 1, None)));
         let index = RecordingIndex::new(txs);
         let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(42)]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
@@ -5441,20 +5534,18 @@ mod tests {
             now_secs,
         )));
 
-        assert_eq!(
-            index.starts().first().copied(),
-            Some(Some(MIN_SKIP_RANGE_TX_COUNT))
-        );
+        assert_eq!(index.starts().first().copied(), Some(None));
         let summary =
             state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
         assert_eq!(summary.topped_up_count, 1);
+        assert!(index.starts().len() <= 2);
     }
 
     #[test]
     fn skip_range_persistence_fault_latches_sticky_fault_instead_of_trapping() {
         let now_secs = 10_225;
         let job = ActivePayoutJob::new(8, 10_000, 10_000, 1_000_000_000, now_secs * 1_000_000_000);
-        let cfg = set_active_job(now_secs, job);
+        let _cfg = set_active_job(now_secs, job);
 
         state::insert_skip_range(SkipRange {
             start_tx_id: MIN_SKIP_RANGE_TX_COUNT + 1,
@@ -5462,31 +5553,15 @@ mod tests {
         })
         .expect("conflicting persisted skip range should be installed for the test");
 
-        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
-        let txs: Vec<_> = (1..=MIN_SKIP_RANGE_TX_COUNT)
-            .map(|id| {
-                commitment_tx(
-                    id,
-                    &staking_id,
-                    crate::MIN_MIN_TX_E8S.saturating_sub(1),
-                    None,
-                )
-            })
-            .collect();
-        let index = RecordingIndex::new(txs);
+        // Invalid intervals remain genuine faults; valid overlap is idempotent.
+        let mut additions = vec![SkipRange {
+            start_tx_id: 1,
+            end_tx_id: 0,
+        }];
+        assert!(persist_new_skip_ranges(&mut additions).is_err());
+        latch_skip_range_invariant_rescue();
         let ledger = ScriptedLedger::new(vec![]);
         let cmc = ScriptedCmc::new(vec![]);
-
-        assert!(run_ready(process_payout(
-            &ledger,
-            &index,
-            &cmc,
-            &NoopGovernance,
-            &crate::clients::canister_info::NoopCanisterStatusClient,
-            now_secs * 1_000_000_000,
-            now_secs,
-        )));
-
         state::with_state(|st| {
             assert_eq!(st.forced_rescue_reason, None);
             assert_eq!(st.skip_range_invariant_fault, Some(true));
@@ -5536,12 +5611,13 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_multi_page_skip_candidate_resumes_and_persists_single_range() {
+    fn interrupted_descending_barren_scan_resumes_learning() {
         let now_secs = 10_250;
         let mut job =
             ActivePayoutJob::new(9, 10_000, 10_000, 1_000_000_000, now_secs * 1_000_000_000);
         job.next_start = None;
         let _cfg = set_active_job(now_secs, job);
+        enable_skip_learning_for_test();
 
         let staking_id = {
             let account = state::with_state(|st| st.config.staking_account.clone());
@@ -5560,7 +5636,7 @@ mod tests {
         let first_page = GetAccountIdentifierTransactionsResponse {
             balance: 0,
             oldest_tx_id: Some(1),
-            transactions: txs.iter().take(PAGE_SIZE as usize).cloned().collect(),
+            transactions: txs.iter().rev().take(PAGE_SIZE as usize).cloned().collect(),
         };
         let interrupted_index = ScriptedIndex::new(vec![
             IndexResponseStep::Ok(first_page),
@@ -5581,9 +5657,18 @@ mod tests {
 
         let interrupted_job = state::with_state(|st| st.active_payout_job.clone())
             .expect("job should remain active after retryable index failure");
-        assert_eq!(interrupted_job.next_start, Some(PAGE_SIZE));
-        assert_eq!(interrupted_job.skip_candidate_start_tx_id, Some(1));
-        assert_eq!(interrupted_job.skip_candidate_end_tx_id, Some(PAGE_SIZE));
+        assert_eq!(
+            interrupted_job.next_start,
+            Some(MIN_SKIP_RANGE_TX_COUNT - PAGE_SIZE + 1)
+        );
+        assert_eq!(
+            interrupted_job.skip_candidate_start_tx_id,
+            Some(MIN_SKIP_RANGE_TX_COUNT)
+        );
+        assert_eq!(
+            interrupted_job.skip_candidate_end_tx_id,
+            Some(MIN_SKIP_RANGE_TX_COUNT - PAGE_SIZE + 1)
+        );
         assert_eq!(interrupted_job.skip_candidate_tx_count, PAGE_SIZE);
         assert!(state::list_skip_ranges().is_empty());
 
@@ -5602,17 +5687,17 @@ mod tests {
             state::list_skip_ranges(),
             vec![SkipRange {
                 start_tx_id: 1,
-                end_tx_id: MIN_SKIP_RANGE_TX_COUNT,
+                end_tx_id: MIN_SKIP_RANGE_TX_COUNT
             }]
         );
         assert_eq!(
             resuming_index.starts().first().copied(),
-            Some(Some(PAGE_SIZE))
+            Some(Some(MIN_SKIP_RANGE_TX_COUNT - PAGE_SIZE + 1))
         );
     }
 
     #[test]
-    fn no_transfer_breaks_skip_span_so_only_long_barren_sides_are_persisted() {
+    fn descending_below_fee_commitment_separates_learned_spans() {
         let now_secs = 10_300;
         let mut job = ActivePayoutJob::new(
             11,
@@ -5623,6 +5708,7 @@ mod tests {
         );
         job.next_start = None;
         let _cfg = set_active_job(now_secs, job);
+        enable_skip_learning_for_test();
 
         let staking_id = {
             let account = state::with_state(|st| st.config.staking_account.clone());
@@ -5674,17 +5760,17 @@ mod tests {
             vec![
                 SkipRange {
                     start_tx_id: 1,
-                    end_tx_id: MIN_SKIP_RANGE_TX_COUNT,
+                    end_tx_id: MIN_SKIP_RANGE_TX_COUNT
                 },
                 SkipRange {
                     start_tx_id: MIN_SKIP_RANGE_TX_COUNT + 2,
-                    end_tx_id: 2 * MIN_SKIP_RANGE_TX_COUNT + 1,
-                },
+                    end_tx_id: 2 * MIN_SKIP_RANGE_TX_COUNT + 1
+                }
             ]
         );
         let summary =
             state::with_state(|st| st.last_summary.clone()).expect("summary should be recorded");
-        assert_eq!(summary.ignored_under_threshold, 2 * MIN_SKIP_RANGE_TX_COUNT);
+        assert_eq!(summary.ignored_under_threshold, 0);
         assert_eq!(summary.topped_up_count, 0);
     }
 
@@ -5698,7 +5784,7 @@ mod tests {
             1_900_000_000,
             now_secs * 1_000_000_000,
         );
-        job.next_start = Some(1);
+        job.next_start = None;
         job.configure_round_accounting(
             Some(0),
             Some(1_000_000_000),
@@ -5708,6 +5794,8 @@ mod tests {
             1_000_000_000,
             false,
         );
+        job.effective_denom_staking_balance_e8s = Some(0);
+        job.round_end_staking_balance_e8s = Some(0);
         let _cfg = set_active_job(now_secs, job);
         state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(0));
 
@@ -5718,7 +5806,7 @@ mod tests {
         let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let beneficiary_b = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
         let beneficiary_c = Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").unwrap();
-        let index = RecordingIndex::new(vec![
+        let index = NewestFirstExclusiveIndex::from_history(vec![
             commitment_tx_at(
                 1,
                 &staking_id,
@@ -5765,7 +5853,7 @@ mod tests {
         assert_eq!(summary.failed_topups, 0);
         assert_eq!(summary.ambiguous_topups, 0);
         assert_eq!(summary.pot_remaining_e8s, 1);
-        assert_eq!(ledger.transfer_amounts(), vec![91_733_119, 8_246_880]);
+        assert_eq!(ledger.transfer_amounts(), vec![8_246_880, 91_733_119]);
         assert_eq!(cmc.call_count(), 2);
     }
 
@@ -5792,7 +5880,7 @@ mod tests {
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let funding_timestamp_nanos = 100_000_000_000;
         let funding_amount_e8s = 100_000_000;
-        let index = RecordingIndex::new(vec![
+        let index = NewestFirstExclusiveIndex::from_history(vec![
             funding_tx_at(
                 20,
                 &funding_source_id,
@@ -5833,12 +5921,10 @@ mod tests {
         assert!(active_job.is_none());
         let summary = summary.expect("summary should be finalized");
         assert_eq!(summary.pot_start_e8s, funding_amount_e8s);
-        assert_eq!(
-            summary.effective_denom_staking_balance_e8s,
-            Some(100_000_000)
-        );
+        assert_eq!(summary.effective_denom_staking_balance_e8s, Some(0));
         assert_eq!(summary.topped_up_count, 0);
-        assert_eq!(round_start_staking_balance_e8s, Some(100_000_000));
+        // No qualifying pre-funding history backs the old cached scalar.
+        assert_eq!(round_start_staking_balance_e8s, Some(0));
         assert_eq!(last_processed_funding_tx_id, Some(20));
     }
 
@@ -5885,7 +5971,7 @@ mod tests {
             Some(pre_funding_beneficiary.to_text().into_bytes()),
             0,
         ));
-        let index = ExclusiveIndex::new(txs);
+        let index = NewestFirstExclusiveIndex::from_history(txs);
         let ledger = BalanceRecordingLedger::new(
             10_000,
             100_000_000,
@@ -5972,6 +6058,7 @@ mod tests {
         let index = ScriptedIndex::new(steps);
 
         state::set_state(state::State::new(test_config(), 0));
+        state::with_state_mut(|st| st.last_processed_funding_tx_id = Some(10));
         let discovery = run_ready(discover_oldest_unprocessed_funding_tranche(
             &index,
             payout_id,
@@ -6025,7 +6112,7 @@ mod tests {
             Some(beneficiary.to_text().into_bytes()),
             0,
         ));
-        let index = ExclusiveIndex::new(txs);
+        let index = NewestFirstExclusiveIndex::from_history(txs);
         let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 100_000_000, vec![91]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
 
@@ -6110,7 +6197,7 @@ mod tests {
             Some(beneficiary.to_text().into_bytes()),
             0,
         ));
-        let index = ExclusiveIndex::new(txs);
+        let index = NewestFirstExclusiveIndex::from_history(txs);
         let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 100_000_000, vec![101]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
 
@@ -6187,7 +6274,7 @@ mod tests {
         state::with_state_mut(|st| {
             st.active_funding_scan = Some(state::FundingScanState {
                 anchor_last_processed_funding_tx_id: None,
-                cursor: Some(100),
+                cursor: Some(50),
                 candidate: Some(state::FundingTrancheState {
                     tx_id: 50,
                     timestamp_nanos: 5,
@@ -6274,6 +6361,7 @@ mod tests {
     #[test]
     fn funding_discovery_with_recovery_cursor_skips_prior_processed_transfer() {
         state::set_state(state::State::new(test_config(), 0));
+        state::with_state_mut(|st| st.last_processed_funding_tx_id = Some(100));
         let payout_id = "payout-account".to_string();
         let funding_source_id = "funding-source".to_string();
         let index = ExclusiveIndex::new(vec![
@@ -6408,7 +6496,7 @@ mod tests {
         let payout_id = account_identifier_text_for_account(&payout_account());
         let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
-        let index = ExclusiveIndex::new(vec![
+        let index = NewestFirstExclusiveIndex::from_history(vec![
             funding_tx_at(
                 200,
                 &funding_source_id,
@@ -6608,7 +6696,7 @@ mod tests {
             1_400_000_000,
             now_secs * 1_000_000_000,
         );
-        job.next_start = Some(1);
+        job.next_start = None;
         job.configure_round_accounting(
             Some(10_000_000_000),
             Some(1_400_000_000),
@@ -6618,6 +6706,8 @@ mod tests {
             1_400_000_000,
             false,
         );
+        job.effective_denom_staking_balance_e8s = Some(0);
+        job.round_end_staking_balance_e8s = Some(0);
         let _cfg = set_active_job(now_secs, job);
         state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
 
@@ -6626,7 +6716,7 @@ mod tests {
             account_identifier_text_for_account(&account)
         };
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
-        let index = RecordingIndex::new(vec![commitment_tx_at(
+        let index = NewestFirstExclusiveIndex::from_history(vec![commitment_tx_at(
             1,
             &staking_id,
             400_000_000,
@@ -6650,11 +6740,11 @@ mod tests {
             state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
         assert_eq!(
             summary.effective_denom_staking_balance_e8s,
-            Some(1_400_000_000)
+            Some(400_000_000)
         );
         assert_eq!(summary.topped_up_count, 1);
-        assert_eq!(summary.remainder_to_relay_e8s, 71_418_572);
-        assert_eq!(ledger.transfer_amounts(), vec![28_561_428, 71_418_572]);
+        assert_eq!(summary.remainder_to_relay_e8s, 0);
+        assert_eq!(ledger.transfer_amounts(), vec![99_990_000]);
     }
 
     #[test]
@@ -6670,7 +6760,7 @@ mod tests {
         let payout_id = account_identifier_text_for_account(&payout_account());
         let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
         let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
-        let no_funding_index = RecordingIndex::new(vec![commitment_tx_at(
+        let no_funding_index = NewestFirstExclusiveIndex::from_history(vec![commitment_tx_at(
             1,
             &staking_id,
             100_000_000,
@@ -6694,7 +6784,7 @@ mod tests {
 
         state::set_state(state::State::new(cfg.clone(), now_secs));
         state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(0));
-        let index = RecordingIndex::new(vec![
+        let index = NewestFirstExclusiveIndex::from_history(vec![
             commitment_tx_at(
                 1,
                 &staking_id,
@@ -6818,7 +6908,7 @@ mod tests {
         let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
         let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let beneficiary_b = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
-        let index = RecordingIndex::new(vec![
+        let index = NewestFirstExclusiveIndex::from_history(vec![
             commitment_tx_at(
                 1,
                 &staking_id,
@@ -6899,7 +6989,7 @@ mod tests {
         let old_beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let mid_beneficiary = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
         let too_late_beneficiary = Principal::from_text("rkp4c-7iaaa-aaaaa-aaaca-cai").unwrap();
-        let index = RecordingIndex::new(vec![
+        let index = NewestFirstExclusiveIndex::from_history(vec![
             commitment_tx_at(
                 1,
                 &staking_id,
@@ -6951,7 +7041,7 @@ mod tests {
         );
         assert_eq!(summary.denom_staking_balance_e8s, 300_000_000);
         assert_eq!(summary.topped_up_count, 2);
-        assert_eq!(ledger.transfer_amounts(), vec![99_990_000, 49_990_000]);
+        assert_eq!(ledger.transfer_amounts(), vec![49_990_000, 99_990_000]);
         assert_eq!(
             state::with_state(|st| st.last_processed_funding_tx_id),
             Some(20)
@@ -6974,7 +7064,7 @@ mod tests {
         let old_beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let post_boundary_beneficiary =
             Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
-        let index = RecordingIndex::new(vec![
+        let index = NewestFirstExclusiveIndex::from_history(vec![
             // This commitment is before the already-processed funding cursor. The
             // cursor applies only to payout-account funding transfers, so staking
             // history must still be replayed and counted.
@@ -7040,7 +7130,7 @@ mod tests {
         let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
         let old_beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let too_fresh_beneficiary = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
-        let index = RecordingIndex::new(vec![
+        let index = NewestFirstExclusiveIndex::from_history(vec![
             commitment_tx_at(
                 1,
                 &staking_id,
@@ -7167,7 +7257,7 @@ mod tests {
                 40_000_000_000,
             ),
         ];
-        let index = RecordingIndex::new(txs.clone());
+        let index = NewestFirstExclusiveIndex::from_history(txs.clone());
         let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![81]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
         assert!(run_ready(process_payout(
@@ -7186,7 +7276,7 @@ mod tests {
         );
         assert_eq!(first_summary.topped_up_count, 1);
 
-        let index = RecordingIndex::new(txs);
+        let index = NewestFirstExclusiveIndex::from_history(txs);
         let ledger =
             BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![82, 83, 84]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok, CmcStep::Ok]);
@@ -7260,7 +7350,7 @@ mod tests {
                 40_000_000_000,
             ),
         ];
-        let index = RecordingIndex::new(txs.clone());
+        let index = NewestFirstExclusiveIndex::from_history(txs.clone());
         let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![201]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
         assert!(run_ready(process_payout(
@@ -7281,7 +7371,7 @@ mod tests {
         assert_eq!(first_summary.topped_up_count, 1);
         assert_eq!(ledger.transfer_amounts(), vec![99_990_000]);
 
-        let index = RecordingIndex::new(txs);
+        let index = NewestFirstExclusiveIndex::from_history(txs);
         let ledger =
             BalanceRecordingLedger::new(10_000, 100_000_000, 200_000_000, vec![202, 203, 204]);
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok, CmcStep::Ok, CmcStep::Ok]);
@@ -7303,7 +7393,7 @@ mod tests {
         );
         assert_eq!(second_summary.topped_up_count, 2);
         assert_eq!(second_summary.pot_remaining_e8s, 1);
-        assert_eq!(ledger.transfer_amounts(), vec![57_132_857, 42_847_142]);
+        assert_eq!(ledger.transfer_amounts(), vec![42_847_142, 57_132_857]);
         assert_eq!(
             state::with_state(|st| st.last_processed_funding_tx_id),
             Some(4)
@@ -7330,13 +7420,15 @@ mod tests {
             100_000_000,
             false,
         );
+        job.effective_denom_staking_balance_e8s = Some(0);
+        job.round_end_staking_balance_e8s = Some(0);
         let cfg = set_active_job(now_secs, job);
         state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
 
         let staking_id = account_identifier_text_for_account(&cfg.staking_account);
         let beneficiary_a = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
         let beneficiary_b = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
-        let index = RecordingIndex::new(vec![
+        let index = NewestFirstExclusiveIndex::from_history(vec![
             commitment_tx_at(
                 1,
                 &staking_id,
@@ -7431,4 +7523,1177 @@ mod tests {
             Some(ForcedRescueReason::AccountingInvariantBroken)
         );
     }
+    #[test]
+    fn synthetic_delay_transition_reconstructs_history_with_equal_live_and_carried_balances() {
+        const START: u64 = 20_000_000_000;
+        const END: u64 = 40_000_000_000;
+        const STALE_CARRIED_E8S: u64 = 777_000_000;
+        const EXPECTED_DENOM_E8S: u64 = 410_000_004;
+        const EXPECTED_ENDING_E8S: u64 = 600_000_010;
+
+        let mut cfg = test_config();
+        cfg.min_tx_e8s = 100_000_000;
+        cfg.staking_account.owner = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        cfg.stake_recognition_delay_seconds = Some(1);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let cycles_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let raw_target = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        let raw_directive = format!("{}.audit", raw_target.to_text().replace('-', ""));
+        let mut st = state::State::new(cfg, START / 1_000_000_000);
+        st.current_round_start_time_nanos = Some(START);
+        st.current_round_start_staking_balance_e8s = Some(STALE_CARRIED_E8S);
+        st.current_round_start_latest_tx_id = Some(1);
+        st.last_processed_funding_tx_id = Some(10);
+        state::clear_skip_ranges();
+        state::set_state(st);
+
+        // The policy update preserves the stale scalar and accounting boundaries. A commitment
+        // recognised under the shorter delay is reweighted from history under the new delay.
+        state::with_state_mut(|st| {
+            crate::apply_upgrade_args_to_state(
+                st,
+                Some(crate::UpgradeArgs {
+                    stake_recognition_delay_seconds: Some(7),
+                    ..Default::default()
+                }),
+                END / 1_000_000_000,
+            );
+        });
+
+        let txs = vec![
+            commitment_tx_at(
+                1,
+                &staking_id,
+                200_000_000,
+                Some(cycles_target.to_text().into_bytes()),
+                0,
+            ),
+            commitment_tx_at(
+                2,
+                &staking_id,
+                100_000_003,
+                Some(raw_directive.into_bytes()),
+                15_000_000_000,
+            ),
+            commitment_tx_at(
+                3,
+                &staking_id,
+                300_000_007,
+                Some(cycles_target.to_text().into_bytes()),
+                25_000_000_000,
+            ),
+            commitment_tx_at(
+                4,
+                &staking_id,
+                99_999_999,
+                Some(cycles_target.to_text().into_bytes()),
+                0,
+            ),
+            commitment_tx_at(5, &staking_id, 200_000_000, Some(vec![0xff]), 0),
+            commitment_tx_at(
+                6,
+                &staking_id,
+                900_000_000,
+                Some(cycles_target.to_text().into_bytes()),
+                0,
+            ),
+        ];
+        let index = NewestFirstExclusiveIndex::from_history(txs);
+        ensure_active_job_with_boundary(
+            END,
+            10_000,
+            EXPECTED_DENOM_E8S,
+            STALE_CARRIED_E8S,
+            END,
+            Some(5),
+            Some(FundingTranche {
+                tx_id: 5,
+                timestamp_nanos: END,
+                amount_e8s: EXPECTED_DENOM_E8S,
+            }),
+        );
+        let ledger = BalanceRecordingLedger::new(
+            10_000,
+            EXPECTED_DENOM_E8S,
+            STALE_CARRIED_E8S,
+            vec![1, 2, 3],
+        );
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok; 2]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            END,
+            END / 1_000_000_000,
+        )));
+
+        let expected_accepted = vec![119_990_002, 89_990_002, 199_990_000];
+        assert_eq!(ledger.transfer_amounts(), expected_accepted);
+        assert_eq!(cmc.call_count(), 2);
+        state::with_state(|st| {
+            let summary = st.last_summary.as_ref().expect("summary");
+            assert_eq!(
+                summary.effective_denom_staking_balance_e8s,
+                Some(EXPECTED_DENOM_E8S)
+            );
+            assert_eq!(summary.topped_up_count, 3);
+            assert_eq!(summary.topped_up_sum_e8s, 409_970_004);
+            assert_eq!(summary.ignored_under_threshold, 1);
+            assert_eq!(summary.ignored_bad_memo, 1);
+            assert_eq!(summary.remainder_to_relay_e8s, 0);
+            assert_eq!(
+                st.current_round_start_staking_balance_e8s,
+                Some(EXPECTED_ENDING_E8S)
+            );
+            assert_eq!(st.current_round_start_time_nanos, Some(END));
+            assert_eq!(st.current_round_start_latest_tx_id, Some(5));
+            assert_eq!(st.last_processed_funding_tx_id, Some(5));
+        });
+    }
+    #[test]
+    fn history_denominator_policy_and_boundary_matrix() {
+        let start = 20_000_000_000u64;
+        let end = 40_000_000_000u64;
+        for (old_delay, patch, threshold) in [
+            (1, Some(7), 100_000_000),
+            (7, Some(1), 100_000_000),
+            (7, None, 100_000_000),
+            (7, Some(7), 200_000_000),
+        ] {
+            let delay = patch.unwrap_or(old_delay);
+            let mut cfg = test_config();
+            cfg.staking_account.owner =
+                Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+            cfg.stake_recognition_delay_seconds = Some(old_delay);
+            // Exercise a threshold decrease alongside the delay decrease.
+            cfg.min_tx_e8s = if old_delay == 7 && patch == Some(1) {
+                200_000_000
+            } else {
+                100_000_000
+            };
+            let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+            let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+            let mut st = state::State::new(cfg, 1);
+            st.current_round_start_time_nanos = Some(start);
+            st.current_round_start_staking_balance_e8s = Some(777_000_000);
+            st.current_round_start_latest_tx_id = Some(100);
+            state::clear_skip_ranges();
+            state::set_state(st);
+            state::with_state_mut(|st| {
+                crate::apply_upgrade_args_to_state(
+                    st,
+                    Some(crate::UpgradeArgs {
+                        stake_recognition_delay_seconds: patch,
+                        min_tx_e8s: Some(threshold),
+                        ..Default::default()
+                    }),
+                    40,
+                );
+            });
+            let mut txs = Vec::new();
+            let mut weight = 0u64;
+            let mut ending = 0u64;
+            for (i, effective) in [start - 1, start, start + 1, end - 1, end, end + 1]
+                .into_iter()
+                .enumerate()
+            {
+                let amount = if i % 2 == 0 { 100_000_001 } else { 200_000_003 };
+                let mut tx = commitment_tx_at(
+                    i as u64 + 1,
+                    &staking_id,
+                    amount,
+                    Some(beneficiary.to_text().into_bytes()),
+                    effective - delay * 1_000_000_000,
+                );
+                if i == 1 {
+                    // Sender timestamp fallback, independently controlled.
+                    tx.transaction.created_at_time = tx.transaction.timestamp.take();
+                }
+                txs.push(tx);
+                if amount >= threshold {
+                    if effective <= end {
+                        ending += amount;
+                    }
+                    weight += if effective <= start {
+                        amount
+                    } else if effective >= end {
+                        0
+                    } else {
+                        ((amount as u128) * (end - effective) as u128 / (end - start) as u128)
+                            as u64
+                    };
+                }
+            }
+            let mut missing = commitment_tx_at(
+                7,
+                &staking_id,
+                900_000_000,
+                Some(beneficiary.to_text().into_bytes()),
+                0,
+            );
+            missing.transaction.timestamp = None;
+            missing.transaction.created_at_time = None;
+            txs.push(missing);
+            // Block exactly at the funding boundary qualifies; just beyond it does not.
+            txs.push(commitment_tx_at(
+                10,
+                &staking_id,
+                200_000_000,
+                Some(beneficiary.to_text().into_bytes()),
+                0,
+            ));
+            txs.push(commitment_tx_at(
+                11,
+                &staking_id,
+                900_000_000,
+                Some(beneficiary.to_text().into_bytes()),
+                0,
+            ));
+            weight += 200_000_000;
+            ending += 200_000_000;
+            let index = NewestFirstExclusiveIndex::from_history(txs);
+            ensure_active_job_with_boundary(
+                end,
+                10_000,
+                100_000_000,
+                777_000_000,
+                end,
+                Some(10),
+                None,
+            );
+            let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 777_000_000, vec![]);
+            let cmc = ScriptedCmc::new(vec![CmcStep::Ok; 8]);
+            assert!(run_ready(process_payout(
+                &ledger,
+                &index,
+                &cmc,
+                &NoopGovernance,
+                &crate::clients::canister_info::NoopCanisterStatusClient,
+                end,
+                40
+            )));
+            state::with_state(|st| {
+                assert_eq!(
+                    st.last_summary
+                        .as_ref()
+                        .unwrap()
+                        .effective_denom_staking_balance_e8s,
+                    Some(weight)
+                );
+                assert_eq!(st.current_round_start_staking_balance_e8s, Some(ending));
+                assert_eq!(st.current_round_start_time_nanos, Some(end));
+            });
+        }
+    }
+
+    #[test]
+    fn history_denominator_is_independent_of_delivery_outcome() {
+        for outcome in 0..3 {
+            let cfg = test_config();
+            let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+            let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+            let mut st = state::State::new(cfg, 40);
+            st.config.stake_recognition_delay_seconds = Some(1);
+            st.current_round_start_time_nanos = Some(20_000_000_000);
+            st.current_round_start_staking_balance_e8s = Some(777_000_000);
+            state::clear_skip_ranges();
+            state::set_state(st);
+            ensure_active_job_with_boundary(
+                40_000_000_000,
+                10_000,
+                100_000_000,
+                777_000_000,
+                40_000_000_000,
+                Some(10),
+                None,
+            );
+            let index = NewestFirstExclusiveIndex::from_history(vec![commitment_tx_at(
+                1,
+                &staking_id,
+                100_000_000,
+                Some(beneficiary.to_text().into_bytes()),
+                0,
+            )]);
+            let steps = match outcome {
+                0 => vec![LedgerStep::Ok(1)],
+                1 => vec![LedgerStep::PermanentErr, LedgerStep::Ok(2)],
+                _ => vec![
+                    LedgerStep::PermanentErr,
+                    LedgerStep::PermanentErr,
+                    LedgerStep::Ok(3),
+                ],
+            };
+            let ledger = ScriptedLedger::new(steps);
+            let cmc = ScriptedCmc::new(if outcome == 0 {
+                vec![CmcStep::Ok]
+            } else {
+                vec![]
+            });
+            assert!(run_ready(process_payout(
+                &ledger,
+                &index,
+                &cmc,
+                &NoopGovernance,
+                &crate::clients::canister_info::NoopCanisterStatusClient,
+                40_000_000_000,
+                40
+            )));
+            state::with_state(|st| {
+                let summary = st.last_summary.as_ref().unwrap();
+                assert_eq!(
+                    summary.effective_denom_staking_balance_e8s,
+                    Some(100_000_000)
+                );
+                assert_eq!(
+                    st.current_round_start_staking_balance_e8s,
+                    Some(100_000_000)
+                );
+                assert_eq!(summary.topped_up_count, if outcome == 2 { 0 } else { 1 });
+                assert_eq!(summary.failed_topups, if outcome == 2 { 1 } else { 0 });
+                assert_eq!(
+                    summary.remainder_to_relay_e8s,
+                    if outcome == 2 { 99_990_000 } else { 0 }
+                );
+            });
+            assert_eq!(cmc.call_count(), if outcome == 0 { 1 } else { 0 });
+        }
+    }
+    #[test]
+    fn authoritative_history_scan_is_bounded_and_never_pays_partial_totals() {
+        for count in [57u64, PAGE_SIZE * (MAX_INDEX_PAGES_PER_PAYOUT_TICK + 1) + 7] {
+            let cfg = test_config();
+            let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+            let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+            let mut st = state::State::new(cfg, 40);
+            st.config.stake_recognition_delay_seconds = Some(1);
+            st.current_round_start_time_nanos = Some(20_000_000_000);
+            st.current_round_start_staking_balance_e8s = Some(777_000_000);
+            state::clear_skip_ranges();
+            state::set_state(st);
+            let txs = (1..=count)
+                .map(|id| {
+                    commitment_tx_at(
+                        id,
+                        &staking_id,
+                        100_000_000,
+                        if id == 1 {
+                            Some(beneficiary.to_text().into_bytes())
+                        } else {
+                            None
+                        },
+                        0,
+                    )
+                })
+                .collect();
+            let index = NewestFirstExclusiveIndex::from_history(txs);
+            ensure_active_job_with_boundary(
+                40_000_000_000,
+                10_000,
+                100_000_000,
+                777_000_000,
+                40_000_000_000,
+                Some(count + 1),
+                None,
+            );
+            let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 777_000_000, vec![1]);
+            let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+            let mut ticks = 0;
+            loop {
+                ticks += 1;
+                let calls_before = index.starts().len();
+                assert!(run_ready(process_payout(
+                    &ledger,
+                    &index,
+                    &cmc,
+                    &NoopGovernance,
+                    &crate::clients::canister_info::NoopCanisterStatusClient,
+                    40_000_000_000,
+                    40
+                )));
+                assert!(
+                    index.starts().len() - calls_before
+                        <= MAX_INDEX_PAGES_PER_PAYOUT_TICK as usize + 1
+                );
+                if ticks == 1 && count > PAGE_SIZE * MAX_INDEX_PAGES_PER_PAYOUT_TICK {
+                    assert!(ledger.transfer_amounts().is_empty());
+                    state::with_state(|st| {
+                        assert_eq!(
+                            st.active_payout_job
+                                .as_ref()
+                                .unwrap()
+                                .effective_denom_scan_complete,
+                            Some(false)
+                        )
+                    });
+                }
+                if state::with_state(|st| st.active_payout_job.is_none()) {
+                    break;
+                }
+                assert!(ticks < 5, "bounded scan must progress");
+            }
+            assert_eq!(ledger.transfer_amounts(), vec![99_990_000]);
+            assert_eq!(
+                cmc.call_count(),
+                1,
+                "large history must pay its beneficiary: {:?}",
+                state::with_state(|st| st.last_summary.clone())
+            );
+            assert_eq!(
+                state::with_state(|st| st.current_round_start_staking_balance_e8s),
+                Some(100_000_000)
+            );
+            let ledger_calls =
+                ledger.read_calls.load(Ordering::SeqCst) + ledger.transfer_amounts().len();
+            println!("history_rows={count} pages={} index_calls={} ledger_calls={ledger_calls} cmc_calls={} total_client_calls={} driver_ticks={ticks}; native instruction measurement unavailable", count.div_ceil(PAGE_SIZE), index.starts().len(), cmc.call_count(), index.starts().len() + ledger_calls + cmc.call_count());
+        }
+    }
+
+    #[test]
+    fn authoritative_history_rejects_incomplete_repeated_and_malformed_pages() {
+        let cfg = test_config();
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let tx = |id| {
+            commitment_tx_at(
+                id,
+                &staking_id,
+                100_000_000,
+                Some(beneficiary.to_text().into_bytes()),
+                0,
+            )
+        };
+        for (cursor, ids, oldest) in [
+            (None, vec![], Some(1)),
+            (None, vec![3, 1, 2], Some(1)),
+            (None, vec![3, 3], Some(1)),
+            (Some(3), vec![3, 2], Some(1)),
+            (Some(3), vec![4], Some(1)),
+            (None, vec![2], None),
+        ] {
+            let mut st = state::State::new(cfg.clone(), 40);
+            st.config.stake_recognition_delay_seconds = Some(1);
+            state::clear_skip_ranges();
+            state::set_state(st);
+            ensure_active_job_with_boundary(
+                40_000_000_000,
+                10_000,
+                100_000_000,
+                100_000_000,
+                40_000_000_000,
+                Some(10),
+                None,
+            );
+            state::with_state_mut(|st| st.active_payout_job.as_mut().unwrap().next_start = cursor);
+            let index = HeldIndex {
+                started: AtomicBool::new(false),
+                release: AtomicBool::new(true),
+                response: GetAccountIdentifierTransactionsResponse {
+                    balance: 100_000_000,
+                    oldest_tx_id: oldest,
+                    transactions: ids.into_iter().map(tx).collect(),
+                },
+            };
+            let ledger = ScriptedLedger::new(vec![]);
+            let cmc = ScriptedCmc::new(vec![]);
+            assert!(!run_ready(process_payout(
+                &ledger,
+                &index,
+                &cmc,
+                &NoopGovernance,
+                &crate::clients::canister_info::NoopCanisterStatusClient,
+                40_000_000_000,
+                40
+            )));
+            assert_eq!(ledger.transfer_calls(), 0);
+            state::with_state(|st| {
+                let job = st.active_payout_job.as_ref().unwrap();
+                assert_eq!(job.next_start, cursor);
+                assert_eq!(job.effective_denom_staking_balance_e8s, Some(0));
+                assert_eq!(job.round_end_staking_balance_e8s, Some(0));
+                assert_eq!(job.effective_denom_scan_complete, Some(false));
+            });
+        }
+    }
+    #[test]
+    fn authoritative_scan_resumes_after_short_page_and_read_failure() {
+        let cfg = test_config();
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let mut st = state::State::new(cfg, 40);
+        st.config.stake_recognition_delay_seconds = Some(1);
+        state::clear_skip_ranges();
+        state::set_state(st);
+        ensure_active_job_with_boundary(
+            40_000_000_000,
+            10_000,
+            100_000_000,
+            300_000_000,
+            40_000_000_000,
+            Some(10),
+            None,
+        );
+        let tx = |id| {
+            commitment_tx_at(
+                id,
+                &staking_id,
+                100_000_000,
+                Some(beneficiary.to_text().into_bytes()),
+                0,
+            )
+        };
+        let page = |ids: Vec<u64>| GetAccountIdentifierTransactionsResponse {
+            balance: 300_000_000,
+            oldest_tx_id: Some(1),
+            transactions: ids.into_iter().map(tx).collect(),
+        };
+        let first = ScriptedIndex::new(vec![
+            IndexResponseStep::Ok(page(vec![3])),
+            IndexResponseStep::Err,
+        ]);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 300_000_000, vec![]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok; 3]);
+        assert!(!run_ready(process_payout(
+            &ledger,
+            &first,
+            &cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            40_000_000_000,
+            40
+        )));
+        assert!(ledger.transfer_amounts().is_empty());
+        state::with_state(|st| {
+            let j = st.active_payout_job.as_ref().unwrap();
+            assert_eq!(j.next_start, Some(3));
+            assert_eq!(j.effective_denom_staking_balance_e8s, Some(100_000_000));
+            assert_eq!(j.effective_denom_scan_complete, Some(false));
+        });
+        let repeated = ScriptedIndex::new(vec![IndexResponseStep::Ok(page(vec![3]))]);
+        assert!(!run_ready(process_payout(
+            &ledger,
+            &repeated,
+            &cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            40_000_000_000,
+            40
+        )));
+        assert!(ledger.transfer_amounts().is_empty());
+        let rest = NewestFirstExclusiveIndex::from_history(vec![tx(1), tx(2), tx(3)]);
+        assert!(run_ready(process_payout(
+            &ledger,
+            &rest,
+            &cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            40_000_000_000,
+            40
+        )));
+        assert_eq!(ledger.transfer_amounts(), vec![33_323_333; 3]);
+        assert_eq!(
+            state::with_state(|st| st.current_round_start_staking_balance_e8s),
+            Some(300_000_000)
+        );
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum BeneficiaryPageFault {
+        Empty,
+        Duplicate,
+        Ascending,
+        RepeatedCursor,
+        WrongAnchor,
+        Read,
+    }
+
+    struct CappedFaultIndex {
+        inner: NewestFirstExclusiveIndex,
+        fault: Mutex<Option<(Option<u64>, BeneficiaryPageFault)>>,
+    }
+
+    #[async_trait]
+    impl IndexClient for CappedFaultIndex {
+        async fn get_account_identifier_transactions(
+            &self,
+            account: String,
+            start: Option<u64>,
+            max_results: u64,
+        ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            let mut response = self
+                .inner
+                .get_account_identifier_transactions(account, start, max_results)
+                .await?;
+            let paying = state::with_state(|st| {
+                st.active_payout_job
+                    .as_ref()
+                    .is_some_and(|job| effective_denom_scan_complete(job) && !job.scan_complete)
+            });
+            let fault = {
+                let mut pending = self.fault.lock().unwrap();
+                if paying && pending.as_ref().is_some_and(|(cursor, _)| *cursor == start) {
+                    pending.take().map(|(_, fault)| fault)
+                } else {
+                    None
+                }
+            };
+            match fault {
+                Some(BeneficiaryPageFault::Empty) => response.transactions.clear(),
+                Some(BeneficiaryPageFault::Duplicate) => {
+                    response.transactions.push(response.transactions[0].clone())
+                }
+                Some(BeneficiaryPageFault::Ascending) => {
+                    let mut extra = response.transactions[0].clone();
+                    extra.id += 1;
+                    response.transactions.push(extra);
+                }
+                Some(BeneficiaryPageFault::RepeatedCursor) => {
+                    response.transactions[0].id = start.unwrap()
+                }
+                Some(BeneficiaryPageFault::WrongAnchor) => response.oldest_tx_id = Some(2),
+                Some(BeneficiaryPageFault::Read) => {
+                    return Err(crate::clients::ClientError::Call(
+                        "capped page unavailable".into(),
+                    ))
+                }
+                None => {}
+            }
+            Ok(response)
+        }
+    }
+
+    fn capped_history(cap: usize, newer: bool) -> (state::Config, NewestFirstExclusiveIndex) {
+        let mut cfg = test_config();
+        cfg.staking_account.owner = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        cfg.min_tx_e8s = 100_000_000;
+        cfg.stake_recognition_delay_seconds = Some(0);
+        cfg.expected_first_staking_tx_id = Some(1);
+        let staking = account_identifier_text_for_account(&cfg.staking_account);
+        let source = account_identifier_text_for_account(&cfg.funding_source_account);
+        let mut st = state::State::new(cfg.clone(), 40);
+        st.current_round_start_time_nanos = Some(20_000_000_000);
+        st.current_round_start_staking_balance_e8s = Some(777_000_000);
+        st.current_round_start_latest_tx_id = Some(4);
+        state::clear_skip_ranges();
+        state::set_state(st);
+        let payout = account_identifier_text_for_account(&payout_account());
+        let mut txs = vec![commitment_tx_at(
+            1,
+            &staking,
+            100_000_000,
+            Some(vec![0; 8]),
+            0,
+        )];
+        for (id, principal) in [
+            (2, "22255-zqaaa-aaaas-qf6uq-cai"),
+            (3, "rrkah-fqaaa-aaaaa-aaaaq-cai"),
+            (4, "rkp4c-7iaaa-aaaaa-aaaca-cai"),
+        ] {
+            txs.push(commitment_tx_at(
+                id,
+                &staking,
+                100_000_000,
+                Some(principal.as_bytes().to_vec()),
+                0,
+            ));
+        }
+        txs.push(funding_tx_at(
+            10,
+            &source,
+            &payout,
+            100_000_000,
+            40_000_000_000,
+        ));
+        if newer {
+            for id in 20..=23 {
+                txs.push(commitment_tx_at(
+                    id,
+                    &staking,
+                    100_000_000,
+                    Some(b"22255-zqaaa-aaaas-qf6uq-cai".to_vec()),
+                    0,
+                ));
+            }
+        }
+        let mut index = NewestFirstExclusiveIndex::from_history(txs);
+        index.cap = cap;
+        (cfg, index)
+    }
+
+    fn drive_capped(
+        index: &impl IndexClient,
+        ledger: &BalanceRecordingLedger,
+        cmc: &ScriptedCmc,
+    ) -> bool {
+        run_ready(process_payout(
+            ledger,
+            index,
+            cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            100_000_000_000,
+            100,
+        ))
+    }
+
+    #[test]
+    fn capped_pages_pay_every_beneficiary_and_only_leave_rounding_dust() {
+        for cap in [1, 2] {
+            for newer in [false, true] {
+                let (cfg, index) = capped_history(cap, newer);
+                let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 400_000_000, vec![]);
+                let cmc = ScriptedCmc::new(vec![CmcStep::Ok; 3]);
+                assert!(drive_capped(&index, &ledger, &cmc));
+                assert_eq!(ledger.transfer_amounts(), vec![33_323_333; 3]);
+                assert_eq!(cmc.call_count(), 3);
+                let args = ledger.transfer_args.lock().unwrap();
+                assert!(args.iter().all(|arg| arg.to.owner == cfg.cmc_canister_id));
+                let destinations: std::collections::BTreeSet<_> = args
+                    .iter()
+                    .map(|arg| candid::encode_one(arg.to).unwrap())
+                    .collect();
+                assert_eq!(destinations.len(), 3, "each distinct beneficiary paid once");
+                drop(args);
+                state::with_state(|st| {
+                    assert!(st.active_payout_job.is_none());
+                    let summary = st.last_summary.as_ref().unwrap();
+                    assert_eq!(
+                        summary.effective_denom_staking_balance_e8s,
+                        Some(300_000_000)
+                    );
+                    assert_eq!(summary.pot_remaining_e8s, 1);
+                    assert_eq!(summary.remainder_to_relay_e8s, 0);
+                    assert_eq!(
+                        st.current_round_start_staking_balance_e8s,
+                        Some(300_000_000)
+                    );
+                    assert_eq!(st.last_processed_funding_tx_id, Some(10));
+                    assert_eq!(st.current_round_start_time_nanos, Some(40_000_000_000));
+                });
+                assert!(drive_capped(&index, &ledger, &cmc));
+                assert_eq!(ledger.transfer_amounts().len(), 3);
+                println!("cap={cap} newer_only_pages={newer}: three payments 33323333; dust=1; no remainder/replay");
+            }
+        }
+    }
+
+    #[test]
+    fn capped_beneficiary_faults_resume_without_replaying_accepted_payments() {
+        for cap in [1, 2] {
+            for fault in [
+                BeneficiaryPageFault::Empty,
+                BeneficiaryPageFault::Duplicate,
+                BeneficiaryPageFault::Ascending,
+                BeneficiaryPageFault::RepeatedCursor,
+                BeneficiaryPageFault::WrongAnchor,
+                BeneficiaryPageFault::Read,
+            ] {
+                let (_, inner) = capped_history(cap, false);
+                let cursor = Some(if cap == 1 { 4 } else { 3 });
+                let index = CappedFaultIndex {
+                    inner,
+                    fault: Mutex::new(Some((cursor, fault))),
+                };
+                let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 400_000_000, vec![]);
+                let cmc = ScriptedCmc::new(vec![CmcStep::Ok; 3]);
+                assert!(!drive_capped(&index, &ledger, &cmc), "{cap} {fault:?}");
+                assert_eq!(ledger.transfer_amounts(), vec![33_323_333; cap]);
+                state::with_state(|st| {
+                    assert_eq!(st.last_processed_funding_tx_id, None);
+                    assert!(st.last_summary.is_none());
+                    let job = st.active_payout_job.as_ref().unwrap();
+                    assert!(effective_denom_scan_complete(job));
+                    assert!(!job.scan_complete);
+                    assert_eq!(job.next_start, cursor);
+                    assert_eq!(job.gross_outflow_e8s, 33_333_333 * cap as u64);
+                });
+                assert!(drive_capped(&index, &ledger, &cmc));
+                assert_eq!(ledger.transfer_amounts(), vec![33_323_333; 3]);
+                assert_eq!(cmc.call_count(), 3);
+                state::with_state(|st| {
+                    assert!(st.active_payout_job.is_none());
+                    assert_eq!(st.last_processed_funding_tx_id, Some(10));
+                    assert_eq!(st.last_summary.as_ref().unwrap().pot_remaining_e8s, 1);
+                    assert_eq!(st.last_summary.as_ref().unwrap().remainder_to_relay_e8s, 0);
+                });
+                println!("cap={cap} fault={fault:?}: accepted progress preserved; retry paid remaining beneficiaries once");
+            }
+        }
+    }
+
+    #[test]
+    fn capped_funding_history_processes_oldest_tranches_across_outgoing_records() {
+        for cap in [1, 2] {
+            let (cfg, mut index) = capped_history(cap, false);
+            let payout = account_identifier_text_for_account(&payout_account());
+            let source = account_identifier_text_for_account(&cfg.funding_source_account);
+            for id in [30, 50] {
+                index.txs.push(funding_tx_at(
+                    id,
+                    &source,
+                    &payout,
+                    100_000_000,
+                    id * 1_000_000_000 + 40_000_000_000,
+                ));
+            }
+            for id in [9, 11, 29, 31, 49, 51] {
+                index.txs.push(funding_tx_at(
+                    id,
+                    &payout,
+                    "outgoing-recipient",
+                    25_000,
+                    id * 1_000_000_000,
+                ));
+            }
+            index
+                .txs
+                .push(funding_tx_at(7, "other-source", &payout, 1, 0));
+            index.txs.sort_by_key(|tx| std::cmp::Reverse(tx.id));
+            let discovery = run_ready(discover_oldest_unprocessed_funding_tranche(
+                &index, payout, source, None, 10_000,
+            ));
+            assert!(matches!(
+                discovery,
+                FundingDiscovery::Found(FundingTranche { tx_id: 10, .. })
+            ));
+            assert_eq!(
+                state::with_state(|st| st.last_processed_funding_tx_id),
+                None
+            );
+            let ledger = BalanceRecordingLedger::new(10_000, 300_000_000, 400_000_000, vec![]);
+            let cmc = ScriptedCmc::new(vec![CmcStep::Ok; 9]);
+            for (n, id) in [10, 30, 50].into_iter().enumerate() {
+                assert!(drive_capped(&index, &ledger, &cmc));
+                assert_eq!(
+                    state::with_state(|st| st.last_processed_funding_tx_id),
+                    Some(id)
+                );
+                assert_eq!(ledger.transfer_amounts(), vec![33_323_333; 3 * (n + 1)]);
+            }
+            let nonce = state::with_state(|st| st.payout_nonce);
+            assert!(drive_capped(&index, &ledger, &cmc));
+            assert_eq!(ledger.transfer_amounts().len(), 9);
+            assert_eq!(cmc.call_count(), 9);
+            assert_eq!(state::with_state(|st| st.payout_nonce), nonce);
+            println!("cap={cap}: funding 10,30,50 processed once in order through outgoing/nonfunding history");
+        }
+    }
+
+    #[test]
+    fn capped_scans_checkpoint_across_driver_ticks_without_partial_payment() {
+        for cap in [1, 2] {
+            let (cfg, mut index) = capped_history(cap, false);
+            let staking = account_identifier_text_for_account(&cfg.staking_account);
+            let payout = account_identifier_text_for_account(&payout_account());
+            // A cap-sized page per iteration exceeds both independent scan budgets.
+            let count = MAX_FUNDING_SCAN_PAGES_PER_TICK * cap as u64 + 3;
+            for id in 100..100 + count {
+                index.txs.push(funding_tx_at(id, &payout, "outgoing", 1, 0));
+                index
+                    .txs
+                    .push(commitment_tx_at(id + count, &staking, 1, None, 0));
+            }
+            index.txs.sort_by_key(|tx| std::cmp::Reverse(tx.id));
+            let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 400_000_000, vec![]);
+            let cmc = ScriptedCmc::new(vec![CmcStep::Ok; 3]);
+            assert!(drive_capped(&index, &ledger, &cmc));
+            state::with_state(|st| {
+                assert!(st.active_funding_scan.is_some());
+                assert!(st.active_payout_job.is_none());
+                assert_eq!(st.last_processed_funding_tx_id, None);
+            });
+            assert!(ledger.transfer_amounts().is_empty());
+            let mut ticks = 1;
+            while state::with_state(|st| st.last_processed_funding_tx_id.is_none()) {
+                let before = index.starts().len();
+                assert!(drive_capped(&index, &ledger, &cmc));
+                ticks += 1;
+                assert!(
+                    index.starts().len() - before
+                        <= (MAX_FUNDING_SCAN_PAGES_PER_TICK + MAX_INDEX_PAGES_PER_PAYOUT_TICK + 1)
+                            as usize
+                );
+                state::with_state(|st| {
+                    if st
+                        .active_payout_job
+                        .as_ref()
+                        .is_some_and(|j| !effective_denom_scan_complete(j))
+                    {
+                        assert!(ledger.transfer_amounts().is_empty());
+                    }
+                });
+                assert!(ticks < 12);
+            }
+            assert_eq!(ledger.transfer_amounts(), vec![33_323_333; 3]);
+            assert!(ticks > 2);
+            println!("cap={cap} capped multi-tick driver_ticks={ticks}");
+        }
+    }
+    #[test]
+    fn capped_beneficiary_response_requires_lease_job_cursor_and_phase() {
+        for changed in ["lease", "job", "cursor", "phase"] {
+            let (cfg, index) = capped_history(2, false);
+            ensure_active_job_with_boundary(
+                40_000_000_000,
+                10_000,
+                100_000_000,
+                400_000_000,
+                40_000_000_000,
+                Some(10),
+                None,
+            );
+            state::with_state_mut(|st| {
+                let job = st.active_payout_job.as_mut().unwrap();
+                job.effective_denom_scan_complete = Some(true);
+                job.effective_denom_staking_balance_e8s = Some(300_000_000);
+                job.observed_oldest_tx_id = Some(1);
+                job.next_start = Some(4);
+            });
+            let held = HeldIndex {
+                started: AtomicBool::new(false),
+                release: AtomicBool::new(false),
+                response: run_ready(index.get_account_identifier_transactions(
+                    account_identifier_text_for_account(&cfg.staking_account),
+                    Some(4),
+                    PAGE_SIZE,
+                ))
+                .unwrap(),
+            };
+            let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 400_000_000, vec![]);
+            let cmc = ScriptedCmc::new(vec![]);
+            let guard = MainGuard::acquire(40).unwrap();
+            let status = crate::clients::canister_info::NoopCanisterStatusClient;
+            let mut future = Box::pin(process_payout_with_lease(
+                &ledger,
+                &held,
+                &cmc,
+                &NoopGovernance,
+                &status,
+                40_000_000_000,
+                40,
+                guard.lease_token(),
+            ));
+            assert!(poll_once(future.as_mut()).is_pending());
+            let successor = if changed == "lease" {
+                Some(
+                    MainGuard::acquire(state::with_state(|st| st.main_lock_state_ts.unwrap()))
+                        .unwrap(),
+                )
+            } else {
+                None
+            };
+            let expected = state::with_state_mut(|st| {
+                let job = st.active_payout_job.as_mut().unwrap();
+                match changed {
+                    "job" => job.id += 1,
+                    "cursor" => job.next_start = Some(2),
+                    "phase" => job.scan_complete = true,
+                    _ => {}
+                }
+                candid::encode_one(&*job).unwrap()
+            });
+            held.release.store(true, Ordering::SeqCst);
+            assert!(matches!(poll_once(future.as_mut()), Poll::Ready(true)));
+            assert_eq!(ledger.transfer_amounts().len(), 0);
+            assert_eq!(
+                state::with_state(
+                    |st| candid::encode_one(st.active_payout_job.as_ref().unwrap()).unwrap()
+                ),
+                expected
+            );
+            drop(future);
+            drop(guard);
+            drop(successor);
+        }
+    }
+
+    #[test]
+    fn capped_funding_response_cannot_overwrite_successor_progress() {
+        for changed in ["lease", "cursor", "candidate", "funding_cursor"] {
+            let (cfg, index) = capped_history(1, false);
+            let payout = account_identifier_text_for_account(&payout_account());
+            let source = account_identifier_text_for_account(&cfg.funding_source_account);
+            let held = HeldIndex {
+                started: AtomicBool::new(false),
+                release: AtomicBool::new(false),
+                response: run_ready(index.get_account_identifier_transactions(
+                    payout.clone(),
+                    None,
+                    PAGE_SIZE,
+                ))
+                .unwrap(),
+            };
+            let guard = MainGuard::acquire(40).unwrap();
+            let mut future = Box::pin(discover_oldest_unprocessed_funding_tranche_with_lease(
+                &held,
+                payout,
+                source,
+                None,
+                10_000,
+                guard.lease_token(),
+            ));
+            assert!(poll_once(future.as_mut()).is_pending());
+            let successor = if changed == "lease" {
+                Some(
+                    MainGuard::acquire(state::with_state(|st| st.main_lock_state_ts.unwrap()))
+                        .unwrap(),
+                )
+            } else {
+                None
+            };
+            let expected = state::with_state_mut(|st| {
+                match changed {
+                    "cursor" => st.active_funding_scan.as_mut().unwrap().cursor = Some(9),
+                    "candidate" => {
+                        st.active_funding_scan.as_mut().unwrap().candidate =
+                            Some(state::FundingTrancheState {
+                                tx_id: 8,
+                                timestamp_nanos: 1,
+                                amount_e8s: 100_000_000,
+                            })
+                    }
+                    "funding_cursor" => st.last_processed_funding_tx_id = Some(10),
+                    _ => {}
+                }
+                (
+                    st.active_funding_scan.clone(),
+                    st.last_processed_funding_tx_id,
+                )
+            });
+            held.release.store(true, Ordering::SeqCst);
+            assert!(matches!(poll_once(future.as_mut()), Poll::Ready(None)));
+            assert_eq!(
+                state::with_state(|st| (
+                    st.active_funding_scan.clone(),
+                    st.last_processed_funding_tx_id
+                )),
+                expected
+            );
+            drop(future);
+            drop(guard);
+            drop(successor);
+        }
+    }
+    #[test]
+    fn capped_funding_invalid_pages_preserve_candidate_without_selecting_it() {
+        for cap in [1, 2] {
+            for malformed in [false, true] {
+                let (cfg, _) = capped_history(cap, false);
+                let payout = account_identifier_text_for_account(&payout_account());
+                let source = account_identifier_text_for_account(&cfg.funding_source_account);
+                let mut history = NewestFirstExclusiveIndex::from_history(vec![
+                    funding_tx_at(50, &source, &payout, 100_000_000, 90_000_000_000),
+                    funding_tx_at(49, &payout, "outgoing", 1, 0),
+                    funding_tx_at(10, &source, &payout, 100_000_000, 40_000_000_000),
+                    funding_tx_at(5, &payout, "outgoing", 1, 0),
+                ]);
+                history.cap = cap;
+                let first = run_ready(history.get_account_identifier_transactions(
+                    payout.clone(),
+                    None,
+                    PAGE_SIZE,
+                ))
+                .unwrap();
+                let cursor = first.transactions.last().unwrap().id;
+                let mut bad = run_ready(history.get_account_identifier_transactions(
+                    payout.clone(),
+                    Some(cursor),
+                    PAGE_SIZE,
+                ))
+                .unwrap();
+                if malformed {
+                    bad.transactions.push(bad.transactions[0].clone());
+                } else {
+                    bad.transactions.clear();
+                }
+                let index = ScriptedIndex::new(vec![
+                    IndexResponseStep::Ok(first),
+                    IndexResponseStep::Ok(bad),
+                ]);
+                let result = run_ready(discover_oldest_unprocessed_funding_tranche(
+                    &index,
+                    payout.clone(),
+                    source.clone(),
+                    None,
+                    10_000,
+                ));
+                assert!(matches!(
+                    result,
+                    FundingDiscovery::Unreadable(FundingDiscoveryUnreadableReason::IndexReadFailed)
+                ));
+                state::with_state(|st| {
+                    let scan = st.active_funding_scan.as_ref().unwrap();
+                    assert_eq!(scan.cursor, Some(cursor));
+                    assert_eq!(scan.candidate.as_ref().unwrap().tx_id, 50);
+                    assert_eq!(st.last_processed_funding_tx_id, None);
+                    assert!(st.active_payout_job.is_none());
+                });
+                let retry = run_ready(discover_oldest_unprocessed_funding_tranche(
+                    &history, payout, source, None, 10_000,
+                ));
+                assert!(matches!(
+                    retry,
+                    FundingDiscovery::Found(FundingTranche { tx_id: 10, .. })
+                ));
+                assert_eq!(
+                    state::with_state(|st| st.last_processed_funding_tx_id),
+                    None
+                );
+                println!("cap={cap} malformed={malformed}: incomplete funding discovery retained candidate 50, then selected oldest 10");
+            }
+        }
+    }
+
+    struct HoldThirdCmc(AtomicUsize);
+    #[async_trait]
+    impl CmcClient for HoldThirdCmc {
+        async fn notify_top_up(&self, _: Principal, _: u64) -> Result<u128, NotifyTopUpError> {
+            if self.0.fetch_add(1, Ordering::SeqCst) == 2 {
+                std::future::pending::<()>().await;
+            }
+            Ok(1_000_000_000_000)
+        }
+    }
+
+    #[test]
+    fn capped_pending_oldest_payment_finishes_without_duplicate_transfer() {
+        for cap in [1, 2] {
+            let (_, mut index) = capped_history(cap, false);
+            // Exercise pending delivery at the oldest record without changing production seed policy.
+            index.txs.retain(|tx| tx.id != 1);
+            state::with_state_mut(|st| st.config.expected_first_staking_tx_id = Some(2));
+            let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 300_000_000, vec![]);
+            let held = HoldThirdCmc(AtomicUsize::new(0));
+            let status = crate::clients::canister_info::NoopCanisterStatusClient;
+            let mut future = Box::pin(process_payout(
+                &ledger,
+                &index,
+                &held,
+                &NoopGovernance,
+                &status,
+                100_000_000_000,
+                100,
+            ));
+            assert!(poll_once(future.as_mut()).is_pending());
+            drop(future); // Interrupted callback; accepted transfer remains durable.
+            let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+            assert_eq!(ledger.transfer_amounts(), vec![33_323_333; 3]);
+            state::with_state(|st| {
+                let job = st.active_payout_job.as_ref().unwrap();
+                assert_eq!(job.next_start, Some(2));
+                assert!(!job.scan_complete);
+                assert_eq!(st.last_processed_funding_tx_id, None);
+            });
+            assert!(drive_capped(&index, &ledger, &cmc));
+            assert_eq!(ledger.transfer_amounts(), vec![33_323_333; 3]);
+            state::with_state(|st| {
+                assert!(st.active_payout_job.is_none());
+                assert_eq!(st.last_processed_funding_tx_id, Some(10));
+                assert_eq!(st.last_summary.as_ref().unwrap().pot_remaining_e8s, 1);
+            });
+        }
+    }
+    include!("skip_cache_tests.rs");
 }

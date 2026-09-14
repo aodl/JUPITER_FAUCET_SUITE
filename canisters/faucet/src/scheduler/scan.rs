@@ -1,4 +1,8 @@
 use super::*;
+#[cfg(test)]
+thread_local! {
+    pub(super) static SKIP_JUMP_OBSERVATIONS: std::cell::RefCell<Option<Vec<ActivePayoutJob>>> = const { std::cell::RefCell::new(None) };
+}
 #[derive(Clone, Debug, Default)]
 pub(super) struct LocalSkipCandidate {
     pub(super) start_tx_id: Option<u64>,
@@ -27,49 +31,15 @@ impl LocalSkipCandidate {
     }
 
     pub(super) fn finish_span(&mut self) -> Option<SkipRange> {
-        let range = if self.tx_count >= MIN_SKIP_RANGE_TX_COUNT {
-            Some(SkipRange {
-                start_tx_id: self.start_tx_id.expect("skip span start missing"),
-                end_tx_id: self.end_tx_id.expect("skip span end missing"),
-            })
-        } else {
-            None
-        };
+        // Calls cover one uninterrupted descending sequence of validated account
+        // records. Count records, never global block-ID width.
+        let range = (self.tx_count >= MIN_SKIP_RANGE_TX_COUNT).then(|| SkipRange {
+            start_tx_id: self.end_tx_id.expect("skip span low missing"),
+            end_tx_id: self.start_tx_id.expect("skip span high missing"),
+        });
         *self = Self::default();
         range
     }
-}
-
-pub(super) fn initial_skip_range_index(skip_ranges: &[SkipRange], cursor: Option<u64>) -> usize {
-    let Some(last_seen) = cursor else {
-        return 0;
-    };
-    for (idx, range) in skip_ranges.iter().enumerate() {
-        if range.end_tx_id > last_seen {
-            return idx;
-        }
-    }
-    skip_ranges.len()
-}
-
-pub(super) fn next_skip_jump_target(
-    cursor: Option<u64>,
-    skip_ranges: &[SkipRange],
-    skip_range_idx: &mut usize,
-) -> Option<u64> {
-    let last_seen = cursor?;
-    while let Some(range) = skip_ranges.get(*skip_range_idx) {
-        if last_seen >= range.end_tx_id {
-            *skip_range_idx += 1;
-            continue;
-        }
-        let next_unread = last_seen.saturating_add(1);
-        if next_unread >= range.start_tx_id && next_unread <= range.end_tx_id {
-            return Some(range.end_tx_id);
-        }
-        return None;
-    }
-    None
 }
 
 pub(super) fn record_completed_skip_range(
@@ -82,23 +52,77 @@ pub(super) fn record_completed_skip_range(
 }
 
 pub(super) fn persist_new_skip_ranges(
-    skip_ranges: &mut Vec<SkipRange>,
     pending_skip_ranges: &mut Vec<SkipRange>,
 ) -> Result<(), state::SkipRangeInsertError> {
-    let mut simulated = skip_ranges.clone();
-    for range in pending_skip_ranges.iter() {
-        state::validate_skip_range_insertion(&simulated, range)?;
-        let insert_pos =
-            simulated.partition_point(|candidate| candidate.start_tx_id < range.start_tx_id);
-        simulated.insert(insert_pos, range.clone());
-    }
     for range in pending_skip_ranges.drain(..) {
-        state::insert_skip_range(range.clone())?;
-        let insert_pos =
-            skip_ranges.partition_point(|candidate| candidate.start_tx_id < range.start_tx_id);
-        skip_ranges.insert(insert_pos, range);
+        state::insert_skip_range(range)?;
     }
     Ok(())
+}
+
+/// The cursor excludes itself. Only jump if its next possible unread ID is
+/// inside validated exclusion evidence; never cross an unverified gap. The new
+/// cursor is the inclusive low endpoint, NOT low - 1.
+pub(super) fn skip_cached_history(
+    job: &ActivePayoutJob,
+    lease: MainLeaseToken,
+) -> Result<bool, state::SkipRangeInsertError> {
+    let Some(oldest) = job.observed_oldest_tx_id else {
+        return Ok(false);
+    };
+    let Some(unread) = job.next_start.and_then(|id| id.checked_sub(1)) else {
+        return Ok(false);
+    };
+    let Some(range) = state::skip_range_containing(unread)? else {
+        return Ok(false);
+    };
+    if range.start_tx_id < oldest {
+        return Err(state::SkipRangeInsertError::InvalidRange);
+    }
+    let complete = range.start_tx_id == oldest;
+    #[cfg(test)]
+    SKIP_JUMP_OBSERVATIONS.with(|observations| {
+        if let Some(observations) = observations.borrow_mut().as_mut() {
+            observations.push(job.clone());
+        }
+    });
+    state::with_state_mut(|st| {
+        if !lease.is_current_in(st) {
+            return Ok(false);
+        }
+        let Some(active) = st.active_payout_job.as_mut().filter(|active| {
+            active.id == job.id
+                && active.next_start == job.next_start
+                && active.effective_denom_scan_complete == job.effective_denom_scan_complete
+                && active.scan_complete == job.scan_complete
+                && active.pending_transfer.is_none()
+        }) else {
+            return Ok(false);
+        };
+        if !effective_denom_scan_complete(active) {
+            // Finish only the observations already examined under this owner.
+            // Work on a copy so an insertion error preserves the recoverable
+            // partial span and cursor, including oldest-anchor completion.
+            if let Some(learned) = LocalSkipCandidate::from_job(active).finish_span() {
+                state::insert_skip_range(learned)?;
+            }
+        }
+        active.next_start = Some(range.start_tx_id);
+        // Never join newly read observations across a cached jump. The cache
+        // proves exclusion but does not encode a record count for learning.
+        active.skip_candidate_start_tx_id = None;
+        active.skip_candidate_end_tx_id = None;
+        active.skip_candidate_tx_count = 0;
+        if complete {
+            if effective_denom_scan_complete(active) {
+                active.scan_complete = true;
+            } else {
+                active.effective_denom_scan_complete = Some(true);
+                active.next_start = None;
+            }
+        }
+        Ok(true)
+    })
 }
 
 pub(super) fn latch_skip_range_invariant_rescue() {

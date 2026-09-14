@@ -40,45 +40,6 @@ fn genesis_round_amount_for_commitment_e8s(
     Some(if recognized { commitment.amount_e8s } else { 0 })
 }
 
-fn commitment_delta_for_job_effective_denominator_e8s(
-    job: &ActivePayoutJob,
-    commitment: &logic::Commitment,
-    tx_id: u64,
-    tx_timestamp_nanos: Option<u64>,
-    now_nanos: u64,
-    recognition_delay_seconds: u64,
-) -> Option<u64> {
-    let round_end_time_nanos = job.round_end_time_nanos.unwrap_or(now_nanos);
-    logic::commitment_delta_for_effective_denominator_e8s(
-        commitment,
-        tx_id,
-        tx_timestamp_nanos,
-        job.round_start_time_nanos,
-        job.round_end_latest_tx_id,
-        round_end_time_nanos,
-        recognition_delay_seconds,
-    )
-}
-
-fn commitment_round_end_staking_delta_for_job_e8s(
-    job: &ActivePayoutJob,
-    commitment: &logic::Commitment,
-    tx_id: u64,
-    tx_timestamp_nanos: Option<u64>,
-    now_nanos: u64,
-    recognition_delay_seconds: u64,
-) -> Option<u64> {
-    logic::commitment_round_end_staking_delta_e8s(
-        commitment,
-        tx_id,
-        tx_timestamp_nanos,
-        job.round_start_time_nanos,
-        job.round_end_latest_tx_id,
-        job.round_end_time_nanos.unwrap_or(now_nanos),
-        recognition_delay_seconds,
-    )
-}
-
 fn commitment_amount_for_job_payout_e8s(
     job: &ActivePayoutJob,
     commitment: &logic::Commitment,
@@ -165,7 +126,10 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche_with_lease(
         return None;
     }
     let mut scan = state::with_state_mut(|st| {
-        if !lease.is_current_in(st) {
+        if !lease.is_current_in(st)
+            || st.last_processed_funding_tx_id != last_processed_funding_tx_id
+            || st.active_payout_job.is_some()
+        {
             return None;
         }
         let reset = st
@@ -186,53 +150,51 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche_with_lease(
                 .expect("funding scan state should exist"),
         )
     })?;
-    let mut pages_scanned = 0u64;
-    loop {
-        if pages_scanned >= MAX_FUNDING_SCAN_PAGES_PER_TICK {
-            state::with_state_mut(|st| {
-                if lease.is_current_in(st) {
-                    st.active_funding_scan = Some(scan);
-                }
-            });
-            return lease.is_current().then_some(FundingDiscovery::InProgress);
+    let owns_scan = |st: &state::State, expected: &state::FundingScanState| {
+        lease.is_current_in(st)
+            && st.last_processed_funding_tx_id == last_processed_funding_tx_id
+            && st.active_payout_job.is_none()
+            && st.active_funding_scan.as_ref() == Some(expected)
+    };
+    let mut observed_oldest = None;
+    for _ in 0..MAX_FUNDING_SCAN_PAGES_PER_TICK {
+        if !state::with_state(|st| owns_scan(st, &scan)) {
+            return None;
         }
-        pages_scanned = pages_scanned.saturating_add(1);
         assert_no_persistence_batch_for_async();
-        let resp = index
+        let response = index
             .get_account_identifier_transactions(
                 payout_account_identifier.clone(),
                 scan.cursor,
                 PAGE_SIZE,
             )
-            .await
-            .ok();
-        if !lease.is_current() {
+            .await;
+        if !state::with_state(|st| owns_scan(st, &scan)) {
             return None;
         }
-        let Some(resp) = resp else {
-            state::with_state_mut(|st| st.active_funding_scan = Some(scan));
+        let Ok(resp) = response else {
             return Some(FundingDiscovery::Unreadable(
                 FundingDiscoveryUnreadableReason::IndexReadFailed,
             ));
         };
-        let descending = index_page_descending_from_cursor(&resp.transactions, scan.cursor);
+        if scan.candidate.is_some() && resp.oldest_tx_id.is_none() {
+            return Some(FundingDiscovery::Unreadable(
+                FundingDiscoveryUnreadableReason::IndexReadFailed,
+            ));
+        }
+        // This anchor belongs to the payout account, never to staking history.
+        let Some(exhausted) = validate_history_page(&resp, scan.cursor, observed_oldest) else {
+            return Some(FundingDiscovery::Unreadable(
+                FundingDiscoveryUnreadableReason::IndexReadFailed,
+            ));
+        };
+        observed_oldest = resp.oldest_tx_id;
+        let mut next_scan = scan.clone();
+        let mut reached_processed = false;
         for tx in &resp.transactions {
-            if !tx_is_after_cursor_for_page(tx.id, scan.cursor, descending) {
-                continue;
-            }
-            if last_processed_funding_tx_id
-                .map(|last| tx.id <= last)
-                .unwrap_or(false)
-            {
-                if descending {
-                    state::with_state_mut(|st| st.active_funding_scan = None);
-                    return Some(
-                        scan.candidate
-                            .map(|candidate| FundingDiscovery::Found(candidate.into()))
-                            .unwrap_or(FundingDiscovery::Empty),
-                    );
-                }
-                continue;
+            if last_processed_funding_tx_id.is_some_and(|last| tx.id <= last) {
+                reached_processed = true;
+                break;
             }
             let IndexOperation::Transfer {
                 from, to, amount, ..
@@ -244,11 +206,9 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche_with_lease(
                 && to == &payout_account_identifier
                 && amount.e8s() > fee_e8s
             {
-                // A funding transfer timestamp defines the tranche boundary. If a qualifying
-                // funding transfer lacks a timestamp, processing later funding transfers would
-                // risk violating chronological tranche order, so discovery fails closed.
+                // A qualifying tranche without a time boundary blocks selection;
+                // choosing a later one would violate chronological processing.
                 let Some(timestamp_nanos) = logic::index_tx_timestamp_nanos(tx) else {
-                    state::with_state_mut(|st| st.active_funding_scan = Some(scan));
                     return Some(FundingDiscovery::Unreadable(
                         FundingDiscoveryUnreadableReason::QualifyingFundingTransferMissingTimestamp,
                     ));
@@ -258,29 +218,41 @@ pub(super) async fn discover_oldest_unprocessed_funding_tranche_with_lease(
                     timestamp_nanos,
                     amount_e8s: amount.e8s(),
                 };
-                if !descending {
-                    state::with_state_mut(|st| st.active_funding_scan = None);
-                    return Some(FundingDiscovery::Found(tranche));
-                }
-                if scan
+                if next_scan
                     .candidate
-                    .map(|existing| tranche.tx_id < existing.tx_id)
-                    .unwrap_or(true)
+                    .is_none_or(|old| tranche.tx_id < old.tx_id)
                 {
-                    scan.candidate = Some(tranche.into());
+                    next_scan.candidate = Some(tranche.into());
                 }
             }
         }
-        if resp.transactions.len() < PAGE_SIZE as usize || resp.transactions.is_empty() {
-            state::with_state_mut(|st| st.active_funding_scan = None);
+        let complete = exhausted || reached_processed;
+        next_scan.cursor = resp.transactions.last().map(|tx| tx.id).or(scan.cursor);
+        let applied = state::with_state_mut(|st| {
+            if !owns_scan(st, &scan) {
+                return false;
+            }
+            st.active_funding_scan = if complete {
+                None
+            } else {
+                Some(next_scan.clone())
+            };
+            true
+        });
+        if !applied {
+            return None;
+        }
+        if complete {
             return Some(
-                scan.candidate
+                next_scan
+                    .candidate
                     .map(|candidate| FundingDiscovery::Found(candidate.into()))
                     .unwrap_or(FundingDiscovery::Empty),
             );
         }
-        scan.cursor = index_page_next_cursor(&resp.transactions);
+        scan = next_scan;
     }
+    Some(FundingDiscovery::InProgress)
 }
 
 #[cfg(test)]
@@ -416,14 +388,7 @@ pub(super) async fn process_payout_with_lease(
         );
     }
 
-    // Skip ranges are a durable cache of barren tx-id spans discovered by earlier jobs.
-    // They deliberately optimize replay work only; if future maintenance changes the rules
-    // for what counts as a commitment, the cache must be cleared before relying on it.
-    let mut skip_ranges = state::list_skip_ranges();
-    let mut skip_range_idx = initial_skip_range_index(
-        &skip_ranges,
-        state::with_state(|st| st.active_payout_job.as_ref().and_then(|job| job.next_start)),
-    );
+    // Each page or cached jump consumes one bounded driver step.
     let mut pages_scanned = 0u64;
 
     loop {
@@ -453,6 +418,23 @@ pub(super) async fn process_payout_with_lease(
             continue;
         }
 
+        if !job.scan_complete {
+            if pages_scanned >= MAX_INDEX_PAGES_PER_PAYOUT_TICK {
+                return true;
+            }
+            match skip_cached_history(&job, lease) {
+                Ok(true) => {
+                    pages_scanned += 1;
+                    continue;
+                }
+                Ok(false) => {}
+                Err(_) => {
+                    latch_skip_range_invariant_rescue();
+                    return true;
+                }
+            }
+        }
+
         if !effective_denom_scan_complete(&job) {
             assert_no_persistence_batch_for_async();
             let resp = match index
@@ -465,51 +447,79 @@ pub(super) async fn process_payout_with_lease(
             if !state::with_state(|st| {
                 lease.is_current_in(st)
                     && st.active_payout_job.as_ref().is_some_and(|active| {
-                        active.id == job.id && active.next_start == job.next_start
+                        active.id == job.id
+                            && active.next_start == job.next_start
+                            && active.effective_denom_scan_complete == Some(false)
                     })
             }) {
                 return true;
             }
             pages_scanned = pages_scanned.saturating_add(1);
-            let descending = index_page_descending_from_cursor(&resp.transactions, job.next_start);
-            let mut page_next_start = job.next_start;
+            // The ICP Index contract is descending with an exclusive cursor. A short
+            // response is not proof of exhaustion: servers may cap max_results.
+            let expected_oldest = state::with_state(|st| st.config.expected_first_staking_tx_id);
+            let oldest = resp.oldest_tx_id;
+            if expected_oldest.is_some_and(|id| oldest != Some(id)) {
+                state::with_state_mut(|st| {
+                    if lease.is_current_in(st)
+                        && st.active_payout_job.as_ref().is_some_and(|active| {
+                            active.id == job.id
+                                && active.next_start == job.next_start
+                                && active.effective_denom_scan_complete == Some(false)
+                        })
+                    {
+                        apply_anchor_observation(st, oldest);
+                    }
+                });
+                // Preserve the existing rescue reconciliation while holding all funds.
+                return true;
+            }
+            let Some(scan_complete) = validate_history_page(
+                &resp,
+                job.next_start,
+                job.observed_oldest_tx_id.or(expected_oldest),
+            ) else {
+                return false;
+            };
+            let page_next_start = resp.transactions.last().map(|tx| tx.id);
             let mut denom_delta_e8s = 0u64;
             let mut round_end_staking_delta_e8s = 0u64;
-            let mut reached_round_end = false;
             let min_tx_e8s = state::with_state(|st| st.config.min_tx_e8s);
             let recognition_delay_seconds = recognition_delay_seconds();
 
+            let mut skip_candidate = LocalSkipCandidate::from_job(&job);
+            let mut pending_skip_ranges = Vec::new();
             for tx in &resp.transactions {
-                if !tx_is_after_cursor_for_page(tx.id, job.next_start, descending) {
+                if job.round_end_latest_tx_id.is_some_and(|end| tx.id > end) {
+                    record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
                     continue;
                 }
-                page_next_start = Some(tx.id);
-                if job
-                    .round_end_latest_tx_id
-                    .map(|end| tx.id > end)
-                    .unwrap_or(false)
-                {
-                    if descending {
+                match state::skip_range_containing(tx.id) {
+                    Ok(Some(_)) => {
+                        record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
                         continue;
                     }
-                    reached_round_end = true;
-                    break;
+                    Ok(None) => {}
+                    Err(_) => {
+                        latch_skip_range_invariant_rescue();
+                        return true;
+                    }
                 }
                 let Some(commitment) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
+                    skip_candidate.note_skippable(tx.id);
                     continue;
                 };
                 if !matches!(
                     logic::classify_commitment(min_tx_e8s, &commitment),
                     logic::CommitmentValidity::Valid { .. }
                 ) {
+                    skip_candidate.note_skippable(tx.id);
                     continue;
                 }
-                // ICP Index TransactionWithId.id is the ICP ledger block index / global
-                // transaction id, not a per-account sequence number. Strict tranche accounting
-                // compares staking-account commitment tx ids with payout-account funding tx ids
-                // only to prove a commitment existed before the funding transfer boundary.
+                // Eligibility, not time weight or delivery, terminates a barren span.
+                record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
                 let tx_timestamp_nanos = logic::index_tx_timestamp_nanos(tx);
-                let weighted_amount_e8s = commitment_delta_for_job_effective_denominator_e8s(
+                let weighted_amount_e8s = commitment_amount_for_job_payout_e8s(
                     &job,
                     &commitment,
                     tx.id,
@@ -518,58 +528,68 @@ pub(super) async fn process_payout_with_lease(
                     recognition_delay_seconds,
                 )
                 .unwrap_or(0);
-                denom_delta_e8s = denom_delta_e8s.saturating_add(weighted_amount_e8s);
-                round_end_staking_delta_e8s = round_end_staking_delta_e8s.saturating_add(
-                    commitment_round_end_staking_delta_for_job_e8s(
-                        &job,
-                        &commitment,
-                        tx.id,
-                        tx_timestamp_nanos,
-                        now_nanos,
-                        recognition_delay_seconds,
-                    )
-                    .unwrap_or(0),
-                );
+                let Some(next_denom) = denom_delta_e8s.checked_add(weighted_amount_e8s) else {
+                    return false;
+                };
+                denom_delta_e8s = next_denom;
+                let recognized = genesis_round_amount_for_commitment_e8s(
+                    &commitment,
+                    tx.id,
+                    tx_timestamp_nanos,
+                    job.round_end_latest_tx_id,
+                    job.round_end_time_nanos.unwrap_or(now_nanos),
+                    recognition_delay_seconds,
+                )
+                .unwrap_or(0);
+                let Some(next_ending) = round_end_staking_delta_e8s.checked_add(recognized) else {
+                    return false;
+                };
+                round_end_staking_delta_e8s = next_ending;
             }
-
-            let scan_complete = reached_round_end
-                || resp.transactions.len() < PAGE_SIZE as usize
-                || resp.transactions.is_empty();
+            let Some(denominator) = job
+                .effective_denom_staking_balance_e8s
+                .unwrap_or(0)
+                .checked_add(denom_delta_e8s)
+            else {
+                return false;
+            };
+            let Some(ending_balance) = job
+                .round_end_staking_balance_e8s
+                .unwrap_or(0)
+                .checked_add(round_end_staking_delta_e8s)
+            else {
+                return false;
+            };
+            if scan_complete {
+                record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
+            }
+            if persist_new_skip_ranges(&mut pending_skip_ranges).is_err() {
+                latch_skip_range_invariant_rescue();
+                return true;
+            }
             state::with_state_mut(|st| {
                 if !lease.is_current_in(st) {
                     return;
                 }
-                if let Some(active_job) = st
-                    .active_payout_job
-                    .as_mut()
-                    .filter(|active| active.id == job.id && active.next_start == job.next_start)
-                {
-                    active_job.effective_denom_staking_balance_e8s = Some(
-                        active_job
-                            .effective_denom_staking_balance_e8s
-                            .unwrap_or(
-                                active_job
-                                    .round_start_staking_balance_e8s
-                                    .unwrap_or(active_job.denom_staking_balance_e8s),
-                            )
-                            .saturating_add(denom_delta_e8s),
-                    );
-                    active_job.round_end_staking_balance_e8s = Some(
-                        active_job
-                            .round_end_staking_balance_e8s
-                            .unwrap_or(
-                                active_job
-                                    .round_start_staking_balance_e8s
-                                    .unwrap_or(active_job.denom_staking_balance_e8s),
-                            )
-                            .saturating_add(round_end_staking_delta_e8s),
-                    );
+                if let Some(active_job) = st.active_payout_job.as_mut().filter(|active| {
+                    active.id == job.id
+                        && active.next_start == job.next_start
+                        && active.effective_denom_scan_complete == Some(false)
+                }) {
+                    active_job.effective_denom_staking_balance_e8s = Some(denominator);
+                    active_job.round_end_staking_balance_e8s = Some(ending_balance);
+                    active_job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
+                    active_job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
+                    active_job.skip_candidate_tx_count = skip_candidate.tx_count;
+                    active_job.observed_oldest_tx_id = oldest;
+                    if let Some(tx) = resp.transactions.first() {
+                        active_job.observed_latest_tx_id =
+                            Some(active_job.observed_latest_tx_id.unwrap_or(tx.id).max(tx.id));
+                    }
                     if scan_complete {
                         active_job.effective_denom_scan_complete = Some(true);
-                        // The effective-denominator pre-scan only needs to visit current-round
-                        // transactions. The payout scan that follows still needs to revisit the
-                        // full beneficiary history up to the round-end boundary so pre-existing
-                        // committers continue to receive payouts each round.
+                        // Both authoritative sums are complete before the payout scan can
+                        // send funds. Replay the same pinned history for beneficiary weights.
                         active_job.next_start = None;
                         active_job.skip_candidate_start_tx_id = None;
                         active_job.skip_candidate_end_tx_id = None;
@@ -644,30 +664,7 @@ pub(super) async fn process_payout_with_lease(
             return true;
         }
 
-        if let Some(skip_to) =
-            next_skip_jump_target(job.next_start, &skip_ranges, &mut skip_range_idx)
-        {
-            if job
-                .round_end_latest_tx_id
-                .map(|end| skip_to >= end)
-                .unwrap_or(false)
-            {
-                state::with_state_mut(|st| {
-                    if let Some(active_job) = st.active_payout_job.as_mut() {
-                        active_job.scan_complete = true;
-                        active_job.next_start = active_job.round_end_latest_tx_id;
-                    }
-                });
-            } else {
-                state::with_state_mut(|st| {
-                    if let Some(active_job) = st.active_payout_job.as_mut() {
-                        active_job.next_start = Some(skip_to);
-                    }
-                });
-            }
-            continue;
-        }
-
+        // Reuse negative evidence learned by the denominator pass.
         assert_no_persistence_batch_for_async();
         let resp = match index
             .get_account_identifier_transactions(staking_id.clone(), job.next_start, PAGE_SIZE)
@@ -679,112 +676,62 @@ pub(super) async fn process_payout_with_lease(
         if !state::with_state(|st| {
             lease.is_current_in(st)
                 && st.active_payout_job.as_ref().is_some_and(|active| {
-                    active.id == job.id && active.next_start == job.next_start
+                    active.id == job.id
+                        && active.next_start == job.next_start
+                        && !active.scan_complete
+                        && effective_denom_scan_complete(active)
                 })
         }) {
             return true;
         }
         pages_scanned = pages_scanned.saturating_add(1);
-        let descending = index_page_descending_from_cursor(&resp.transactions, job.next_start);
-        let last_id = index_page_next_cursor(&resp.transactions);
-        let cursor_invariant_broken = job
-            .next_start
-            .zip(last_id)
-            .map(|(prev, latest)| {
-                if descending {
-                    latest >= prev
-                } else {
-                    latest <= prev
-                }
-            })
-            .unwrap_or(false);
-        if cursor_invariant_broken {
+        let expected_oldest = state::with_state(|st| st.config.expected_first_staking_tx_id);
+        let Some(scan_complete) = validate_history_page(
+            &resp,
+            job.next_start,
+            job.observed_oldest_tx_id.or(expected_oldest),
+        ) else {
             state::with_state_mut(|st| {
-                if !lease.is_current_in(st) {
-                    return;
-                }
-                if let Some(active_job) = st
-                    .active_payout_job
-                    .as_mut()
-                    .filter(|active| active.id == job.id && active.next_start == job.next_start)
+                if lease.is_current_in(st)
+                    && st.active_payout_job.as_ref().is_some_and(|active| {
+                        active.id == job.id
+                            && active.next_start == job.next_start
+                            && !active.scan_complete
+                    })
                 {
-                    if active_job.observed_oldest_tx_id.is_none() {
-                        active_job.observed_oldest_tx_id = resp.oldest_tx_id;
-                    }
-                } else {
-                    return;
+                    record_latest_invariant_failure(st);
                 }
-                record_latest_invariant_failure(st);
             });
             return false;
-        }
+        };
+        let last_id = resp.transactions.last().map(|tx| tx.id).or(job.next_start);
         {
             let _batch = state::begin_persistence_batch();
             note_index_page_with_lease(&resp, lease, job.id, job.next_start);
-        }
-        if resp.transactions.is_empty() {
-            let mut skip_candidate = LocalSkipCandidate::from_job(&job);
-            let mut pending_skip_ranges = Vec::new();
-            record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
-            {
-                let _batch = state::begin_persistence_batch();
-                state::with_state_mut(|st| {
-                    if !lease.is_current_in(st) {
-                        return;
-                    }
-                    if let Some(active_job) = st
-                        .active_payout_job
-                        .as_mut()
-                        .filter(|active| active.id == job.id && active.next_start == job.next_start)
-                    {
-                        active_job.scan_complete = true;
-                        active_job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
-                        active_job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
-                        active_job.skip_candidate_tx_count = skip_candidate.tx_count;
-                    }
-                });
-            }
-            if !state::with_state(|st| {
-                lease.is_current_in(st)
-                    && st.active_payout_job.as_ref().is_some_and(|active| {
-                        active.id == job.id && active.next_start == job.next_start
-                    })
-            }) {
-                return true;
-            }
-            if persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges).is_err() {
-                latch_skip_range_invariant_rescue();
-                return true;
-            }
-            continue;
         }
 
         let page_start = job.next_start;
         let mut ignored_under_threshold_delta = 0u64;
         let mut ignored_bad_memo_delta = 0u64;
         let mut page_next_start = page_start;
-        let mut skip_candidate = LocalSkipCandidate::from_job(&job);
-        let mut pending_skip_ranges = Vec::new();
-        let mut reached_round_end = false;
+        let skip_candidate = LocalSkipCandidate::default();
         let mut last_persisted_cursor = job.next_start;
         for tx in &resp.transactions {
-            if !tx_is_after_cursor_for_page(tx.id, page_start, descending) {
+            // Advance over newer records without mistaking them for an end
+            // boundary: older eligible commitments are on subsequent pages.
+            page_next_start = Some(tx.id);
+            if job.round_end_latest_tx_id.is_some_and(|end| tx.id > end) {
                 continue;
             }
-            if job
-                .round_end_latest_tx_id
-                .map(|end| tx.id > end)
-                .unwrap_or(false)
-            {
-                if descending {
-                    continue;
+            match state::skip_range_containing(tx.id) {
+                Ok(Some(_)) => continue,
+                Ok(None) => {}
+                Err(_) => {
+                    latch_skip_range_invariant_rescue();
+                    return true;
                 }
-                reached_round_end = true;
-                break;
             }
-            page_next_start = Some(tx.id);
             let Some(commitment) = logic::memo_bytes_from_index_tx(tx, &staking_id) else {
-                skip_candidate.note_skippable(tx.id);
                 continue;
             };
             let snapshot = state::with_state(|st| {
@@ -802,11 +749,9 @@ pub(super) async fn process_payout_with_lease(
             });
             match logic::classify_commitment(snapshot.3, &commitment) {
                 logic::CommitmentValidity::IgnoreUnderThreshold => {
-                    skip_candidate.note_skippable(tx.id);
                     ignored_under_threshold_delta = ignored_under_threshold_delta.saturating_add(1);
                 }
                 logic::CommitmentValidity::IgnoreBadMemo => {
-                    skip_candidate.note_skippable(tx.id);
                     ignored_bad_memo_delta = ignored_bad_memo_delta.saturating_add(1);
                 }
                 logic::CommitmentValidity::Valid { target } => {
@@ -822,42 +767,12 @@ pub(super) async fn process_payout_with_lease(
                     let gross_share_e8s =
                         logic::compute_raw_share_e8s(amount_for_round_e8s, snapshot.0, snapshot.1);
                     if gross_share_e8s <= snapshot.2 {
-                        record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
                         continue;
                     }
                     if snapshot.4.gross_outflow_e8s.saturating_add(gross_share_e8s) > snapshot.0 {
                         state::latch_forced_rescue_reason(
                             ForcedRescueReason::AccountingInvariantBroken,
                         );
-                        return true;
-                    }
-                    record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
-                    {
-                        let _batch = state::begin_persistence_batch();
-                        flush_scan_progress(
-                            &mut ignored_under_threshold_delta,
-                            &mut ignored_bad_memo_delta,
-                            page_next_start,
-                            &skip_candidate,
-                            lease,
-                            job.id,
-                            last_persisted_cursor,
-                        );
-                    }
-                    if page_next_start.is_some() {
-                        last_persisted_cursor = page_next_start;
-                    }
-                    if !state::with_state(|st| {
-                        lease.is_current_in(st)
-                            && st.active_payout_job.as_ref().is_some_and(|active| {
-                                active.id == job.id && active.next_start == page_next_start
-                            })
-                    }) {
-                        return true;
-                    }
-                    if persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges).is_err()
-                    {
-                        latch_skip_range_invariant_rescue();
                         return true;
                     }
                     let (kind, beneficiary, transfer_memo, destination_subaccount, neuron_id) =
@@ -872,7 +787,14 @@ pub(super) async fn process_payout_with_lease(
                                 let subaccount_result =
                                     neuron_staking_subaccount_retry_once(governance, neuron_id)
                                         .await;
-                                if !lease.is_current() {
+                                if !state::with_state(|st| {
+                                    lease.is_current_in(st)
+                                        && st.active_payout_job.as_ref().is_some_and(|active| {
+                                            active.id == job.id
+                                                && active.next_start == last_persisted_cursor
+                                                && !active.scan_complete
+                                        })
+                                }) {
                                     return true;
                                 }
                                 let subaccount = match subaccount_result {
@@ -912,6 +834,29 @@ pub(super) async fn process_payout_with_lease(
                                 )
                             }
                         };
+                    {
+                        let _batch = state::begin_persistence_batch();
+                        flush_scan_progress(
+                            &mut ignored_under_threshold_delta,
+                            &mut ignored_bad_memo_delta,
+                            page_next_start,
+                            &skip_candidate,
+                            lease,
+                            job.id,
+                            last_persisted_cursor,
+                        );
+                    }
+                    if page_next_start.is_some() {
+                        last_persisted_cursor = page_next_start;
+                    }
+                    if !state::with_state(|st| {
+                        lease.is_current_in(st)
+                            && st.active_payout_job.as_ref().is_some_and(|active| {
+                                active.id == job.id && active.next_start == page_next_start
+                            })
+                    }) {
+                        return true;
+                    }
                     let pending = PendingNotification {
                         kind,
                         beneficiary,
@@ -938,16 +883,18 @@ pub(super) async fn process_payout_with_lease(
                     {
                         return true;
                     }
-                    if !lease.is_current() {
+                    if !state::with_state(|st| {
+                        lease.is_current_in(st)
+                            && st.active_payout_job.as_ref().is_some_and(|active| {
+                                active.id == job.id
+                                    && active.next_start == last_persisted_cursor
+                                    && !active.scan_complete
+                            })
+                    }) {
                         return true;
                     }
                 }
             }
-        }
-        let scan_complete =
-            reached_round_end || resp.transactions.len() < PAGE_SIZE as usize || last_id.is_none();
-        if scan_complete {
-            record_completed_skip_range(&mut skip_candidate, &mut pending_skip_ranges);
         }
         {
             let _batch = state::begin_persistence_batch();
@@ -972,7 +919,7 @@ pub(super) async fn process_payout_with_lease(
                     active.skip_candidate_tx_count = skip_candidate.tx_count;
                     if scan_complete {
                         active.scan_complete = true;
-                    } else if !reached_round_end {
+                    } else {
                         active.next_start = last_id;
                     }
                 }
@@ -985,10 +932,6 @@ pub(super) async fn process_payout_with_lease(
                     .as_ref()
                     .is_some_and(|active| active.id == job.id)
         }) {
-            return true;
-        }
-        if persist_new_skip_ranges(&mut skip_ranges, &mut pending_skip_ranges).is_err() {
-            latch_skip_range_invariant_rescue();
             return true;
         }
         if !scan_complete && pages_scanned >= MAX_INDEX_PAGES_PER_PAYOUT_TICK {

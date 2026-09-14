@@ -80,7 +80,7 @@ pub(crate) fn runtime_state_log_line(st: &State) -> String {
     let active_funding_scan = st.active_funding_scan.as_ref();
     let active_payout_job = st.active_payout_job.as_ref();
     format!(
-        "STATE:last_processed_funding_tx_id={} forced_rescue_reason={} last_observed_staking_balance_e8s={} last_observed_latest_tx_id={} consecutive_index_anchor_failures={} consecutive_index_latest_invariant_failures={} consecutive_index_latest_unreadable_failures={} active_funding_scan_cursor={} active_funding_scan_candidate_tx_id={} active_funding_scan_candidate_amount_e8s={} active_funding_scan_anchor_last_processed_funding_tx_id={} active_payout_job_present={} active_payout_funding_tx_id={} active_payout_funding_amount_e8s={}",
+        "STATE:last_processed_funding_tx_id={} forced_rescue_reason={} last_observed_staking_balance_e8s={} last_observed_latest_tx_id={} consecutive_index_anchor_failures={} consecutive_index_latest_invariant_failures={} consecutive_index_latest_unreadable_failures={} active_funding_scan_cursor={} active_funding_scan_candidate_tx_id={} active_funding_scan_candidate_amount_e8s={} active_funding_scan_anchor_last_processed_funding_tx_id={} active_payout_job_present={} active_payout_funding_tx_id={} active_payout_funding_amount_e8s={} carried_recognised_stake_e8s={} carried_round_start_time_nanos={} carried_round_start_tx_id={}",
         opt_u64_text(st.last_processed_funding_tx_id),
         opt_forced_rescue_reason_text(st.forced_rescue_reason.as_ref()),
         opt_u64_text(st.last_observed_staking_balance_e8s),
@@ -101,6 +101,9 @@ pub(crate) fn runtime_state_log_line(st: &State) -> String {
         active_payout_job.is_some(),
         opt_u64_text(active_payout_job.and_then(|job| job.funding_tx_id)),
         opt_u64_text(active_payout_job.and_then(|job| job.funding_amount_e8s)),
+        opt_u64_text(st.current_round_start_staking_balance_e8s),
+        opt_u64_text(st.current_round_start_time_nanos),
+        opt_u64_text(st.current_round_start_latest_tx_id),
     )
 }
 
@@ -252,9 +255,6 @@ pub enum ForcedRescueReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SkipRangeInsertError {
     InvalidRange,
-    DuplicateStart,
-    OverlapsOrAbutsPredecessor,
-    OverlapsOrAbutsSuccessor,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -610,6 +610,7 @@ fn with_skip_range_map<R>(f: impl FnOnce(&mut StableBTreeMap<U64Key, U64Value, M
 // irrelevant under the current faucet attribution policy. Rescue upgrades conservatively
 // clear the cache before the faucet resumes, and any future maintenance that bypasses that
 // default must still clear the cache whenever commitment-validity rules change.
+#[cfg(test)]
 pub(crate) fn list_skip_ranges() -> Vec<SkipRange> {
     with_skip_range_map(|map| {
         map.iter()
@@ -624,53 +625,118 @@ pub(crate) fn list_skip_ranges() -> Vec<SkipRange> {
     })
 }
 
-pub(crate) fn validate_skip_range_insertion(
-    existing: &[SkipRange],
-    range: &SkipRange,
-) -> Result<(), SkipRangeInsertError> {
+/// Lookup one interval, without materialising the stable map. Endpoints are
+/// inclusive low/high global block IDs, independent of traversal direction.
+pub(crate) fn skip_range_containing(id: u64) -> Result<Option<SkipRange>, SkipRangeInsertError> {
+    #[cfg(test)]
+    if skip_cache_test_access(false)? {
+        return Ok(None);
+    }
+    with_skip_range_map(|map| {
+        let Some(entry) = map.range(..=U64Key::from(id)).next_back() else {
+            return Ok(None);
+        };
+        let (low, high) = entry.into_pair();
+        if low.get() > high.get() {
+            return Err(SkipRangeInsertError::InvalidRange);
+        }
+        Ok((id <= high.get()).then_some(SkipRange {
+            start_tx_id: low.get(),
+            end_tx_id: high.get(),
+        }))
+    })
+}
+
+/// Insert only independently proven exclusion evidence. Union is safe only for
+/// overlap or numerical adjacency; a gap is never invented as covered evidence.
+/// Inspect at most four neighbours (one predecessor and three successors). If a new interval would absorb more than
+/// two old entries, conservatively retain the old cache instead of doing
+/// unbounded merge work. Normal descending learning stops at existing evidence.
+pub(crate) fn insert_skip_range(mut range: SkipRange) -> Result<(), SkipRangeInsertError> {
     if range.start_tx_id > range.end_tx_id {
         return Err(SkipRangeInsertError::InvalidRange);
     }
-    if existing
-        .iter()
-        .any(|candidate| candidate.start_tx_id == range.start_tx_id)
-    {
-        return Err(SkipRangeInsertError::DuplicateStart);
+    #[cfg(test)]
+    if skip_cache_test_access(true)? {
+        return Ok(());
     }
-    if let Some(previous) = existing
-        .iter()
-        .rev()
-        .find(|candidate| candidate.start_tx_id < range.start_tx_id)
-    {
-        if previous.end_tx_id.saturating_add(1) >= range.start_tx_id {
-            return Err(SkipRangeInsertError::OverlapsOrAbutsPredecessor);
-        }
-    }
-    if let Some(next) = existing
-        .iter()
-        .find(|candidate| candidate.start_tx_id > range.start_tx_id)
-    {
-        if range.end_tx_id.saturating_add(1) >= next.start_tx_id {
-            return Err(SkipRangeInsertError::OverlapsOrAbutsSuccessor);
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn insert_skip_range(range: SkipRange) -> Result<(), SkipRangeInsertError> {
-    // This durable cache assumes the commitment-validity rules are unchanged since the
-    // range was learned. Rescue upgrades clear the whole cache before resuming, and any
-    // future maintenance path that changes commitment-validity rules must do the same
-    // before relying on persisted skip ranges again.
-    let existing = list_skip_ranges();
-    validate_skip_range_insertion(&existing, &range)?;
     with_skip_range_map(|map| {
+        let mut remove = Vec::with_capacity(2);
+        if let Some(entry) = map.range(..=U64Key::from(range.start_tx_id)).next_back() {
+            let (low, high) = entry.into_pair();
+            if low.get() > high.get() {
+                return Err(SkipRangeInsertError::InvalidRange);
+            }
+            if high.get() >= range.end_tx_id {
+                return Ok(());
+            }
+            if high.get().saturating_add(1) >= range.start_tx_id {
+                range.start_tx_id = low.get();
+                range.end_tx_id = range.end_tx_id.max(high.get());
+                remove.push(low);
+            }
+        }
+        for entry in map
+            .range((
+                std::ops::Bound::Excluded(U64Key::from(range.start_tx_id)),
+                std::ops::Bound::Unbounded,
+            ))
+            .take(3)
+        {
+            let (low, high) = entry.into_pair();
+            if low.get() > high.get() {
+                return Err(SkipRangeInsertError::InvalidRange);
+            }
+            if low.get() > range.end_tx_id.saturating_add(1) {
+                break;
+            }
+            if remove.len() == 2 {
+                return Ok(());
+            }
+            range.end_tx_id = range.end_tx_id.max(high.get());
+            remove.push(low);
+        }
+        for key in remove {
+            map.remove(&key);
+        }
         map.insert(
             U64Key::from(range.start_tx_id),
             U64Value::from(range.end_tx_id),
         );
-    });
-    Ok(())
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SkipCacheTestStats {
+    pub lookups: u64,
+    pub insertions: u64,
+    pub disabled: bool,
+    pub fail_next_insert: bool,
+}
+#[cfg(test)]
+thread_local! { pub(crate) static SKIP_CACHE_TEST_STATS: std::cell::RefCell<SkipCacheTestStats> = std::cell::RefCell::new(SkipCacheTestStats::default()); }
+#[cfg(test)]
+pub(crate) fn skip_cache_test_memory_bytes() -> u64 {
+    MEMORY_MANAGER.with(|manager| {
+        ic_stable_structures::Memory::size(&manager.borrow().get(MemoryId::new(1))) * 65_536
+    })
+}
+#[cfg(test)]
+fn skip_cache_test_access(insert: bool) -> Result<bool, SkipRangeInsertError> {
+    SKIP_CACHE_TEST_STATS.with(|cell| {
+        let mut stats = cell.borrow_mut();
+        if insert {
+            stats.insertions += 1;
+            if std::mem::take(&mut stats.fail_next_insert) {
+                return Err(SkipRangeInsertError::InvalidRange);
+            }
+        } else {
+            stats.lookups += 1;
+        }
+        Ok(stats.disabled)
+    })
 }
 
 pub(crate) fn latch_forced_rescue_reason(reason: ForcedRescueReason) {
@@ -688,12 +754,9 @@ pub(crate) fn latch_skip_range_invariant_fault() {
 }
 
 pub(crate) fn clear_skip_ranges() {
-    with_skip_range_map(|map| {
-        let keys: Vec<_> = map.iter().map(|entry| entry.key().clone()).collect();
-        for key in keys {
-            map.remove(&key);
-        }
-    });
+    // Reset the existing map/allocator in place; do not allocate a whole-map
+    // key list during upgrade. The memory ID and wire representation are unchanged.
+    with_skip_range_map(|map| map.clear_new());
 }
 
 pub(crate) fn init_stable_storage() {
@@ -917,6 +980,10 @@ mod tests {
 
     #[test]
     fn current_v1_state_round_trips_through_stable_storage() {
+        const NON_AUTHORITATIVE_CARRIED_E8S: u64 = 999_000_000;
+        const ROUND_START_TIME_NANOS: u64 = 20_000_000_000;
+        const ROUND_START_TX_ID: u64 = 41;
+
         reset_test_storage();
         let mut st = State::new(sample_config(), 1_000);
         st.last_successful_transfer_ts = Some(77);
@@ -935,6 +1002,9 @@ mod tests {
             ..Summary::default()
         });
         st.last_processed_funding_tx_id = Some(41);
+        st.current_round_start_time_nanos = Some(ROUND_START_TIME_NANOS);
+        st.current_round_start_staking_balance_e8s = Some(NON_AUTHORITATIVE_CARRIED_E8S);
+        st.current_round_start_latest_tx_id = Some(ROUND_START_TX_ID);
         st.active_funding_scan = Some(FundingScanState {
             anchor_last_processed_funding_tx_id: Some(41),
             cursor: Some(500),
@@ -956,6 +1026,18 @@ mod tests {
         assert!(restored.rescue_triggered);
         assert_eq!(restored.last_summary, st.last_summary);
         assert_eq!(restored.last_processed_funding_tx_id, Some(41));
+        assert_eq!(
+            restored.current_round_start_time_nanos,
+            Some(ROUND_START_TIME_NANOS)
+        );
+        assert_eq!(
+            restored.current_round_start_staking_balance_e8s,
+            Some(NON_AUTHORITATIVE_CARRIED_E8S)
+        );
+        assert_eq!(
+            restored.current_round_start_latest_tx_id,
+            Some(ROUND_START_TX_ID)
+        );
         assert_eq!(restored.active_funding_scan, st.active_funding_scan);
     }
 
@@ -1091,7 +1173,7 @@ mod tests {
     }
 
     #[test]
-    fn skip_range_insertion_rejects_adjacent_ranges() {
+    fn skip_range_insertion_merges_adjacent_ranges() {
         reset_test_storage();
         insert_skip_range(SkipRange {
             start_tx_id: 10,
@@ -1099,16 +1181,15 @@ mod tests {
         })
         .expect("baseline range should persist");
 
-        let err = insert_skip_range(SkipRange {
+        let result = insert_skip_range(SkipRange {
             start_tx_id: 21,
             end_tx_id: 30,
-        })
-        .expect_err("adjacent skip range should be rejected");
-        assert_eq!(err, SkipRangeInsertError::OverlapsOrAbutsPredecessor);
+        });
+        assert!(result.is_ok());
     }
 
     #[test]
-    fn skip_range_insertion_rejects_same_start_as_existing_range() {
+    fn skip_range_insertion_is_idempotent_for_same_start() {
         reset_test_storage();
         insert_skip_range(SkipRange {
             start_tx_id: 10,
@@ -1116,12 +1197,11 @@ mod tests {
         })
         .expect("baseline range should persist");
 
-        let err = insert_skip_range(SkipRange {
+        let result = insert_skip_range(SkipRange {
             start_tx_id: 10,
             end_tx_id: 30,
-        })
-        .expect_err("duplicate-start skip range should be rejected");
-        assert_eq!(err, SkipRangeInsertError::DuplicateStart);
+        });
+        assert!(result.is_ok());
     }
 
     #[test]

@@ -310,5 +310,8 @@ pub(super) async fn finalize_completed_job(
         return false;
     };
     log_summary(&summary);
+    // The completed ending recognised balance is now the carried baseline, distinct
+    // from the live balance and this summary's weighted denominator.
+    log_current_state();
     true
 }

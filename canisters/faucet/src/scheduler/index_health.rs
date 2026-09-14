@@ -155,17 +155,34 @@ pub(super) fn index_page_descending(txs: &[IndexTransactionWithId]) -> bool {
         .unwrap_or(false)
 }
 
-pub(super) fn index_page_descending_from_cursor(
-    txs: &[IndexTransactionWithId],
+/// Validate the entire newest-first, exclusive page before applying any of it.
+/// Some(true) proves exhaustion; a short page alone never does. A cursor at the
+/// known oldest record also proves traversal after its pending payment settles.
+pub(super) fn validate_history_page(
+    response: &GetAccountIdentifierTransactionsResponse,
     cursor: Option<u64>,
-) -> bool {
-    if txs.len() >= 2 {
-        return index_page_descending(txs);
+    expected_oldest: Option<u64>,
+) -> Option<bool> {
+    let oldest = response.oldest_tx_id;
+    let txs = &response.transactions;
+    if expected_oldest.is_some_and(|id| oldest != Some(id))
+        || txs.len() > PAGE_SIZE as usize
+        || txs.windows(2).any(|pair| pair[0].id <= pair[1].id)
+        || txs
+            .first()
+            .is_some_and(|tx| cursor.is_some_and(|id| tx.id >= id))
+        || txs.iter().any(|tx| oldest.is_none_or(|id| tx.id < id))
+    {
+        return None;
     }
-    match (cursor, txs.first()) {
-        (Some(last_seen), Some(tx)) => tx.id < last_seen,
-        _ => false,
+    if txs.is_empty() {
+        return match (cursor, oldest) {
+            (None, None) => Some(true),
+            (Some(cursor), Some(oldest)) if cursor == oldest => Some(true),
+            _ => None,
+        };
     }
+    Some(txs.last().map(|tx| tx.id) == oldest)
 }
 
 pub(super) fn index_page_latest_tx_id(txs: &[IndexTransactionWithId]) -> Option<u64> {
@@ -178,18 +195,6 @@ pub(super) fn index_page_latest_tx_id(txs: &[IndexTransactionWithId]) -> Option<
 
 pub(super) fn index_page_next_cursor(txs: &[IndexTransactionWithId]) -> Option<u64> {
     txs.last().map(|tx| tx.id)
-}
-
-pub(super) fn tx_is_after_cursor_for_page(
-    tx_id: u64,
-    cursor: Option<u64>,
-    descending: bool,
-) -> bool {
-    match cursor {
-        None => true,
-        Some(last_seen) if descending => tx_id < last_seen,
-        Some(last_seen) => tx_id > last_seen,
-    }
 }
 
 pub(super) async fn scan_latest_observation(
