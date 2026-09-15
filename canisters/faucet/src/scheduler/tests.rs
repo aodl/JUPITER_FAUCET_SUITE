@@ -924,13 +924,11 @@ mod tests {
         let mut cfg = test_config();
         cfg.stake_recognition_delay_seconds = Some(0);
         if job.round_start_time_nanos.is_none()
-            && job.round_start_staking_balance_e8s.is_none()
             && job.round_start_latest_tx_id.is_none()
             && job.round_end_time_nanos.is_none()
         {
             job.configure_round_accounting(
                 Some(0),
-                Some(job.denom_staking_balance_e8s),
                 None,
                 now_secs.saturating_mul(1_000_000_000),
                 None,
@@ -1157,7 +1155,6 @@ mod tests {
             st.active_payout_job = None;
             st.last_processed_funding_tx_id = Some(20);
             st.current_round_start_time_nanos = Some(20_000_000_000);
-            st.current_round_start_staking_balance_e8s = Some(200_000_000);
             st.current_round_start_latest_tx_id = Some(20);
         });
         ledger.set_payout_balance_e8s(200_000_000);
@@ -1169,10 +1166,6 @@ mod tests {
             assert!(st.active_payout_job.is_none());
             assert_eq!(st.last_processed_funding_tx_id, Some(20));
             assert_eq!(st.current_round_start_time_nanos, Some(20_000_000_000));
-            assert_eq!(
-                st.current_round_start_staking_balance_e8s,
-                Some(200_000_000)
-            );
             assert_eq!(st.current_round_start_latest_tx_id, Some(20));
         });
         drop(future);
@@ -1238,7 +1231,6 @@ mod tests {
         state::with_state_mut(|st| {
             let job = st.active_payout_job.as_mut().unwrap();
             job.effective_denom_staking_balance_e8s = Some(100_000_000);
-            job.round_end_staking_balance_e8s = Some(100_000_000);
             job.next_start = Some(1);
         });
         index.release.store(true, Ordering::SeqCst);
@@ -1247,7 +1239,6 @@ mod tests {
         state::with_state(|st| {
             let job = st.active_payout_job.as_ref().unwrap();
             assert_eq!(job.effective_denom_staking_balance_e8s, Some(100_000_000));
-            assert_eq!(job.round_end_staking_balance_e8s, Some(100_000_000));
             assert_eq!(job.next_start, Some(1));
         });
         drop(future);
@@ -1311,7 +1302,6 @@ mod tests {
                     _ => unreachable!(),
                 }
                 job.effective_denom_staking_balance_e8s = Some(44);
-                job.round_end_staking_balance_e8s = Some(55);
                 candid::encode_one(&*job).unwrap()
             });
             index.release.store(true, Ordering::SeqCst);
@@ -1344,7 +1334,6 @@ mod tests {
         job.cmc_attempted_beneficiaries = Some(vec![Principal::management_canister()]);
         job.funding_tx_id = Some(10);
         job.round_end_time_nanos = Some(10_000_000_000);
-        job.round_end_staking_balance_e8s = Some(100_000_000);
         job.round_end_latest_tx_id = Some(10);
         let _cfg = set_active_job(now_secs, job);
         let status = HeldCanisterStatus {
@@ -1363,7 +1352,6 @@ mod tests {
             st.active_payout_job = None;
             st.last_processed_funding_tx_id = Some(20);
             st.current_round_start_time_nanos = Some(20_000_000_000);
-            st.current_round_start_staking_balance_e8s = Some(300_000_000);
             st.current_round_start_latest_tx_id = Some(20);
             st.consecutive_cmc_zero_success_runs = Some(9);
         });
@@ -1374,10 +1362,6 @@ mod tests {
             assert!(st.active_payout_job.is_none());
             assert_eq!(st.last_processed_funding_tx_id, Some(20));
             assert_eq!(st.current_round_start_time_nanos, Some(20_000_000_000));
-            assert_eq!(
-                st.current_round_start_staking_balance_e8s,
-                Some(300_000_000)
-            );
             assert_eq!(st.current_round_start_latest_tx_id, Some(20));
             assert_eq!(st.consecutive_cmc_zero_success_runs, Some(9));
         });
@@ -4040,7 +4024,6 @@ mod tests {
         job.configure_round_accounting(
             None,
             None,
-            None,
             now_secs * 1_000_000_000,
             None,
             100_000_000,
@@ -4098,7 +4081,6 @@ mod tests {
             now_secs * 1_000_000_000,
         );
         job.configure_round_accounting(
-            None,
             None,
             None,
             now_secs * 1_000_000_000,
@@ -5787,7 +5769,6 @@ mod tests {
         job.next_start = None;
         job.configure_round_accounting(
             Some(0),
-            Some(1_000_000_000),
             Some(1),
             100_000_000_000,
             Some(2),
@@ -5795,7 +5776,6 @@ mod tests {
             false,
         );
         job.effective_denom_staking_balance_e8s = Some(0);
-        job.round_end_staking_balance_e8s = Some(0);
         let _cfg = set_active_job(now_secs, job);
         state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(0));
 
@@ -5868,7 +5848,6 @@ mod tests {
         cfg.funding_source_account = funding_source.clone();
         let mut st = state::State::new(cfg.clone(), now_secs);
         st.current_round_start_time_nanos = Some(1_000_000_000);
-        st.current_round_start_staking_balance_e8s = Some(100_000_000);
         st.current_round_start_latest_tx_id = Some(10);
         state::clear_skip_ranges();
         state::set_state(st);
@@ -5909,22 +5888,18 @@ mod tests {
             now_secs,
         )));
 
-        let (summary, active_job, round_start_staking_balance_e8s, last_processed_funding_tx_id) =
-            state::with_state(|st| {
-                (
-                    st.last_summary.clone(),
-                    st.active_payout_job.clone(),
-                    st.current_round_start_staking_balance_e8s,
-                    st.last_processed_funding_tx_id,
-                )
-            });
+        let (summary, active_job, last_processed_funding_tx_id) = state::with_state(|st| {
+            (
+                st.last_summary.clone(),
+                st.active_payout_job.clone(),
+                st.last_processed_funding_tx_id,
+            )
+        });
         assert!(active_job.is_none());
         let summary = summary.expect("summary should be finalized");
         assert_eq!(summary.pot_start_e8s, funding_amount_e8s);
         assert_eq!(summary.effective_denom_staking_balance_e8s, Some(0));
         assert_eq!(summary.topped_up_count, 0);
-        // No qualifying pre-funding history backs the old cached scalar.
-        assert_eq!(round_start_staking_balance_e8s, Some(0));
         assert_eq!(last_processed_funding_tx_id, Some(20));
     }
 
@@ -5990,17 +5965,15 @@ mod tests {
             now_secs,
         )));
 
-        let (summary, active_job, round_start_staking_balance_e8s, last_processed_funding_tx_id) =
-            state::with_state(|st| {
-                (
-                    st.last_summary
-                        .clone()
-                        .expect("summary should be finalized"),
-                    st.active_payout_job.clone(),
-                    st.current_round_start_staking_balance_e8s,
-                    st.last_processed_funding_tx_id,
-                )
-            });
+        let (summary, active_job, last_processed_funding_tx_id) = state::with_state(|st| {
+            (
+                st.last_summary
+                    .clone()
+                    .expect("summary should be finalized"),
+                st.active_payout_job.clone(),
+                st.last_processed_funding_tx_id,
+            )
+        });
         assert!(active_job.is_none());
         assert_eq!(summary.pot_start_e8s, 100_000_000);
         assert_eq!(summary.topped_up_count, 1);
@@ -6010,7 +5983,6 @@ mod tests {
         );
         assert_eq!(ledger.transfer_amounts(), vec![99_990_000]);
         assert_eq!(cmc.call_count(), 1);
-        assert_eq!(round_start_staking_balance_e8s, Some(100_000_000));
         assert_eq!(last_processed_funding_tx_id, Some(1000));
         assert!(
             index.starts().contains(&Some(1002)),
@@ -6699,7 +6671,6 @@ mod tests {
         job.next_start = None;
         job.configure_round_accounting(
             Some(10_000_000_000),
-            Some(1_400_000_000),
             Some(1),
             100_000_000_000,
             Some(1),
@@ -6707,7 +6678,6 @@ mod tests {
             false,
         );
         job.effective_denom_staking_balance_e8s = Some(0);
-        job.round_end_staking_balance_e8s = Some(0);
         let _cfg = set_active_job(now_secs, job);
         state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
 
@@ -6821,21 +6791,18 @@ mod tests {
         );
         assert_eq!(summary.remainder_to_relay_e8s, 0);
         assert_eq!(ledger.transfer_amounts(), vec![99_990_000]);
-        let (round_start_time_nanos, round_start_staking_balance_e8s, round_start_latest_tx_id) =
-            state::with_state(|st| {
-                (
-                    st.current_round_start_time_nanos,
-                    st.current_round_start_staking_balance_e8s,
-                    st.current_round_start_latest_tx_id,
-                )
-            });
+        let (round_start_time_nanos, round_start_latest_tx_id) = state::with_state(|st| {
+            (
+                st.current_round_start_time_nanos,
+                st.current_round_start_latest_tx_id,
+            )
+        });
         assert_eq!(round_start_time_nanos, Some(now_secs * 1_000_000_000));
-        assert_eq!(round_start_staking_balance_e8s, Some(100_000_000));
         assert_eq!(round_start_latest_tx_id, Some(2));
     }
 
     #[test]
-    fn strict_tranche_job_creation_never_creates_legacy_no_start_nonzero_baseline_shape() {
+    fn strict_tranche_job_creation_uses_time_boundary_to_distinguish_genesis() {
         let now_nanos = 3_000_000_000_000;
         state::clear_skip_ranges();
         state::set_state(state::State::new(test_config(), 3_000));
@@ -6858,16 +6825,10 @@ mod tests {
             state::with_state(|st| st.active_payout_job.clone().expect("genesis job"));
         assert_eq!(genesis_job.round_start_time_nanos, None);
         assert_eq!(genesis_job.round_start_latest_tx_id, None);
-        assert_eq!(genesis_job.round_start_staking_balance_e8s, Some(0));
         assert_eq!(genesis_job.effective_denom_scan_complete, Some(false));
-        assert_ne!(
-            genesis_job.round_start_staking_balance_e8s,
-            Some(250_000_000)
-        );
 
         let mut st = state::State::new(test_config(), 3_001);
         st.current_round_start_time_nanos = Some(100_000_000_000);
-        st.current_round_start_staking_balance_e8s = Some(250_000_000);
         st.current_round_start_latest_tx_id = Some(20);
         state::set_state(st);
 
@@ -6887,12 +6848,7 @@ mod tests {
 
         let later_job = state::with_state(|st| st.active_payout_job.clone().expect("later job"));
         assert_eq!(later_job.round_start_time_nanos, Some(100_000_000_000));
-        assert_eq!(later_job.round_start_staking_balance_e8s, Some(250_000_000));
-        assert!(
-            !(later_job.round_start_time_nanos.is_none()
-                && later_job.round_start_staking_balance_e8s != Some(0)),
-            "strict job creation must not produce the no-start/nonzero-baseline shape"
-        );
+        assert_eq!(later_job.round_start_latest_tx_id, Some(20));
     }
 
     #[test]
@@ -6944,16 +6900,14 @@ mod tests {
             now_secs,
         )));
 
-        let (summary, round_start_staking_balance_e8s, last_processed_funding_tx_id) =
-            state::with_state(|st| {
-                (
-                    st.last_summary
-                        .clone()
-                        .expect("summary should be finalized"),
-                    st.current_round_start_staking_balance_e8s,
-                    st.last_processed_funding_tx_id,
-                )
-            });
+        let (summary, last_processed_funding_tx_id) = state::with_state(|st| {
+            (
+                st.last_summary
+                    .clone()
+                    .expect("summary should be finalized"),
+                st.last_processed_funding_tx_id,
+            )
+        });
         assert_eq!(summary.pot_start_e8s, 100_000_000);
         assert_eq!(
             summary.effective_denom_staking_balance_e8s,
@@ -6962,7 +6916,6 @@ mod tests {
         assert_eq!(summary.topped_up_count, 1);
         assert_eq!(ledger.transfer_amounts(), vec![99_990_000]);
         assert_eq!(cmc.call_count(), 1);
-        assert_eq!(round_start_staking_balance_e8s, Some(100_000_000));
         assert_eq!(last_processed_funding_tx_id, Some(2));
     }
 
@@ -6977,7 +6930,6 @@ mod tests {
         cfg.funding_source_account = funding_source.clone();
         let mut st = state::State::new(cfg.clone(), now_secs);
         st.current_round_start_time_nanos = Some(100_000_000_000);
-        st.current_round_start_staking_balance_e8s = Some(100_000_000);
         st.current_round_start_latest_tx_id = Some(10);
         state::clear_skip_ranges();
         state::set_state(st);
@@ -7037,7 +6989,7 @@ mod tests {
         assert_eq!(
             summary.effective_denom_staking_balance_e8s,
             Some(150_000_000),
-            "denominator is old baseline plus the half-round effective commitment, not live stake"
+            "denominator is the fully weighted historical commitment plus the half-round commitment, not live stake"
         );
         assert_eq!(summary.denom_staking_balance_e8s, 300_000_000);
         assert_eq!(summary.topped_up_count, 2);
@@ -7413,7 +7365,6 @@ mod tests {
         );
         job.configure_round_accounting(
             Some(20_000_000_000),
-            Some(100_000_000),
             Some(3),
             40_000_000_000,
             Some(4),
@@ -7421,7 +7372,6 @@ mod tests {
             false,
         );
         job.effective_denom_staking_balance_e8s = Some(0);
-        job.round_end_staking_balance_e8s = Some(0);
         let cfg = set_active_job(now_secs, job);
         state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(10));
 
@@ -7482,15 +7432,7 @@ mod tests {
             100_000_000,
             now_secs * 1_000_000_000,
         );
-        job.configure_round_accounting(
-            None,
-            Some(0),
-            None,
-            100_000_000_000,
-            Some(2),
-            100_000_000,
-            true,
-        );
+        job.configure_round_accounting(None, None, 100_000_000_000, Some(2), 100_000_000, true);
         job.gross_outflow_e8s = 90_000_000;
         let cfg = set_active_job(now_secs, job);
         state::with_state_mut(|st| st.config.stake_recognition_delay_seconds = Some(0));
@@ -7524,12 +7466,11 @@ mod tests {
         );
     }
     #[test]
-    fn synthetic_delay_transition_reconstructs_history_with_equal_live_and_carried_balances() {
+    fn synthetic_delay_transition_reconstructs_qualifying_history() {
         const START: u64 = 20_000_000_000;
         const END: u64 = 40_000_000_000;
-        const STALE_CARRIED_E8S: u64 = 777_000_000;
+        const LIVE_STAKING_BALANCE_E8S: u64 = 777_000_000;
         const EXPECTED_DENOM_E8S: u64 = 410_000_004;
-        const EXPECTED_ENDING_E8S: u64 = 600_000_010;
 
         let mut cfg = test_config();
         cfg.min_tx_e8s = 100_000_000;
@@ -7541,14 +7482,13 @@ mod tests {
         let raw_directive = format!("{}.audit", raw_target.to_text().replace('-', ""));
         let mut st = state::State::new(cfg, START / 1_000_000_000);
         st.current_round_start_time_nanos = Some(START);
-        st.current_round_start_staking_balance_e8s = Some(STALE_CARRIED_E8S);
         st.current_round_start_latest_tx_id = Some(1);
         st.last_processed_funding_tx_id = Some(10);
         state::clear_skip_ranges();
         state::set_state(st);
 
-        // The policy update preserves the stale scalar and accounting boundaries. A commitment
-        // recognised under the shorter delay is reweighted from history under the new delay.
+        // The policy update preserves accounting boundaries. A commitment recognised under the
+        // shorter delay is reweighted from history under the new delay.
         state::with_state_mut(|st| {
             crate::apply_upgrade_args_to_state(
                 st,
@@ -7603,7 +7543,7 @@ mod tests {
             END,
             10_000,
             EXPECTED_DENOM_E8S,
-            STALE_CARRIED_E8S,
+            LIVE_STAKING_BALANCE_E8S,
             END,
             Some(5),
             Some(FundingTranche {
@@ -7615,7 +7555,7 @@ mod tests {
         let ledger = BalanceRecordingLedger::new(
             10_000,
             EXPECTED_DENOM_E8S,
-            STALE_CARRIED_E8S,
+            LIVE_STAKING_BALANCE_E8S,
             vec![1, 2, 3],
         );
         let cmc = ScriptedCmc::new(vec![CmcStep::Ok; 2]);
@@ -7644,10 +7584,6 @@ mod tests {
             assert_eq!(summary.ignored_under_threshold, 1);
             assert_eq!(summary.ignored_bad_memo, 1);
             assert_eq!(summary.remainder_to_relay_e8s, 0);
-            assert_eq!(
-                st.current_round_start_staking_balance_e8s,
-                Some(EXPECTED_ENDING_E8S)
-            );
             assert_eq!(st.current_round_start_time_nanos, Some(END));
             assert_eq!(st.current_round_start_latest_tx_id, Some(5));
             assert_eq!(st.last_processed_funding_tx_id, Some(5));
@@ -7678,7 +7614,6 @@ mod tests {
             let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
             let mut st = state::State::new(cfg, 1);
             st.current_round_start_time_nanos = Some(start);
-            st.current_round_start_staking_balance_e8s = Some(777_000_000);
             st.current_round_start_latest_tx_id = Some(100);
             state::clear_skip_ranges();
             state::set_state(st);
@@ -7695,7 +7630,6 @@ mod tests {
             });
             let mut txs = Vec::new();
             let mut weight = 0u64;
-            let mut ending = 0u64;
             for (i, effective) in [start - 1, start, start + 1, end - 1, end, end + 1]
                 .into_iter()
                 .enumerate()
@@ -7714,9 +7648,6 @@ mod tests {
                 }
                 txs.push(tx);
                 if amount >= threshold {
-                    if effective <= end {
-                        ending += amount;
-                    }
                     weight += if effective <= start {
                         amount
                     } else if effective >= end {
@@ -7753,7 +7684,6 @@ mod tests {
                 0,
             ));
             weight += 200_000_000;
-            ending += 200_000_000;
             let index = NewestFirstExclusiveIndex::from_history(txs);
             ensure_active_job_with_boundary(
                 end,
@@ -7783,7 +7713,6 @@ mod tests {
                         .effective_denom_staking_balance_e8s,
                     Some(weight)
                 );
-                assert_eq!(st.current_round_start_staking_balance_e8s, Some(ending));
                 assert_eq!(st.current_round_start_time_nanos, Some(end));
             });
         }
@@ -7798,7 +7727,6 @@ mod tests {
             let mut st = state::State::new(cfg, 40);
             st.config.stake_recognition_delay_seconds = Some(1);
             st.current_round_start_time_nanos = Some(20_000_000_000);
-            st.current_round_start_staking_balance_e8s = Some(777_000_000);
             state::clear_skip_ranges();
             state::set_state(st);
             ensure_active_job_with_boundary(
@@ -7847,10 +7775,6 @@ mod tests {
                     summary.effective_denom_staking_balance_e8s,
                     Some(100_000_000)
                 );
-                assert_eq!(
-                    st.current_round_start_staking_balance_e8s,
-                    Some(100_000_000)
-                );
                 assert_eq!(summary.topped_up_count, if outcome == 2 { 0 } else { 1 });
                 assert_eq!(summary.failed_topups, if outcome == 2 { 1 } else { 0 });
                 assert_eq!(
@@ -7870,7 +7794,6 @@ mod tests {
             let mut st = state::State::new(cfg, 40);
             st.config.stake_recognition_delay_seconds = Some(1);
             st.current_round_start_time_nanos = Some(20_000_000_000);
-            st.current_round_start_staking_balance_e8s = Some(777_000_000);
             state::clear_skip_ranges();
             state::set_state(st);
             let txs = (1..=count)
@@ -7941,10 +7864,6 @@ mod tests {
                 "large history must pay its beneficiary: {:?}",
                 state::with_state(|st| st.last_summary.clone())
             );
-            assert_eq!(
-                state::with_state(|st| st.current_round_start_staking_balance_e8s),
-                Some(100_000_000)
-            );
             let ledger_calls =
                 ledger.read_calls.load(Ordering::SeqCst) + ledger.transfer_amounts().len();
             println!("history_rows={count} pages={} index_calls={} ledger_calls={ledger_calls} cmc_calls={} total_client_calls={} driver_ticks={ticks}; native instruction measurement unavailable", count.div_ceil(PAGE_SIZE), index.starts().len(), cmc.call_count(), index.starts().len() + ledger_calls + cmc.call_count());
@@ -8012,7 +7931,6 @@ mod tests {
                 let job = st.active_payout_job.as_ref().unwrap();
                 assert_eq!(job.next_start, cursor);
                 assert_eq!(job.effective_denom_staking_balance_e8s, Some(0));
-                assert_eq!(job.round_end_staking_balance_e8s, Some(0));
                 assert_eq!(job.effective_denom_scan_complete, Some(false));
             });
         }
@@ -8093,10 +8011,6 @@ mod tests {
             40
         )));
         assert_eq!(ledger.transfer_amounts(), vec![33_323_333; 3]);
-        assert_eq!(
-            state::with_state(|st| st.current_round_start_staking_balance_e8s),
-            Some(300_000_000)
-        );
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -8174,7 +8088,6 @@ mod tests {
         let source = account_identifier_text_for_account(&cfg.funding_source_account);
         let mut st = state::State::new(cfg.clone(), 40);
         st.current_round_start_time_nanos = Some(20_000_000_000);
-        st.current_round_start_staking_balance_e8s = Some(777_000_000);
         st.current_round_start_latest_tx_id = Some(4);
         state::clear_skip_ranges();
         state::set_state(st);
@@ -8265,10 +8178,6 @@ mod tests {
                     );
                     assert_eq!(summary.pot_remaining_e8s, 1);
                     assert_eq!(summary.remainder_to_relay_e8s, 0);
-                    assert_eq!(
-                        st.current_round_start_staking_balance_e8s,
-                        Some(300_000_000)
-                    );
                     assert_eq!(st.last_processed_funding_tx_id, Some(10));
                     assert_eq!(st.current_round_start_time_nanos, Some(40_000_000_000));
                 });

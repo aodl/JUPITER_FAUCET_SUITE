@@ -137,8 +137,8 @@ So if the same beneficiary appears twice in staking-account history, the faucet 
 
 Before sending any beneficiary funds, each job uses the bounded Index pre-scan to
 sum qualifying incoming commitments at its pinned funding transaction boundary.
-The carried balance is retained for stable compatibility and observability; it is
-not an input to either authoritative sum. Equal live and carried balances do not
+There is no carried recognised-stake amount: every job independently reconstructs
+its one authoritative weighted denominator. The live balance snapshot does not
 skip reconstruction. The scan must establish coverage through the Index's advertised oldest transaction,
 using validated descending pages and eligible exclusion ranges with a consistent configured oldest anchor.
 Incomplete, malformed, repeated or failed pages cannot authorize a payment from
@@ -161,25 +161,14 @@ weights whose eventual allocation is too small to pay after fees. Delivery failu
 cycles-to-raw-ICP fallback, neuron resolution and fee deductions do not redefine
 recognised stake. Undeliverable allocations follow the existing remainder rules.
 
-The independently computed ending recognised balance includes each qualifying
-amount in full when its effective time is at or before `E`, subject to the same
-transaction boundary. Thus a commitment effective exactly at `E` has zero weight
-in a non-genesis payout and full membership in the next baseline. Genesis retains
-its separate full-amount recognition-at-`E` rule.
-
-At boundary `(S, J)`, the qualifying-only baseline invariant is:
-
-```text
-B(S, J, P) = sum(amount for qualifying incoming commitments under policy P
-                where block_id <= J and effective_timestamp <= S)
-```
+A commitment effective exactly at `E` has zero weight in that non-genesis payout.
+When the following job evaluates history against its preserved start boundary,
+the same commitment has full weight without any stored ending-balance membership.
+Genesis retains its separate full-amount recognition-at-`E` rule.
 
 Delay or minimum-threshold changes cause the next ordinary job to recompute from
 history under the new policy, preserving its true time and funding boundaries.
 No synchronous upgrade-time history calls or per-commitment registry are needed.
-Each completed job replaces the carried scalar with the independently reconstructed
-ending balance; between jobs that scalar remains informational and cannot influence
-an allocation.
 
 ### 4) The payout pot is snapshotted once per job
 
@@ -195,16 +184,16 @@ The faucet explicitly addresses the case where the same additional stake amount 
 
 Operationally, the mitigation strategy is therefore:
 
-1. retain the completed funding timestamp/block boundary and independently calculated recognised ending balance
+1. retain the completed funding timestamp/block boundary
 2. pin the next funding tranche's amount, timestamp and global block ID once
 3. reconstruct the denominator from all qualifying commitments under those time/block boundaries
-4. use each commitment's identical weight for its numerator and the denominator, and separately sum recognised ending amounts
+4. use each commitment's identical weight for its numerator and the denominator
 5. exclude invalid memos and below-threshold transfers individually
 
 The repo covers this in three layers:
 
 - [`src/logic.rs`](src/logic.rs) unit tests verify the weighting, boundary, production-delay, and payout arithmetic used by the faucet
-- [`src/scheduler/tests.rs`](src/scheduler/tests.rs) and [`src/scheduler/route_accounting.rs`](src/scheduler/route_accounting.rs) tests verify that the faucet clamps a round by tx id, computes the round-effective denominator before payout scanning, keeps historical stake contributing, and handles the genesis strict tranche with a zero round-start baseline
+- [`src/scheduler/tests.rs`](src/scheduler/tests.rs) and [`src/scheduler/route_accounting.rs`](src/scheduler/route_accounting.rs) tests verify that the faucet clamps a round by tx id, computes the round-effective denominator before payout scanning, keeps historical stake contributing, and handles the genesis strict tranche without a prior time/block boundary
 - the [disburser/faucet PocketIC suite](../../tests/pocketic) keeps canonical end-to-end economics tests that prove very late valid and very late invalid top-ups do not reduce the existing beneficiary's affected-round payout under the weighted-round mitigation; short-delay variants prove the mechanism, and the production-delay variant proves the 7-day policy
 
 The detailed reward-environment caveats and the rationale for the PocketIC whale background live in [`../../tools/xtask/README.md`](../../tools/xtask/README.md) and in the comments around the PocketIC reward helpers.
@@ -289,7 +278,7 @@ Each interval timer is clamped to at least 60 seconds by the runtime code. There
 
 ### Runtime config verification
 
-After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits `STATE ...` and `CONFIG ...` lines on every completed main-tick cadence, alongside its regular `Cycles: ...` health line. Forced scheduler ticks can emit additional state/config lines outside the regular cadence. The `CONFIG` line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, the embedded canonical Relay canister ID, funding source account, rescue controller, autonomous-rescue state, expected first staking transaction ID, timer intervals, minimum tracked endowment, and stake-recognition delay. The `STATE` line includes the funding cursor, active funding-scan cursor/candidate/anchor, `active_payout_job_present`, active payout funding tranche, forced rescue reason, last observed staking balance and latest transaction ID, and the Index anchor/latest-invariant/latest-unreadable failure counters. It also labels the carried recognised balance and its associated time/block boundary separately; a STATE record emitted after finalisation reports the independently computed recognised ending balance that was just carried forward.
+After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The faucet emits `STATE ...` and `CONFIG ...` lines on every completed main-tick cadence, alongside its regular `Cycles: ...` health line. Forced scheduler ticks can emit additional state/config lines outside the regular cadence. The `CONFIG` line is comma-separated `key=value` text and includes the staking account, payout subaccount, ledger/index/CMC/governance canister IDs, the embedded canonical Relay canister ID, funding source account, rescue controller, autonomous-rescue state, expected first staking transaction ID, timer intervals, minimum tracked endowment, and stake-recognition delay. The `STATE` line includes the funding cursor, active funding-scan cursor/candidate/anchor, `active_payout_job_present`, active payout funding tranche, forced rescue reason, last observed staking balance and latest transaction ID, the preserved round-start time/block boundary, and the Index anchor/latest-invariant/latest-unreadable failure counters.
 
 ### Main tick sequence
 
@@ -304,7 +293,7 @@ On each successful main tick, the canister:
 4. selects the oldest unprocessed Disburser-to-Faucet funding transfer as the payout pot
 5. if there is no unprocessed funding transfer, the payout pot is too small, or the live staking-account balance is zero, it performs only index-health probing and bootstrap-rescue checks
 6. otherwise, creates an `ActivePayoutJob`
-7. completes the authoritative denominator/ending-balance scan, then traverses history for beneficiaries; both passes reuse validated nonqualifying exclusions
+7. completes the authoritative weighted-denominator scan, then traverses history for beneficiaries; both passes reuse validated nonqualifying exclusions
 8. evaluates each eligible incoming transfer independently
 9. for each eligible beneficiary endowment, performs ledger transfer then `notify_top_up`
 10. if a beneficiary CMC-deposit transfer is conclusively rejected, completes one raw fallback before scanning another beneficiary; ambiguous transfer outcomes do not fallback
@@ -442,7 +431,15 @@ Production canister: `jupiter_faucet` / `acjuz-liaaa-aaaar-qb4qq-cai`
 
 The production faucet has completed a payout. Use upgrade for the production path so stable summaries, funding cursors, and recovery state are preserved. Upgrades require `active_payout_job = None`.
 
-Before stopping, snapshotting, or upgrading the Faucet, inspect the public `STATE` log and require `active_payout_job_present=false`. The post-upgrade guard traps if this precondition is missed. This is the current lifecycle quiescence rule; upgrades with an active payout job are deliberately rejected. The one-hop old-controller-state bridge completed in production on 2026-09-11 and its compatibility decoder is retired. The earlier live `07a01016...fa91af` module's `canonical_relay_canister_id` marker proved that its stable payout state already used the post-Relay-remainder representation; `funding_source_account` predated that discriminating marker. Current source decodes only the current V1 stable representation.
+Before stopping, snapshotting, or upgrading the Faucet, inspect the public `STATE` log and require `active_payout_job_present=false`. The post-upgrade guard traps if this precondition is missed. This is the current lifecycle quiescence rule; upgrades with an active payout job are deliberately rejected.
+
+The stable decoder accepts either an exactly round-tripping current V1 message or
+the immediately preceding wider V1 record. The wider form is accepted only when
+its complete wire type becomes structurally identical to current V1 after removing
+the retired state balance and two retired job-balance fields, each with its expected
+`opt nat64` type. This preserves supported optional values and rejects absent or
+incompatible supported fields instead of allowing Candid optional fallback to turn
+them into `null`. New persistence writes only the reduced V1 representation.
 
 The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
 

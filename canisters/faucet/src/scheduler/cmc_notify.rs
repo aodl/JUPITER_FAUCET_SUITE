@@ -292,10 +292,6 @@ pub(super) async fn finalize_completed_job(
         apply_job_health_observations(st, &job, zero_success_run_counts);
         if let Some(round_end_time_nanos) = job.round_end_time_nanos {
             st.current_round_start_time_nanos = Some(round_end_time_nanos);
-            st.current_round_start_staking_balance_e8s = Some(
-                job.round_end_staking_balance_e8s
-                    .unwrap_or(job.denom_staking_balance_e8s),
-            );
             st.current_round_start_latest_tx_id =
                 job.round_end_latest_tx_id.or(job.observed_latest_tx_id);
         }
@@ -310,8 +306,6 @@ pub(super) async fn finalize_completed_job(
         return false;
     };
     log_summary(&summary);
-    // The completed ending recognised balance is now the carried baseline, distinct
-    // from the live balance and this summary's weighted denominator.
     log_current_state();
     true
 }

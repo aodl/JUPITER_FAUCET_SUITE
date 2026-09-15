@@ -3646,8 +3646,8 @@ fn faucet_current_state_upgrade_reconstructs_without_replaying_funding() -> Resu
     );
 
     // This commitment is added at the prior round boundary. Once its ten-second
-    // recognition delay elapses, the persisted 1 ICP carried scalar is deliberately
-    // stale; the next job must reconstruct 1 ICP plus the commitment's time weight.
+    // recognition delay elapses, the next job must reconstruct both commitments
+    // from history and apply the new commitment's time weight.
     env.append_transfer(COMMITMENT_E8S, Some(beneficiary_b.to_text().into_bytes()))?;
     env.credit_staking(COMMITMENT_E8S)?;
     env.advance_time_and_tick(28, 2);
@@ -3657,9 +3657,8 @@ fn faucet_current_state_upgrade_reconstructs_without_replaying_funding() -> Resu
         faucet_stable_field(&before_upgrade, "current_round_start_time_nanos")?,
         IDLValue::Opt(Box::new(IDLValue::Nat64(initial_round_end)))
     );
-    assert_eq!(
-        faucet_stable_field(&before_upgrade, "current_round_start_staking_balance_e8s")?,
-        IDLValue::Opt(Box::new(IDLValue::Nat64(COMMITMENT_E8S)))
+    assert!(
+        faucet_stable_field(&before_upgrade, "current_round_start_staking_balance_e8s").is_err()
     );
     assert_eq!(
         faucet_stable_field(&before_upgrade, "current_round_start_latest_tx_id")?,
@@ -3679,7 +3678,6 @@ fn faucet_current_state_upgrade_reconstructs_without_replaying_funding() -> Resu
     for field in [
         "config",
         "current_round_start_time_nanos",
-        "current_round_start_staking_balance_e8s",
         "current_round_start_latest_tx_id",
         "last_processed_funding_tx_id",
         "payout_nonce",
@@ -3702,10 +3700,7 @@ fn faucet_current_state_upgrade_reconstructs_without_replaying_funding() -> Resu
     env.main_tick()?;
     assert!(!env.state()?.active_payout_job_present);
     let completed = faucet_stable_payload(&env);
-    assert_eq!(
-        faucet_stable_field(&completed, "current_round_start_staking_balance_e8s")?,
-        IDLValue::Opt(Box::new(IDLValue::Nat64(200_000_000)))
-    );
+    assert!(faucet_stable_field(&completed, "current_round_start_staking_balance_e8s").is_err());
     assert_eq!(
         faucet_stable_field(&completed, "last_processed_funding_tx_id")?,
         IDLValue::Opt(Box::new(IDLValue::Nat64(first_funding)))

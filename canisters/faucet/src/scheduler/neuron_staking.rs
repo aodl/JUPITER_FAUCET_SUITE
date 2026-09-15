@@ -66,23 +66,11 @@ pub(super) fn ensure_active_job_with_boundary(
                 tranche.amount_e8s,
             );
         }
-        match (
-            st.current_round_start_time_nanos,
-            st.current_round_start_staking_balance_e8s,
-            st.current_round_start_latest_tx_id,
-        ) {
-            (
-                Some(round_start_time_nanos),
-                round_start_staking_balance_e8s,
-                round_start_latest_tx_id,
-            ) => {
-                // The carried scalar is historical information, not an accounting input.
-                // Policy changes and delayed recognition require the same full-history scan
-                // even when the live account balance happens to equal that scalar.
+        match st.current_round_start_time_nanos {
+            Some(round_start_time_nanos) => {
                 job.configure_round_accounting(
                     Some(round_start_time_nanos),
-                    round_start_staking_balance_e8s,
-                    round_start_latest_tx_id,
+                    st.current_round_start_latest_tx_id,
                     round_end_time_nanos,
                     round_end_latest_tx_id,
                     0,
@@ -95,7 +83,6 @@ pub(super) fn ensure_active_job_with_boundary(
                 // staking balance is only an operational snapshot.
                 job.configure_round_accounting(
                     None,
-                    Some(0),
                     None,
                     round_end_time_nanos,
                     round_end_latest_tx_id,

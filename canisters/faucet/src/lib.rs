@@ -648,7 +648,6 @@ fn debug_reset_runtime_state() {
         st.main_lock_state_ts = Some(0);
         st.active_payout_job = None;
         st.current_round_start_time_nanos = None;
-        st.current_round_start_staking_balance_e8s = None;
         st.current_round_start_latest_tx_id = None;
         st.last_processed_funding_tx_id = None;
         st.active_funding_scan = None;

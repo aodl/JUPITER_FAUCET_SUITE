@@ -128,7 +128,6 @@ fn skip_start_round(index: &SkipMeasuredIndex, round: u64) {
     state::with_state_mut(|st| {
         if st.current_round_start_time_nanos.is_none() {
             st.current_round_start_time_nanos = Some(2_000_000_000);
-            st.current_round_start_staking_balance_e8s = Some(99_999_999_999);
         }
     });
     ensure_active_job_with_boundary(
@@ -206,10 +205,6 @@ fn skip_c_cold_and_warm_rounds_preserve_oracle_and_bound_interior_reads() {
                 assert_eq!(summary.topped_up_sum_e8s, 99_980_000);
                 assert_eq!(summary.remainder_to_relay_e8s, 0);
                 assert_eq!(summary.pot_remaining_e8s, 0);
-                assert_eq!(
-                    state::with_state(|st| st.current_round_start_staking_balance_e8s),
-                    Some(200_000_000)
-                );
                 assert_eq!(ledger.transfer_calls(), 2);
                 assert_eq!(cmc.call_count(), 2);
                 assert_eq!(
@@ -497,7 +492,6 @@ fn enable_skip_learning_for_test() {
         let job = st.active_payout_job.as_mut().unwrap();
         job.effective_denom_scan_complete = Some(false);
         job.effective_denom_staking_balance_e8s = Some(0);
-        job.round_end_staking_balance_e8s = Some(0);
     });
 }
 
@@ -705,7 +699,6 @@ fn skip_extra_many_jumps_are_bounded_without_whole_map_loading() {
     job.observed_oldest_tx_id = Some(0);
     job.configure_round_accounting(
         Some(1),
-        Some(99),
         None,
         200_000_000_000,
         Some(2_000_000),

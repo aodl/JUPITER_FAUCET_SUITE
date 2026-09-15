@@ -49,10 +49,7 @@ fn commitment_amount_for_job_payout_e8s(
     recognition_delay_seconds: u64,
 ) -> Option<u64> {
     let round_end_time_nanos = job.round_end_time_nanos.unwrap_or(now_nanos);
-    if job.round_start_time_nanos.is_none()
-        && job.round_start_latest_tx_id.is_none()
-        && job.round_start_staking_balance_e8s == Some(0)
-    {
+    if job.round_start_time_nanos.is_none() && job.round_start_latest_tx_id.is_none() {
         return genesis_round_amount_for_commitment_e8s(
             commitment,
             tx_id,
@@ -483,7 +480,6 @@ pub(super) async fn process_payout_with_lease(
             };
             let page_next_start = resp.transactions.last().map(|tx| tx.id);
             let mut denom_delta_e8s = 0u64;
-            let mut round_end_staking_delta_e8s = 0u64;
             let min_tx_e8s = state::with_state(|st| st.config.min_tx_e8s);
             let recognition_delay_seconds = recognition_delay_seconds();
 
@@ -532,31 +528,11 @@ pub(super) async fn process_payout_with_lease(
                     return false;
                 };
                 denom_delta_e8s = next_denom;
-                let recognized = genesis_round_amount_for_commitment_e8s(
-                    &commitment,
-                    tx.id,
-                    tx_timestamp_nanos,
-                    job.round_end_latest_tx_id,
-                    job.round_end_time_nanos.unwrap_or(now_nanos),
-                    recognition_delay_seconds,
-                )
-                .unwrap_or(0);
-                let Some(next_ending) = round_end_staking_delta_e8s.checked_add(recognized) else {
-                    return false;
-                };
-                round_end_staking_delta_e8s = next_ending;
             }
             let Some(denominator) = job
                 .effective_denom_staking_balance_e8s
                 .unwrap_or(0)
                 .checked_add(denom_delta_e8s)
-            else {
-                return false;
-            };
-            let Some(ending_balance) = job
-                .round_end_staking_balance_e8s
-                .unwrap_or(0)
-                .checked_add(round_end_staking_delta_e8s)
             else {
                 return false;
             };
@@ -577,7 +553,6 @@ pub(super) async fn process_payout_with_lease(
                         && active.effective_denom_scan_complete == Some(false)
                 }) {
                     active_job.effective_denom_staking_balance_e8s = Some(denominator);
-                    active_job.round_end_staking_balance_e8s = Some(ending_balance);
                     active_job.skip_candidate_start_tx_id = skip_candidate.start_tx_id;
                     active_job.skip_candidate_end_tx_id = skip_candidate.end_tx_id;
                     active_job.skip_candidate_tx_count = skip_candidate.tx_count;
@@ -588,7 +563,7 @@ pub(super) async fn process_payout_with_lease(
                     }
                     if scan_complete {
                         active_job.effective_denom_scan_complete = Some(true);
-                        // Both authoritative sums are complete before the payout scan can
+                        // The authoritative denominator is complete before the payout scan can
                         // send funds. Replay the same pinned history for beneficiary weights.
                         active_job.next_start = None;
                         active_job.skip_candidate_start_tx_id = None;
