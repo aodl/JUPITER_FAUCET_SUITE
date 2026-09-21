@@ -10,6 +10,8 @@ use ic_stable_structures::{
 };
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg};
+use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
+use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
 use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResponse,
@@ -29,13 +31,6 @@ use std::process::Command;
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Duration;
-
-fn require_ignored_flag() -> Result<()> {
-    // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
-    // The supported repository entry points (for example `cargo run -p xtask -- test_all`)
-    // invoke them explicitly with `--ignored`.
-    support::assertions::require_ignored_flag()
-}
 
 fn build_pic_with_real_icp() -> PocketIc {
     support::ledger::build_pic_with_real_icp()
@@ -898,6 +893,17 @@ fn index_account_transactions(
     }
 }
 
+#[derive(CandidType, Deserialize)]
+struct RealIndexStatusPrefix {
+    num_blocks_synced: u64,
+}
+
+fn real_index_synced_count(pic: &PocketIc, index: Principal) -> Result<u64> {
+    let status: RealIndexStatusPrefix =
+        query_one(pic, index, Principal::anonymous(), "status", ())?;
+    Ok(status.num_blocks_synced)
+}
+
 fn wait_for_index_transactions(
     pic: &PocketIc,
     index: Principal,
@@ -1457,7 +1463,6 @@ fn assert_spawned_relay_fixed_splitter(
 #[test]
 #[ignore]
 fn canonical_configurations_survive_current_schema_upgrade() -> Result<()> {
-    require_ignored_flag()?;
     let env = SelfServiceTestEnv::new(relay_enabled_historian_wasm()?)?;
     let memo_args = RelaySetupArgs {
         target_canister_ids: vec![env.target],
@@ -1553,7 +1558,6 @@ fn relay_setup_view(
 #[test]
 #[ignore]
 fn zero_recipient_factory_child_executes_all_cycles_mode() -> Result<()> {
-    require_ignored_flag()?;
     let env = SelfServiceTestEnv::new(relay_enabled_historian_wasm()?)?;
     let args = RelaySetupArgs {
         target_canister_ids: vec![env.target],
@@ -1674,7 +1678,6 @@ fn zero_recipient_factory_child_executes_all_cycles_mode() -> Result<()> {
 #[test]
 #[ignore]
 fn memo_bearing_factory_child_uses_exact_transfer_memos() -> Result<()> {
-    require_ignored_flag()?;
     let env = SelfServiceTestEnv::new(relay_enabled_historian_wasm()?)?;
     let recipient = Principal::from_slice(&[0x7d, 3]);
     let memo = vec![0x00, 0xff, 0x80];
@@ -1715,7 +1718,6 @@ fn memo_bearing_factory_child_uses_exact_transfer_memos() -> Result<()> {
 #[test]
 #[ignore]
 fn memo_bearing_factory_child_uses_exact_neuron_transfer_memo() -> Result<()> {
-    require_ignored_flag()?;
     let env = SelfServiceTestEnv::new(relay_enabled_historian_wasm()?)?;
     let neuron_id = 42u64;
     let memo = vec![0xfe, 0x00, 0x81];
@@ -1760,7 +1762,6 @@ fn memo_bearing_factory_child_uses_exact_neuron_transfer_memo() -> Result<()> {
 #[test]
 #[ignore]
 fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrade() -> Result<()> {
-    require_ignored_flag()?;
     let pic = build_pic_with_real_icp();
     let ledger = real_icp_ledger_principal();
     let index = real_icp_index_principal();
@@ -2461,7 +2462,6 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
 #[test]
 #[ignore]
 fn active_setup_survives_target_becoming_configured_cmc_without_external_work() -> Result<()> {
-    require_ignored_flag()?;
     let pic = build_pic_with_real_icp();
     let ledger = real_icp_ledger_principal();
     let index = real_icp_index_principal();
@@ -2764,7 +2764,6 @@ impl Harness {
 #[test]
 #[ignore]
 fn endowment_refresh_full_page_has_bounded_calls_and_measured_pocketic_cost() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new_with_scan_interval(false, 3_600)?;
     let staking_id = h.staking_identifier()?;
     let target = Principal::from_slice(&[71]);
@@ -3005,7 +3004,6 @@ fn endowment_refresh_full_page_has_bounded_calls_and_measured_pocketic_cost() ->
 #[test]
 #[ignore]
 fn unauthorized_canisters_are_rejected_without_state_changes_or_consuming_the_slot() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new_with_scan_interval(false, 3_600)?;
     let now_secs = (h.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
     let _: () = update_one(
@@ -3127,7 +3125,6 @@ fn unauthorized_canisters_are_rejected_without_state_changes_or_consuming_the_sl
 #[ignore]
 fn concurrent_whitelisted_refreshes_reserve_one_global_attempt_and_leave_scheduler_live(
 ) -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new_with_scan_interval(false, 3_600)?;
     let calls_before: Vec<DebugIndexGetCall> = query_one(
         &h.pic,
@@ -3318,7 +3315,6 @@ fn assert_scheduled_indexing_live_after_storm(h: &Harness, marker: u8) -> Result
 #[test]
 #[ignore]
 fn whitelisted_batched_oneway_refresh_storms_preserve_global_admission() -> Result<()> {
-    require_ignored_flag()?;
     const CALL_COUNT: u32 = 128;
     let h = Harness::new_with_scan_interval(false, 3_600)?;
     let caller_state_before: DebugState = query_one(
@@ -3399,7 +3395,6 @@ fn whitelisted_batched_oneway_refresh_storms_preserve_global_admission() -> Resu
 #[test]
 #[ignore]
 fn whitelisted_raw_oneway_refresh_payloads_reach_bounded_admission() -> Result<()> {
-    require_ignored_flag()?;
     let fixtures = vec![
         (
             "small malformed Candid",
@@ -3488,7 +3483,6 @@ fn whitelisted_raw_oneway_refresh_payloads_reach_bounded_admission() -> Result<(
 #[test]
 #[ignore]
 fn pending_genesis_backfill_survives_an_actual_historian_upgrade() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new_with_scan_interval(false, 3_600)?;
     let staking_id = h.staking_identifier()?;
     let target = Principal::from_slice(&[72]);
@@ -3617,7 +3611,6 @@ fn pending_genesis_backfill_survives_an_actual_historian_upgrade() -> Result<()>
 #[test]
 #[ignore]
 fn real_icp_index_returns_newest_first_for_account_history() -> Result<()> {
-    require_ignored_flag()?;
     let pic = build_pic_with_real_icp();
     let ledger = real_icp_ledger_principal();
     let index = real_icp_index_principal();
@@ -3660,7 +3653,6 @@ fn real_icp_index_returns_newest_first_for_account_history() -> Result<()> {
 #[test]
 #[ignore]
 fn real_icp_index_pagination_excludes_start_boundary_when_walking_older_history() -> Result<()> {
-    require_ignored_flag()?;
     let pic = build_pic_with_real_icp();
     let ledger = real_icp_ledger_principal();
     let index = real_icp_index_principal();
@@ -3669,11 +3661,17 @@ fn real_icp_index_pagination_excludes_start_boundary_when_walking_older_history(
         subaccount: Some([7u8; 32]),
     };
     let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
+    let unrelated_account = Account {
+        owner: Principal::management_canister(),
+        subaccount: Some([8u8; 32]),
+    };
     let fee_e8s = icrc1_fee(&pic, ledger)?;
+    let mut staking_blocks = Vec::new();
+    let mut unrelated_blocks = Vec::new();
 
     for ordinal in 0..4u64 {
         let memo_text = format!("real-index-pagination-{ordinal}");
-        let _block_index = icrc1_transfer(
+        staking_blocks.push(icrc1_transfer(
             &pic,
             ledger,
             Principal::anonymous(),
@@ -3685,7 +3683,20 @@ fn real_icp_index_pagination_excludes_start_boundary_when_walking_older_history(
                 memo: Some(Memo::from(memo_text.into_bytes())),
                 amount: Nat::from(100_000_100u64 + ordinal),
             },
-        )?;
+        )?);
+        unrelated_blocks.push(icrc1_transfer(
+            &pic,
+            ledger,
+            Principal::anonymous(),
+            TransferArg {
+                from_subaccount: None,
+                to: unrelated_account,
+                fee: Some(Nat::from(fee_e8s)),
+                created_at_time: None,
+                memo: None,
+                amount: Nat::from(1_000_000u64 + ordinal),
+            },
+        )?);
         pic.advance_time(Duration::from_secs(1));
         tick_n(&pic, 3);
     }
@@ -3710,13 +3721,260 @@ fn real_icp_index_pagination_excludes_start_boundary_when_walking_older_history(
         second_ids.windows(2).all(|window| window[0] > window[1]),
         "expected second page to stay newest-first, got ids {second_ids:?}"
     );
+    assert_eq!(first_page.oldest_tx_id, staking_blocks.first().copied());
+    assert_eq!(second_page.oldest_tx_id, first_page.oldest_tx_id);
+
+    let absent_account_cursor = unrelated_blocks[2];
+    let absent_cursor_page = index_account_transactions(
+        &pic,
+        index,
+        staking_id.clone(),
+        Some(absent_account_cursor),
+        10,
+    )?;
+    let expected_below_absent = staking_blocks
+        .iter()
+        .copied()
+        .filter(|id| *id < absent_account_cursor)
+        .rev()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        absent_cursor_page
+            .transactions
+            .iter()
+            .map(|tx| tx.id)
+            .collect::<Vec<_>>(),
+        expected_below_absent,
+        "numeric cursors are exclusive global bounds even when absent from the account history"
+    );
+    assert_eq!(
+        index_account_transactions(&pic, index, staking_id.clone(), None, 0)?
+            .transactions
+            .len(),
+        0
+    );
+    assert_eq!(
+        index_account_transactions(&pic, index, staking_id.clone(), None, 1)?
+            .transactions
+            .len(),
+        1
+    );
+    assert_eq!(
+        index_account_transactions(&pic, index, staking_id, None, 2)?
+            .transactions
+            .len(),
+        2
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn real_icp_index_includes_outgoing_and_self_transfers_in_account_history() -> Result<()> {
+    let pic = build_pic_with_real_icp();
+    let ledger = real_icp_ledger_principal();
+    let index = real_icp_index_principal();
+    let fee = icrc1_fee(&pic, ledger)?;
+    let source = Account {
+        owner: Principal::anonymous(),
+        subaccount: None,
+    };
+    let destination = Account {
+        owner: Principal::management_canister(),
+        subaccount: Some([61; 32]),
+    };
+    let outgoing = icrc1_transfer(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: destination,
+            fee: Some(Nat::from(fee)),
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(10_000_000u64),
+        },
+    )?;
+    let self_transfer = icrc1_transfer(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: source,
+            fee: Some(Nat::from(fee)),
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(10_000_000u64),
+        },
+    )?;
+    pic.advance_time(Duration::from_secs(1));
+    tick_n(&pic, 12);
+    let source_id = account_identifier_text(source.owner, source.subaccount);
+    let page = wait_for_index_transactions(&pic, index, &source_id, 2)?;
+    let ids = page.transactions.iter().map(|tx| tx.id).collect::<Vec<_>>();
+    assert!(
+        ids.contains(&outgoing),
+        "outgoing transfer missing from {ids:?}"
+    );
+    assert!(
+        ids.contains(&self_transfer),
+        "self-transfer missing from {ids:?}"
+    );
+    assert_eq!(
+        ids.iter().filter(|id| **id == self_transfer).count(),
+        1,
+        "self-transfer must not be duplicated in one account history"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn production_index_adapter_decodes_real_delegated_transfer_as_transfer_with_spender() -> Result<()>
+{
+    let pic = build_pic_with_real_icp();
+    let ledger = real_icp_ledger_principal();
+    let index = real_icp_index_principal();
+    let fee = icrc1_fee(&pic, ledger)?;
+    let owner = Account {
+        owner: Principal::anonymous(),
+        subaccount: None,
+    };
+    let spender = Principal::from_slice(&[88]);
+    let destination = Account {
+        owner: Principal::management_canister(),
+        subaccount: Some([89; 32]),
+    };
+    let approved: Result<Nat, ApproveError> = update_one(
+        &pic,
+        ledger,
+        owner.owner,
+        "icrc2_approve",
+        ApproveArgs {
+            from_subaccount: None,
+            spender: Account {
+                owner: spender,
+                subaccount: None,
+            },
+            amount: Nat::from(20_000_000u64 + fee),
+            expected_allowance: None,
+            expires_at: None,
+            fee: Some(Nat::from(fee)),
+            memo: Some(Memo::from(b"real-index-approve".to_vec())),
+            created_at_time: None,
+        },
+    )?;
+    let approved_block = approved
+        .map_err(|error| anyhow!("real Ledger approval failed: {error}"))?
+        .0
+        .to_u64_digits()
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("approval block index did not fit u64"))?;
+    let delegated: Result<Nat, TransferFromError> = update_one(
+        &pic,
+        ledger,
+        spender,
+        "icrc2_transfer_from",
+        TransferFromArgs {
+            spender_subaccount: None,
+            from: owner,
+            to: destination,
+            amount: Nat::from(20_000_000u64),
+            fee: Some(Nat::from(fee)),
+            memo: Some(Memo::from(b"real-index-transfer-from".to_vec())),
+            created_at_time: None,
+        },
+    )?;
+    let delegated_block = delegated
+        .map_err(|error| anyhow!("real Ledger delegated transfer failed: {error}"))?
+        .0
+        .to_u64_digits()
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("delegated block index did not fit u64"))?;
+    pic.advance_time(Duration::from_secs(1));
+    tick_n(&pic, 12);
+    let owner_id = account_identifier_text(owner.owner, owner.subaccount);
+    let page = wait_for_index_transactions(&pic, index, &owner_id, 2)?;
+    let transaction = page
+        .transactions
+        .iter()
+        .find(|transaction| transaction.id == delegated_block)
+        .ok_or_else(|| anyhow!("missing delegated block {delegated_block} from real Index"))?;
+    match &transaction.transaction.operation {
+        IndexOperation::Transfer {
+            from,
+            to,
+            spender: Some(decoded_spender),
+            amount,
+            ..
+        } => {
+            assert_eq!(from, &owner_id);
+            assert_eq!(
+                to,
+                &account_identifier_text(destination.owner, destination.subaccount)
+            );
+            assert_eq!(decoded_spender, &account_identifier_text(spender, None));
+            assert_eq!(amount.e8s(), 20_000_000);
+        }
+        other => bail!("expected real delegated Transfer with spender, got {other:?}"),
+    }
+
+    let spender_id = account_identifier_text(spender, None);
+    let spender_page = wait_for_index_transactions(&pic, index, &spender_id, 1)?;
+    let spender_ids = spender_page
+        .transactions
+        .iter()
+        .map(|transaction| transaction.id)
+        .collect::<Vec<_>>();
+    assert!(
+        spender_ids.contains(&approved_block),
+        "approval must be indexed for its spender: {spender_ids:?}"
+    );
+    assert!(
+        !spender_ids.contains(&delegated_block),
+        "a delegated Transfer is indexed for from/to, not for spender alone: {spender_ids:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn real_icp_index_includes_genesis_mint_for_recipient() -> Result<()> {
+    let pic = build_pic_with_real_icp();
+    let index = real_icp_index_principal();
+    let source = Account {
+        owner: Principal::anonymous(),
+        subaccount: None,
+    };
+    pic.advance_time(Duration::from_secs(1));
+    tick_n(&pic, 12);
+
+    let source_id = account_identifier_text(source.owner, source.subaccount);
+    let page = wait_for_index_transactions(&pic, index, &source_id, 1)?;
+    let mint = page
+        .transactions
+        .iter()
+        .find(|transaction| {
+            matches!(
+                transaction.transaction.operation,
+                IndexOperation::Mint { .. }
+            )
+        })
+        .context("initial mint was absent from the recipient account history")?;
+    match &mint.transaction.operation {
+        IndexOperation::Mint { to, .. } => assert_eq!(to, &source_id),
+        _ => unreachable!(),
+    }
     Ok(())
 }
 
 #[test]
 #[ignore]
 fn real_index_lag_canister_poke_status_and_revision_aware_route_flow() -> Result<()> {
-    require_ignored_flag()?;
     let pic = build_pic_with_real_icp();
     let ledger = real_icp_ledger_principal();
     let index = real_icp_index_principal();
@@ -3780,6 +4038,7 @@ fn real_index_lag_canister_poke_status_and_revision_aware_route_flow() -> Result
     );
 
     let fee_e8s = icrc1_fee(&pic, ledger)?;
+    let indexed_before_transfer = real_index_synced_count(&pic, index)?;
     let transaction_id = icrc1_transfer(
         &pic,
         ledger,
@@ -3794,6 +4053,11 @@ fn real_index_lag_canister_poke_status_and_revision_aware_route_flow() -> Result
         },
     )?;
     let unsynchronized = index_account_transactions(&pic, index, staking_id.clone(), None, 10)?;
+    assert_eq!(
+        real_index_synced_count(&pic, index)?,
+        indexed_before_transfer,
+        "status count and account history must share the lagging prefix"
+    );
     assert!(
         unsynchronized
             .transactions
@@ -3889,6 +4153,10 @@ fn real_index_lag_canister_poke_status_and_revision_aware_route_flow() -> Result
 
     let indexed = wait_for_index_transactions(&pic, index, &staking_id, 1)?;
     assert_eq!(indexed.transactions[0].id, transaction_id);
+    assert!(
+        real_index_synced_count(&pic, index)? > transaction_id,
+        "a zero-based transaction ID must be below the indexed block count"
+    );
     support::governance::start_canister_as(&pic, historian, historian_controller)?;
     let updated = refresh_endowments_via_proxy(&pic, proxy, historian)?;
     assert_eq!(updated.outcome, RefreshEndowmentsOutcome::Updated);
@@ -3981,7 +4249,6 @@ fn real_index_lag_canister_poke_status_and_revision_aware_route_flow() -> Result
 #[test]
 #[ignore]
 fn gzip_install_payload_module_hash_matches_exact_supplied_bytes() -> Result<()> {
-    require_ignored_flag()?;
     let relay = relay_wasm()?;
     let unique = format!(
         "jupiter-relay-module-hash-{}-{}",
@@ -4065,7 +4332,6 @@ fn gzip_install_payload_module_hash_matches_exact_supplied_bytes() -> Result<()>
 #[test]
 #[ignore]
 fn canonical_sns_wasm_mock_is_installed_on_nns_subnet() -> Result<()> {
-    require_ignored_flag()?;
     let pic = support::pocketic::sns_topology_builder().build();
     let topology = pic.topology();
     let nns_subnet = topology.get_nns().context("NNS subnet missing")?;
@@ -4112,7 +4378,6 @@ fn canonical_sns_wasm_mock_is_installed_on_nns_subnet() -> Result<()> {
 #[test]
 #[ignore]
 fn sns_root_proxy_reads_real_application_dapp_status_cross_subnet() -> Result<()> {
-    require_ignored_flag()?;
     let pic = support::pocketic::sns_topology_builder().build();
     let topology = pic.topology();
     let sns_subnet = topology.get_sns().context("SNS subnet missing")?;
@@ -4177,7 +4442,6 @@ fn sns_root_proxy_reads_real_application_dapp_status_cross_subnet() -> Result<()
 #[test]
 #[ignore]
 fn management_status_visibility_capability_smoke() -> Result<()> {
-    require_ignored_flag()?;
     use jupiter_ic_clients::management::{
         CanisterSettings, CanisterStatusArgs, CanisterStatusResult, LogVisibility,
         StatusVisibility, UpdateSettingsArgs,
@@ -4286,7 +4550,6 @@ fn management_status_visibility_capability_smoke() -> Result<()> {
 #[ignore]
 fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monotonic_fault(
 ) -> Result<()> {
-    require_ignored_flag()?;
     let pic = build_pic_with_real_icp();
     let ledger = real_icp_ledger_principal();
     let index = real_icp_index_principal();
@@ -4410,7 +4673,6 @@ fn historian_with_real_icp_index_resumes_from_cursor_without_latching_non_monoto
 #[ignore]
 fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_without_stalling(
 ) -> Result<()> {
-    require_ignored_flag()?;
     let pic = build_pic_with_real_icp();
     let ledger = real_icp_ledger_principal();
     let index = real_icp_index_principal();
@@ -4641,7 +4903,6 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
 #[test]
 #[ignore]
 fn historian_keeps_under_threshold_commitments_out_of_durable_tracking() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let target = Principal::from_slice(&[1]);
     let staking_id = h.staking_identifier()?;
@@ -4744,7 +5005,6 @@ fn historian_keeps_under_threshold_commitments_out_of_durable_tracking() -> Resu
 #[test]
 #[ignore]
 fn historian_ignores_missing_icrc1_memo_even_when_legacy_numeric_memo_exists() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let staking_id = h.staking_identifier()?;
     let _: u64 = update_bytes(
@@ -4790,7 +5050,6 @@ fn historian_ignores_missing_icrc1_memo_even_when_legacy_numeric_memo_exists() -
 #[test]
 #[ignore]
 fn historian_accepts_short_valid_principal_text_without_hardcoded_suffix() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let staking_id = h.staking_identifier()?;
     let target = Principal::from_slice(&[1]);
@@ -4848,7 +5107,6 @@ fn historian_accepts_short_valid_principal_text_without_hardcoded_suffix() -> Re
 #[test]
 #[ignore]
 fn historian_indexes_raw_icp_directive_with_empty_transfer_memo() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let staking_id = h.staking_identifier()?;
     let target = Principal::from_slice(&[1]);
@@ -4907,7 +5165,6 @@ fn historian_indexes_raw_icp_directive_with_empty_transfer_memo() -> Result<()> 
 #[test]
 #[ignore]
 fn historian_indexes_numeric_neuron_id_commitment_without_registering_canister() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let staking_id = h.staking_identifier()?;
     let neuron_id = 11_614_578_985_374_291_210_u64;
@@ -4967,7 +5224,6 @@ fn historian_indexes_numeric_neuron_id_commitment_without_registering_canister()
 #[test]
 #[ignore]
 fn historian_indexes_dotted_neuron_id_commitment_with_right_memo_segment() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let staking_id = h.staking_identifier()?;
     let neuron_id = 42_u64;
@@ -5023,7 +5279,6 @@ fn historian_indexes_dotted_neuron_id_commitment_with_right_memo_segment() -> Re
 #[test]
 #[ignore]
 fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let staking_id = h.staking_identifier()?;
     for reserved in [Principal::anonymous(), Principal::management_canister()] {
@@ -5166,7 +5421,6 @@ fn historian_rejects_reserved_principal_memos_from_durable_tracking() -> Result<
 #[test]
 #[ignore]
 fn historian_indexes_commitments_and_blackhole_cycles() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let target = h.historian;
     let staking_id = h.staking_identifier()?;
@@ -5258,7 +5512,6 @@ fn historian_indexes_commitments_and_blackhole_cycles() -> Result<()> {
 #[test]
 #[ignore]
 fn historian_discovers_sns_membership_and_directly_samples_public_members() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(true)?;
     let sns_root = h.pic.create_canister();
     h.pic.add_cycles(sns_root, 5_000_000_000_000);
@@ -5379,7 +5632,6 @@ fn historian_discovers_sns_membership_and_directly_samples_public_members() -> R
 #[test]
 #[ignore]
 fn historian_upgrade_preserves_histories() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let target = h.historian;
     let raw_target = h.blackhole;
@@ -5573,7 +5825,6 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
 #[test]
 #[ignore]
 fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let canister_a = Principal::from_slice(&[41]);
     let canister_b = Principal::from_slice(&[42]);
@@ -5918,7 +6169,6 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
 #[test]
 #[ignore]
 fn historian_upgrade_preserves_paginated_listing_without_skips() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let staking_id = h.staking_identifier()?;
     let targets = vec![h.blackhole, h.index, h.historian];
@@ -6073,7 +6323,6 @@ fn historian_upgrade_preserves_paginated_listing_without_skips() -> Result<()> {
 #[test]
 #[ignore]
 fn historian_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let target = h.historian;
     let staking_id = h.staking_identifier()?;
@@ -6138,7 +6387,6 @@ fn historian_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
 #[test]
 #[ignore]
 fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(false)?;
     let target = h.historian;
     let staking_id = h.staking_identifier()?;
@@ -6270,7 +6518,6 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
 #[test]
 #[ignore]
 fn historian_public_counts_exclude_sns_only_canisters_from_registered_totals() -> Result<()> {
-    require_ignored_flag()?;
     let h = Harness::new(true)?;
     let sns_root = h.pic.create_canister();
     h.pic.add_cycles(sns_root, 5_000_000_000_000);

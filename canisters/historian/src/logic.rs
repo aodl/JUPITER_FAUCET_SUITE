@@ -49,11 +49,6 @@ pub(crate) enum IndexedCommitmentEntry {
 
 pub(crate) type IndexMemoTransfer = (u64, Option<Vec<u8>>, u64, Option<u64>);
 
-#[cfg(test)]
-fn parse_target_canister_from_memo(bytes: &[u8]) -> Option<Principal> {
-    jupiter_memo_policy::parse_target_canister_principal_from_memo(bytes)
-}
-
 pub(crate) fn memo_bytes_from_index_tx(
     tx: &IndexTransactionWithId,
     staking_account_id: &str,
@@ -240,38 +235,6 @@ mod tests {
     }
     fn target_canister() -> Principal {
         principal("22255-zqaaa-aaaas-qf6uq-cai")
-    }
-
-    #[test]
-    fn indexes_cycles_top_up_memo_as_target_canister() {
-        let p = target_canister();
-        assert_eq!(
-            parse_target_canister_from_memo(p.to_text().as_bytes()),
-            Some(p)
-        );
-    }
-
-    #[test]
-    fn indexes_declared_target_from_raw_icp_memo_directive() {
-        let p = target_canister();
-        let compact = p.to_text().replace('-', "");
-        assert_eq!(
-            parse_target_canister_from_memo(format!("{compact}.vault42").as_bytes()),
-            Some(p)
-        );
-    }
-
-    #[test]
-    fn numeric_neuron_id_memos_are_not_indexed_as_canisters() {
-        assert_eq!(
-            parse_target_canister_from_memo(b"11614578985374291210"),
-            None
-        );
-    }
-
-    #[test]
-    fn invalid_commitment_memo_is_not_indexed_as_target_canister() {
-        assert_eq!(parse_target_canister_from_memo(b"not-a-principal"), None);
     }
 
     #[test]

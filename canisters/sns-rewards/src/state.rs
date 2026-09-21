@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn uninitialized_version_supports_upgrade_from_empty_placeholder() {
+    fn uninitialized_v1_tag_roundtrips_losslessly() {
         let bytes = candid::encode_one(VersionedStableState::Uninitialized).unwrap();
         let decoded: VersionedStableState = candid::decode_one(&bytes).unwrap();
         assert!(matches!(decoded, VersionedStableState::Uninitialized));

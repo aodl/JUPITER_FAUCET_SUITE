@@ -34,13 +34,6 @@ fn canonical_relay_canister_id() -> Result<Principal> {
     ))?)
 }
 
-fn require_ignored_flag() -> Result<()> {
-    // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
-    // The supported repository entry points (for example `cargo run -p xtask -- test_all`)
-    // invoke them explicitly with `--ignored`.
-    support::assertions::require_ignored_flag()
-}
-
 static LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static INDEX_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
@@ -1192,7 +1185,6 @@ impl RealNnsFaucetEnv {
 #[test]
 #[ignore]
 fn faucet_retries_persisted_notification_after_cmc_failure() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -1223,7 +1215,6 @@ fn faucet_retries_persisted_notification_after_cmc_failure() -> Result<()> {
 #[test]
 #[ignore]
 fn faucet_raw_icp_memo_directive_sends_to_default_account_without_cmc_notify() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let compact_target = target.to_text().replace('-', "");
@@ -1285,7 +1276,6 @@ fn faucet_raw_icp_memo_directive_sends_to_default_account_without_cmc_notify() -
 #[ignore]
 fn faucet_numeric_neuron_id_memo_routes_to_resolved_staking_account_without_cmc_notify(
 ) -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let neuron_id = 42_u64;
 
@@ -1364,7 +1354,6 @@ fn append_funding_tranche(
 #[test]
 #[ignore]
 fn faucet_excludes_post_funding_commitment_even_after_recognition_delay() -> Result<()> {
-    require_ignored_flag()?;
     let funding_source = strict_funding_source_account()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.funding_source_account = funding_source.clone();
@@ -1415,7 +1404,6 @@ fn faucet_excludes_post_funding_commitment_even_after_recognition_delay() -> Res
 #[test]
 #[ignore]
 fn faucet_processes_disburser_funding_transfers_as_chronological_tranches() -> Result<()> {
-    require_ignored_flag()?;
     let funding_source = strict_funding_source_account()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.funding_source_account = funding_source.clone();
@@ -1461,7 +1449,6 @@ fn faucet_processes_disburser_funding_transfers_as_chronological_tranches() -> R
 #[ignore]
 fn post_funding_commitment_excluded_from_current_tranche_but_eligible_for_next_tranche(
 ) -> Result<()> {
-    require_ignored_flag()?;
     let funding_source = strict_funding_source_account()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.funding_source_account = funding_source.clone();
@@ -1554,7 +1541,6 @@ fn post_funding_commitment_excluded_from_current_tranche_but_eligible_for_next_t
 #[ignore]
 fn faucet_dotted_neuron_id_memos_route_to_staking_account_with_right_segment_as_transfer_memo(
 ) -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let cases = [
         (42_u64, "42.vault.memo", b"vault.memo".to_vec()),
@@ -1620,7 +1606,6 @@ fn faucet_dotted_neuron_id_memos_route_to_staking_account_with_right_segment_as_
 #[test]
 #[ignore]
 fn faucet_real_nns_neuron_memo_increases_resolved_neuron_stake() -> Result<()> {
-    require_ignored_flag()?;
     let env = RealNnsFaucetEnv::new()?;
     let controller = Principal::anonymous();
     let neuron_id = stake_and_claim_neuron(
@@ -1684,7 +1669,6 @@ fn faucet_real_nns_neuron_memo_increases_resolved_neuron_stake() -> Result<()> {
 #[test]
 #[ignore]
 fn faucet_raw_icp_memo_directive_allows_empty_transfer_memo_after_dot() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let compact_target = target.to_text().replace('-', "");
@@ -1735,7 +1719,6 @@ fn faucet_raw_icp_memo_directive_allows_empty_transfer_memo_after_dot() -> Resul
 #[test]
 #[ignore]
 fn faucet_upgrade_rejects_current_state_with_active_payout_job() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.main_interval_seconds = Some(7 * 24 * 60 * 60);
         init.rescue_interval_seconds = Some(7 * 24 * 60 * 60);
@@ -1773,7 +1756,6 @@ fn faucet_upgrade_rejects_current_state_with_active_payout_job() -> Result<()> {
 #[test]
 #[ignore]
 fn faucet_retries_notify_without_duplicate_ledger_transfer_across_repeated_ticks() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -1803,7 +1785,6 @@ fn faucet_retries_notify_without_duplicate_ledger_transfer_across_repeated_ticks
 #[test]
 #[ignore]
 fn faucet_upgrade_after_inline_retry_recovery_remains_quiescent() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -1856,7 +1837,6 @@ fn faucet_upgrade_after_inline_retry_recovery_remains_quiescent() -> Result<()> 
 #[test]
 #[ignore]
 fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separate() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let memo = Some(target.to_text().into_bytes());
@@ -1922,7 +1902,6 @@ fn faucet_replays_full_history_on_each_new_job_and_keeps_same_beneficiary_separa
 #[ignore]
 fn faucet_scans_across_many_pages_and_skips_bad_or_small_entries_without_poisoning_run(
 ) -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let good_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let memo = Some(good_target.to_text().into_bytes());
@@ -1973,7 +1952,6 @@ fn faucet_scans_across_many_pages_and_skips_bad_or_small_entries_without_poisoni
 #[test]
 #[ignore]
 fn faucet_characterizes_short_valid_principal_text_without_hardcoded_suffix() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
     let target = Principal::from_slice(&[1]);
@@ -2005,8 +1983,7 @@ fn faucet_characterizes_short_valid_principal_text_without_hardcoded_suffix() ->
 
 #[test]
 #[ignore]
-fn faucet_large_history_repeated_runs_keep_state_footprint_bounded() -> Result<()> {
-    require_ignored_flag()?;
+fn faucet_large_history_repeated_runs_keep_serialized_debug_state_bounded() -> Result<()> {
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let memo = Some(target.to_text().into_bytes());
@@ -2043,7 +2020,6 @@ fn faucet_large_history_repeated_runs_keep_state_footprint_bounded() -> Result<(
 #[test]
 #[ignore]
 fn faucet_timer_cadence_waits_for_elapsed_time_before_running_automatically() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -2075,7 +2051,6 @@ fn faucet_timer_cadence_waits_for_elapsed_time_before_running_automatically() ->
 #[test]
 #[ignore]
 fn faucet_repeated_ticks_after_completion_do_not_duplicate_topups() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -2109,8 +2084,7 @@ fn faucet_repeated_ticks_after_completion_do_not_duplicate_topups() -> Result<()
 
 #[test]
 #[ignore]
-fn faucet_debug_footprint_returns_to_baseline_after_retry() -> Result<()> {
-    require_ignored_flag()?;
+fn faucet_serialized_debug_state_returns_near_baseline_after_retry() -> Result<()> {
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -2143,7 +2117,6 @@ fn faucet_debug_footprint_returns_to_baseline_after_retry() -> Result<()> {
 #[test]
 #[ignore]
 fn faucet_ledger_temporary_failure_before_transfer_recovers_inline() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -2170,7 +2143,6 @@ fn faucet_ledger_temporary_failure_before_transfer_recovers_inline() -> Result<(
 #[test]
 #[ignore]
 fn faucet_duplicate_ledger_result_uses_duplicate_block_index_without_new_transfer() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -2201,7 +2173,6 @@ fn faucet_duplicate_ledger_result_uses_duplicate_block_index_without_new_transfe
 #[ignore]
 fn faucet_temporary_ledger_failure_then_duplicate_counts_as_success_without_extra_transfer(
 ) -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -2254,7 +2225,6 @@ fn faucet_temporary_ledger_failure_then_duplicate_counts_as_success_without_extr
 #[test]
 #[ignore]
 fn faucet_terminal_cmc_errors_retry_safely_without_duplicate_transfer() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -2321,7 +2291,6 @@ fn faucet_terminal_cmc_errors_retry_safely_without_duplicate_transfer() -> Resul
 #[ignore]
 fn faucet_exhausted_terminal_cmc_errors_count_as_failed_without_duplicate_transfer_retry(
 ) -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -2390,7 +2359,6 @@ fn faucet_exhausted_terminal_cmc_errors_count_as_failed_without_duplicate_transf
 #[test]
 #[ignore]
 fn faucet_proven_cmc_refund_uses_reduced_raw_fallback_without_second_notify() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -2454,7 +2422,6 @@ fn faucet_proven_cmc_refund_uses_reduced_raw_fallback_without_second_notify() ->
 #[test]
 #[ignore]
 fn faucet_quiescent_upgrade_then_empty_history_sends_remainder_to_canonical_relay() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     if env.state()?.active_payout_job_present {
         bail!("new Faucet must be quiescent before upgrade");
@@ -2499,7 +2466,6 @@ fn faucet_quiescent_upgrade_then_empty_history_sends_remainder_to_canonical_rela
 #[test]
 #[ignore]
 fn faucet_definite_retryable_rejections_use_one_raw_fallback() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -2551,7 +2517,6 @@ fn faucet_definite_retryable_rejections_use_one_raw_fallback() -> Result<()> {
 #[ignore]
 fn faucet_retry_exhaustion_on_one_commitment_does_not_block_later_success_in_same_job() -> Result<()>
 {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let failed_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let success_target = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
@@ -2611,7 +2576,6 @@ fn faucet_retry_exhaustion_on_one_commitment_does_not_block_later_success_in_sam
 #[test]
 #[ignore]
 fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let first_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let second_target = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
@@ -2702,7 +2666,6 @@ fn faucet_index_failure_mid_scan_resumes_without_duplicating_completed_work() ->
 #[test]
 #[ignore]
 fn faucet_daily_rescue_tick_resumes_interrupted_job_before_next_main_interval() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let first_target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let second_target = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai")?;
@@ -2800,7 +2763,6 @@ fn faucet_daily_rescue_tick_resumes_interrupted_job_before_next_main_interval() 
 #[test]
 #[ignore]
 fn faucet_rescue_controller_roundtrip_uses_real_controller_updates() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
     env.set_self_only_controllers()?;
@@ -2873,8 +2835,7 @@ fn faucet_rescue_controller_roundtrip_uses_real_controller_updates() -> Result<(
 
 #[test]
 #[ignore]
-fn faucet_large_history_many_replays_do_not_monotonically_drift_state_size() -> Result<()> {
-    require_ignored_flag()?;
+fn faucet_large_history_many_replays_do_not_drift_serialized_debug_state_size() -> Result<()> {
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let memo = Some(target.to_text().into_bytes());
@@ -2913,7 +2874,6 @@ fn faucet_large_history_many_replays_do_not_monotonically_drift_state_size() -> 
 #[test]
 #[ignore]
 fn faucet_unarmed_rescue_broken_conditions_do_not_change_controllers() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
     env.set_self_only_controllers()?;
@@ -2941,7 +2901,6 @@ fn faucet_unarmed_rescue_broken_conditions_do_not_change_controllers() -> Result
 #[test]
 #[ignore]
 fn faucet_unarmed_rescue_forced_reason_does_not_change_controllers() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
     env.set_self_only_controllers()?;
@@ -2981,7 +2940,6 @@ fn faucet_unarmed_rescue_forced_reason_does_not_change_controllers() -> Result<(
 #[test]
 #[ignore]
 fn faucet_bootstrap_rescue_fires_before_first_successful_topup() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
     env.set_self_only_controllers()?;
@@ -3011,7 +2969,6 @@ fn faucet_bootstrap_rescue_fires_before_first_successful_topup() -> Result<()> {
 #[test]
 #[ignore]
 fn faucet_init_args_preserve_expected_first_staking_tx_id() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.expected_first_staking_tx_id = Some(42);
     })?;
@@ -3030,7 +2987,6 @@ fn faucet_init_args_preserve_expected_first_staking_tx_id() -> Result<()> {
 #[test]
 #[ignore]
 fn faucet_correct_first_tx_anchor_stays_healthy() -> Result<()> {
-    require_ignored_flag()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let expected_first_tx_id = 1u64;
     let env = FaucetEnv::new_with_init_overrides(|init| {
@@ -3077,7 +3033,6 @@ fn faucet_correct_first_tx_anchor_stays_healthy() -> Result<()> {
 #[test]
 #[ignore]
 fn faucet_wrong_first_tx_anchor_latches_rescue_before_any_payment() -> Result<()> {
-    require_ignored_flag()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.autonomous_rescue_armed = Some(true);
@@ -3122,7 +3077,6 @@ fn faucet_wrong_first_tx_anchor_latches_rescue_before_any_payment() -> Result<()
 #[test]
 #[ignore]
 fn faucet_anchor_failure_resets_if_observed_oldest_tx_heals_before_latch() -> Result<()> {
-    require_ignored_flag()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     let env = FaucetEnv::new_with_init_overrides(|init| {
         init.autonomous_rescue_armed = Some(true);
@@ -3164,7 +3118,6 @@ fn faucet_anchor_failure_resets_if_observed_oldest_tx_heals_before_latch() -> Re
 #[test]
 #[ignore]
 fn faucet_missing_anchor_twice_latches_forced_rescue() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
     env.set_self_only_controllers()?;
@@ -3202,7 +3155,6 @@ fn faucet_missing_anchor_twice_latches_forced_rescue() -> Result<()> {
 #[test]
 #[ignore]
 fn faucet_real_icp_index_head_advances_health_without_false_latest_invariant_latch() -> Result<()> {
-    require_ignored_flag()?;
     let env = RealIcpIndexHealthEnv::new()?;
 
     env.main_tick()?;
@@ -3248,7 +3200,6 @@ fn faucet_real_icp_index_head_advances_health_without_false_latest_invariant_lat
 #[test]
 #[ignore]
 fn faucet_balance_change_without_new_latest_tx_twice_latches_forced_rescue() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -3283,7 +3234,6 @@ fn faucet_balance_change_without_new_latest_tx_twice_latches_forced_rescue() -> 
 #[test]
 #[ignore]
 fn faucet_two_zero_success_cmc_runs_latch_forced_rescue() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
     env.set_self_only_controllers()?;
@@ -3316,7 +3266,6 @@ fn faucet_two_zero_success_cmc_runs_latch_forced_rescue() -> Result<()> {
 #[test]
 #[ignore]
 fn faucet_zero_success_runs_for_non_canister_targets_do_not_latch_forced_rescue() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
     env.set_self_only_controllers()?;
@@ -3345,13 +3294,12 @@ fn faucet_zero_success_runs_for_non_canister_targets_do_not_latch_forced_rescue(
 
 #[test]
 #[ignore]
-fn faucet_reserved_principal_target_is_accepted_by_current_cmc_path() -> Result<()> {
-    require_ignored_flag()?;
+fn faucet_routes_reserved_principal_after_mock_cmc_success() -> Result<()> {
     let env = FaucetEnv::new()?;
     // Use a reserved principal (last byte 0x7f) that is valid principal text, passes the
     // memo policy, but should not be treated as a textual canister-id convention check.
-    // This is a characterization test for the current local/PocketIC CMC path rather than
-    // a protocol guarantee or a supported user-facing target class.
+    // This checks Faucet parsing and routing with an explicitly successful mock CMC; it
+    // does not claim that the platform CMC accepts this target class.
     let target = Principal::from_slice(&[0x7f]);
 
     env.credit_payout(100_000_000)?;
@@ -3365,7 +3313,10 @@ fn faucet_reserved_principal_target_is_accepted_by_current_cmc_path() -> Result<
         || summary.ambiguous_topups != 0
         || summary.ignored_bad_memo != 0
     {
-        bail!("expected reserved principal target to be accepted by the current CMC path after passing memo policy, got {:?}", summary);
+        bail!(
+            "expected Faucet to settle the reserved principal after mocked CMC success, got {:?}",
+            summary
+        );
     }
 
     let notifications = env.notifications()?;
@@ -3378,12 +3329,11 @@ fn faucet_reserved_principal_target_is_accepted_by_current_cmc_path() -> Result<
 
 #[test]
 #[ignore]
-fn faucet_opaque_principal_target_is_accepted_by_current_cmc_path() -> Result<()> {
-    require_ignored_flag()?;
+fn faucet_routes_opaque_principal_after_mock_cmc_success() -> Result<()> {
     let env = FaucetEnv::new()?;
     // Use a short opaque principal (last byte 0x01) that passes memo parsing.
-    // This is a characterization test for the current local/PocketIC CMC path rather
-    // than a protocol guarantee or a supported user-facing target class.
+    // This checks Faucet parsing and routing with an explicitly successful mock CMC; it
+    // does not claim that the platform CMC accepts this target class.
     let target = Principal::from_slice(&[0x01]);
 
     env.credit_payout(100_000_000)?;
@@ -3398,7 +3348,7 @@ fn faucet_opaque_principal_target_is_accepted_by_current_cmc_path() -> Result<()
         || summary.ignored_bad_memo != 0
     {
         bail!(
-            "expected opaque principal target to be accepted by the current CMC path after passing memo policy, got {:?}",
+            "expected Faucet to settle the opaque principal after mocked CMC success, got {:?}",
             summary
         );
     }
@@ -3417,7 +3367,6 @@ fn faucet_opaque_principal_target_is_accepted_by_current_cmc_path() -> Result<()
 #[test]
 #[ignore]
 fn faucet_canister_info_characterization_matrix_records_observed_wording() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
     let installed_canister = env.blackhole;
@@ -3459,7 +3408,6 @@ fn faucet_canister_info_characterization_matrix_records_observed_wording() -> Re
 #[ignore]
 fn faucet_zero_success_runs_for_nonexistent_canister_ids_do_not_latch_forced_rescue() -> Result<()>
 {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai")?;
 
@@ -3500,7 +3448,6 @@ fn faucet_zero_success_runs_for_nonexistent_canister_ids_do_not_latch_forced_res
 #[test]
 #[ignore]
 fn faucet_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
 
@@ -3546,7 +3493,6 @@ fn faucet_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
 #[test]
 #[ignore]
 fn faucet_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
 
     env.set_autonomous_rescue_armed(Some(true))?;
@@ -3614,7 +3560,6 @@ fn faucet_stable_field(bytes: &[u8], name: &str) -> Result<candid::types::value:
 #[test]
 #[ignore]
 fn faucet_current_state_upgrade_reconstructs_without_replaying_funding() -> Result<()> {
-    require_ignored_flag()?;
     use candid::types::value::IDLValue;
     const COMMITMENT_E8S: u64 = 100_000_000;
     const INITIAL_POT_E8S: u64 = 100_000_000;
@@ -3796,7 +3741,6 @@ fn faucet_current_state_upgrade_reconstructs_without_replaying_funding() -> Resu
 #[test]
 #[ignore]
 fn faucet_skip_cache_cold_warm_and_upgrade_relearn_preserve_allocations() -> Result<()> {
-    require_ignored_flag()?;
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
     env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;

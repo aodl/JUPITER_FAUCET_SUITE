@@ -13,6 +13,7 @@ struct SkipRunMeasurements {
     stable_map_bytes: u64,
 }
 struct SkipMeasuredIndex {
+    expected_account: String,
     txs: Vec<IndexTransactionWithId>,
     cap: usize,
     measurements: Mutex<SkipRunMeasurements>,
@@ -22,11 +23,12 @@ struct SkipMeasuredIndex {
 impl IndexClient for SkipMeasuredIndex {
     async fn get_account_identifier_transactions(
         &self,
-        _: String,
+        account_identifier: String,
         start: Option<u64>,
         max_results: u64,
     ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
         assert_no_persistence_batch();
+        assert_eq!(account_identifier, self.expected_account);
         let beneficiary = state::with_state(|st| {
             st.active_payout_job
                 .as_ref()
@@ -117,6 +119,7 @@ fn skip_fixture(count: u64, cap: usize, sparse: u64, oldest_barren: bool) -> Ski
     txs.sort_by_key(|t| std::cmp::Reverse(t.id));
     state::with_state_mut(|st| st.config.expected_first_staking_tx_id = txs.last().map(|t| t.id));
     SkipMeasuredIndex {
+        expected_account: account,
         txs,
         cap,
         measurements: Mutex::new(Default::default()),
@@ -524,6 +527,7 @@ fn skip_extra_cached_and_uncached_interleaved_histories_match_independent_sum() 
         txs.reverse();
         state::with_state_mut(|st| st.config.expected_first_staking_tx_id = Some(0));
         let index = SkipMeasuredIndex {
+            expected_account: account,
             txs,
             cap: 500,
             measurements: Mutex::new(Default::default()),

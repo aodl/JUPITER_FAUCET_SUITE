@@ -38,13 +38,6 @@ use support::governance::{set_controllers_exact, start_canister_as, stop_caniste
 const ICP_LEDGER_ID: &str = support::principals::ICP_LEDGER_ID;
 const NNS_GOVERNANCE_ID: &str = support::principals::NNS_GOVERNANCE_ID;
 
-// These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
-// Repository entry points such as `cargo run -p xtask -- test_all` invoke them explicitly.
-fn require_ignored_flag() -> Result<()> {
-    // Running with: cargo test -p jupiter-disburser --test jupiter_disburser_integration -- --ignored --nocapture
-    support::assertions::require_ignored_flag()
-}
-
 // ------------------------- Test harness helpers -------------------------
 
 fn pic_log_level() -> Level {
@@ -1470,8 +1463,6 @@ fn set_self_only_controllers(pic: &PocketIc, canister: Principal) -> Result<()> 
 #[test]
 #[ignore]
 fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -1594,8 +1585,6 @@ fn nns_maturity_disbursement_lands_in_staging() -> Result<()> {
 #[test]
 #[ignore]
 fn disburser_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -1686,8 +1675,6 @@ fn disburser_reclaims_stale_main_lease_after_time_fast_forward() -> Result<()> {
 #[test]
 #[ignore]
 fn full_pipeline_initiates_maturity_then_routes_finalized_staging_once() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -1862,8 +1849,6 @@ fn full_pipeline_initiates_maturity_then_routes_finalized_staging_once() -> Resu
 #[test]
 #[ignore]
 fn repeated_ticks_while_governance_inflight_do_not_start_second_disbursement() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -1956,8 +1941,6 @@ fn repeated_ticks_while_governance_inflight_do_not_start_second_disbursement() -
 #[test]
 #[ignore]
 fn upgrade_while_governance_inflight_preserves_state_and_completes_once() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -2070,8 +2053,6 @@ fn upgrade_while_governance_inflight_preserves_state_and_completes_once() -> Res
 #[test]
 #[ignore]
 fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -2268,8 +2249,6 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
 #[test]
 #[ignore]
 fn hotkey_only_cannot_disburse_maturity() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -2346,8 +2325,6 @@ fn hotkey_only_cannot_disburse_maturity() -> Result<()> {
 #[test]
 #[ignore]
 fn autonomous_rescue_timers_only_progresses_pipeline() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -2490,8 +2467,6 @@ fn autonomous_rescue_timers_only_progresses_pipeline() -> Result<()> {
 #[test]
 #[ignore]
 fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -2632,8 +2607,6 @@ fn rescue_controller_roundtrip_real_management_canister() -> Result<()> {
 #[test]
 #[ignore]
 fn autonomous_rescue_does_not_reconcile_when_unarmed() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -2716,8 +2689,6 @@ fn autonomous_rescue_does_not_reconcile_when_unarmed() -> Result<()> {
 #[test]
 #[ignore]
 fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -2810,8 +2781,6 @@ fn bootstrap_rescue_fires_before_first_successful_payout() -> Result<()> {
 #[test]
 #[ignore]
 fn disburser_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -2973,8 +2942,6 @@ fn disburser_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
 #[ignore]
 fn disburser_clear_forced_rescue_keeps_narrowing_pending_after_update_settings_failure(
 ) -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -3101,7 +3068,6 @@ fn disburser_clear_forced_rescue_keeps_narrowing_pending_after_update_settings_f
 fn staged_maturity_transfer_routes_existing_staging_without_new_initiation() -> Result<()> {
     // Unique invariant: once ICP is already staged, payout-only debug ticks must
     // route that balance without depending on another governance disbursement.
-    require_ignored_flag()?;
 
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -3284,8 +3250,6 @@ fn staged_maturity_transfer_routes_existing_staging_without_new_initiation() -> 
 #[test]
 #[ignore]
 fn partial_transfer_execution_retry_accepts_duplicates_without_double_payment() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -3479,8 +3443,6 @@ fn partial_transfer_execution_retry_accepts_duplicates_without_double_payment() 
 #[test]
 #[ignore]
 fn disburser_upgrade_clears_stale_lock_and_auto_resumes_persisted_plan() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -3651,8 +3613,6 @@ fn disburser_upgrade_clears_stale_lock_and_auto_resumes_persisted_plan() -> Resu
 #[test]
 #[ignore]
 fn upgrade_with_persisted_plan_real_trap_auto_resumes_without_duplicate_transfer() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -3842,8 +3802,6 @@ fn upgrade_with_persisted_plan_real_trap_auto_resumes_without_duplicate_transfer
 #[test]
 #[ignore]
 fn long_downtime_catchup_does_not_double_initiate() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -3988,8 +3946,6 @@ fn long_downtime_catchup_does_not_double_initiate() -> Result<()> {
 #[test]
 #[ignore]
 fn simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -4115,8 +4071,6 @@ fn simulated_low_cycles_fails_closed_and_recovers() -> Result<()> {
 // relies on debug hooks and is useful for manual / CI-on-demand validation, but it does not need
 // to run in every default test invocation.
 fn payout_plan_clears_after_staging_balance_drift_causes_insufficient_funds() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -4237,9 +4191,7 @@ fn payout_plan_clears_after_staging_balance_drift_causes_insufficient_funds() ->
 
 #[test]
 #[ignore]
-fn state_size_does_not_grow_unbounded_under_repeated_payouts() -> Result<()> {
-    require_ignored_flag()?;
-
+fn serialized_debug_state_size_stays_bounded_under_repeated_payouts() -> Result<()> {
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -4347,8 +4299,6 @@ fn state_size_does_not_grow_unbounded_under_repeated_payouts() -> Result<()> {
 #[test]
 #[ignore]
 fn inflight_idempotent_under_repeated_ticks() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -4444,8 +4394,6 @@ fn inflight_idempotent_under_repeated_ticks() -> Result<()> {
 #[test]
 #[ignore]
 fn upgrade_persists_inflight() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -4565,8 +4513,6 @@ fn upgrade_persists_inflight() -> Result<()> {
 #[test]
 #[ignore]
 fn autonomous_rescue_smoke_timers_only() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -4661,8 +4607,6 @@ fn autonomous_rescue_smoke_timers_only() -> Result<()> {
 #[test]
 #[ignore]
 fn age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -4932,8 +4876,6 @@ fn age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
 #[test]
 #[ignore]
 fn payout_plan_uses_two_year_age_snapshot_and_clamps_at_four_years() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let disburser_canister = pic.create_canister();
@@ -5206,8 +5148,6 @@ fn payout_plan_uses_two_year_age_snapshot_and_clamps_at_four_years() -> Result<(
 #[test]
 #[ignore]
 fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -5654,8 +5594,6 @@ fn age_bonus_baseline_matches_age0_with_whale_background() -> Result<()> {
 #[test]
 #[ignore]
 fn claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -5738,8 +5676,6 @@ fn claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
 #[test]
 #[ignore]
 fn refresh_voting_power_after_successful_disbursement_initiation() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
 
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
@@ -5877,8 +5813,6 @@ fn faucet_late_valid_top_up_does_not_pinch_existing_beneficiary_under_weighted_r
     // * do NOT require later rounds to stay identical, because once the commitment becomes
     //   eligible it legitimately changes beneficiary participation and any later tiny residuals
     //   can also reflect real age-bonus timing differences rather than unfair first-round skew
-
-    require_ignored_flag()?;
 
     #[derive(Clone, Debug)]
     struct RoundRec {
@@ -6417,8 +6351,6 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
     // slightly between rounds. The claim is therefore not "every round is identical", but rather:
     // same setup + same pot timing + same effective denominator => no unfair affected-round payout loss.
 
-    require_ignored_flag()?;
-
     #[derive(Clone, Debug)]
     struct RoundRec {
         gross: u128,
@@ -6905,8 +6837,6 @@ fn faucet_late_invalid_top_up_does_not_pinch_existing_beneficiary_under_weighted
 #[test]
 #[ignore]
 fn faucet_warmup_drain_leaves_no_immediate_stageable_maturity() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;
@@ -7035,8 +6965,6 @@ fn faucet_warmup_drain_leaves_no_immediate_stageable_maturity() -> Result<()> {
 #[test]
 #[ignore]
 fn faucet_baseline_round_accounting_without_invalid_top_up_is_stable() -> Result<()> {
-    require_ignored_flag()?;
-
     let pic = build_pic();
     let ledger = Principal::from_text(ICP_LEDGER_ID)?;
     let gov = Principal::from_text(NNS_GOVERNANCE_ID)?;

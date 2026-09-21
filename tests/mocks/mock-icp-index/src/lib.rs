@@ -107,11 +107,17 @@ pub struct Status {
 
 #[derive(Default)]
 struct State {
+    // Debug append IDs are one-based. `num_blocks_synced` is a count, so a
+    // visible prefix of N includes mock IDs <= N (real Ledger IDs are zero-based).
     next_id: u64,
     txs: Vec<IndexTransactionWithId>,
     get_calls: Vec<DebugGetCall>,
     scripted_get_behaviors: Vec<DebugGetBehavior>,
     num_blocks_synced: Option<u64>,
+}
+
+fn visible_block_count(st: &State) -> u64 {
+    st.num_blocks_synced.unwrap_or(st.next_id).min(st.next_id)
 }
 
 thread_local! {
@@ -170,13 +176,30 @@ fn account_balance_e8s(txs: &[IndexTransactionWithId], account_identifier: &str)
         })
 }
 
+fn operation_accounts(operation: &IndexOperation, account_identifier: &str) -> bool {
+    match operation {
+        IndexOperation::Approve { from, spender, .. } => {
+            from == account_identifier || spender == account_identifier
+        }
+        IndexOperation::Burn { from, .. } => from == account_identifier,
+        IndexOperation::Mint { to, .. } => to == account_identifier,
+        IndexOperation::Transfer { to, from, .. }
+        | IndexOperation::TransferFrom { to, from, .. } => {
+            to == account_identifier || from == account_identifier
+        }
+    }
+}
+
 #[ic_cdk::init]
 fn init() {}
 
 #[ic_cdk::query]
 fn status() -> Status {
     Status {
-        num_blocks_synced: ST.with(|s| s.borrow().num_blocks_synced.unwrap_or(u64::MAX)),
+        num_blocks_synced: ST.with(|s| {
+            let st = s.borrow();
+            visible_block_count(&st)
+        }),
     }
 }
 
@@ -201,23 +224,22 @@ fn get_account_identifier_transactions(args: GetArgs) -> GetResp {
             return GetResp::Err(GetAccountIdentifierTransactionsError { message });
         }
 
-        let end_idx = match args.start {
-            None => st.txs.len(),
-            Some(last_seen) => st
-                .txs
-                .iter()
-                .position(|transaction| transaction.id == last_seen)
-                .unwrap_or(0),
-        };
-
+        let visible_count = visible_block_count(&st);
+        let visible = st
+            .txs
+            .iter()
+            .filter(|tx| tx.id <= visible_count)
+            .cloned()
+            .collect::<Vec<_>>();
         let mut out = Vec::new();
-        for tx in st.txs[..end_idx].iter().rev() {
-            let include = match &tx.transaction.operation {
-                IndexOperation::Transfer { to, .. } => to == &args.account_identifier,
-                IndexOperation::Burn { from, .. } => from == &args.account_identifier,
-                _ => false,
-            };
-            if include {
+        for tx in visible.iter().rev().take_while(|_| args.max_results > 0) {
+            if args
+                .start
+                .is_some_and(|exclusive_start| tx.id >= exclusive_start)
+            {
+                continue;
+            }
+            if operation_accounts(&tx.transaction.operation, &args.account_identifier) {
                 out.push(tx.clone());
             }
             if out.len() >= args.max_results as usize {
@@ -233,15 +255,16 @@ fn get_account_identifier_transactions(args: GetArgs) -> GetResp {
         });
 
         GetResp::Ok(GetAccountIdentifierTransactionsResponse {
-            balance: account_balance_e8s(&st.txs, &args.account_identifier),
-            oldest_tx_id: st.txs.iter().find_map(|transaction| {
-                let belongs_to_account = match &transaction.transaction.operation {
-                    IndexOperation::Transfer { to, .. } => to == &args.account_identifier,
-                    IndexOperation::Burn { from, .. } => from == &args.account_identifier,
-                    _ => false,
-                };
-                belongs_to_account.then_some(transaction.id)
-            }),
+            balance: account_balance_e8s(&visible, &args.account_identifier),
+            oldest_tx_id: st
+                .txs
+                .iter()
+                .filter(|tx| tx.id <= visible_count)
+                .filter(|transaction| {
+                    operation_accounts(&transaction.transaction.operation, &args.account_identifier)
+                })
+                .map(|transaction| transaction.id)
+                .min(),
             transactions: out,
         })
     })
@@ -429,6 +452,34 @@ mod tests {
         }
     }
 
+    fn transaction(id: u64, operation: IndexOperation) -> IndexTransactionWithId {
+        IndexTransactionWithId {
+            id,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: None,
+                operation,
+                created_at_time: None,
+                timestamp: None,
+            },
+        }
+    }
+
+    fn account_page(
+        account: &str,
+        start: Option<u64>,
+        limit: u64,
+    ) -> GetAccountIdentifierTransactionsResponse {
+        match get_account_identifier_transactions(GetArgs {
+            account_identifier: account.to_string(),
+            start,
+            max_results: limit,
+        }) {
+            GetResp::Ok(response) => response,
+            GetResp::Err(error) => panic!("unexpected error: {}", error.message),
+        }
+    }
+
     #[test]
     fn account_history_is_newest_first_and_start_walks_exclusively_toward_older_history() {
         ST.with(|s| {
@@ -469,5 +520,212 @@ mod tests {
             }
             GetResp::Err(err) => panic!("unexpected error: {}", err.message),
         }
+    }
+
+    #[test]
+    fn sparse_numeric_cursor_is_exclusive_even_when_id_is_absent_from_account_history() {
+        ST.with(|s| {
+            let mut st = s.borrow_mut();
+            st.next_id = 13;
+            st.txs = vec![
+                transfer_tx(2, "target"),
+                transfer_tx(5, "other"),
+                transfer_tx(9, "target"),
+                transfer_tx(13, "target"),
+            ];
+        });
+
+        assert_eq!(
+            account_page("target", None, 10)
+                .transactions
+                .iter()
+                .map(|tx| tx.id)
+                .collect::<Vec<_>>(),
+            vec![13, 9, 2]
+        );
+        assert_eq!(
+            account_page("target", Some(12), 10)
+                .transactions
+                .iter()
+                .map(|tx| tx.id)
+                .collect::<Vec<_>>(),
+            vec![9, 2]
+        );
+        assert!(account_page("target", Some(0), 10).transactions.is_empty());
+        assert!(account_page("target", None, 0).transactions.is_empty());
+    }
+
+    #[test]
+    fn account_history_contains_every_relevant_operation_side_and_keeps_global_oldest_anchor() {
+        let target = "target".to_string();
+        let other = "other".to_string();
+        ST.with(|s| {
+            let mut st = s.borrow_mut();
+            st.next_id = 8;
+            st.txs = vec![
+                transaction(
+                    1,
+                    IndexOperation::Mint {
+                        to: target.clone(),
+                        amount: Tokens { e8s: 1_000_000 },
+                    },
+                ),
+                transaction(
+                    2,
+                    IndexOperation::Transfer {
+                        to: other.clone(),
+                        fee: Tokens { e8s: 10_000 },
+                        from: target.clone(),
+                        amount: Tokens { e8s: 100_000 },
+                        spender: None,
+                    },
+                ),
+                transaction(
+                    3,
+                    IndexOperation::Transfer {
+                        to: target.clone(),
+                        fee: Tokens { e8s: 10_000 },
+                        from: target.clone(),
+                        amount: Tokens { e8s: 50_000 },
+                        spender: None,
+                    },
+                ),
+                transaction(
+                    4,
+                    IndexOperation::Approve {
+                        fee: Tokens { e8s: 10_000 },
+                        from: target.clone(),
+                        allowance: Tokens { e8s: 200_000 },
+                        expires_at: None,
+                        spender: other.clone(),
+                        expected_allowance: None,
+                    },
+                ),
+                transaction(
+                    5,
+                    IndexOperation::Burn {
+                        from: target.clone(),
+                        amount: Tokens { e8s: 20_000 },
+                        spender: Some(other.clone()),
+                    },
+                ),
+                transaction(
+                    6,
+                    IndexOperation::TransferFrom {
+                        to: other.clone(),
+                        fee: Tokens { e8s: 10_000 },
+                        from: target.clone(),
+                        amount: Tokens { e8s: 30_000 },
+                        spender: other.clone(),
+                    },
+                ),
+                transfer_tx(8, "unrelated"),
+            ];
+        });
+
+        let newest_two = account_page(&target, None, 2);
+        assert_eq!(
+            newest_two
+                .transactions
+                .iter()
+                .map(|tx| tx.id)
+                .collect::<Vec<_>>(),
+            vec![6, 5]
+        );
+        assert_eq!(newest_two.oldest_tx_id, Some(1));
+        assert_eq!(newest_two.balance, 810_000);
+        assert_eq!(
+            account_page(&other, None, 20)
+                .transactions
+                .iter()
+                .map(|tx| tx.id)
+                .collect::<Vec<_>>(),
+            vec![6, 4, 2]
+        );
+        assert_eq!(account_page("empty", None, 20).oldest_tx_id, None);
+    }
+
+    #[test]
+    fn status_defaults_to_indexed_prefix_and_explicit_lag_is_observable() {
+        ST.with(|s| {
+            let mut st = s.borrow_mut();
+            st.next_id = 17;
+            st.num_blocks_synced = None;
+        });
+        assert_eq!(status().num_blocks_synced, 17);
+        debug_set_num_blocks_synced(Some(11));
+        assert_eq!(status().num_blocks_synced, 11);
+    }
+
+    #[test]
+    fn indexed_prefix_controls_history_balance_and_oldest_across_accounts() {
+        ST.with(|s| {
+            let mut st = s.borrow_mut();
+            *st = State::default();
+            st.next_id = 6;
+            st.txs = vec![
+                transaction(
+                    1,
+                    IndexOperation::Mint {
+                        to: "alice".into(),
+                        amount: Tokens { e8s: 1_000_000 },
+                    },
+                ),
+                transaction(
+                    2,
+                    IndexOperation::Mint {
+                        to: "bob".into(),
+                        amount: Tokens { e8s: 500_000 },
+                    },
+                ),
+                transaction(
+                    4,
+                    IndexOperation::Transfer {
+                        from: "alice".into(),
+                        to: "bob".into(),
+                        amount: Tokens { e8s: 100_000 },
+                        fee: Tokens { e8s: 10_000 },
+                        spender: None,
+                    },
+                ),
+                transaction(
+                    6,
+                    IndexOperation::Transfer {
+                        from: "alice".into(),
+                        to: "alice".into(),
+                        amount: Tokens { e8s: 50_000 },
+                        fee: Tokens { e8s: 10_000 },
+                        spender: None,
+                    },
+                ),
+            ];
+            st.num_blocks_synced = Some(0);
+        });
+        let ids = |account: &str, start: Option<u64>| {
+            account_page(account, start, 10)
+                .transactions
+                .into_iter()
+                .map(|tx| tx.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(status().num_blocks_synced, 0);
+        assert_eq!(ids("alice", None), Vec::<u64>::new());
+        assert_eq!(account_page("alice", None, 10).balance, 0);
+        assert_eq!(account_page("alice", None, 10).oldest_tx_id, None);
+        debug_set_num_blocks_synced(Some(2));
+        assert_eq!(ids("alice", None), vec![1]);
+        assert_eq!(ids("bob", None), vec![2]);
+        assert_eq!(account_page("alice", None, 10).balance, 1_000_000);
+        debug_set_num_blocks_synced(Some(4));
+        assert_eq!(ids("alice", None), vec![4, 1]);
+        assert_eq!(ids("bob", None), vec![4, 2]);
+        assert_eq!(ids("alice", Some(3)), vec![1]);
+        assert_eq!(account_page("alice", None, 1).oldest_tx_id, Some(1));
+        assert_eq!(account_page("alice", None, 10).balance, 890_000);
+        assert_eq!(account_page("bob", None, 10).balance, 600_000);
+        debug_set_num_blocks_synced(Some(6));
+        assert_eq!(ids("alice", None), vec![6, 4, 1]);
+        assert_eq!(account_page("alice", None, 10).balance, 880_000);
+        assert_eq!(account_page("alice", None, 10).oldest_tx_id, Some(1));
     }
 }

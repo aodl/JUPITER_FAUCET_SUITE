@@ -5774,7 +5774,9 @@ fn run_local_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     run_local_faucet_scenarios(outcomes)?;
     run_local_historian_scenarios(outcomes)?;
     run_local_relay_scenarios(outcomes)?;
-    run_local_frontend_scenarios(outcomes)?;
+    // Historian's local suite already runs the shared dashboard/replica fixture.
+    // The frontend-specific command retains the same component-owned shortcut,
+    // while the aggregate executes the expensive fixture only once.
     run_local_historian_config_roundtrip_scenario(outcomes)?;
     Ok(())
 }
@@ -5810,7 +5812,7 @@ fn run_unit_disburser_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
             "always",
         ],
         &root,
-        &[],
+        (&[], true),
     )
 }
 
@@ -5831,7 +5833,7 @@ fn run_unit_faucet_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
             "always",
         ],
         &root,
-        &[],
+        (&[], true),
     )
 }
 
@@ -5852,7 +5854,7 @@ fn run_unit_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
             "always",
         ],
         &root,
-        &[],
+        (&[], true),
     )
 }
 
@@ -5873,7 +5875,7 @@ fn run_unit_relay_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
             "always",
         ],
         &root,
-        &[],
+        (&[], true),
     )
 }
 
@@ -5894,8 +5896,74 @@ fn run_unit_sns_rewards_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()>
             "always",
         ],
         &root,
-        &[],
+        (&[], true),
     )
+}
+
+fn run_unit_workspace_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    run_cargo_test_suite(
+        outcomes,
+        "unit",
+        "workspace-default-libs",
+        "cargo",
+        &[
+            "test",
+            "--workspace",
+            "--lib",
+            "--locked",
+            "--",
+            "--color",
+            "always",
+        ],
+        &root,
+        (&[], true),
+    )
+}
+
+fn run_unit_xtask_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    run_cargo_test_suite(
+        outcomes,
+        "unit",
+        "xtask",
+        "cargo",
+        &[
+            "test", "-p", "xtask", "--bin", "xtask", "--locked", "--", "--color", "always",
+        ],
+        &root,
+        (&[], true),
+    )
+}
+
+fn run_unit_debug_contract_suites(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    for (component, package) in [
+        ("relay-debug-api", "jupiter-relay"),
+        ("sns-rewards-debug-api", "jupiter-sns-rewards"),
+    ] {
+        run_cargo_test_suite(
+            outcomes,
+            "unit",
+            component,
+            "cargo",
+            &[
+                "test",
+                "-p",
+                package,
+                "--lib",
+                "--features",
+                "debug_api",
+                "--locked",
+                "--",
+                "--color",
+                "always",
+            ],
+            &root,
+            (&[], true),
+        )?;
+    }
+    Ok(())
 }
 
 fn ensure_frontend_node_modules() -> Result<()> {
@@ -6002,7 +6070,16 @@ fn run_frontend_unit_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
         "npm",
         &["run", "test:frontend-unit"],
         &root,
-        &[],
+        (&[], true),
+    )?;
+    run_cargo_test_suite(
+        outcomes,
+        "browser",
+        "frontend",
+        "npm",
+        &["run", "test:frontend-browser"],
+        &root,
+        (&[], true),
     )
 }
 
@@ -6050,7 +6127,7 @@ fn run_pocketic_faucet_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
             "always",
         ],
         &root,
-        &common_env,
+        (&common_env, true),
     )
 }
 
@@ -6074,7 +6151,7 @@ fn run_pocketic_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
             "always",
         ],
         &root,
-        &common_env,
+        (&common_env, true),
     )
 }
 
@@ -6098,7 +6175,7 @@ fn run_pocketic_relay_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
             "always",
         ],
         &root,
-        &common_env,
+        (&common_env, true),
     )
 }
 
@@ -6122,7 +6199,31 @@ fn run_pocketic_sns_rewards_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result
             "always",
         ],
         &root,
-        &common_env,
+        (&common_env, true),
+    )
+}
+
+fn run_pocketic_lifeline_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
+    let root = repo_root();
+    let common_env = pocketic_test_env()?;
+    run_cargo_test_suite(
+        outcomes,
+        "pocketic",
+        "lifeline",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "jupiter-lifeline",
+            "--test",
+            "jupiter_lifeline_integration",
+            "--",
+            "--ignored",
+            "--color",
+            "always",
+        ],
+        &root,
+        (&common_env, true),
     )
 }
 
@@ -6146,7 +6247,7 @@ fn run_e2e_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
             "always",
         ],
         &root,
-        &common_env,
+        (&common_env, true),
     )
 }
 
@@ -6159,7 +6260,7 @@ fn run_repo_validation_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
         "python3",
         &["./tools/scripts/validate-mainnet-install-args"],
         &root,
-        &[],
+        (&[], false),
     )
 }
 
@@ -6167,11 +6268,9 @@ fn run_unit_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCompon
     match component {
         TestComponent::Test => {
             run_repo_validation_suite(outcomes)?;
-            run_unit_disburser_suite(outcomes)?;
-            run_unit_faucet_suite(outcomes)?;
-            run_unit_historian_suite(outcomes)?;
-            run_unit_relay_suite(outcomes)?;
-            run_unit_sns_rewards_suite(outcomes)?;
+            run_unit_workspace_suite(outcomes)?;
+            run_unit_xtask_suite(outcomes)?;
+            run_unit_debug_contract_suites(outcomes)?;
             run_frontend_unit_suite(outcomes)?;
         }
         TestComponent::Disburser => run_unit_disburser_suite(outcomes)?,
@@ -6218,6 +6317,7 @@ fn run_pocketic_component(
             run_pocketic_historian_suite(outcomes)?;
             run_pocketic_relay_suite(outcomes)?;
             run_pocketic_sns_rewards_suite(outcomes)?;
+            run_pocketic_lifeline_suite(outcomes)?;
             run_e2e_suite(outcomes)?;
         }
         TestComponent::Disburser => run_pocketic_disburser_suite(outcomes)?,

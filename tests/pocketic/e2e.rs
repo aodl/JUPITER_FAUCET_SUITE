@@ -19,13 +19,6 @@ use support::governance::set_controllers_exact;
 use support::ledger::build_pic_with_real_icp;
 use support::principals::fixture_principal;
 
-fn require_ignored_flag() -> Result<()> {
-    // These PocketIC suites are intentionally #[ignore] so a plain cargo test stays fast.
-    // The supported repository entry points (for example `cargo run -p xtask -- test_all`)
-    // invoke them explicitly with `--ignored`.
-    support::assertions::require_ignored_flag()
-}
-
 static LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static INDEX_WASM: OnceLock<Vec<u8>> = OnceLock::new();
@@ -112,6 +105,7 @@ struct DebugState {
     last_observed_staking_balance_e8s: Option<u64>,
     last_observed_latest_tx_id: Option<u64>,
     expected_first_staking_tx_id: Option<u64>,
+    last_processed_funding_tx_id: Option<u64>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -222,7 +216,6 @@ fn append_faucet_funding_tranche(
 #[test]
 #[ignore]
 fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
-    require_ignored_flag()?;
     let pic = support::pocketic::builder()
         .with_application_subnet()
         .build();
@@ -381,7 +374,6 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
 #[test]
 #[ignore]
 fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<()> {
-    require_ignored_flag()?;
     let pic = support::pocketic::builder()
         .with_application_subnet()
         .build();
@@ -555,7 +547,6 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
 #[ignore]
 fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_transfer(
 ) -> Result<()> {
-    require_ignored_flag()?;
     let pic = support::pocketic::builder()
         .with_application_subnet()
         .build();
@@ -709,7 +700,6 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
 #[test]
 #[ignore]
 fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<()> {
-    require_ignored_flag()?;
     let pic = support::pocketic::builder()
         .with_application_subnet()
         .build();
@@ -1092,8 +1082,7 @@ fn describe_account(account: &Account) -> String {
 
 #[test]
 #[ignore]
-fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
-    require_ignored_flag()?;
+fn real_cmc_manual_topup_contract_accepts_ledger_payment_and_delivers_cycles() -> Result<()> {
     let pic = build_pic_with_real_icp();
     let ledger = support::principals::icp_ledger();
     let cmc = support::principals::cycles_minting_canister();
@@ -1103,6 +1092,7 @@ fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
     pic.add_cycles(target, 5_000_000_000_000);
     pic.install_canister(target, blackhole_wasm, vec![], None);
     set_controllers_exact(&pic, target, vec![target])?;
+    let target_cycles_before = pic.cycle_balance(target);
 
     let fee_e8s = icrc1_fee(&pic, ledger)?;
     let memo_u64 = 1_347_768_404u64;
@@ -1154,6 +1144,16 @@ fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
 
     let deposit_after_transfer = icrc1_balance(&pic, ledger, &deposit_account)?;
     let anon_after_transfer = icrc1_balance(&pic, ledger, &anon_default)?;
+    if deposit_after_transfer != deposit_before.saturating_add(amount_e8s) {
+        bail!(
+            "real Ledger deposit balance mismatch: before={deposit_before}, after={deposit_after_transfer}, amount={amount_e8s}"
+        );
+    }
+    if anon_before.saturating_sub(anon_after_transfer) != amount_e8s.saturating_add(fee_e8s) {
+        bail!(
+            "real Ledger source debit mismatch: before={anon_before}, after={anon_after_transfer}, amount={amount_e8s}, fee={fee_e8s}"
+        );
+    }
     println!("transfer_block_index={}", block_index);
     println!(
         "deposit_balance_after_transfer_e8s={}",
@@ -1175,11 +1175,28 @@ fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
         },
     )?;
     println!("notify_top_up_result={notify_result:?}");
+    let minted_cycles = match notify_result {
+        RealNotifyTopUpResult::Ok(cycles) => cycles,
+        RealNotifyTopUpResult::Err(error) => {
+            bail!(
+                "real CMC returned an application error after accepting the Ledger call: {error:?}"
+            )
+        }
+    };
 
     let deposit_after_notify = icrc1_balance(&pic, ledger, &deposit_account)?;
     let anon_after_notify = icrc1_balance(&pic, ledger, &anon_default)?;
     println!("deposit_balance_after_notify_e8s={}", deposit_after_notify);
     println!("anonymous_balance_after_notify_e8s={}", anon_after_notify);
+    let target_cycles_after = pic.cycle_balance(target);
+    if target_cycles_after <= target_cycles_before {
+        bail!(
+            "real CMC reported {minted_cycles} minted cycles but target balance did not increase: before={target_cycles_before}, after={target_cycles_after}"
+        );
+    }
+    if deposit_after_notify != 0 {
+        bail!("real CMC did not consume its deposit balance: {deposit_after_notify}");
+    }
     println!("=== end real CMC top-up probe ===");
 
     Ok(())
@@ -1187,8 +1204,146 @@ fn probe_real_cmc_topup_flow_diagnostics() -> Result<()> {
 
 #[test]
 #[ignore]
+fn faucet_drives_real_ledger_index_and_cmc_without_replaying_funding() -> Result<()> {
+    let pic = build_pic_with_real_icp();
+    let ledger = support::principals::icp_ledger();
+    let index = support::principals::icp_index();
+    let cmc = support::principals::cycles_minting_canister();
+    let faucet = pic.create_canister();
+    let target = pic.create_canister();
+    for canister in [faucet, target] {
+        pic.add_cycles(canister, 5_000_000_000_000);
+    }
+    pic.install_canister(target, real_blackhole::real_blackhole_wasm()?, vec![], None);
+    let staking = Account {
+        owner: faucet,
+        subaccount: Some([41; 32]),
+    };
+    let payout = Account {
+        owner: faucet,
+        subaccount: None,
+    };
+    let source = Account {
+        owner: fixture_principal(),
+        subaccount: None,
+    };
+    pic.install_canister(
+        faucet,
+        build_wasm("jupiter-faucet", Some("debug_api"))?,
+        encode_one(FaucetInitArg {
+            staking_account: staking.clone(),
+            payout_subaccount: None,
+            funding_source_account: source.clone(),
+            ledger_canister_id: Some(ledger),
+            index_canister_id: Some(index),
+            cmc_canister_id: Some(cmc),
+            rescue_controller: fixture_principal(),
+            autonomous_rescue_armed: Some(false),
+            expected_first_staking_tx_id: None,
+            main_interval_seconds: Some(86_400),
+            rescue_interval_seconds: Some(86_400),
+            min_tx_e8s: Some(100_000_000),
+            stake_recognition_delay_seconds: Some(1),
+        })?,
+        None,
+    );
+
+    let fee = icrc1_fee(&pic, ledger)?;
+    icrc1_transfer(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        TransferArg {
+            from_subaccount: None,
+            to: source.clone(),
+            fee: Some(Nat::from(fee)),
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(250_000_000u64),
+        },
+    )?;
+    let source_before = icrc1_balance(&pic, ledger, &source)?;
+    let staking_tx = icrc1_transfer(
+        &pic,
+        ledger,
+        source.owner,
+        TransferArg {
+            from_subaccount: None,
+            to: staking,
+            fee: Some(Nat::from(fee)),
+            created_at_time: None,
+            memo: Some(Memo::from(target.to_text().into_bytes())),
+            amount: Nat::from(100_000_000u64),
+        },
+    )?;
+    pic.advance_time(Duration::from_secs(2));
+    tick_n(&pic, 5);
+    let funding_tx = icrc1_transfer(
+        &pic,
+        ledger,
+        source.owner,
+        TransferArg {
+            from_subaccount: None,
+            to: payout.clone(),
+            fee: Some(Nat::from(fee)),
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(100_000_000u64),
+        },
+    )?;
+    assert!(funding_tx > staking_tx);
+    pic.advance_time(Duration::from_secs(2));
+    tick_n(&pic, 30);
+
+    let target_cycles_before = pic.cycle_balance(target);
+    for _ in 0..12 {
+        let _: () = update_noargs(&pic, faucet, Principal::anonymous(), "debug_main_tick")?;
+        tick_n(&pic, 5);
+        let state: DebugState = query_one(&pic, faucet, Principal::anonymous(), "debug_state", ())?;
+        if state.last_processed_funding_tx_id == Some(funding_tx)
+            && !state.active_payout_job_present
+        {
+            break;
+        }
+    }
+    let state: DebugState = query_one(&pic, faucet, Principal::anonymous(), "debug_state", ())?;
+    assert_eq!(state.last_processed_funding_tx_id, Some(funding_tx));
+    assert!(!state.active_payout_job_present);
+    let summary: Option<FaucetSummary> = query_one(
+        &pic,
+        faucet,
+        Principal::anonymous(),
+        "debug_last_summary",
+        (),
+    )?;
+    let summary = summary.ok_or_else(|| anyhow!("missing Faucet summary after real CMC payout"))?;
+    assert_eq!(summary.denom_staking_balance_e8s, 100_000_000);
+    assert_eq!(summary.topped_up_count, 1);
+    assert_eq!(summary.topped_up_sum_e8s, 99_990_000);
+    assert_eq!(summary.failed_topups, 0);
+    assert_eq!(summary.ambiguous_topups, 0);
+    assert_eq!(summary.pot_remaining_e8s, 0);
+    assert!(pic.cycle_balance(target) > target_cycles_before);
+    assert_eq!(icrc1_balance(&pic, ledger, &payout)?, 0);
+    assert_eq!(
+        source_before.saturating_sub(icrc1_balance(&pic, ledger, &source)?),
+        200_000_000 + fee * 2
+    );
+
+    let target_cycles_after = pic.cycle_balance(target);
+    let _: () = update_noargs(&pic, faucet, Principal::anonymous(), "debug_main_tick")?;
+    tick_n(&pic, 5);
+    let replay_state: DebugState =
+        query_one(&pic, faucet, Principal::anonymous(), "debug_state", ())?;
+    assert_eq!(replay_state.last_processed_funding_tx_id, Some(funding_tx));
+    assert_eq!(pic.cycle_balance(target), target_cycles_after);
+    assert_eq!(icrc1_balance(&pic, ledger, &payout)?, 0);
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
-    require_ignored_flag()?;
     let pic = support::pocketic::builder()
         .with_application_subnet()
         .build();

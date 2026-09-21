@@ -31,10 +31,6 @@ mod support;
 use support::account_identifier::principal_to_subaccount;
 use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
 
-fn require_ignored_flag() -> Result<()> {
-    support::assertions::require_ignored_flag()
-}
-
 fn principal(text: &str) -> Principal {
     Principal::from_text(text).unwrap()
 }
@@ -1006,7 +1002,6 @@ fn assert_splitter_transfer_pair_records(
 #[test]
 #[ignore]
 fn fixed_splitters_10_50_90_route_exact_gross_shares_and_drain_source() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(Some(1))?;
     let starting_balance = 250_000_007;
     for splitter_number in [10, 50, 90] {
@@ -1023,7 +1018,6 @@ fn fixed_splitters_10_50_90_route_exact_gross_shares_and_drain_source() -> Resul
 #[test]
 #[ignore]
 fn splitter_accumulates_below_threshold_and_splits_full_balance_after_crossing() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.credit_relay_numbered_subaccount(30, 100_009_999)?;
     env.trigger_relay()?;
@@ -1042,7 +1036,6 @@ fn splitter_accumulates_below_threshold_and_splits_full_balance_after_crossing()
 #[test]
 #[ignore]
 fn splitter_chains_into_existing_subaccount_one_commitment_in_same_tick() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.credit_relay_numbered_subaccount(10, 200_000_000)?;
     env.trigger_relay()?;
@@ -1070,7 +1063,6 @@ fn splitter_chains_into_existing_subaccount_one_commitment_in_same_tick() -> Res
 #[test]
 #[ignore]
 fn splitter_default_branch_is_available_to_allocation_in_same_tick() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     let baseline = env.tick_relay()?;
@@ -1102,7 +1094,6 @@ fn splitter_default_branch_is_available_to_allocation_in_same_tick() -> Result<(
 #[test]
 #[ignore]
 fn splitter_lost_response_retries_exact_identity_without_duplicate_spend() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.advance_time_and_tick(5 * 60, 5);
     // Keep both destination balances below the commitment threshold so this regression observes
@@ -1242,7 +1233,6 @@ fn splitter_lost_response_retries_exact_identity_without_duplicate_spend() -> Re
 #[test]
 #[ignore]
 fn splitter_journal_survives_upgrade_and_second_leg_bad_fee_preserves_gross_budget() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     let starting_balance = 500_000_007;
     env.credit_relay_numbered_subaccount(30, starting_balance)?;
@@ -1316,7 +1306,6 @@ fn splitter_journal_survives_upgrade_and_second_leg_bad_fee_preserves_gross_budg
 #[test]
 #[ignore]
 fn deposit_arriving_between_splitter_legs_remains_for_an_independent_later_split() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     let original_balance = 500_000_007;
     let later_deposit = 300_000_019;
@@ -1361,7 +1350,6 @@ fn deposit_arriving_between_splitter_legs_remains_for_an_independent_later_split
 #[test]
 #[ignore]
 fn relay_production_wasm_does_not_export_status_or_admin_endpoints() -> Result<()> {
-    require_ignored_flag()?;
     let wasm = relay_prod_wasm()?;
     let removed_debug_marker = b"relay_"
         .iter()
@@ -1392,7 +1380,6 @@ fn relay_production_wasm_does_not_export_status_or_admin_endpoints() -> Result<(
 #[test]
 #[ignore]
 fn relay_debug_wasm_does_not_export_status_or_admin_endpoints() -> Result<()> {
-    require_ignored_flag()?;
     let wasm = relay_wasm()?;
     let removed_debug_marker = b"relay_"
         .iter()
@@ -1423,7 +1410,6 @@ fn relay_debug_wasm_does_not_export_status_or_admin_endpoints() -> Result<()> {
 #[test]
 #[ignore]
 fn subaccount_one_commitment_forwards_without_default_account_funds() -> Result<()> {
-    require_ignored_flag()?;
     let jupiter_faucet_neuron = 11_614_578_985_374_291_210_u64;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
@@ -1496,7 +1482,6 @@ fn subaccount_one_commitment_forwards_without_default_account_funds() -> Result<
 #[test]
 #[ignore]
 fn subaccount_one_commitment_uses_bootstrap_fee_when_fee_query_fails_without_cache() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.set_ledger_fee_query_failure(true)?;
@@ -1523,7 +1508,6 @@ fn subaccount_one_commitment_uses_bootstrap_fee_when_fee_query_fails_without_cac
 #[test]
 #[ignore]
 fn subaccount_one_commitment_uses_cached_live_fee_when_later_fee_query_fails() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.set_ledger_fee(20_000)?;
@@ -1553,7 +1537,6 @@ fn subaccount_one_commitment_uses_cached_live_fee_when_later_fee_query_fails() -
 #[test]
 #[ignore]
 fn subaccount_one_commitment_waits_until_one_icp_net() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay_subaccount_one(100_009_999)?;
@@ -1578,7 +1561,6 @@ fn subaccount_one_commitment_waits_until_one_icp_net() -> Result<()> {
 #[test]
 #[ignore]
 fn subaccount_one_no_funds_is_quiet_without_skip_log() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
 
@@ -1597,7 +1579,6 @@ fn subaccount_one_no_funds_is_quiet_without_skip_log() -> Result<()> {
 #[test]
 #[ignore]
 fn subaccount_one_commitment_treats_ledger_duplicate_as_accepted() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay_subaccount_one(100_010_000)?;
@@ -1633,7 +1614,6 @@ fn subaccount_one_commitment_treats_ledger_duplicate_as_accepted() -> Result<()>
 #[test]
 #[ignore]
 fn subaccount_one_commitment_refresh_failure_does_not_duplicate_transfer() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay_subaccount_one(100_010_000)?;
@@ -1666,7 +1646,6 @@ fn subaccount_one_commitment_refresh_failure_does_not_duplicate_transfer() -> Re
 #[test]
 #[ignore]
 fn baseline_then_headroom_cmc_topup_records_real_async_notify() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(10_000_000_000)?;
@@ -1718,7 +1697,6 @@ fn baseline_then_headroom_cmc_topup_records_real_async_notify() -> Result<()> {
 #[test]
 #[ignore]
 fn no_raw_recipients_routes_all_spendable_icp_as_cycles() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(10_000_000_000)?;
@@ -1777,7 +1755,6 @@ fn no_raw_recipients_routes_all_spendable_icp_as_cycles() -> Result<()> {
 #[test]
 #[ignore]
 fn no_raw_recipients_waits_until_every_positive_burner_is_fee_efficient() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| {
         (vec![ledger, cmc], None, Vec::new())
     })?;
@@ -1870,7 +1847,6 @@ fn no_raw_recipients_waits_until_every_positive_burner_is_fee_efficient() -> Res
 #[test]
 #[ignore]
 fn headroom_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| {
         (vec![ledger, cmc], None, Vec::new())
     })?;
@@ -1942,7 +1918,6 @@ fn headroom_cmc_topup_prefers_higher_burn_managed_canister() -> Result<()> {
 #[test]
 #[ignore]
 fn relay_canister_with_increased_cycles_gets_no_topup_when_others_burned() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| {
         (vec![ledger, cmc], None, Vec::new())
     })?;
@@ -1983,7 +1958,6 @@ fn relay_canister_with_increased_cycles_gets_no_topup_when_others_burned() -> Re
 #[test]
 #[ignore]
 fn relay_splits_equally_when_no_canister_burned_cycles() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| {
         (vec![ledger, cmc], None, Vec::new())
     })?;
@@ -2012,7 +1986,6 @@ fn relay_splits_equally_when_no_canister_burned_cycles() -> Result<()> {
 #[test]
 #[ignore]
 fn surplus_canister_transfer_uses_configured_memo_without_cmc_notify() -> Result<()> {
-    require_ignored_flag()?;
     let external_memo = vec![0xA1, 0xB2];
     let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
         (
@@ -2072,7 +2045,6 @@ fn surplus_canister_transfer_uses_configured_memo_without_cmc_notify() -> Result
 #[test]
 #[ignore]
 fn surplus_recipient_memos_preserve_absent_and_binary_icrc1_forms() -> Result<()> {
-    require_ignored_flag()?;
     let empty_neuron_id = 42_u64;
     let binary_neuron_id = 43_u64;
     let arbitrary_canister_memo = vec![0xa1, 0xb2];
@@ -2176,7 +2148,6 @@ fn surplus_recipient_memos_preserve_absent_and_binary_icrc1_forms() -> Result<()
 #[test]
 #[ignore]
 fn recovery_deficit_carries_underfunded_topup_and_blocks_surplus_until_recovered() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
         (
             vec![cmc],
@@ -2279,7 +2250,6 @@ fn recovery_deficit_carries_underfunded_topup_and_blocks_surplus_until_recovered
 #[test]
 #[ignore]
 fn intermittent_topup_ambiguity_converges_through_future_recovery_deficits() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
         (
             vec![cmc],
@@ -2381,7 +2351,6 @@ fn intermittent_topup_ambiguity_converges_through_future_recovery_deficits() -> 
 #[test]
 #[ignore]
 fn surplus_neuron_transfers_are_suppressed_below_one_icp_each() -> Result<()> {
-    require_ignored_flag()?;
     let io_neuron = 10_292_412_127_977_304_661_u64;
     let jupiter_faucet_neuron = 11_614_578_985_374_291_210_u64;
     let io_memo = b"10292412127977304661".to_vec();
@@ -2462,7 +2431,6 @@ fn surplus_neuron_transfers_are_suppressed_below_one_icp_each() -> Result<()> {
 #[test]
 #[ignore]
 fn relay_retains_funds_when_cycles_are_unchanged_and_conversion_is_missing() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |_, cmc, _, relay| {
         (
             vec![cmc],
@@ -2489,7 +2457,6 @@ fn relay_retains_funds_when_cycles_are_unchanged_and_conversion_is_missing() -> 
 #[test]
 #[ignore]
 fn relay_recomputes_topups_each_tick_after_prior_no_topup_tick() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |_, cmc, _, relay| {
         (
             vec![cmc],
@@ -2523,7 +2490,6 @@ fn relay_recomputes_topups_each_tick_after_prior_no_topup_tick() -> Result<()> {
 #[test]
 #[ignore]
 fn fail_closed_blackhole_probe_failure_spends_nothing() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.credit_relay(100_000_000)?;
 
@@ -2554,7 +2520,6 @@ fn fail_closed_blackhole_probe_failure_spends_nothing() -> Result<()> {
 #[test]
 #[ignore]
 fn relay_tick_succeeds_when_both_production_blackholes_are_managed() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new_with_production_blackholes_managed()?;
 
     let summary = env.tick_relay()?;
@@ -2567,7 +2532,6 @@ fn relay_tick_succeeds_when_both_production_blackholes_are_managed() -> Result<(
 #[test]
 #[ignore]
 fn cmc_processing_is_retried_without_double_spending_ledger() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(100_000_000)?;
@@ -2602,7 +2566,6 @@ fn cmc_processing_is_retried_without_double_spending_ledger() -> Result<()> {
 #[test]
 #[ignore]
 fn relay_marks_cmc_repeated_retryable_notify_as_ambiguous() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(100_000_000)?;
@@ -2633,7 +2596,6 @@ fn relay_marks_cmc_repeated_retryable_notify_as_ambiguous() -> Result<()> {
 #[test]
 #[ignore]
 fn relay_treats_ledger_duplicate_as_accepted_transfer() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay(100_000_000)?;
@@ -2659,7 +2621,6 @@ fn relay_treats_ledger_duplicate_as_accepted_transfer() -> Result<()> {
 #[test]
 #[ignore]
 fn relay_respects_max_transfers_per_tick_and_resumes_active_job() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new_with_config(Some(1), |ledger, cmc, _, _| {
         (vec![ledger, cmc], None, Vec::new())
     })?;
@@ -2708,7 +2669,6 @@ fn relay_respects_max_transfers_per_tick_and_resumes_active_job() -> Result<()> 
 #[ignore]
 fn relay_full_init_args_upgrade_reinitializes_config_and_resets_operational_heap_state(
 ) -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {
         (
             vec![cmc],
@@ -2823,7 +2783,6 @@ fn relay_full_init_args_upgrade_reinitializes_config_and_resets_operational_heap
 #[test]
 #[ignore]
 fn relay_no_arg_upgrade_is_rejected() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.advance_time_and_tick(5 * 60, 5);
     let result = env.try_upgrade_relay_without_args()?;
@@ -2839,7 +2798,6 @@ fn relay_no_arg_upgrade_is_rejected() -> Result<()> {
 #[test]
 #[ignore]
 fn relay_reinstall_starts_without_summary_or_active_job() -> Result<()> {
-    require_ignored_flag()?;
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     let first = env.tick_relay()?;
@@ -3238,7 +3196,6 @@ impl RealSplitterRewardEnv {
 #[test]
 #[ignore]
 fn reward_context_failure_retries_on_next_daily_main_tick() -> Result<()> {
-    require_ignored_flag()?;
     let mut env = RealSplitterRewardEnv::new(0)?;
     tick_n(&env.pic, 30);
     assert_eq!(env.journal()?.last_sweep_attempt_timestamp_seconds, 0);
@@ -3284,7 +3241,6 @@ fn reward_context_failure_retries_on_next_daily_main_tick() -> Result<()> {
 #[ignore]
 fn stateless_reward_lookback_is_pro_rata_reusable_and_skips_newer_ineligible_commitment(
 ) -> Result<()> {
-    require_ignored_flag()?;
     let mut env = RealSplitterRewardEnv::new(2)?;
     tick_n(&env.pic, 30);
     let alice = env.owners[0];
@@ -3406,7 +3362,6 @@ fn stateless_reward_lookback_is_pro_rata_reusable_and_skips_newer_ineligible_com
 #[test]
 #[ignore]
 fn reward_arrival_before_newer_commitment_fences_that_funder_out() -> Result<()> {
-    require_ignored_flag()?;
     let mut env = RealSplitterRewardEnv::new(2)?;
     tick_n(&env.pic, 30);
     let alice = env.owners[0];
@@ -3459,7 +3414,6 @@ fn reward_arrival_before_newer_commitment_fences_that_funder_out() -> Result<()>
 #[test]
 #[ignore]
 fn reward_arrival_after_newer_commitment_permits_that_funder() -> Result<()> {
-    require_ignored_flag()?;
     let mut env = RealSplitterRewardEnv::new(2)?;
     tick_n(&env.pic, 30);
     let alice = env.owners[0];
@@ -3494,7 +3448,6 @@ fn reward_arrival_after_newer_commitment_permits_that_funder() -> Result<()> {
 #[test]
 #[ignore]
 fn mixed_reward_pot_uses_oldest_credit_then_later_epoch_can_select_bob() -> Result<()> {
-    require_ignored_flag()?;
     let mut env = RealSplitterRewardEnv::new(2)?;
     tick_n(&env.pic, 30);
     let alice = env.owners[0];
@@ -3557,7 +3510,6 @@ fn mixed_reward_pot_uses_oldest_credit_then_later_epoch_can_select_bob() -> Resu
 #[test]
 #[ignore]
 fn reward_index_lag_retries_without_consuming_cadence() -> Result<()> {
-    require_ignored_flag()?;
     let mut env = RealSplitterRewardEnv::new(1)?;
     tick_n(&env.pic, 30);
     let alice = env.owners[0];
@@ -3604,7 +3556,6 @@ fn reward_index_lag_retries_without_consuming_cadence() -> Result<()> {
 #[test]
 #[ignore]
 fn reward_index_components_must_match_pinned_root_and_ledger() -> Result<()> {
-    require_ignored_flag()?;
     let mut env = RealSplitterRewardEnv::new(1)?;
     tick_n(&env.pic, 30);
     let alice = env.owners[0];
@@ -3672,7 +3623,6 @@ fn reward_index_components_must_match_pinned_root_and_ledger() -> Result<()> {
 #[test]
 #[ignore]
 fn splitter_provenance_is_stateless_and_same_commitment_receives_later_accrual() -> Result<()> {
-    require_ignored_flag()?;
     const SPLITTER: u8 = 50;
     let mut env = RealSplitterRewardEnv::new(1)?;
     tick_n(&env.pic, 30);
@@ -3714,7 +3664,6 @@ fn splitter_provenance_is_stateless_and_same_commitment_receives_later_accrual()
 #[test]
 #[ignore]
 fn no_eligible_historical_commitment_holds_the_reward_pot() -> Result<()> {
-    require_ignored_flag()?;
     let mut env = RealSplitterRewardEnv::new(0)?;
     tick_n(&env.pic, 30);
     let unknown = Principal::self_authenticating([88; 32]);
@@ -3753,7 +3702,6 @@ fn no_eligible_historical_commitment_holds_the_reward_pot() -> Result<()> {
 #[test]
 #[ignore]
 fn ambiguous_reward_is_bounded_and_does_not_block_later_recipients() -> Result<()> {
-    require_ignored_flag()?;
     let mut env = RealSplitterRewardEnv::new(3)?;
     tick_n(&env.pic, 30);
     for owner in env.owners.clone() {
@@ -3829,7 +3777,6 @@ fn ambiguous_reward_is_bounded_and_does_not_block_later_recipients() -> Result<(
 #[test]
 #[ignore]
 fn bad_fee_abandons_unpaid_remainder_and_fresh_adjudication_can_continue() -> Result<()> {
-    require_ignored_flag()?;
     let mut env = RealSplitterRewardEnv::new(3)?;
     tick_n(&env.pic, 30);
     for owner in env.owners.clone() {

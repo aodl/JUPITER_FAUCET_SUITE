@@ -8,7 +8,8 @@
     "setup:frontend": "npm run check:npm-lock-hermetic --silent && npm ci --no-fund --no-audit --silent",
     "test:frontend-dashboard": "node --test canisters/frontend/web/test/dashboard-data.test.mjs",
     "test:frontend-neuron": "node --test canisters/frontend/web/test/neuron-details-controller.test.mjs",
-    "test:frontend-unit": "node --test canisters/frontend/web/test/*.test.mjs",
+    "test:frontend-unit": "node --test $(find canisters/frontend/web/test -maxdepth 1 -name '*.test.mjs' ! -name 'navbar-browser.test.mjs' -print | sort)",
+    "test:frontend-browser": "docker run --rm --ipc=host --user \"$(id -u):$(id -g)\" -e HOME=/tmp ${JUPITER_DOCKER_CIDFILE:+--cidfile=$JUPITER_DOCKER_CIDFILE} -e JUPITER_TEST_OMIT_NAVBAR_CSS -v \"$PWD:/work\" -w /work mcr.microsoft.com/playwright:v1.63.0-noble node --test canisters/frontend/web/test/navbar-browser.test.mjs",
     "test:frontend-dashboard-local": "node --test canisters/frontend/web/test/dashboard-data.local-replica.test.mjs",
     "lint:frontend-exports": "node tools/scripts/check-frontend-exports.mjs",
     "security:scan": "./tools/scripts/security-scan",
@@ -17,9 +18,10 @@
   },
   "dependencies": {
     "@icp-sdk/core": "5.0.0",
-    "@noble/hashes": "1.8.0"
+    "@noble/hashes": "1.8.0",
+    "esbuild": "0.28.1"
   },
   "devDependencies": {
-    "esbuild": "0.28.1"
+    "@playwright/test": "1.63.0"
   }
 }

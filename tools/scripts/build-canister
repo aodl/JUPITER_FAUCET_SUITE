@@ -85,7 +85,11 @@ ensure_frontend_node_modules() {
   fi
 
   if [[ "$needs_install" -eq 1 ]]; then
-    npm ci --no-fund --no-audit
+    if [[ "${JUPITER_CANONICAL_NODE_DEPENDENCIES:-}" == "production" ]]; then
+      npm ci --omit=dev --no-fund --no-audit
+    else
+      npm ci --no-fund --no-audit
+    fi
   fi
 }
 
@@ -117,6 +121,7 @@ roots = [
     Path('canisters/frontend/web/test'),
     Path('canisters/frontend/web/build-frontend.mjs'),
     Path('tools/scripts/build-canister'),
+    Path('tools/scripts/frontend-render.mjs'),
 ]
 
 h = hashlib.sha256()
@@ -180,19 +185,7 @@ PY
     backup_dir="$(dirname "$backup_path")"
     mkdir -p "$backup_dir"
     cp "$file" "$backup_path"
-    python3 - "$file" "$FRONTEND_ASSET_TOKEN" "$asset_version" "$FRONTEND_BUNDLE_TOKEN" "$bundle_path" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-asset_token = sys.argv[2]
-asset_value = sys.argv[3]
-bundle_token = sys.argv[4]
-bundle_value = sys.argv[5]
-text = path.read_text()
-text = text.replace(asset_token, asset_value).replace(bundle_token, bundle_value)
-path.write_text(text)
-PY
+    node tools/scripts/frontend-render.mjs "$file" "$asset_version" "$bundle_path"
   done
 }
 

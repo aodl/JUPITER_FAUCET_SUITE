@@ -26,13 +26,19 @@ cargo run -p xtask -- frontend_all
 
 The frontend `xtask` commands auto-install or refresh repo-root Node dependencies when they are missing or stale, and `frontend_setup` lets you do that preflight explicitly.
 
-The direct npm entry points remain available when you want to run the browser/data-loader tests without going through `xtask` (the unit target auto-discovers every [`canisters/frontend/web/test/*.test.mjs`](../../canisters/frontend/web/test) file):
+Use the direct npm entry points to run frontend tests without `xtask` (the Node unit target discovers the non-browser [`canisters/frontend/web/test/*.test.mjs`](../../canisters/frontend/web/test) files, and the browser target is explicit):
 
 ```bash
 npm run setup:frontend
 npm run test:frontend-unit
+npm run test:frontend-browser
 npm run test:frontend-dashboard-local
 ```
+
+The rendered navbar suite uses the pinned Playwright Docker image. The ordinary
+Node suite intentionally excludes that file so controller tests do not require a
+browser; `frontend_unit` and `test_unit` run both commands and fail if either
+reports no executed tests.
 
 ## Prerequisites
 
@@ -153,6 +159,13 @@ Runs the regular Rust unit tests for the relevant crate(s).
 
 Use this when iterating on pure logic and state transitions.
 
+The aggregate `test_unit` command uses `cargo test --workspace --lib` so new
+test-bearing workspace library packages are discovered without maintaining a
+second package catalogue. It separately executes xtask's binary tests and the
+Relay/SNS Rewards `debug_api` contract variants. Default and debug feature
+contracts are both required; `--all-features` is not used as a substitute for
+their mutually selected interfaces.
+
 ### `*_local_integration`
 
 Runs scenario-based integration checks against the local `icp-cli` managed replica using the mock canisters declared in [`icp.yaml`](../../icp.yaml).
@@ -190,6 +203,7 @@ The heavier suites live under [`tests/pocketic/`](../../tests/pocketic):
 - `jupiter_faucet_integration.rs`
 - `jupiter_historian_integration.rs`
 - `jupiter_relay_integration.rs`
+- `jupiter_lifeline_integration.rs`
 - `e2e.rs`
 
 The mock canisters used by the local-`icp-cli` scenarios live under [`tests/mocks/`](../../tests/mocks).
@@ -202,7 +216,9 @@ Examples covered by the current PocketIC suites include:
 - blackhole / rescue-controller round-trips
 - age-bonus behavior at multiple neuron ages
 - faucet retry persistence across upgrades
-- bounded faucet state footprint under repeated replays
+- bounded Faucet serialized debug-state size under repeated replays, plus
+  separate cold/warm Index-call, returned-record, stable-memory and cycle
+  measurements for the exclusion cache
 - forced rescue latching for index-anchor, latest-tx invariant, and zero-success CMC runs
 - historian public-read-model assertions for:
   - `get_public_counts`
@@ -235,14 +251,18 @@ The current E2E coverage includes:
 
 - disburser paying faucet and faucet topping up a declared canister
 - repeated disburser payouts feeding faucet full-history replay
-- a real-ICP PocketIC diagnostic probe for the CMC top-up flow that logs the exact deposit account, memo bytes, ledger transfer block, and raw `notify_top_up` result for comparison against a manual top-up flow
+- a real-ICP PocketIC CMC contract test that separately asserts the Ledger
+  deposit, decoded notification success, deposit consumption, and target-cycle
+  increase
+- a Jupiter Faucet-driven real Ledger/Index/CMC payout that asserts the intended
+  beneficiary, exact e8s accounting, funding cursor completion, and no replay
 - retry safety across the disburser → faucet → CMC boundary
 - faucet upgrade during retry-state recovery
 
-To run just the diagnostic probe and print the transfer / notify details:
+To run the CMC contract test with transfer and notification details:
 
 ```bash
-cargo test -p xtask --test e2e probe_real_cmc_topup_flow_diagnostics -- --ignored --exact --nocapture
+cargo test -p xtask --test e2e real_cmc_manual_topup_contract_accepts_ledger_payment_and_delivers_cycles -- --ignored --exact --nocapture
 ```
 
 ## Reproducible blackhole requirement in historian / E2E suites

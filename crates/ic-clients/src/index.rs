@@ -153,7 +153,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn candid_decodes_transfer_from_transactions() {
+    fn local_legacy_transfer_from_variant_roundtrips() {
         let encoded = candid::encode_one(GetAccountIdentifierTransactionsResult::Ok(
             GetAccountIdentifierTransactionsResponse {
                 balance: 0,
@@ -197,6 +197,61 @@ mod tests {
                 }
             }
             other => panic!("expected Ok result, got {other:?}"),
+        }
+    }
+
+    fn decode_hex_fixture(text: &str) -> Vec<u8> {
+        let compact: String = text.split_whitespace().collect();
+        assert_eq!(compact.len() % 2, 0, "hex fixture must contain byte pairs");
+        compact
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let text = std::str::from_utf8(pair).expect("ASCII hex fixture");
+                u8::from_str_radix(text, 16).expect("valid hex fixture")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pinned_real_index_delegated_transfer_decodes_as_transfer_with_spender() {
+        // Frozen reply from the pinned real local ICP Index: a delegated transfer
+        // is encoded as Transfer with spender populated.
+        let bytes = decode_hex_fixture(include_str!(
+            "../tests/fixtures/icp-index-delegated-transfer-response.hex"
+        ));
+        let decoded: GetAccountIdentifierTransactionsResult =
+            candid::decode_one(&bytes).expect("decode pinned real Index response");
+        let GetAccountIdentifierTransactionsResult::Ok(response) = decoded else {
+            panic!("expected successful real Index response");
+        };
+        assert_eq!(response.transactions.len(), 2);
+        let delegated = &response.transactions[0];
+        assert_eq!(delegated.id, 4);
+        match &delegated.transaction.operation {
+            IndexOperation::Transfer {
+                from,
+                to,
+                spender: Some(spender),
+                amount,
+                fee,
+            } => {
+                assert_eq!(
+                    from,
+                    "1c7a48ba6a562aa9eaa2481a9049cdf0433b9738c992d698c31d8abf89cadc79"
+                );
+                assert_eq!(
+                    to,
+                    "6c19589384c6767f4a5632dd884c4b94239a23d71cf4196acb3cf42d99048495"
+                );
+                assert_eq!(
+                    spender,
+                    "82a867f8955a6516fb7de0ce1bf4ee258fb6bf0ccef09e650e1c918860556726"
+                );
+                assert_eq!(amount.e8s(), 20_000_000);
+                assert_eq!(fee.e8s(), 10_000);
+            }
+            other => panic!("expected delegated Transfer with spender, got {other:?}"),
         }
     }
 }

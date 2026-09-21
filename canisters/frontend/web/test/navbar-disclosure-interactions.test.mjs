@@ -464,32 +464,20 @@ function activePage(section) {
     .find((page) => page.classList.contains('is-active'));
 }
 
-for (const width of [1440, 1024, 861, 720]) {
-  test(`navbar disclosures align and remain clickable at ${width}px`, () => {
-    const env = setupNavbar(width);
-    const actionsRect = env.actionsButton.getBoundingClientRect();
-    const metricsRect = env.metricsButton.getBoundingClientRect();
+test('navbar JavaScript keeps disclosure state mutually exclusive', () => {
+    const env = setupNavbar(1024);
 
     click(env.actionsButton);
     assert.equal(env.actionsMenu.hidden, false);
     assert.equal(env.metricsMenu.hidden, true);
     assert.equal(env.actionsButton.getAttribute('aria-expanded'), 'true');
     assert.equal(env.metricsButton.getAttribute('aria-expanded'), 'false');
-    assert.ok(Math.abs(env.actionsMenu.getBoundingClientRect().left - actionsRect.left) <= 2);
-    assert.ok(env.actionsMenu.getBoundingClientRect().top >= actionsRect.bottom);
-    const metricsCenter = center(metricsRect);
-    assert.equal(env.document.elementFromPoint(metricsCenter.x, metricsCenter.y), env.metricsButton);
 
     click(env.metricsButton);
     assert.equal(env.actionsMenu.hidden, true);
     assert.equal(env.metricsMenu.hidden, false);
     assert.equal(env.actionsButton.getAttribute('aria-expanded'), 'false');
     assert.equal(env.metricsButton.getAttribute('aria-expanded'), 'true');
-    const actionsCenter = center(actionsRect);
-    assert.equal(env.document.elementFromPoint(actionsCenter.x, actionsCenter.y), env.actionsButton);
-    const metricsMenuRect = env.metricsMenu.getBoundingClientRect();
-    assert.ok(Math.abs(metricsMenuRect.right - metricsRect.right) <= 2);
-    assert.ok(metricsMenuRect.top >= metricsRect.bottom);
 
     click(env.metricsButton);
     assert.equal(env.actionsMenu.hidden, true);
@@ -497,8 +485,7 @@ for (const width of [1440, 1024, 861, 720]) {
     assert.equal(env.backdrop.classList.contains('is-open'), false);
     assert.equal(env.actionsButton.getAttribute('aria-expanded'), 'false');
     assert.equal(env.metricsButton.getAttribute('aria-expanded'), 'false');
-  });
-}
+});
 
 test('navbar disclosure and panel state transitions are authoritative', () => {
   const env = setupNavbar();

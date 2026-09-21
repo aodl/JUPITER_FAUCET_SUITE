@@ -289,32 +289,6 @@ pub(crate) fn conversion_estimate_is_usable(estimate: &ConversionEstimate, now_n
         && now_nanos.saturating_sub(estimate.timestamp_nanos) <= CONVERSION_ESTIMATE_MAX_AGE_NANOS
 }
 
-#[cfg(test)]
-pub(crate) fn conversion_estimate_from_icp_xdr_rate(
-    rate: u64,
-    decimals: u32,
-    timestamp_seconds: u64,
-) -> Result<ConversionEstimate, String> {
-    let scale = 10_u128
-        .checked_pow(decimals)
-        .ok_or_else(|| format!("10^{decimals} overflows u128"))?;
-    let numerator = u128::from(rate)
-        .checked_mul(10_000)
-        .ok_or_else(|| "rate * 10000 overflows u128".to_string())?;
-    let cycles_per_e8 = numerator / scale;
-    if cycles_per_e8 == 0 {
-        return Err("ICP/XDR rate produced zero cycles per e8".to_string());
-    }
-    let timestamp_nanos = timestamp_seconds
-        .checked_mul(1_000_000_000)
-        .ok_or_else(|| "timestamp seconds to nanoseconds overflows u64".to_string())?;
-
-    Ok(ConversionEstimate {
-        cycles_per_e8,
-        timestamp_nanos,
-    })
-}
-
 pub(crate) fn conversion_estimate_from_cmc_rate(
     xdr_permyriad_per_icp: u64,
     timestamp_seconds: u64,
@@ -1266,29 +1240,6 @@ mod tests {
         assert_eq!(target_topup_cycles(100_000_000_000), 101_000_000_000);
         assert_eq!(target_topup_cycles(1), 2);
         assert_eq!(target_topup_cycles(0), 0);
-    }
-
-    #[test]
-    fn conversion_estimate_from_icp_xdr_rate_converts_to_cycles_per_e8() {
-        let estimate =
-            conversion_estimate_from_icp_xdr_rate(720_000_000, 8, 1_700_000_000).unwrap();
-
-        assert_eq!(estimate.cycles_per_e8, 72_000);
-        assert_eq!(estimate.timestamp_nanos, 1_700_000_000_000_000_000);
-    }
-
-    #[test]
-    fn conversion_estimate_from_icp_xdr_rate_rejects_zero_cycles_per_e8() {
-        let err = conversion_estimate_from_icp_xdr_rate(1, 8, 1).unwrap_err();
-
-        assert!(err.contains("zero cycles per e8"));
-    }
-
-    #[test]
-    fn conversion_estimate_from_icp_xdr_rate_rejects_scale_overflow() {
-        let err = conversion_estimate_from_icp_xdr_rate(1, 129, 1).unwrap_err();
-
-        assert!(err.contains("overflows"));
     }
 
     #[test]

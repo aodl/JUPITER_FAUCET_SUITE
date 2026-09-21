@@ -104,7 +104,12 @@ mod tests {
             st.memo_registered_canister_summaries_total_desc_index = Some(vec![canister]);
         });
 
-        let index = MockIndexClient::new(Vec::new());
+        let index = MockIndexClient::new(vec![
+            empty_index_page(),
+            empty_index_page(),
+            empty_index_page(),
+            empty_index_page(),
+        ]);
         let cycles_probe = RecordingCyclesProbeClient::blackhole(0);
         let sns_wasm = MockSnsWasmClient::new(Vec::new());
         let sns_root = MockSnsRootClient::new(BTreeMap::new());
@@ -234,11 +239,14 @@ mod tests {
             },
         }
     }
+    type IndexRequest = (String, Option<u64>, u64);
+
     struct MockIndexClient {
         responses: Mutex<
             VecDeque<Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError>>,
         >,
         calls: Mutex<Vec<(String, Option<u64>, u64)>>,
+        expected_requests: Mutex<Option<VecDeque<IndexRequest>>>,
     }
 
     struct DelayedIndexClient {
@@ -323,7 +331,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .pop_front()
-                .unwrap_or_else(|| index_page(Vec::new())))
+                .expect("unexpected LeaseClockIndexClient script exhaustion"))
         }
     }
 
@@ -368,7 +376,17 @@ mod tests {
             Self {
                 responses: Mutex::new(pages.into_iter().map(Ok).collect()),
                 calls: Mutex::new(Vec::new()),
+                expected_requests: Mutex::new(None),
             }
+        }
+
+        fn nominal(
+            pages: Vec<GetAccountIdentifierTransactionsResponse>,
+            expected_requests: Vec<IndexRequest>,
+        ) -> Self {
+            let mut client = Self::new(pages);
+            client.expected_requests = Mutex::new(Some(expected_requests.into()));
+            client
         }
 
         fn scripted(
@@ -379,6 +397,7 @@ mod tests {
             Self {
                 responses: Mutex::new(responses.into()),
                 calls: Mutex::new(Vec::new()),
+                expected_requests: Mutex::new(None),
             }
         }
 
@@ -394,6 +413,21 @@ mod tests {
             balance: 0,
             oldest_tx_id: transactions.iter().map(|tx| tx.id).min(),
             transactions,
+        }
+    }
+
+    fn empty_index_page() -> GetAccountIdentifierTransactionsResponse {
+        index_page(Vec::new())
+    }
+
+    fn index_page_with_oldest(
+        transactions: Vec<IndexTransactionWithId>,
+        oldest_tx_id: Option<u64>,
+    ) -> GetAccountIdentifierTransactionsResponse {
+        GetAccountIdentifierTransactionsResponse {
+            balance: 0,
+            transactions,
+            oldest_tx_id,
         }
     }
 
@@ -455,6 +489,14 @@ mod tests {
             start: Option<u64>,
             max_results: u64,
         ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
+            if let Some(expected) = self.expected_requests.lock().unwrap().as_mut() {
+                assert_eq!(
+                    expected
+                        .pop_front()
+                        .expect("unexpected nominal Index request"),
+                    (account_identifier.clone(), start, max_results)
+                );
+            }
             self.calls
                 .lock()
                 .unwrap()
@@ -463,13 +505,23 @@ mod tests {
                 .lock()
                 .unwrap()
                 .pop_front()
-                .unwrap_or_else(|| {
-                    Ok(GetAccountIdentifierTransactionsResponse {
-                        balance: 0,
-                        transactions: Vec::new(),
-                        oldest_tx_id: None,
-                    })
-                })
+                .expect("unexpected MockIndexClient script exhaustion")
+        }
+    }
+
+    #[test]
+    fn nominal_index_fixture_rejects_account_cursor_and_limit_mutations() {
+        let expected = ("expected-account".to_string(), Some(512), 500);
+        for actual in [
+            ("wrong-account".to_string(), Some(512), 500),
+            ("expected-account".to_string(), Some(511), 500),
+            ("expected-account".to_string(), Some(512), 499),
+        ] {
+            let index = MockIndexClient::nominal(vec![empty_index_page()], vec![expected.clone()]);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                block_on(index.get_account_identifier_transactions(actual.0, actual.1, actual.2))
+            }));
+            assert!(result.is_err(), "mutated request unexpectedly accepted");
         }
     }
 
@@ -1253,7 +1305,14 @@ mod tests {
                 ..Default::default()
             },
         )]));
-        let index = MockIndexClient::new(Vec::new());
+        let index = MockIndexClient::new(vec![
+            empty_index_page(),
+            empty_index_page(),
+            empty_index_page(),
+            empty_index_page(),
+            empty_index_page(),
+            empty_index_page(),
+        ]);
         let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
         let governance = RecordingGovernanceClient::new();
         let xrc = MockXrcClient::success(720_000_000, 8, 9_900);
@@ -1393,11 +1452,7 @@ mod tests {
             );
             st.initial_cycles_probe_queue.push(initial_target);
         });
-        let index = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
-            balance: 0,
-            transactions: Vec::new(),
-            oldest_tx_id: None,
-        }]);
+        let index = MockIndexClient::new(vec![empty_index_page(), empty_index_page()]);
         let cycles_probe = RecordingCyclesProbeClient::blackhole(0)
             .with_blackhole_target_response(initial_target, ProbeResponse::Ok(111))
             .with_blackhole_target_response(sweep_target, ProbeResponse::Ok(222));
@@ -1621,11 +1676,7 @@ mod tests {
             });
             st.last_completed_cycles_sweep_ts = 10_000;
         });
-        let index = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
-            balance: 0,
-            transactions: Vec::new(),
-            oldest_tx_id: None,
-        }]);
+        let index = MockIndexClient::new(vec![empty_index_page(), empty_index_page()]);
         let cycles_probe = RecordingCyclesProbeClient::blackhole(0);
         let sns_wasm = MockSnsWasmClient::new(vec![]);
         let mut summaries = BTreeMap::new();
@@ -2743,13 +2794,14 @@ mod tests {
             st.commitment_route_rollups_complete_from_genesis = Some(true);
         });
 
-        let newest_page = index_page(
+        let newest_page = index_page_with_oldest(
             (512..=1_011)
                 .rev()
                 .map(|id| {
                     transfer_to_staking_tx(id, &staking_id, canister, 100, id * 1_000_000_000)
                 })
                 .collect(),
+            Some(1),
         );
         block_on(process_commitment_indexing(
             &MockIndexClient::new(vec![newest_page]),
@@ -2758,21 +2810,25 @@ mod tests {
         .unwrap();
         state::with_state_mut(|st| st.config.max_index_pages_per_tick = 2);
 
-        let older_page = index_page(
+        let older_page = index_page_with_oldest(
             (12..=511)
                 .rev()
                 .map(|id| {
                     transfer_to_staking_tx(id, &staking_id, canister, 100, id * 1_000_000_000)
                 })
                 .collect(),
+            Some(1),
         );
-        let oldest_page = index_page(vec![transfer_to_staking_tx(
-            11,
-            &staking_id,
-            canister,
-            100,
-            11_000_000_000,
-        )]);
+        let oldest_page = index_page_with_oldest(
+            vec![transfer_to_staking_tx(
+                11,
+                &staking_id,
+                canister,
+                100,
+                11_000_000_000,
+            )],
+            Some(1),
+        );
         let resumed = MockIndexClient::new(vec![older_page, oldest_page]);
         block_on(process_commitment_indexing(&resumed, 201)).unwrap();
 
@@ -3504,11 +3560,7 @@ mod tests {
             state::with_state(|st| st.commitment_route_rollups_complete_from_genesis),
             Some(false)
         );
-        let empty = MockIndexClient::new(vec![GetAccountIdentifierTransactionsResponse {
-            balance: 0,
-            transactions: Vec::new(),
-            oldest_tx_id: None,
-        }]);
+        let empty = MockIndexClient::new(vec![empty_index_page(), empty_index_page()]);
         block_on(process_commitment_indexing(&empty, 200)).unwrap();
         assert_eq!(
             state::with_state(|st| st.commitment_route_rollups_complete_from_genesis),
@@ -3838,6 +3890,9 @@ mod tests {
             st.rewards_route_backfill_complete = Some(false);
         });
 
+        // The repeated boundary IDs on pages two and three are deliberate
+        // overlap fault injection, not nominal exclusive Index pagination.
+        // The separate descending_output_catch_up test uses coherent pages.
         let route_pages = |route_id: &str| {
             let from_for = |id| {
                 if id == 250 || id == 750 {
@@ -3846,7 +3901,7 @@ mod tests {
                     source_id.as_str()
                 }
             };
-            vec![
+            let mut pages = vec![
                 index_page(
                     (501..=1_000)
                         .rev()
@@ -3863,7 +3918,11 @@ mod tests {
                     transfer_between_accounts_tx(2, &source_id, route_id, 1, 2),
                     transfer_between_accounts_tx(1, &source_id, route_id, 1, 1),
                 ]),
-            ]
+            ];
+            for page in &mut pages {
+                page.oldest_tx_id = Some(1);
+            }
+            pages
         };
         let mut responses = route_pages(&output_id);
         responses.extend(route_pages(&rewards_id));
@@ -3887,6 +3946,9 @@ mod tests {
                 1_001,
             )]),
         ]);
+        for response in &mut responses {
+            response.oldest_tx_id = Some(1);
+        }
         let index = MockIndexClient::new(responses);
 
         state::with_state(|st| {
@@ -3960,13 +4022,39 @@ mod tests {
         });
 
         let calls = index.calls();
+        assert_eq!(calls.len(), 10);
         assert_eq!(
             calls
                 .iter()
-                .take(6)
-                .map(|(_, start, _)| *start)
+                .map(|(account, _, limit)| (account.as_str(), *limit))
                 .collect::<Vec<_>>(),
-            vec![None, Some(501), Some(2), None, Some(501), Some(2)]
+            vec![
+                (output_id.as_str(), 500),
+                (output_id.as_str(), 500),
+                (output_id.as_str(), 500),
+                (rewards_id.as_str(), 500),
+                (rewards_id.as_str(), 500),
+                (rewards_id.as_str(), 500),
+                (output_id.as_str(), 500),
+                (rewards_id.as_str(), 500),
+                (output_id.as_str(), 500),
+                (rewards_id.as_str(), 500),
+            ]
+        );
+        assert_eq!(
+            calls.iter().map(|(_, start, _)| *start).collect::<Vec<_>>(),
+            vec![
+                None,
+                Some(501),
+                Some(2),
+                None,
+                Some(501),
+                Some(2),
+                None,
+                None,
+                None,
+                None,
+            ]
         );
     }
 
@@ -3984,27 +4072,45 @@ mod tests {
             st.output_route_backfill_complete = Some(true);
         });
 
-        let newest_page = index_page(
+        let newest_page = index_page_with_oldest(
             (512..=1_011)
                 .rev()
                 .map(|id| transfer_between_accounts_tx(id, &source_id, &output_id, 1, id))
                 .collect(),
+            Some(11),
         );
-        let older_page = index_page(
+        let older_page = index_page_with_oldest(
             (12..=511)
                 .rev()
                 .map(|id| transfer_between_accounts_tx(id, &source_id, &output_id, 1, id))
                 .collect(),
+            Some(11),
         );
-        let oldest_page = index_page(vec![transfer_between_accounts_tx(
-            11, &source_id, &output_id, 1, 11,
-        )]);
-        let index = MockIndexClient::new(vec![newest_page, older_page, oldest_page]);
+        let oldest_page = index_page_with_oldest(
+            vec![transfer_between_accounts_tx(
+                11, &source_id, &output_id, 1, 11,
+            )],
+            Some(11),
+        );
+        let index = MockIndexClient::nominal(
+            vec![newest_page, older_page, oldest_page],
+            vec![
+                (output_id.clone(), None, 500),
+                (output_id.clone(), Some(512), 500),
+                (output_id.clone(), Some(12), 500),
+            ],
+        );
 
         block_on(process_route_indexing(100, 200, &index, main_lease())).unwrap();
 
-        assert_eq!(index.calls()[0].1, None);
-        assert_eq!(index.calls()[1].1, Some(512));
+        assert_eq!(
+            index.calls(),
+            vec![
+                (output_id.clone(), None, 500),
+                (output_id.clone(), Some(512), 500),
+                (output_id.clone(), Some(12), 500),
+            ]
+        );
         state::with_state(|st| {
             assert_eq!(st.total_output_e8s, Some(1_001));
             assert_eq!(st.last_indexed_output_tx_id, Some(1_011));

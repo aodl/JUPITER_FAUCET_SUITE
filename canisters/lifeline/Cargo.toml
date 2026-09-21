@@ -5,10 +5,20 @@ edition = "2021"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[[test]]
+name = "jupiter_lifeline_integration"
+path = "../../tests/pocketic/jupiter_lifeline_integration.rs"
 
 [dependencies]
 candid = { workspace = true }
 ic-cdk = { workspace = true }
 ic-cdk-timers = { workspace = true }
 jupiter-canister-logging = { version = "0.1.0", path = "../../crates/canister-logging" }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+candid = { workspace = true }
+pocket-ic = { workspace = true }
+tokio = { workspace = true }

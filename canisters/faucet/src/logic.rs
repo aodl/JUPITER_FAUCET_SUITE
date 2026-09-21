@@ -21,19 +21,6 @@ pub(crate) enum CommitmentValidity {
     Valid { target: PayoutTarget },
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum CommitmentDecision {
-    IgnoreUnderThreshold,
-    IgnoreBadMemo,
-    NoTransfer,
-    Eligible {
-        target: PayoutTarget,
-        gross_share_e8s: u64,
-        amount_e8s: u64,
-    },
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PayoutTarget {
     CyclesTopUp {
@@ -227,32 +214,6 @@ pub(crate) fn commitment_amount_for_payout_e8s(
         round_end_time_nanos,
         effective_timestamp_nanos,
     ))
-}
-
-#[allow(dead_code)]
-pub(crate) fn evaluate_commitment(
-    pot_start_e8s: u64,
-    denom_e8s: u64,
-    fee_e8s: u64,
-    min_tx_e8s: u64,
-    commitment: &Commitment,
-) -> CommitmentDecision {
-    let target = match classify_commitment(min_tx_e8s, commitment) {
-        CommitmentValidity::IgnoreUnderThreshold => {
-            return CommitmentDecision::IgnoreUnderThreshold
-        }
-        CommitmentValidity::IgnoreBadMemo => return CommitmentDecision::IgnoreBadMemo,
-        CommitmentValidity::Valid { target } => target,
-    };
-    let gross_share_e8s = compute_raw_share_e8s(commitment.amount_e8s, pot_start_e8s, denom_e8s);
-    if gross_share_e8s <= fee_e8s {
-        return CommitmentDecision::NoTransfer;
-    }
-    CommitmentDecision::Eligible {
-        target,
-        gross_share_e8s,
-        amount_e8s: gross_share_e8s.saturating_sub(fee_e8s),
-    }
 }
 
 pub(crate) fn record_ledger_accepted_transfer(
@@ -765,166 +726,6 @@ mod tests {
     }
 
     #[test]
-    fn commitment_below_threshold_is_ignored() {
-        let valid = target_canister();
-        let c = Commitment {
-            amount_e8s: 99_999_999,
-            memo_bytes: Some(valid.to_text().into_bytes()),
-        };
-        assert_eq!(
-            evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c),
-            CommitmentDecision::IgnoreUnderThreshold
-        );
-    }
-
-    #[test]
-    fn commitment_exactly_at_threshold_is_included() {
-        let valid = target_canister();
-        let c = Commitment {
-            amount_e8s: 100_000_000,
-            memo_bytes: Some(valid.to_text().into_bytes()),
-        };
-        assert_eq!(
-            evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c),
-            CommitmentDecision::Eligible {
-                target: top_up_target(valid),
-                gross_share_e8s: 50_000_000,
-                amount_e8s: 49_990_000
-            }
-        );
-    }
-
-    #[test]
-    fn commitment_above_threshold_is_included() {
-        let valid = target_canister();
-        let c = Commitment {
-            amount_e8s: 400_000_000,
-            memo_bytes: Some(valid.to_text().into_bytes()),
-        };
-        assert_eq!(
-            evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &c),
-            CommitmentDecision::Eligible {
-                target: top_up_target(valid),
-                gross_share_e8s: 200_000_000,
-                amount_e8s: 199_990_000
-            }
-        );
-    }
-
-    #[test]
-    fn share_calculation_uses_current_pot_and_denominator() {
-        let valid = target_canister();
-        let c = Commitment {
-            amount_e8s: 250_000_000,
-            memo_bytes: Some(valid.to_text().into_bytes()),
-        };
-        assert_eq!(
-            evaluate_commitment(120_000_000, 600_000_000, 10_000, 100_000_000, &c),
-            CommitmentDecision::Eligible {
-                target: top_up_target(valid),
-                gross_share_e8s: 50_000_000,
-                amount_e8s: 49_990_000
-            }
-        );
-    }
-
-    #[test]
-    fn evaluate_commitment_counts_bad_and_missing_memos() {
-        let missing = Commitment {
-            amount_e8s: 200_000_000,
-            memo_bytes: None,
-        };
-        let bad = Commitment {
-            amount_e8s: 300_000_000,
-            memo_bytes: Some(b"bad-memo".to_vec()),
-        };
-        assert_eq!(
-            evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &missing),
-            CommitmentDecision::IgnoreBadMemo
-        );
-        assert_eq!(
-            evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &bad),
-            CommitmentDecision::IgnoreBadMemo
-        );
-    }
-
-    #[test]
-    fn separate_commitments_for_same_beneficiary_remain_separate() {
-        let beneficiary = target_canister();
-        let first = Commitment {
-            amount_e8s: 200_000_000,
-            memo_bytes: Some(beneficiary.to_text().into_bytes()),
-        };
-        let second = Commitment {
-            amount_e8s: 300_000_000,
-            memo_bytes: Some(beneficiary.to_text().into_bytes()),
-        };
-        let first_eval =
-            evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &first);
-        let second_eval =
-            evaluate_commitment(500_000_000, 1_000_000_000, 10_000, 100_000_000, &second);
-        assert_eq!(
-            first_eval,
-            CommitmentDecision::Eligible {
-                target: top_up_target(beneficiary),
-                gross_share_e8s: 100_000_000,
-                amount_e8s: 99_990_000
-            }
-        );
-        assert_eq!(
-            second_eval,
-            CommitmentDecision::Eligible {
-                target: top_up_target(beneficiary),
-                gross_share_e8s: 150_000_000,
-                amount_e8s: 149_990_000
-            }
-        );
-    }
-
-    #[test]
-    fn distinct_beneficiaries_with_same_commitment_size_are_processed_independently() {
-        let a = target_canister();
-        let b = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
-        let amount_e8s = 200_000_000;
-        let eval_a = evaluate_commitment(
-            500_000_000,
-            1_000_000_000,
-            10_000,
-            100_000_000,
-            &Commitment {
-                amount_e8s,
-                memo_bytes: Some(a.to_text().into_bytes()),
-            },
-        );
-        let eval_b = evaluate_commitment(
-            500_000_000,
-            1_000_000_000,
-            10_000,
-            100_000_000,
-            &Commitment {
-                amount_e8s,
-                memo_bytes: Some(b.to_text().into_bytes()),
-            },
-        );
-        assert_eq!(
-            eval_a,
-            CommitmentDecision::Eligible {
-                target: top_up_target(a),
-                gross_share_e8s: 100_000_000,
-                amount_e8s: 99_990_000
-            }
-        );
-        assert_eq!(
-            eval_b,
-            CommitmentDecision::Eligible {
-                target: top_up_target(b),
-                gross_share_e8s: 100_000_000,
-                amount_e8s: 99_990_000
-            }
-        );
-    }
-
-    #[test]
     fn rounding_behavior_is_deterministic() {
         assert_eq!(compute_raw_share_e8s(1, 1, 3), 0);
         assert_eq!(compute_raw_share_e8s(2, 5, 3), 3);
@@ -941,6 +742,8 @@ mod tests {
     #[test]
     fn proportional_pot_and_denominator_scaling_preserves_absolute_shares() {
         let commitment = 400_000_000_u64;
+        assert_eq!(compute_raw_share_e8s(commitment, 0, 1_000_000_000), 0);
+        assert_eq!(compute_raw_share_e8s(commitment, 100_000_000, 0), 0);
         let initial = compute_raw_share_e8s(commitment, 100_000_000, 1_000_000_000);
         let scaled = compute_raw_share_e8s(commitment, 150_000_000, 1_500_000_000);
         assert_eq!(initial, 40_000_000);
@@ -960,19 +763,6 @@ mod tests {
             "if the staking-balance denominator grows before the payout pot catches up, that single round can temporarily underpay relative to steady state");
         assert_eq!(reequilibrated_round, steady_state,
             "once the payout pot scales with the larger stake base, the beneficiary re-equilibrates to the original absolute share");
-    }
-
-    #[test]
-    fn no_transfer_when_share_rounds_below_fee() {
-        let beneficiary = target_canister();
-        let c = Commitment {
-            amount_e8s: 100_000_000,
-            memo_bytes: Some(beneficiary.to_text().into_bytes()),
-        };
-        assert_eq!(
-            evaluate_commitment(10_000, 1_000_000_000, 10_000, 100_000_000, &c),
-            CommitmentDecision::NoTransfer
-        );
     }
 
     #[test]
@@ -1063,56 +853,6 @@ mod tests {
     }
 
     #[test]
-    fn same_beneficiary_with_identical_memo_bytes_is_evaluated_as_distinct_commitments() {
-        let beneficiary = target_canister();
-        let memo = Some(beneficiary.to_text().into_bytes());
-        let first = Commitment {
-            amount_e8s: 125_000_000,
-            memo_bytes: memo.clone(),
-        };
-        let second = Commitment {
-            amount_e8s: 125_000_000,
-            memo_bytes: memo,
-        };
-        let first_eval = evaluate_commitment(200_000_000, 500_000_000, 10_000, 100_000_000, &first);
-        let second_eval =
-            evaluate_commitment(200_000_000, 500_000_000, 10_000, 100_000_000, &second);
-        assert_eq!(
-            first_eval,
-            CommitmentDecision::Eligible {
-                target: top_up_target(beneficiary),
-                gross_share_e8s: 50_000_000,
-                amount_e8s: 49_990_000
-            }
-        );
-        assert_eq!(
-            second_eval,
-            CommitmentDecision::Eligible {
-                target: top_up_target(beneficiary),
-                gross_share_e8s: 50_000_000,
-                amount_e8s: 49_990_000
-            }
-        );
-    }
-
-    #[test]
-    fn zero_pot_or_zero_denominator_never_produces_a_transfer() {
-        let beneficiary = target_canister();
-        let commitment = Commitment {
-            amount_e8s: 100_000_000,
-            memo_bytes: Some(beneficiary.to_text().into_bytes()),
-        };
-        assert_eq!(
-            evaluate_commitment(0, 500_000_000, 10_000, 100_000_000, &commitment),
-            CommitmentDecision::NoTransfer
-        );
-        assert_eq!(
-            evaluate_commitment(50_000_000, 0, 10_000, 100_000_000, &commitment),
-            CommitmentDecision::NoTransfer
-        );
-    }
-
-    #[test]
     fn accepted_but_unnotified_transfer_still_reduces_remaining_pot() {
         let beneficiary = target_canister();
         let mut job = ActivePayoutJob::new(12, 10_000, 90_000_000, 200_000_000, 1);
@@ -1171,17 +911,16 @@ mod tests {
                     amount_e8s: 1 + (lcg(&mut seed) % 500_000_000),
                     memo_bytes: Some(beneficiary.to_text().into_bytes()),
                 };
-                if let CommitmentDecision::Eligible {
-                    target,
-                    gross_share_e8s,
-                    amount_e8s,
-                } = evaluate_commitment(
-                    pot_start_e8s,
-                    denom_staking_balance_e8s,
-                    fee_e8s,
-                    1,
-                    &commitment,
-                ) {
+                if let CommitmentValidity::Valid { target } = classify_commitment(1, &commitment) {
+                    let gross_share_e8s = compute_raw_share_e8s(
+                        commitment.amount_e8s,
+                        pot_start_e8s,
+                        denom_staking_balance_e8s,
+                    );
+                    if gross_share_e8s <= fee_e8s {
+                        continue;
+                    }
+                    let amount_e8s = gross_share_e8s - fee_e8s;
                     let Some(beneficiary) = target.canister_id() else {
                         continue;
                     };

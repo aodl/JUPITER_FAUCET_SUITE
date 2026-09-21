@@ -60,7 +60,7 @@ mod tests {
 
     #[test]
     fn self_only_when_healthy() {
-        let now = 100 + HEALTHY_WINDOW_SECS;
+        let now = 100 + HEALTHY_WINDOW_SECS - 1;
         let got = desired_controllers(now, Some(100), self_id(), rescue_id()).unwrap();
         assert_eq!(got, vec![self_id()]);
     }

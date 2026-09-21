@@ -581,18 +581,21 @@ mod tests {
         ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
             assert_no_persistence_batch();
             self.starts.lock().unwrap().push(start);
+            // This fixture deliberately preserves the caller-supplied ordering so
+            // tests can exercise synthetic ascending and malformed histories. The
+            // nominal Index contract is modelled by NewestFirstExclusiveIndex.
             let start_idx = match start {
                 None => 0,
                 Some(last_seen) => self
                     .txs
                     .iter()
-                    .position(|t| t.id == last_seen)
-                    .map(|i| i + 1)
+                    .position(|tx| tx.id == last_seen)
+                    .map(|index| index + 1)
                     .unwrap_or(self.txs.len()),
             };
             let mut out = Vec::new();
-            for tx in self.txs[start_idx..].iter() {
-                let include = matches!(&tx.transaction.operation, IndexOperation::Transfer { to, .. } if to == &account_identifier);
+            for tx in &self.txs[start_idx..] {
+                let include = matches!(&tx.transaction.operation, IndexOperation::Transfer { from, to, .. } if from == &account_identifier || to == &account_identifier);
                 if include {
                     out.push(tx.clone());
                 }
@@ -602,7 +605,18 @@ mod tests {
             }
             Ok(GetAccountIdentifierTransactionsResponse {
                 balance: 0,
-                oldest_tx_id: self.txs.iter().map(|tx| tx.id).min(),
+                oldest_tx_id: self
+                    .txs
+                    .iter()
+                    .rev()
+                    .find(|tx| {
+                        matches!(
+                            &tx.transaction.operation,
+                            IndexOperation::Transfer { from, to, .. }
+                                if from == &account_identifier || to == &account_identifier
+                        )
+                    })
+                    .map(|tx| tx.id),
                 transactions: out,
             })
         }
@@ -648,17 +662,9 @@ mod tests {
         ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
             assert_no_persistence_batch();
             self.starts.lock().unwrap().push(start);
-            let start_idx = match start {
-                None => 0,
-                Some(boundary) => self
-                    .txs
-                    .iter()
-                    .position(|tx| tx.id == boundary)
-                    .map(|index| index + 1)
-                    .unwrap_or(self.txs.len()),
-            };
-            let transactions = self.txs[start_idx..]
+            let transactions = self.txs
                 .iter()
+                .filter(|tx| start.is_none_or(|boundary| tx.id < boundary))
                 .filter(|tx| {
                     matches!(
                         &tx.transaction.operation,
@@ -746,11 +752,12 @@ mod tests {
     impl IndexClient for BarrenPagedIndex {
         async fn get_account_identifier_transactions(
             &self,
-            _account_identifier: String,
+            account_identifier: String,
             start: Option<u64>,
             max_results: u64,
         ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError> {
             assert_no_persistence_batch();
+            assert_eq!(account_identifier, self.staking_id);
             self.starts.lock().unwrap().push(start);
             let first_id = start
                 .unwrap_or(self.page_count * PAGE_SIZE + 1)

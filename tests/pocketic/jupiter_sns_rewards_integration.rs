@@ -240,7 +240,6 @@ impl TimerScanEnv {
 #[test]
 #[ignore = "PocketIC integration"]
 fn periodic_config_logging_survives_root_resolution_failure() -> Result<()> {
-    support::assertions::require_ignored_flag()?;
     let env = TimerScanEnv::new(false)?;
     support::calls::tick_n(&env.pic, 20);
 
@@ -281,7 +280,6 @@ fn periodic_config_logging_survives_root_resolution_failure() -> Result<()> {
 #[test]
 #[ignore = "PocketIC integration"]
 fn timer_starts_second_snapshot_at_the_next_daily_due_boundary() -> Result<()> {
-    support::assertions::require_ignored_flag()?;
     let env = TimerScanEnv::new(true)?;
     support::calls::tick_n(&env.pic, 20);
     let first = env
@@ -319,7 +317,6 @@ fn timer_starts_second_snapshot_at_the_next_daily_due_boundary() -> Result<()> {
 #[test]
 #[ignore = "PocketIC integration"]
 fn failed_root_resolution_retries_without_consuming_daily_cadence() -> Result<()> {
-    support::assertions::require_ignored_flag()?;
     let env = TimerScanEnv::new(false)?;
     support::calls::tick_n(&env.pic, 20);
     assert!(env.context()?.is_none());
@@ -344,7 +341,6 @@ fn failed_root_resolution_retries_without_consuming_daily_cadence() -> Result<()
 #[test]
 #[ignore = "PocketIC integration"]
 fn owner_scan_is_resumable_atomic_and_invalidated_on_root_change() -> Result<()> {
-    support::assertions::require_ignored_flag()?;
     let pic = support::pocketic::builder()
         .with_application_subnet()
         .build();

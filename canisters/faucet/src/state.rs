@@ -1500,6 +1500,63 @@ mod tests {
     }
 
     #[test]
+    fn fe7ed08_predecessor_bytes_decode_without_losing_supported_state() {
+        // Synthetic Candid V1 bytes from the schema at fe7ed08ee07acb7195e1a628170a4e4b5f4af4c9.
+        // This fixture is independent of the current encoder and is not production state.
+        let hex: String = include_str!("../tests/fixtures/fe7ed08-stable-v1.hex")
+            .split_whitespace()
+            .collect();
+        assert_eq!(hex.len(), 2 * 1_065, "predecessor fixture byte length");
+        let bytes = hex
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let pair = std::str::from_utf8(pair).expect("ASCII predecessor hex");
+                u8::from_str_radix(pair, 16).expect("valid predecessor hex")
+            })
+            .collect::<Vec<_>>();
+        let VersionedStableState::V1(restored) = decode_versioned_stable_state(&bytes)
+            .expect("independently predecessor-encoded V1 must decode")
+        else {
+            panic!("expected V1 predecessor fixture");
+        };
+        assert_eq!(restored.config.staking_account.owner, principal(&[1]));
+        assert_eq!(restored.config.payout_subaccount, Some([7; 32]));
+        assert_eq!(restored.config.autonomous_rescue_armed, Some(false));
+        assert_eq!(restored.config.expected_first_staking_tx_id, Some(11));
+        assert_eq!(restored.last_successful_transfer_ts, Some(987));
+        assert_eq!(restored.last_rescue_check_ts, 876);
+        assert_eq!(restored.payout_nonce, 42);
+        assert_eq!(
+            restored.current_round_start_time_nanos,
+            Some(654_000_000_000)
+        );
+        assert_eq!(restored.current_round_start_latest_tx_id, Some(543));
+        assert_eq!(restored.last_processed_funding_tx_id, Some(432));
+        assert_eq!(
+            restored.active_funding_scan,
+            Some(FundingScanState {
+                anchor_last_processed_funding_tx_id: Some(432),
+                cursor: Some(500),
+                candidate: Some(FundingTrancheState {
+                    tx_id: 444,
+                    timestamp_nanos: 333_000_000_000,
+                    amount_e8s: 222_000_000,
+                }),
+            })
+        );
+        assert!(restored.active_payout_job.is_none());
+
+        let reduced = candid::encode_one(VersionedStableState::V1(restored.clone()))
+            .expect("encode reduced current state");
+        decode_versioned_stable_state(&reduced).expect("reduced state remains strict-decodable");
+        let (_, _, mut args, _, _) = parse_wire(&reduced);
+        assert!(state_fields_mut(&mut args)
+            .iter()
+            .all(|field| field.id.get_id() != candid::idl_hash(RETIRED_STATE_FIELD)));
+    }
+
+    #[test]
     fn deployed_wider_v1_active_jobs_remain_present_for_quiescence_in_all_phases() {
         let mut phases = Vec::new();
 
