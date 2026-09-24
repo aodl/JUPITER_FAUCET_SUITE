@@ -5550,20 +5550,9 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
             .iter()
             .filter(|call| call.account_identifier == staking_id)
             .count(),
-        staking_calls_after + 1,
-        "each steady-state tick must make only the normal staking Index call"
+        staking_calls_after,
+        "a same-hour steady-state driver tick must not repeat scheduled commitment indexing"
     );
-    let overlap_call = calls_after_overlap
-        .iter()
-        .filter(|call| call.account_identifier == staking_id)
-        .nth(staking_calls_after)
-        .expect("missing overlap staking Index call");
-    assert!(
-        overlap_call.start.is_none(),
-        "a completed newest-first interval starts the next bounded scan at the current head"
-    );
-    assert!(overlap_call.max_results > 0);
-    assert!(overlap_call.returned_count <= overlap_call.max_results);
     Ok(())
 }
 
@@ -5849,7 +5838,7 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
     );
     assert_eq!(status.staking_account.subaccount, Some([9u8; 32]));
     assert_eq!(status.ledger_canister_id, h.index);
-    assert_eq!(status.index_interval_seconds, 60);
+    assert_eq!(status.index_interval_seconds, 3_600);
     assert_eq!(status.cycles_interval_seconds, 1);
     assert!(status.last_index_run_ts.is_some());
     assert!(status.heap_memory_bytes.is_some());

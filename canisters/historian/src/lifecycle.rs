@@ -124,7 +124,7 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
             .unwrap_or_else(mainnet_sns_wasm_id),
         xrc_canister_id: args.xrc_canister_id.unwrap_or_else(mainnet_xrc_id),
         enable_sns_tracking: args.enable_sns_tracking.unwrap_or(false),
-        scan_interval_seconds: args.scan_interval_seconds.unwrap_or(60 * 60),
+        scan_interval_seconds: args.scan_interval_seconds.unwrap_or(10 * 60),
         cycles_interval_seconds: args.cycles_interval_seconds.unwrap_or(7 * 24 * 60 * 60),
         min_tx_e8s: args.min_tx_e8s.unwrap_or(100_000_000),
         max_cycles_entries_per_canister: clamp_cycles_entries_per_canister(

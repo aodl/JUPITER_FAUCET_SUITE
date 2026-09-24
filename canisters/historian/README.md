@@ -178,7 +178,7 @@ Up to 100 exact routes can be queried in one call, so consumers can batch the re
 
 Event Horizon makes best-effort inter-canister `poke(vec nat64)` calls with affected subscription IDs. Only the configured endowment ID requests one bounded ICP Index check; a batch or duplicate ID cannot cause duplicate scans. The call is a hint, not payment evidence. Production caller and ID allowlists require the actual Event Horizon principal and subscription ID before this path is enabled. The browser does not call `poke`.
 
-Historian checks at most one 500-transaction Index page per attempt. Each relevant hint requests an immediate bounded check when admission and the commitment writer permit it, plus one coalesced trailing check 10 seconds after the most recent relevant hint. Normal hourly indexing is the complete fallback when notifications are missed or cannot be acted upon. `get_endowment_transaction_status(transaction_id)` remains a bounded read query.
+Historian checks at most one 500-transaction Index page per attempt. Each relevant hint requests an immediate bounded check when admission and the commitment writer permit it, plus one coalesced trailing check 10 seconds after the most recent relevant hint. Scheduled hourly commitment indexing is the complete fallback when notifications are missed or cannot be acted upon. `get_endowment_transaction_status(transaction_id)` remains a bounded read query.
 
 ## Self-service Relay configurations
 
@@ -200,20 +200,24 @@ On Historian upgrade, interrupted `Reserved` and `ProbingTargets` entries are re
 
 Defaults are:
 
-- `scan_interval_seconds = 3600` (1 hour)
+- `scan_interval_seconds = 600` (10 minutes)
 - `cycles_interval_seconds = 604800` (7 days)
 - `max_index_pages_per_tick = 10`
 - `max_canisters_per_cycles_tick = 25`
 
-The historian also schedules an immediate one-shot tick roughly 1 second after install or upgrade so local and fresh deployments do not have to wait for the first full scan interval.
+The historian also schedules an immediate one-shot tick roughly 1 second after install or upgrade so local and fresh deployments do not have to wait for the first full scan interval. In steady state, scheduled commitment/endowment indexing runs once per hourly wall-clock window. Event Horizon hints independently request an immediate bounded commitment check plus one trailing-edge check 10 seconds after the latest relevant hint. Incomplete commitment backfill, catch-up, or authoritative route roll-up work can advance on every 10-minute main-driver run.
 
 ### What the driver does
 
 On each driver run it:
 
-1. advances endowment indexing
-2. performs SNS discovery when the SNS / cycles cadence is due and SNS tracking is enabled
-3. starts or advances a cycles sweep when the sweep cadence is due or a prior sweep is still in progress
+1. advances scheduled commitment/endowment indexing when its hourly fallback is due, or on every run while catch-up/backfill remains incomplete
+2. advances output and rewards indexing
+3. performs SNS discovery when the SNS / cycles cadence is due and SNS tracking is enabled
+4. advances the initial cycles-probe queue
+5. starts or advances a cycles sweep when the sweep cadence is due or a prior sweep is still in progress
+
+The existing XRC refresh due policy also remains part of the main driver.
 
 The configured production ICP Index contract is newest-first. A persisted legacy ascending-order flag is unsupported because its historical coverage cannot be proved safely. Staking indexing fails closed before an outcall, marks route totals incomplete, and latches an actionable fault. Output or rewards indexing likewise fails closed rather than reinterpreting an ascending cursor. Production exposed legacy ascending output/rewards metadata on 2026-09-11; a reviewed one-hop upgrade discarded only those untrusted derived totals/cursors and rebuilt both aggregates from authoritative newest-first ICP Ledger/Index history. Both backfills completed successfully, and that compatibility repair has been removed. Current code no longer auto-repairs `Some(false)`; any future occurrence is anomalous and fails closed. `get_public_status().route_index_fault` remains non-null while either current newest-first historical backfill is incomplete, so temporarily lower or partial output/rewards totals are explicitly degraded until genesis coverage is established. A genuine staking fault remains visible until an operator establishes that the invariant is resolved and explicitly clears it; a poke does not clear it.
 
@@ -257,7 +261,7 @@ Optional:
 - `faucet_canister_id` (defaults to production [`jupiter-faucet`](../faucet) canister ID)
 - `sns_wasm_canister_id` (defaults to SNS-WASM)
 - `enable_sns_tracking` (defaults to `false`)
-- `scan_interval_seconds` (defaults to `3600`)
+- `scan_interval_seconds` (defaults to `600`)
 - `cycles_interval_seconds` (defaults to `604800`)
 - `min_tx_e8s` (defaults to `100_000_000`; must be at least `10_000_000`)
 - `max_cycles_entries_per_canister` (defaults to `100`)
@@ -291,13 +295,7 @@ Upgrades can change:
 
 Inspect the current `UpgradeArgs` definition in [`src/lifecycle.rs`](src/lifecycle.rs), its imported API type in [`src/api.rs`](src/api.rs), and the exported DID [`jupiter_historian.did`](jupiter_historian.did) before preparing any upgrade-time argument file.
 
-The existing production canister retains its persisted 600-second interval on a no-argument upgrade. This release requires a reviewed temporary `Option<UpgradeArgs>` file to set the live interval:
-
-```candid
-(opt record { scan_interval_seconds = opt (3600 : nat64) })
-```
-
-Remove that temporary file after the config-changing upgrade. A fresh install uses the checked-in 3600-second default.
+The existing production canister retains its persisted 600-second interval on a no-argument upgrade. A routine upgrade for the Event Horizon feature does not need to change `scan_interval_seconds`.
 
 ### Mainnet install args committed in this repo
 
@@ -306,7 +304,7 @@ The committed [`mainnet-install-args.did`](mainnet-install-args.did) configures:
 - the Jupiter staking account as the endowment source
 - default ICP Ledger, ICP Index, CMC, faucet, and SNS-WASM IDs by leaving those principals as `null`
 - `enable_sns_tracking = false`
-- `scan_interval_seconds = 3600`
+- `scan_interval_seconds = 600`
 - `cycles_interval_seconds = 604800`
 - `min_tx_e8s = 100_000_000` (must match the faucet config, and both are validated by [`../../tools/scripts/validate-mainnet-install-args`](../../tools/scripts/validate-mainnet-install-args))
 - `max_cycles_entries_per_canister = 100`

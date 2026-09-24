@@ -83,6 +83,103 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_commitment_policy_separates_hourly_fallback_from_main_driver() {
+        configure_state(10);
+        state::with_state_mut(|st| {
+            st.staking_backfill_complete = Some(true);
+            st.active_staking_catch_up = None;
+            st.commitment_route_rollups_complete_from_genesis = Some(true);
+            st.last_main_run_ts = 3_650;
+            st.last_index_run_ts = Some(7_199);
+        });
+
+        state::with_state(|st| {
+            assert!(!scheduled_commitment_indexing_due(st, 3_700, false));
+            assert!(scheduled_commitment_indexing_due(st, 7_200, false));
+            assert!(
+                scheduled_commitment_indexing_due(st, 3_700, true),
+                "forced ticks retain the pre-gate commitment-indexing behavior"
+            );
+        });
+
+        state::with_state_mut(|st| st.staking_backfill_complete = Some(false));
+        state::with_state(|st| assert!(scheduled_commitment_indexing_due(st, 3_700, false)));
+
+        state::with_state_mut(|st| {
+            st.staking_backfill_complete = Some(true);
+            st.active_staking_catch_up = Some(state::DescendingIndexCatchUp {
+                boundary_tx_id: 10,
+                observed_head_tx_id: 11,
+                next_start_tx_id: Some(9),
+            });
+        });
+        state::with_state(|st| assert!(scheduled_commitment_indexing_due(st, 3_700, false)));
+
+        state::with_state_mut(|st| {
+            st.active_staking_catch_up = None;
+            st.commitment_route_rollups_complete_from_genesis = Some(false);
+        });
+        state::with_state(|st| assert!(scheduled_commitment_indexing_due(st, 3_700, false)));
+
+        state::with_state_mut(|st| {
+            st.commitment_route_rollups_complete_from_genesis = Some(true);
+            st.last_main_run_ts = 3_599;
+            st.last_index_run_ts = Some(3_605);
+        });
+        state::with_state(|st| {
+            assert!(
+                scheduled_commitment_indexing_due(st, 3_600, false),
+                "a recent Event Horizon pass must not postpone the independent hourly fallback"
+            );
+        });
+    }
+
+    #[test]
+    fn main_tick_skips_commitment_scan_without_skipping_route_indexing() {
+        configure_state(10);
+        let (source_id, output_id) = state::with_state(|st| {
+            (
+                account_identifier_text_for_account(&st.config.output_source_account),
+                account_identifier_text_for_account(&st.config.output_account),
+            )
+        });
+        state::with_state_mut(|st| {
+            st.staking_backfill_complete = Some(true);
+            st.commitment_route_rollups_complete_from_genesis = Some(true);
+            st.last_index_run_ts = Some(55);
+        });
+        let index = MockIndexClient::new(vec![index_page(vec![transfer_between_accounts_tx(
+            1, &source_id, &output_id, 123, 1,
+        )])]);
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(0);
+        let sns_wasm = MockSnsWasmClient::new(Vec::new());
+        let sns_root = MockSnsRootClient::new(BTreeMap::new());
+        let governance = RecordingGovernanceClient::new();
+        let xrc = MockXrcClient::success(720_000_000, 8, 9_900);
+
+        block_on(run_main_tick_with_clients(
+            100_000_000_000,
+            100,
+            &index,
+            &cycles_probe,
+            &sns_wasm,
+            &sns_root,
+            &governance,
+            &xrc,
+            false,
+            main_lease(),
+            &|| 100,
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(st.last_index_run_ts, Some(55));
+            assert_eq!(st.total_output_e8s, Some(123));
+        });
+        assert_eq!(index.calls().len(), 1);
+    }
+
+    #[test]
     fn main_tick_repairs_memo_registered_summary_index_drift() {
         configure_state(10);
         let canister = principal("jufzc-caaaa-aaaar-qb5da-cai");
@@ -126,6 +223,7 @@ mod tests {
             &sns_root,
             &governance,
             &xrc,
+            true,
             main_lease(),
             &|| 100,
         ))
@@ -1328,6 +1426,7 @@ mod tests {
                 &sns_root,
                 &governance,
                 &xrc,
+                true,
                 main_lease(),
                 &|| now_secs,
             ))
@@ -1473,6 +1572,7 @@ mod tests {
             &sns_root,
             &governance,
             &xrc,
+            true,
             main_lease(),
             &|| 123,
         ))
@@ -1577,6 +1677,7 @@ mod tests {
                 &sns_root,
                 &governance,
                 &xrc,
+                true,
                 main_lease(),
                 &|| 123,
             ))
@@ -1637,6 +1738,7 @@ mod tests {
                 &sns_root,
                 &governance,
                 &xrc,
+                true,
                 main_lease(),
                 &|| 133,
             ))
@@ -1701,6 +1803,7 @@ mod tests {
             &sns_root,
             &governance,
             &xrc,
+            true,
             main_lease(),
             &|| 10_000,
         ))
@@ -3478,6 +3581,7 @@ mod tests {
             &sns_root,
             &governance,
             &xrc,
+            true,
             main_lease(),
             &|| clock.load(Ordering::SeqCst),
         ))

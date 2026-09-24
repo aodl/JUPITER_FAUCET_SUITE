@@ -373,7 +373,7 @@ mod tests {
         assert_eq!(cfg.cmc_canister_id, Some(mainnet_cmc_id()));
         assert_eq!(cfg.faucet_canister_id, Some(mainnet_faucet_id()));
         assert_eq!(cfg.sns_wasm_canister_id, mainnet_sns_wasm_id());
-        assert_eq!(cfg.scan_interval_seconds, 3600);
+        assert_eq!(cfg.scan_interval_seconds, 600);
         assert_eq!(cfg.cycles_interval_seconds, 604800);
         assert_eq!(cfg.min_tx_e8s, 100_000_000);
     }
@@ -947,31 +947,11 @@ mod tests {
     }
 
     #[test]
-    fn abbreviated_upgrade_args_set_hourly_scan() {
-        #[derive(CandidType)]
-        struct IntervalOnly {
-            scan_interval_seconds: Option<u64>,
-        }
-        let raw = encode_args((Some(IntervalOnly {
-            scan_interval_seconds: Some(3_600),
-        }),))
-        .unwrap();
-        let args = decode_post_upgrade_args_from_bytes(&raw)
-            .unwrap()
-            .expect("upgrade option");
-        assert_eq!(args.scan_interval_seconds, Some(3_600));
-        let mut st = base_state();
-        st.config.scan_interval_seconds = 600;
-        apply_upgrade_args(&mut st, Some(args));
-        assert_eq!(st.config.scan_interval_seconds, 3_600);
-    }
-
-    #[test]
     fn get_public_status_reflects_effective_runtime_config() {
         let mut st = base_state();
         st.config.staking_account = alternate_account();
         st.config.ledger_canister_id = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        st.config.scan_interval_seconds = 3_600;
+        st.config.scan_interval_seconds = 600;
         st.last_index_run_ts = Some(777);
         st.last_completed_cycles_sweep_ts = 888;
         state::set_state(st);
@@ -996,6 +976,9 @@ mod tests {
                     .saturating_add(status.stable_memory_bytes.unwrap_or(0))
             ),
         );
+
+        state::with_state_mut(|st| st.config.scan_interval_seconds = 7_200);
+        assert_eq!(get_public_status().index_interval_seconds, 7_200);
     }
 
     #[test]

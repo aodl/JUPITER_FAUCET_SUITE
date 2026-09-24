@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import {
+  DASH,
+  formatDurationSeconds,
+  formatLocalTimestampSeconds,
+} from '../src/app/view-formatters.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const indexHtml = readFileSync(resolve(__dirname, '../../public/index.html'), 'utf8');
@@ -879,6 +884,9 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
 
   assert.match(rail, /id="landing-next-run"[\s\S]*Jupiter Stake/);
   assert.match(mainJs, /setText\('landing-next-run', subtitle\);/);
+  assert.match(bootstrapJs, /Last endowment-index update/);
+  assert.match(bootstrapJs, /Scheduled endowment-index fallback about every/);
+  assert.doesNotMatch(bootstrapJs, /Next historian run approx\./);
   assert.match(rail, /Jupiter Stake[\s\S]*Patron Endowments/);
   assert.doesNotMatch(rail, /Track Memos/);
   assert.doesNotMatch(rail, /Create Relay/);
@@ -898,6 +906,25 @@ test('Total Output and Total Rewards are pages of Jupiter Stake rather than metr
   assert.match(navbarJs, /key === "metric-output"[\s\S]*key: "metric-stake", page: 1/);
   assert.match(navbarJs, /key === "metric-rewards"[\s\S]*key: "metric-stake", page: 2/);
   assert.match(navbarJs, /key === "metric-registered"[\s\S]*key: "metric-commitments", page: 0/);
+});
+
+test('zero historian index timestamp shows fallback cadence without a last-update prefix', () => {
+  const source = bootstrapJs.match(/function nextRunLabel\(status\) \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(source, 'missing nextRunLabel source');
+  const nextRunLabel = Function(
+    'formatDurationSeconds',
+    'formatLocalTimestampSeconds',
+    'DASH',
+    `"use strict"; return (${source});`,
+  )(formatDurationSeconds, formatLocalTimestampSeconds, DASH);
+
+  const label = nextRunLabel({
+    last_index_run_ts: [0n],
+    index_interval_seconds: 3_600n,
+  });
+
+  assert.equal(label, 'Scheduled endowment-index fallback about every 1 hour.');
+  assert.doesNotMatch(label, /Last endowment-index update/);
 });
 
 test('Actions nav button exposes Plan, Endow, Optimize, and Track Memos pane links in order', () => {

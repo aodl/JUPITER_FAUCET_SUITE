@@ -22,7 +22,7 @@
   sns_wasm_canister_id = opt principal "qaa6y-5yaaa-aaaaa-aaafa-cai";
   xrc_canister_id = opt principal "uf6dk-hyaaa-aaaaq-qaaaq-cai";
   enable_sns_tracking = opt false;
-  scan_interval_seconds = opt (3600 : nat64);
+  scan_interval_seconds = opt (600 : nat64);
   cycles_interval_seconds = opt (604800 : nat64);
   min_tx_e8s = opt (100000000 : nat64);
   max_cycles_entries_per_canister = opt (100 : nat32);

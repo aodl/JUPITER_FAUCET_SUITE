@@ -283,7 +283,10 @@ pub(super) fn get_public_status() -> PublicStatus {
         rewards_account: Some(st.config.rewards_account),
         index_canister_id: Some(st.config.index_canister_id),
         last_index_run_ts: st.last_index_run_ts.or(Some(st.last_main_run_ts)),
-        index_interval_seconds: st.config.scan_interval_seconds,
+        index_interval_seconds: st
+            .config
+            .scan_interval_seconds
+            .max(crate::scheduler::SCHEDULED_COMMITMENT_SCAN_INTERVAL_SECONDS),
         last_completed_cycles_sweep_ts: if st.last_completed_cycles_sweep_ts == 0 {
             None
         } else {
