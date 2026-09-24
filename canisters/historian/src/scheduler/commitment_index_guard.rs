@@ -41,8 +41,7 @@ pub(super) struct CommitmentIndexGuard {
 impl CommitmentIndexGuard {
     pub(super) fn acquire(now_secs: u64, owner: state::CommitmentIndexLeaseOwner) -> Option<Self> {
         state::with_root_state_mut(|st| {
-            let timer_preempts_endowment_refresh = owner
-                == state::CommitmentIndexLeaseOwner::Scheduled
+            let timer_preempts_poke = owner == state::CommitmentIndexLeaseOwner::Scheduled
                 && st.commitment_index_lock_owner
                     == Some(state::CommitmentIndexLeaseOwner::EndowmentRefresh);
             let inner = FencedTimerLeaseGuard::acquire(
@@ -50,7 +49,7 @@ impl CommitmentIndexGuard {
                 COMMITMENT_INDEX_LEASE_SECONDS,
                 st.commitment_index_lock_expires_at_ts,
                 st.commitment_index_lock_generation,
-                timer_preempts_endowment_refresh,
+                timer_preempts_poke,
             )?;
             st.commitment_index_lock_expires_at_ts = Some(inner.lease_expires_at_ts());
             st.commitment_index_lock_generation = inner.generation();

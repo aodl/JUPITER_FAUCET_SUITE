@@ -278,6 +278,7 @@ pub(crate) struct DescendingIndexCatchUp {
 #[derive(CandidType, Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommitmentIndexLeaseOwner {
     Scheduled,
+    // Stable Candid tag: old roots can contain this active lease owner.
     EndowmentRefresh,
 }
 
@@ -360,6 +361,7 @@ pub(crate) struct StableRootState {
     pub commitment_index_lock_generation: Option<u64>,
     #[serde(default)]
     pub commitment_index_lock_owner: Option<CommitmentIndexLeaseOwner>,
+    // Retain old Candid field names so deployed roots decode before lease reset.
     #[serde(default)]
     pub endowment_refresh_next_allowed_ts: Option<u64>,
     #[serde(default)]

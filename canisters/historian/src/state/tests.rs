@@ -612,6 +612,30 @@ mod tests {
     }
 
     #[test]
+    fn deployed_endowment_refresh_lease_tag_still_decodes() {
+        let state = State::new(sample_config(), 1_000);
+        let mut root = build_root_snapshot(&state);
+        root.commitment_index_lock_owner = Some(CommitmentIndexLeaseOwner::EndowmentRefresh);
+        root.endowment_refresh_next_allowed_ts = Some(1_060);
+        root.endowment_refresh_ineffective_streak = Some(3);
+        let bytes = candid::encode_one(DeployedVersionedStableState::Current(
+            DeployedStableRootState::from(root),
+        ))
+        .unwrap();
+        let VersionedStableState::Current(decoded) =
+            VersionedStableState::from_bytes(Cow::Owned(bytes))
+        else {
+            panic!("expected deployed root");
+        };
+        assert_eq!(
+            decoded.commitment_index_lock_owner,
+            Some(CommitmentIndexLeaseOwner::EndowmentRefresh)
+        );
+        assert_eq!(decoded.endowment_refresh_next_allowed_ts, Some(1_060));
+        assert_eq!(decoded.endowment_refresh_ineffective_streak, Some(3));
+    }
+
+    #[test]
     fn old_wider_root_restores_and_persists_without_burn_state() {
         reset_test_storage();
         let mut state = State::new(sample_config(), 1_000);

@@ -35,6 +35,7 @@ mod tests {
     }
 
     fn configure_state(max_index_pages_per_tick: u32) -> String {
+        reset_poke_deferred_for_test();
         state::clear_commitment_route_rollups();
         let account = sample_account();
         let staking_id = account_identifier_text_for_account(&account);
@@ -2725,9 +2726,6 @@ mod tests {
         let transaction_status = endowment_transaction_status(42);
         assert!(!transaction_status.complete_from_genesis);
         assert!(transaction_status.commitment_index_fault.is_none());
-        let refresh_progress = progress_snapshot(0, None);
-        assert!(!refresh_progress.complete_from_genesis);
-        assert!(refresh_progress.commitment_index_fault.is_none());
         state::with_state(|st| {
             assert_eq!(st.staking_index_descending, Some(false));
             assert_eq!(
@@ -2968,7 +2966,7 @@ mod tests {
     }
 
     #[test]
-    fn endowment_refresh_commits_all_endowment_routes_before_returning() {
+    fn poke_commits_all_endowment_routes_before_returning() {
         let staking_id = configure_state(10);
         let cycles_target = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let raw_target = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
@@ -3003,11 +3001,14 @@ mod tests {
         ]);
         let index = MockIndexClient::new(vec![page]);
 
-        let response = block_on(refresh_endowments_with_client(&index, 100));
+        let attempt = block_on(handle_endowment_poke_with_client(&index, 100));
 
-        assert_eq!(response.outcome, crate::RefreshEndowmentsOutcome::Updated);
-        assert_eq!(response.progress.newly_indexed_qualifying_endowments, 6);
-        assert!(response.progress.complete_from_genesis);
+        assert_eq!(attempt, PokeAttempt::Indexed);
+        assert_eq!(
+            state::with_state(|st| st.qualifying_commitment_count),
+            Some(6)
+        );
+        assert!(state::with_state(state::commitment_index_is_complete));
         assert_eq!(
             endowment_transaction_status(9).status,
             crate::ExpectedEndowmentStatus::KnownIndexed
@@ -3029,7 +3030,10 @@ mod tests {
                 ],
             });
         assert!(summaries.complete_from_genesis);
-        assert_eq!(summaries.revision, Some(response.progress.revision));
+        assert_eq!(
+            summaries.revision,
+            Some(state::with_state(|st| st.commitment_index_revision))
+        );
         assert_eq!(
             summaries
                 .items
@@ -3064,115 +3068,216 @@ mod tests {
     }
 
     #[test]
-    fn endowment_refresh_commits_at_most_one_page_and_finishes_the_pinned_interval_before_new_arrivals(
-    ) {
+    fn poke_scans_one_page_and_enforces_ten_second_admission() {
         let staking_id = configure_state(10);
         let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        state::with_state_mut(|st| {
-            st.last_indexed_staking_tx_id = Some(10);
-            st.oldest_indexed_staking_tx_id = Some(1);
-            st.staking_index_descending = Some(true);
-            st.staking_backfill_complete = Some(true);
-            st.commitment_route_rollups_complete_from_genesis = Some(true);
-        });
-
         let first = MockIndexClient::new(vec![index_page(
-            (512..=1_011)
+            (1..=500)
                 .rev()
                 .map(|id| transfer_to_staking_tx(id, &staking_id, target, 100, id))
                 .collect(),
         )]);
-        let first_response = block_on(refresh_endowments_with_client(&first, 100));
+        assert_eq!(
+            block_on(handle_endowment_poke_with_client(&first, 100)),
+            PokeAttempt::Indexed
+        );
         assert_eq!(first.calls().len(), 1);
+        assert_eq!(first.calls()[0].2, 500);
         assert_eq!(
-            first_response.outcome,
-            crate::RefreshEndowmentsOutcome::IncompleteProgress
+            state::with_state(|st| st.qualifying_commitment_count),
+            Some(500)
         );
+        let denied = MockIndexClient::new(Vec::new());
         assert_eq!(
-            first_response.progress.newly_indexed_qualifying_endowments,
-            500
+            block_on(handle_endowment_poke_with_client(&denied, 109)),
+            PokeAttempt::Skipped
         );
+        assert!(denied.calls().is_empty());
+        let allowed = MockIndexClient::new(vec![index_page(Vec::new())]);
         assert_eq!(
-            first_response.progress.committed_head_staking_tx_id,
-            Some(10)
+            block_on(handle_endowment_poke_with_client(&allowed, 110)),
+            PokeAttempt::Indexed
         );
-        assert_eq!(
-            first_response.progress.observed_head_staking_tx_id,
-            Some(1_011)
-        );
-        assert_eq!(first_response.progress.next_staking_start_tx_id, Some(512));
-        assert_eq!(
-            endowment_transaction_status(11).status,
-            crate::ExpectedEndowmentStatus::NotYetObserved,
-            "an ID inside the unread part of a pinned interval remains pending"
-        );
+        assert_eq!(allowed.calls().len(), 1);
+    }
 
-        // Transaction 1,012 arrives after the interval was pinned. The next
-        // accepted request must continue below 512 instead of restarting at it.
-        let second = MockIndexClient::new(vec![index_page(
-            (12..=511)
-                .rev()
-                .map(|id| transfer_to_staking_tx(id, &staking_id, target, 100, id))
-                .collect(),
-        )]);
-        let second_response = block_on(refresh_endowments_with_client(&second, 160));
-        assert_eq!(second.calls()[0].1, Some(512));
+    #[test]
+    fn poke_failure_preserves_committed_state_and_consumes_ten_second_admission() {
+        configure_state(10);
+        let failed = MockIndexClient::scripted(vec![Err(crate::clients::ClientError::Call(
+            "unavailable".into(),
+        ))]);
         assert_eq!(
-            second_response.outcome,
-            crate::RefreshEndowmentsOutcome::IncompleteProgress
+            block_on(handle_endowment_poke_with_client(&failed, 100)),
+            PokeAttempt::Indexed
         );
         assert_eq!(
-            second_response.progress.newly_indexed_qualifying_endowments,
-            500
+            state::with_state(|st| st.endowment_refresh_next_allowed_ts),
+            110
         );
-        assert_eq!(second_response.progress.next_staking_start_tx_id, Some(12));
+        assert_eq!(
+            state::with_state(|st| st.qualifying_commitment_count),
+            Some(0)
+        );
+        let empty = MockIndexClient::new(vec![index_page(Vec::new())]);
+        assert_eq!(
+            block_on(handle_endowment_poke_with_client(&empty, 110)),
+            PokeAttempt::Indexed
+        );
+        assert_eq!(empty.calls().len(), 1);
+    }
 
-        let third = MockIndexClient::new(vec![index_page(vec![transfer_to_staking_tx(
-            11,
+    #[test]
+    fn trailing_check_observes_a_lagged_notified_transfer() {
+        let staking_id = configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        assert!(record_poke_hint(100 * NANOS_PER_SECOND));
+        let older = MockIndexClient::new(vec![index_page(vec![transfer_to_staking_tx(
+            10,
             &staking_id,
             target,
             100,
-            11,
+            10,
         )])]);
-        let third_response = block_on(refresh_endowments_with_client(&third, 220));
-        assert_eq!(third.calls()[0].1, Some(12));
         assert_eq!(
-            third_response.outcome,
-            crate::RefreshEndowmentsOutcome::Updated
+            block_on(handle_endowment_poke_with_client(&older, 100)),
+            PokeAttempt::Indexed
         );
         assert_eq!(
-            third_response.progress.committed_head_staking_tx_id,
-            Some(1_011)
+            endowment_transaction_status(11).status,
+            crate::ExpectedEndowmentStatus::NotYetObserved
         );
-        assert!(third_response.progress.complete_from_genesis);
+        assert_eq!(
+            deferred_timer_action(110 * NANOS_PER_SECOND),
+            DeferredTimerAction::Check
+        );
 
-        let fourth = MockIndexClient::new(vec![index_page(vec![
-            transfer_to_staking_tx(1_012, &staking_id, target, 100, 1_012),
-            transfer_to_staking_tx(1_011, &staking_id, target, 100, 1_011),
+        let notified = MockIndexClient::new(vec![index_page(vec![
+            transfer_to_staking_tx(11, &staking_id, target, 100, 11),
+            transfer_to_staking_tx(10, &staking_id, target, 100, 10),
         ])]);
-        let fourth_response = block_on(refresh_endowments_with_client(&fourth, 280));
-        assert_eq!(fourth.calls()[0].1, None);
         assert_eq!(
-            fourth_response.outcome,
-            crate::RefreshEndowmentsOutcome::Updated
+            block_on(handle_endowment_poke_with_client(&notified, 110)),
+            PokeAttempt::Indexed
+        );
+        assert_eq!(notified.calls().len(), 1);
+        assert_eq!(
+            endowment_transaction_status(11).status,
+            crate::ExpectedEndowmentStatus::KnownIndexed
+        );
+        assert_eq!(poke_deferred_state_for_test(), (None, false));
+    }
+
+    #[test]
+    fn poke_during_deferred_index_await_establishes_a_fresh_trailing_check() {
+        configure_state(10);
+        assert!(record_poke_hint(90 * NANOS_PER_SECOND));
+        assert_eq!(
+            deferred_timer_action(100 * NANOS_PER_SECOND),
+            DeferredTimerAction::Check
+        );
+        assert_eq!(poke_deferred_state_for_test(), (None, false));
+        let (delayed, sender) = DelayedIndexClient::new();
+        let mut deferred = Box::pin(handle_endowment_poke_with_client(&delayed, 100));
+        assert!(deferred.as_mut().now_or_never().is_none());
+        assert!(record_poke_hint(101 * NANOS_PER_SECOND));
+        assert_eq!(
+            poke_deferred_state_for_test(),
+            (Some(111 * NANOS_PER_SECOND), true)
+        );
+        let busy = MockIndexClient::new(Vec::new());
+        assert_eq!(
+            block_on(handle_endowment_poke_with_client(&busy, 101)),
+            PokeAttempt::Skipped
+        );
+        assert!(busy.calls().is_empty());
+        sender.send(Ok(index_page(Vec::new()))).unwrap();
+        assert_eq!(block_on(deferred), PokeAttempt::Indexed);
+        assert_eq!(
+            poke_deferred_state_for_test(),
+            (Some(111 * NANOS_PER_SECOND), true)
         );
         assert_eq!(
-            fourth_response.progress.committed_head_staking_tx_id,
-            Some(1_012)
-        );
-        assert_eq!(
-            route_rollup(crate::CommitmentRoute::CyclesTopUp {
-                canister_id: target,
-            }),
-            state::CommitmentRouteRollup {
-                qualifying_commitment_count: 1_002,
-                total_qualifying_committed_e8s: 100_200,
-            }
+            deferred_timer_action(111 * NANOS_PER_SECOND),
+            DeferredTimerAction::Check
         );
     }
 
     #[test]
-    fn descending_endowment_refresh_preserves_a_latched_fault_and_reports_partial_success() {
+    fn newer_hint_moves_the_single_trailing_deadline_without_an_early_check() {
+        configure_state(10);
+        assert!(record_poke_hint(0));
+        assert!(!record_poke_hint(9_900_000_000));
+        assert_eq!(poke_deferred_state_for_test(), (Some(19_900_000_000), true));
+        assert_eq!(
+            deferred_timer_action(10 * NANOS_PER_SECOND),
+            DeferredTimerAction::Reschedule(Duration::from_millis(9_900))
+        );
+        assert_eq!(poke_deferred_state_for_test(), (Some(19_900_000_000), true));
+        assert_eq!(
+            deferred_timer_action(19_900_000_000),
+            DeferredTimerAction::Check
+        );
+        assert_eq!(poke_deferred_state_for_test(), (None, false));
+    }
+
+    #[test]
+    fn rapid_pokes_keep_one_timer_and_one_final_deadline() {
+        configure_state(10);
+        assert!(record_poke_hint(0));
+        for now_seconds in [1, 2, 3, 4, 5] {
+            assert!(!record_poke_hint(now_seconds * NANOS_PER_SECOND));
+        }
+        assert_eq!(
+            poke_deferred_state_for_test(),
+            (Some(15 * NANOS_PER_SECOND), true)
+        );
+        assert_eq!(
+            deferred_timer_action(14 * NANOS_PER_SECOND),
+            DeferredTimerAction::Reschedule(Duration::from_secs(1))
+        );
+        assert_eq!(
+            deferred_timer_action(15 * NANOS_PER_SECOND),
+            DeferredTimerAction::Check
+        );
+        assert_eq!(
+            deferred_timer_action(16 * NANOS_PER_SECOND),
+            DeferredTimerAction::Stop
+        );
+    }
+
+    #[test]
+    fn poke_status_distinguishes_indexed_invalid_pending_and_unretained() {
+        let staking_id = configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let index = MockIndexClient::new(vec![index_page(vec![
+            transfer_to_staking_memo_tx(100, &staking_id, b"invalid".to_vec(), 100, 100),
+            transfer_to_staking_tx(99, &staking_id, target, 100, 99),
+        ])]);
+        assert_eq!(
+            block_on(handle_endowment_poke_with_client(&index, 100)),
+            PokeAttempt::Indexed
+        );
+        assert_eq!(
+            endowment_transaction_status(99).status,
+            crate::ExpectedEndowmentStatus::KnownIndexed
+        );
+        assert_eq!(
+            endowment_transaction_status(100).status,
+            crate::ExpectedEndowmentStatus::ObservedNotQualifying
+        );
+        assert_eq!(
+            endowment_transaction_status(101).status,
+            crate::ExpectedEndowmentStatus::NotYetObserved
+        );
+        assert_eq!(
+            endowment_transaction_status(98).status,
+            crate::ExpectedEndowmentStatus::NotFoundInRetainedEvidence
+        );
+    }
+
+    #[test]
+    fn productive_poke_preserves_latched_commitment_index_fault() {
         let staking_id = configure_state(10);
         let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let fault = state::CommitmentIndexFault {
@@ -3193,202 +3298,44 @@ mod tests {
             transfer_to_staking_tx(50_000, &staking_id, target, 100, 50_000),
             transfer_to_staking_tx(10, &staking_id, target, 100, 10),
         ])]);
-
-        let response = block_on(refresh_endowments_with_client(&index, 100));
-
         assert_eq!(
-            response.outcome,
-            crate::RefreshEndowmentsOutcome::IncompleteProgress
+            block_on(handle_endowment_poke_with_client(&index, 100)),
+            PokeAttempt::Indexed
         );
-        assert_eq!(response.progress.newly_indexed_qualifying_endowments, 1);
-        assert_eq!(response.progress.commitment_index_fault, Some(fault));
-        assert!(!response.progress.complete_from_genesis);
-        assert_eq!(response.progress.committed_head_staking_tx_id, Some(50_000));
+        assert_eq!(
+            state::with_state(|st| st.qualifying_commitment_count),
+            Some(1)
+        );
+        assert_eq!(
+            state::with_state(|st| st.commitment_index_fault.clone()),
+            Some(fault)
+        );
     }
 
     #[test]
-    fn endowment_refresh_denials_are_cheap_and_do_not_slide_backoff() {
-        let _staking_id = configure_state(10);
-        let first = MockIndexClient::new(vec![index_page(Vec::new())]);
-        let response = block_on(refresh_endowments_with_client(&first, 100));
-        assert_eq!(
-            response.outcome,
-            crate::RefreshEndowmentsOutcome::NoQualifyingChange
-        );
-        assert_eq!(response.progress.retry_after_ts, Some(160));
-        assert_eq!(first.calls().len(), 1);
-
-        let denied = MockIndexClient::new(Vec::new());
-        let root_before_denials = candid::encode_one(
-            state::restore_state_from_stable().expect("accepted attempt persisted root state"),
-        )
-        .unwrap();
-        for now_secs in [101, 120, 159] {
-            let response = block_on(refresh_endowments_with_client(&denied, now_secs));
-            assert_eq!(
-                response.outcome,
-                crate::RefreshEndowmentsOutcome::RateLimited
-            );
-            assert_eq!(response.progress.retry_after_ts, Some(160));
-        }
-        assert!(denied.calls().is_empty());
-        assert_eq!(
-            candid::encode_one(
-                state::restore_state_from_stable().expect("denials preserve stable root state")
-            )
-            .unwrap(),
-            root_before_denials,
-            "update-level denials create no caller/transaction records or stable-root writes",
-        );
-
-        let second = MockIndexClient::new(vec![index_page(Vec::new())]);
-        let response = block_on(refresh_endowments_with_client(&second, 160));
-        assert_eq!(
-            response.outcome,
-            crate::RefreshEndowmentsOutcome::NoQualifyingChange
-        );
-        assert_eq!(response.progress.retry_after_ts, Some(280));
-        assert_eq!(second.calls().len(), 1);
-    }
-
-    #[test]
-    fn busy_and_rate_limited_refreshes_skip_the_index() {
-        let _staking_id = configure_state(10);
-        let scheduled =
-            CommitmentIndexGuard::acquire(100, state::CommitmentIndexLeaseOwner::Scheduled)
-                .unwrap();
-        let index = MockIndexClient::new(Vec::new());
-        let busy = block_on(refresh_endowments_with_client(&index, 101));
-        assert_eq!(busy.outcome, crate::RefreshEndowmentsOutcome::Busy);
-        assert!(index.calls().is_empty());
-        drop(scheduled);
-
-        state::with_state_mut(|st| st.endowment_refresh_next_allowed_ts = 200);
-        let rate_limited = block_on(refresh_endowments_with_client(&index, 150));
-        assert_eq!(
-            rate_limited.outcome,
-            crate::RefreshEndowmentsOutcome::RateLimited
-        );
-        assert!(index.calls().is_empty());
-    }
-
-    #[test]
-    fn one_refresh_reserves_global_admission_from_concurrent_callers() {
-        let _staking_id = configure_state(10);
+    fn concurrent_pokes_share_one_commitment_writer() {
+        configure_state(10);
         let (first_index, sender) = DelayedIndexClient::new();
-        let mut first = Box::pin(refresh_endowments_with_client(&first_index, 100));
+        let mut first = Box::pin(handle_endowment_poke_with_client(&first_index, 100));
         assert!(first.as_mut().now_or_never().is_none());
         assert_eq!(*first_index.calls.lock().unwrap(), 1);
-
         let second_index = MockIndexClient::new(Vec::new());
-        let second = block_on(refresh_endowments_with_client(&second_index, 100));
-        assert_eq!(second.outcome, crate::RefreshEndowmentsOutcome::Busy);
+        assert_eq!(
+            block_on(handle_endowment_poke_with_client(&second_index, 100)),
+            PokeAttempt::Skipped
+        );
         assert!(second_index.calls().is_empty());
-
         sender.send(Ok(index_page(Vec::new()))).unwrap();
-        let completed = block_on(first);
-        assert_eq!(
-            completed.outcome,
-            crate::RefreshEndowmentsOutcome::NoQualifyingChange
-        );
-        assert_eq!(*first_index.calls.lock().unwrap(), 1);
+        assert_eq!(block_on(first), PokeAttempt::Indexed);
     }
 
     #[test]
-    fn transaction_status_query_distinguishes_invalid_pending_and_unretained_evidence() {
-        let staking_id = configure_state(10);
-        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
-        let index = MockIndexClient::new(vec![index_page(vec![
-            transfer_to_staking_memo_tx(100, &staking_id, b"invalid".to_vec(), 100, 100),
-            transfer_to_staking_tx(99, &staking_id, target, 100, 99),
-        ])]);
-        let _ = block_on(refresh_endowments_with_client(&index, 100));
-        assert_eq!(
-            endowment_transaction_status(100).status,
-            crate::ExpectedEndowmentStatus::ObservedNotQualifying
-        );
-
-        assert_eq!(
-            endowment_transaction_status(101).status,
-            crate::ExpectedEndowmentStatus::NotYetObserved
-        );
-        assert_eq!(
-            endowment_transaction_status(98).status,
-            crate::ExpectedEndowmentStatus::NotFoundInRetainedEvidence,
-            "a larger observed global ID is not evidence that the hinted transfer qualified"
-        );
-    }
-
-    #[test]
-    fn endowment_refresh_backoff_caps_and_failed_outcalls_consume_attempts() {
-        let _staking_id = configure_state(10);
-        let schedule = [
-            (100, 160),
-            (160, 280),
-            (280, 520),
-            (520, 1_000),
-            (1_000, 1_600),
-            (1_600, 2_200),
-        ];
-        for (now_secs, expected_retry) in schedule {
-            let index = MockIndexClient::new(vec![index_page(Vec::new())]);
-            let response = block_on(refresh_endowments_with_client(&index, now_secs));
-            assert_eq!(response.progress.retry_after_ts, Some(expected_retry));
-            assert_eq!(index.calls().len(), 1);
-        }
-
-        let failed = MockIndexClient::scripted(vec![Err(crate::clients::ClientError::Call(
-            "upstream unavailable".into(),
-        ))]);
-        let response = block_on(refresh_endowments_with_client(&failed, 2_200));
-        assert!(matches!(
-            response.outcome,
-            crate::RefreshEndowmentsOutcome::UpstreamFailure { .. }
-        ));
-        assert_eq!(response.progress.retry_after_ts, Some(2_800));
-        assert_eq!(failed.calls().len(), 1);
-
-        state::with_state_mut(|st| st.endowment_refresh_next_allowed_ts = 0);
-        let unicode_failure = MockIndexClient::scripted(vec![Err(
-            crate::clients::ClientError::Call("\u{1f6a8}".repeat(600)),
-        )]);
-        let response = block_on(refresh_endowments_with_client(&unicode_failure, 3_000));
-        let crate::RefreshEndowmentsOutcome::UpstreamFailure { message } = response.outcome else {
-            panic!("expected bounded upstream failure")
-        };
-        assert!(
-            message.len() <= 512,
-            "diagnostics are bounded in encoded bytes"
-        );
-        assert!(message.is_char_boundary(message.len()));
-    }
-
-    #[test]
-    fn busy_endowment_refresh_is_cheap_and_does_not_reserve_cooldown() {
-        let _staking_id = configure_state(10);
-        let scheduled =
-            CommitmentIndexGuard::acquire(100, state::CommitmentIndexLeaseOwner::Scheduled)
-                .unwrap();
-        let denied = MockIndexClient::new(Vec::new());
-        let response = block_on(refresh_endowments_with_client(&denied, 101));
-        assert_eq!(response.outcome, crate::RefreshEndowmentsOutcome::Busy);
-        assert!(denied.calls().is_empty());
-        assert_eq!(
-            state::with_state(|st| st.endowment_refresh_next_allowed_ts),
-            0
-        );
-        drop(scheduled);
-    }
-
-    #[test]
-    fn stale_endowment_refresh_callback_cannot_commit_or_release_the_timer_lease() {
+    fn stale_poke_callback_cannot_commit_or_release_the_timer_lease() {
         let staking_id = configure_state(10);
         let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let (index, sender) = DelayedIndexClient::new();
-        let mut refresh = Box::pin(refresh_endowments_with_client(&index, 100));
-        assert!(refresh.as_mut().now_or_never().is_none());
-        assert_eq!(*index.calls.lock().unwrap(), 1);
-
+        let mut poke = Box::pin(handle_endowment_poke_with_client(&index, 100));
+        assert!(poke.as_mut().now_or_never().is_none());
         let scheduled =
             CommitmentIndexGuard::acquire(101, state::CommitmentIndexLeaseOwner::Scheduled)
                 .unwrap();
@@ -3401,20 +3348,16 @@ mod tests {
                 1,
             )])))
             .unwrap();
-        let response = block_on(refresh);
-        assert_eq!(response.outcome, crate::RefreshEndowmentsOutcome::Busy);
+        assert_eq!(block_on(poke), PokeAttempt::Skipped);
         assert_eq!(
-            route_rollup(crate::CommitmentRoute::CyclesTopUp {
-                canister_id: target,
-            }),
-            state::CommitmentRouteRollup::default()
+            state::with_state(|st| st.qualifying_commitment_count),
+            Some(0)
         );
         assert!(scheduled.token().is_current());
-        drop(scheduled);
     }
 
     #[test]
-    fn scheduled_indexing_preempts_endowment_refresh_lease_without_stale_release() {
+    fn scheduled_indexing_preempts_poke_lease_without_stale_release() {
         let _staking_id = configure_state(10);
         let refresh =
             CommitmentIndexGuard::acquire(100, state::CommitmentIndexLeaseOwner::EndowmentRefresh)

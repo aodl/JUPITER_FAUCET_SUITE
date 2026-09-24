@@ -312,42 +312,42 @@ pub(super) async fn notify_relay_configuration(args: RelaySetupArgs) -> RelaySet
     crate::relay_setup::notify_relay_configuration(args).await
 }
 
-// The production whitelist is intentionally empty by default. Protocols integrating
-// Jupiter Faucet may request that a specific backend canister be whitelisted when
-// they want their UI to offer expedited endowment recognition: after a user completes
-// a Faucet endowment, that backend canister may call `refresh_endowments()` so
-// Historian performs one bounded staking-account Index pass immediately instead of
-// waiting for its normal poll cadence. This permission grants no general Historian
-// control and remains subject to the existing global cadence, single-flight lease,
-// and one-page indexing bound. Every addition or removal requires a reviewed
-// Historian code change and canister upgrade.
+// Explicit production Event Horizon callers are required before enabling poke.
 #[cfg(not(feature = "debug_api"))]
-const ENDOWMENT_REFRESH_CALLER_WHITELIST: &[&[u8]] = &[];
+const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[];
 
-// PocketIC installs its authorized test proxy at this fixed principal. This entry is
-// compiled only into the debug Wasm and is absent from the production build.
+// Debug builds allow the fixed PocketIC Event Horizon proxy.
 #[cfg(feature = "debug_api")]
-const ENDOWMENT_REFRESH_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
+const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
 
-fn endowment_refresh_caller_is_whitelisted(caller: Principal) -> bool {
-    ENDOWMENT_REFRESH_CALLER_WHITELIST
+// IDs are Event Horizon subscription scalars, not ICRC subaccount blobs.
+#[cfg(not(feature = "debug_api"))]
+const EVENT_HORIZON_ENDOWMENT_SUBACCOUNT_IDS: &[u64] = &[];
+#[cfg(feature = "debug_api")]
+pub(crate) const EVENT_HORIZON_ENDOWMENT_SUBACCOUNT_IDS: &[u64] = &[42];
+
+fn event_horizon_caller_is_whitelisted(caller: Principal) -> bool {
+    EVENT_HORIZON_CALLER_WHITELIST
         .iter()
         .any(|allowed| caller.as_slice() == *allowed)
 }
 
-fn guard_endowment_refresh_caller() -> Result<(), String> {
+fn guard_event_horizon_caller() -> Result<(), String> {
     let caller = ic_cdk::api::msg_caller();
-    endowment_refresh_caller_is_whitelisted(caller)
+    event_horizon_caller_is_whitelisted(caller)
         .then_some(())
-        .ok_or_else(|| "caller is not authorized to refresh endowments".to_string())
+        .ok_or_else(|| "caller is not Event Horizon".to_string())
 }
 
-#[ic_cdk::update(guard = "guard_endowment_refresh_caller")]
-pub(super) async fn refresh_endowments() -> RefreshEndowmentsResponse {
-    // Ingress is rejected by canister_inspect_message as a cost-saving filter. The
-    // exact-principal guard above is the authoritative replicated boundary for every
-    // invocation and runs before this async body.
-    crate::scheduler::refresh_endowments().await
+#[ic_cdk::update(guard = "guard_event_horizon_caller")]
+pub(super) async fn poke(subaccount_ids: Vec<u64>) {
+    // Ingress is rejected; the replicated guard authorizes Event Horizon.
+    if subaccount_ids
+        .iter()
+        .any(|id| EVENT_HORIZON_ENDOWMENT_SUBACCOUNT_IDS.contains(id))
+    {
+        crate::scheduler::handle_endowment_poke().await;
+    }
 }
 
 #[ic_cdk::query]
@@ -727,17 +727,27 @@ pub(super) fn list_recent_commitments(
 mod tests {
     use super::*;
 
+    #[cfg(not(feature = "debug_api"))]
     #[test]
-    fn production_endowment_refresh_whitelist_is_empty_by_default() {
-        assert!(ENDOWMENT_REFRESH_CALLER_WHITELIST.is_empty());
-        assert!(!endowment_refresh_caller_is_whitelisted(
-            Principal::anonymous()
-        ));
-        assert!(!endowment_refresh_caller_is_whitelisted(
+    fn production_event_horizon_whitelist_is_empty_by_default() {
+        assert!(EVENT_HORIZON_CALLER_WHITELIST.is_empty());
+        assert!(!event_horizon_caller_is_whitelisted(Principal::anonymous()));
+        assert!(!event_horizon_caller_is_whitelisted(
             Principal::self_authenticating(b"authenticated ingress")
         ));
-        assert!(!endowment_refresh_caller_is_whitelisted(
-            Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1])
-        ));
+        assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
+            &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]
+        )));
+    }
+
+    #[cfg(feature = "debug_api")]
+    #[test]
+    fn debug_event_horizon_whitelist_is_exact() {
+        assert!(event_horizon_caller_is_whitelisted(Principal::from_slice(
+            &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]
+        )));
+        assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
+            &[0, 0, 0, 0, 2, 48, 15, 70, 2, 1]
+        )));
     }
 }

@@ -124,7 +124,7 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
             .unwrap_or_else(mainnet_sns_wasm_id),
         xrc_canister_id: args.xrc_canister_id.unwrap_or_else(mainnet_xrc_id),
         enable_sns_tracking: args.enable_sns_tracking.unwrap_or(false),
-        scan_interval_seconds: args.scan_interval_seconds.unwrap_or(10 * 60),
+        scan_interval_seconds: args.scan_interval_seconds.unwrap_or(60 * 60),
         cycles_interval_seconds: args.cycles_interval_seconds.unwrap_or(7 * 24 * 60 * 60),
         min_tx_e8s: args.min_tx_e8s.unwrap_or(100_000_000),
         max_cycles_entries_per_canister: clamp_cycles_entries_per_canister(
@@ -889,10 +889,8 @@ pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs
 
 #[ic_cdk::inspect_message]
 pub(super) fn inspect_message() {
-    if ic_cdk::api::msg_method_name() == "refresh_endowments" {
-        // Cost-saving ingress filter only. Inter-canister calls bypass this hook,
-        // and the replicated update guard performs the authoritative exact-principal
-        // whitelist check before dispatch or any ICP Index call.
+    if ic_cdk::api::msg_method_name() == "poke" {
+        // Reject ingress; the update guard authorizes the Event Horizon caller.
         return;
     }
     ic_cdk::api::accept_message();

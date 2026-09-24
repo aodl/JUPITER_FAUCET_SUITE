@@ -5322,7 +5322,7 @@ fn run_local_historian_config_roundtrip_scenario(
                 || cfg.sns_wasm_canister_id != mainnet_sns_wasm_principal()
                 || cfg.xrc_canister_id != mainnet_xrc_principal()
                 || cfg.enable_sns_tracking
-                || cfg.scan_interval_seconds != 600
+                || cfg.scan_interval_seconds != 3600
                 || cfg.cycles_interval_seconds != 604_800
                 || cfg.min_tx_e8s != 100_000_000
                 || cfg.max_cycles_entries_per_canister != 100
