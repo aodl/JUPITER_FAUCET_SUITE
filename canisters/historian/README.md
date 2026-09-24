@@ -174,37 +174,11 @@ icp canister call j5gs6-uiaaa-aaaar-qb5cq-cai get_commitment_route_summaries \
 
 Up to 100 exact routes can be queried in one call, so consumers can batch the records they display. The complete machine-readable public interface is [`jupiter_historian.did`](jupiter_historian.did).
 
-### Request one bounded endowment refresh
+### Event Horizon notifications
 
-`refresh_endowments` is an argument-free, inter-canister-only production update method for explicitly whitelisted backend canisters. The compile-time production whitelist is intentionally empty by default. A protocol integrating Jupiter Faucet may request a reviewed Historian code change and upgrade that adds one specific backend canister principal when it wants its UI to offer expedited endowment recognition. Whitelist additions and removals are never runtime registration or controller-managed configuration.
+Event Horizon makes best-effort inter-canister `poke(vec nat64)` calls with affected subscription IDs. Only the configured endowment ID requests one bounded ICP Index check; a batch or duplicate ID cannot cause duplicate scans. The call is a hint, not payment evidence. Production caller and ID allowlists require the actual Event Horizon principal and subscription ID before this path is enabled. The browser does not call `poke`.
 
-After a user completes a Faucet endowment, a whitelisted backend may make an ordinary `refresh_endowments()` call without attached cycles. Historian can then perform one bounded staking-account Index pass immediately instead of waiting for its normal poll cadence. This permission grants no general Historian control: each accepted request remains subject to the existing global cadence, single-flight lease, and one-page indexing bound. It does not run the general scheduler, refresh XRC rates, index output/reward accounts, discover SNS canisters, probe cycles, call Governance/CMC, or advance `last_main_run_ts`.
-
-The replicated update guard captures the platform `msg_caller()` and requires exact raw-principal equality against the static whitelist before refresh admission, evidence construction, persistence, any await, or any downstream call. The zero-Rust-argument update has no argument-decoding path. The guard uses no principal suffix or textual heuristic and accumulates no caller cache or caller-specific state. `canister_inspect_message` also rejects every ingress invocation, whether anonymous, authenticated, or malformed, but that is only a cost-saving optimization; the exact-principal replicated guard is the authoritative authorization boundary.
-
-Each accepted whitelisted request can make at most one ICP Index outcall, request at most 500 transactions, and commit at most one page. The global budget has burst one and a minimum 60-second interval even when a call finds a qualifying endowment. No-op and Index-upstream-failure attempts consume admission and back off globally for 60, 120, 240, 480, then at most 600 seconds. Busy and rate-limited calls make no Index request and do not move the deadline or effectiveness streak. Scheduled indexing uses the same fenced lease and may pre-empt an accepted refresh while Index work is in flight; stale callbacks cannot commit or release the scheduled writer's successor lease.
-
-After an accepted attempt forms its committed response, Historian flushes the scoped dirty state and releases loaded per-route history caches. Repeated attempts therefore do not retain an ever-growing working set. Unauthorized, busy, and rate-limited calls perform neither a downstream call nor a full-state flush. Normal scheduled Historian indexing remains the complete fallback while the production whitelist is empty and whenever an optional expedited request is unavailable.
-
-PocketIC server 15.0.0 measurements on 2026-09-09 exercise actual batched one-way delivery and record both canister balances. A 128-call unauthorized canonical batch cost Historian 722,702,208 cycles and the proxy 1,810,131,328 cycles. A 128-call unauthorized malformed-raw batch cost Historian 722,675,584 cycles and the proxy 691,101,051 cycles; although the Historian side was about 4.6% higher in that fixture, the exact-principal guard still prevented admission, persistence, or an Index call. For the explicitly whitelisted debug proxy, 128 canonical calls beginning while admission was available cost Historian 769,306,119 cycles and the proxy 1,856,303,148 cycles, and a subsequent 128-call rate-limited batch cost 748,784,386 and 1,856,179,553 cycles respectively. Exactly one Index request occurred in the available batch and none in the rate-limited batch.
-
-Whitelisted raw one-way fixtures also confirmed that unexpected raw bytes reach the same bounded admission path without introducing a Historian argument decoder: eight small malformed calls cost Historian/proxy 67,414,584/133,795,025 cycles; eight well-formed calls with unexpected arguments cost 67,414,584/134,354,181; eight 4,096-byte payloads cost 67,414,584/246,358,285; and four 262,144-byte payloads cost 44,023,961/4,410,244,417. The exact Historian delta equality across the three eight-call fixtures, despite payloads ranging from 7 to 4,096 bytes, is regression-checked. These are comparative test-environment measurements, not mainnet price guarantees. Arbitrary canisters cannot enter this admitted path in the production build because its whitelist is empty.
-
-The response reports its outcome, newly indexed qualifying endowment count, committed revision, committed/observed/next-page cursors, completeness, durable fault, and retry time. Transaction-ID classification is deliberately separate in the bounded query `get_endowment_transaction_status(transaction_id)`, so an update denial never scans retained evidence. `KnownIndexed`, `ObservedNotQualifying`, `NotYetObserved`, and `NotFoundInRetainedEvidence` are distinct; observing some larger global Ledger ID never proves that the requested transaction was a qualifying endowment.
-
-The optional whitelisted-backend flow is:
-
-1. the user's frontend completes the ICP Ledger endowment transfer to the Faucet neuron's staking account
-2. if that protocol's specific backend canister has been explicitly whitelisted in Historian code, the frontend asks it to request expedited indexing
-3. the whitelisted backend makes an ordinary argument-free inter-canister `refresh_endowments()` update call without attached cycles
-4. the frontend polls `get_endowment_transaction_status(transaction_id)` and the exact `get_commitment_route_summaries` route, requiring a query `revision` at least as new as the committed refresh revision
-5. if the optional expedited request is unavailable, busy, or rate-limited, normal scheduled Historian indexing remains the fallback; the frontend keeps bounded query polling and cancels obsolete polling when the selected transfer or page changes
-
-An integrating backend should apply its own admission policy. Jupiter does not provide an unrestricted browser-facing proxy for this method, and arbitrary protocol canisters are not authorized automatically.
-
-A completed Ledger transfer does not mean the separate ICP Index has synchronized it, and Historian cannot force upstream visibility. An absent transaction remains pending/not yet observed rather than automatically invalid. Likewise, `Updated` means committed Historian indexing—not an immediate Faucet payout, Relay top-up, or promise of returns. An ordinary browser query is not a certified payment receipt; security-critical attribution must verify the appropriate Ledger/endowment evidence.
-
-A transaction-specific Ledger-backed `notify_endowment(transaction_id)` remains a possible alternative when visibility before Index synchronization is mandatory. It is intentionally not implemented here: safe support would require trusted archive resolution, bounded lookup, verification of operation/destination/amount/memo, durable out-of-order deduplication beyond capped histories, reconciliation with the normal Index writer, and its own global admission policy.
+Historian checks at most one 500-transaction Index page per attempt. Each relevant hint requests an immediate bounded check when admission and the commitment writer permit it, plus one coalesced trailing check 10 seconds after the most recent relevant hint. Scheduled hourly commitment indexing is the complete fallback when notifications are missed or cannot be acted upon. `get_endowment_transaction_status(transaction_id)` remains a bounded read query.
 
 ## Self-service Relay configurations
 
@@ -231,19 +205,23 @@ Defaults are:
 - `max_index_pages_per_tick = 10`
 - `max_canisters_per_cycles_tick = 25`
 
-The historian also schedules an immediate one-shot tick roughly 1 second after install or upgrade so local and fresh deployments do not have to wait for the first full scan interval.
+The historian also schedules an immediate one-shot tick roughly 1 second after install or upgrade so local and fresh deployments do not have to wait for the first full scan interval. In steady state, scheduled commitment/endowment indexing runs once per hourly wall-clock window. Event Horizon hints independently request an immediate bounded commitment check plus one trailing-edge check 10 seconds after the latest relevant hint. Incomplete commitment backfill, catch-up, or authoritative route roll-up work can advance on every 10-minute main-driver run.
 
 ### What the driver does
 
 On each driver run it:
 
-1. advances endowment indexing
-2. performs SNS discovery when the SNS / cycles cadence is due and SNS tracking is enabled
-3. starts or advances a cycles sweep when the sweep cadence is due or a prior sweep is still in progress
+1. advances scheduled commitment/endowment indexing when its hourly fallback is due, or on every run while catch-up/backfill remains incomplete
+2. advances output and rewards indexing
+3. performs SNS discovery when the SNS / cycles cadence is due and SNS tracking is enabled
+4. advances the initial cycles-probe queue
+5. starts or advances a cycles sweep when the sweep cadence is due or a prior sweep is still in progress
 
-The configured production ICP Index contract is newest-first. A persisted legacy ascending-order flag is unsupported because its historical coverage cannot be proved safely. Staking indexing fails closed before an outcall, marks route totals incomplete, and latches an actionable fault. Output or rewards indexing likewise fails closed rather than reinterpreting an ascending cursor. Production exposed legacy ascending output/rewards metadata on 2026-09-11; a reviewed one-hop upgrade discarded only those untrusted derived totals/cursors and rebuilt both aggregates from authoritative newest-first ICP Ledger/Index history. Both backfills completed successfully, and that compatibility repair has been removed. Current code no longer auto-repairs `Some(false)`; any future occurrence is anomalous and fails closed. `get_public_status().route_index_fault` remains non-null while either current newest-first historical backfill is incomplete, so temporarily lower or partial output/rewards totals are explicitly degraded until genesis coverage is established. A genuine staking fault remains visible until an operator establishes that the invariant is resolved and explicitly clears it; a superficially successful endowment refresh does not clear it merely to return success.
+The existing XRC refresh due policy also remains part of the main driver.
 
-The historian logs its own `Cycles: <amount>` line only once per completed sweep sample of **itself**, not on every 10-minute driver tick.
+The configured production ICP Index contract is newest-first. A persisted legacy ascending-order flag is unsupported because its historical coverage cannot be proved safely. Staking indexing fails closed before an outcall, marks route totals incomplete, and latches an actionable fault. Output or rewards indexing likewise fails closed rather than reinterpreting an ascending cursor. Production exposed legacy ascending output/rewards metadata on 2026-09-11; a reviewed one-hop upgrade discarded only those untrusted derived totals/cursors and rebuilt both aggregates from authoritative newest-first ICP Ledger/Index history. Both backfills completed successfully, and that compatibility repair has been removed. Current code no longer auto-repairs `Some(false)`; any future occurrence is anomalous and fails closed. `get_public_status().route_index_fault` remains non-null while either current newest-first historical backfill is incomplete, so temporarily lower or partial output/rewards totals are explicitly degraded until genesis coverage is established. A genuine staking fault remains visible until an operator establishes that the invariant is resolved and explicitly clears it; a poke does not clear it.
+
+The historian logs its own `Cycles: <amount>` line only once per completed sweep sample of **itself**, not on every driver tick.
 
 ### Runtime config verification
 
@@ -316,6 +294,8 @@ Upgrades can change:
 - `faucet_canister_id`
 
 Inspect the current `UpgradeArgs` definition in [`src/lifecycle.rs`](src/lifecycle.rs), its imported API type in [`src/api.rs`](src/api.rs), and the exported DID [`jupiter_historian.did`](jupiter_historian.did) before preparing any upgrade-time argument file.
+
+The existing production canister retains its persisted 600-second interval on a no-argument upgrade. A routine upgrade for the Event Horizon feature does not need to change `scan_interval_seconds`.
 
 ### Mainnet install args committed in this repo
 

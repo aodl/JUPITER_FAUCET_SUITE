@@ -20,6 +20,7 @@ import { createStakePaneController } from './stake-pane-controller.js';
 import {
   DASH,
   formatBytes,
+  formatDurationSeconds,
   formatIcpE8s,
   formatInteger,
   formatLocalTimestampSeconds,
@@ -114,11 +115,14 @@ function setMetricLoadingStates() {
 }
 
 function nextRunLabel(status) {
-  if (!status) return 'Next historian run unavailable.';
+  if (!status) return 'Endowment-index cadence unavailable.';
+  const cadence = formatDurationSeconds(status.index_interval_seconds);
+  const fallback = cadence === DASH
+    ? 'Scheduled endowment-index fallback cadence unavailable.'
+    : `Scheduled endowment-index fallback about every ${cadence}.`;
   const base = status.last_index_run_ts?.[0] ?? null;
-  if (!base) return `Refreshes every ${formatInteger(status.index_interval_seconds)} seconds.`;
-  const next = BigInt(base) + BigInt(status.index_interval_seconds);
-  return `Next historian run approx. ${formatLocalTimestampSeconds(next)}.`;
+  if (!base) return fallback;
+  return `Last endowment-index update ${formatLocalTimestampSeconds(base)}. ${fallback}`;
 }
 
 function renderLandingSummary(data) {

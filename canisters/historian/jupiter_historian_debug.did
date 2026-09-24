@@ -146,29 +146,6 @@ type ExpectedEndowmentStatus = variant {
   NotYetObserved;
   NotFoundInRetainedEvidence;
 };
-type RefreshEndowmentsOutcome = variant {
-  Updated;
-  NoQualifyingChange;
-  IncompleteProgress;
-  Busy;
-  RateLimited;
-  UpstreamFailure : record { message : text };
-};
-type EndowmentIndexProgress = record {
-  revision : nat64;
-  newly_indexed_qualifying_endowments : nat64;
-  complete_from_genesis : bool;
-  committed_head_staking_tx_id : opt nat64;
-  oldest_indexed_staking_tx_id : opt nat64;
-  observed_head_staking_tx_id : opt nat64;
-  next_staking_start_tx_id : opt nat64;
-  commitment_index_fault : opt CommitmentIndexFault;
-  retry_after_ts : opt nat64;
-};
-type RefreshEndowmentsResponse = record {
-  outcome : RefreshEndowmentsOutcome;
-  progress : EndowmentIndexProgress;
-};
 type EndowmentTransactionStatusResponse = record {
   transaction_id : nat64;
   status : ExpectedEndowmentStatus;
@@ -383,8 +360,7 @@ type DebugState = record {
   last_index_run_ts : opt nat64;
   commitment_index_lock_expires_at_ts : opt nat64;
   commitment_index_lock_generation : nat64;
-  endowment_refresh_next_allowed_ts : nat64;
-  endowment_refresh_ineffective_streak : nat8;
+  poke_next_allowed_ts : nat64;
 };
 type DebugRefreshIcpXdrRateResult = variant { Ok; Err : text };
 type DebugConfig = record {
@@ -416,7 +392,7 @@ service : (InitArgs) -> {
   get_neuron_commitment_history : (GetNeuronCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
   get_commitment_route_summaries : (GetCommitmentRouteSummariesArgs) -> (GetCommitmentRouteSummariesResponse) query;
   get_endowment_transaction_status : (nat64) -> (EndowmentTransactionStatusResponse) query;
-  refresh_endowments : () -> (RefreshEndowmentsResponse);
+  poke : (vec nat64) -> ();
   get_canister_overview : (principal) -> (opt CanisterOverview) query;
   get_public_counts : () -> (PublicCounts) query;
   get_public_status : () -> (PublicStatus) query;
@@ -433,6 +409,7 @@ service : (InitArgs) -> {
   debug_set_last_sns_discovery_ts : (opt nat64) -> ();
   debug_set_last_indexed_staking_tx_id : (opt nat64) -> ();
   debug_set_main_lock_expires_at_ts : (opt nat64) -> ();
+  debug_seed_legacy_poke_lease : () -> ();
   debug_set_icp_xdr_rate_fetched_at_ts : (opt nat64) -> ();
   debug_set_blackhole_cycles_probe_route : (principal, principal) -> ();
   debug_reset_runtime_state : () -> ();

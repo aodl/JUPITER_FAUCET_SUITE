@@ -67,8 +67,8 @@ mod tests {
     }
 
     #[test]
-    fn refresh_endowments_candid_is_zero_argument() {
-        let expected = "refresh_endowments : () -> (RefreshEndowmentsResponse);";
+    fn poke_candid_matches_event_horizon_callback() {
+        let expected = "poke : (vec nat64) -> ();";
         for (label, service) in [
             ("Rust export", __export_service()),
             (
@@ -82,9 +82,12 @@ mod tests {
         ] {
             let signature = service
                 .lines()
-                .find(|line| line.contains("refresh_endowments :"))
-                .unwrap_or_else(|| panic!("{label} omits refresh_endowments"));
+                .find(|line| line.contains("poke :"))
+                .unwrap_or_else(|| panic!("{label} omits poke"));
             assert_eq!(signature.trim(), expected, "{label} signature diverged");
+            assert!(!service.contains("refresh_endowments"));
+            assert!(!service.contains("RefreshEndowments"));
+            assert!(!service.contains("EndowmentIndexProgress"));
         }
     }
 
@@ -948,6 +951,7 @@ mod tests {
         let mut st = base_state();
         st.config.staking_account = alternate_account();
         st.config.ledger_canister_id = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        st.config.scan_interval_seconds = 600;
         st.last_index_run_ts = Some(777);
         st.last_completed_cycles_sweep_ts = 888;
         state::set_state(st);
@@ -959,6 +963,7 @@ mod tests {
             principal("jufzc-caaaa-aaaar-qb5da-cai")
         );
         assert_eq!(status.last_index_run_ts, Some(777));
+        assert_eq!(status.index_interval_seconds, 3_600);
         assert_eq!(status.last_completed_cycles_sweep_ts, Some(888));
         assert!(status.heap_memory_bytes.is_some());
         assert!(status.stable_memory_bytes.is_some());
@@ -971,6 +976,9 @@ mod tests {
                     .saturating_add(status.stable_memory_bytes.unwrap_or(0))
             ),
         );
+
+        state::with_state_mut(|st| st.config.scan_interval_seconds = 7_200);
+        assert_eq!(get_public_status().index_interval_seconds, 7_200);
     }
 
     #[test]

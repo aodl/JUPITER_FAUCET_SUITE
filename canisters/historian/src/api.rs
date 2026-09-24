@@ -165,35 +165,6 @@ pub enum ExpectedEndowmentStatus {
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
-pub enum RefreshEndowmentsOutcome {
-    Updated,
-    NoQualifyingChange,
-    IncompleteProgress,
-    Busy,
-    RateLimited,
-    UpstreamFailure { message: String },
-}
-
-#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
-pub struct EndowmentIndexProgress {
-    pub revision: u64,
-    pub newly_indexed_qualifying_endowments: u64,
-    pub complete_from_genesis: bool,
-    pub committed_head_staking_tx_id: Option<u64>,
-    pub oldest_indexed_staking_tx_id: Option<u64>,
-    pub observed_head_staking_tx_id: Option<u64>,
-    pub next_staking_start_tx_id: Option<u64>,
-    pub commitment_index_fault: Option<CommitmentIndexFault>,
-    pub retry_after_ts: Option<u64>,
-}
-
-#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
-pub struct RefreshEndowmentsResponse {
-    pub outcome: RefreshEndowmentsOutcome,
-    pub progress: EndowmentIndexProgress,
-}
-
-#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
 pub struct EndowmentTransactionStatusResponse {
     pub transaction_id: u64,
     pub status: ExpectedEndowmentStatus,

@@ -70,10 +70,6 @@ export async function createHistorianClient({
   }
 }
 
-function candidOptionalValue(value) {
-  return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
-}
-
 export async function loadHistorianEndowmentTransactionStatus({
   transactionId,
   ...clientOptions
@@ -84,16 +80,8 @@ export async function loadHistorianEndowmentTransactionStatus({
 
 export async function loadHistorianEndowmentRoutes({
   routes = [],
-  minimumRevision = null,
   ...clientOptions
 } = {}) {
   const { historian } = await createHistorianClient(clientOptions);
-  const response = await historian.get_commitment_route_summaries({ routes });
-  if (minimumRevision !== null && minimumRevision !== undefined) {
-    const revision = candidOptionalValue(response?.revision);
-    if (revision === null || BigInt(revision) < BigInt(minimumRevision)) {
-      throw new Error('Historian route query is older than the committed refresh revision.');
-    }
-  }
-  return response;
+  return historian.get_commitment_route_summaries({ routes });
 }

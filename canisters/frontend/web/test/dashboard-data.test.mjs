@@ -56,7 +56,7 @@ function historianStatus(overrides = {}) {
     ledger_canister_id: principal('ryjl3-tyaaa-aaaaa-aaaba-cai'),
     faucet_canister_id: principal('acjuz-liaaa-aaaar-qb4qq-cai'),
     last_index_run_ts: [123n],
-    index_interval_seconds: 600n,
+    index_interval_seconds: 3600n,
     last_completed_cycles_sweep_ts: [456n],
     cycles_interval_seconds: 3600n,
     heap_memory_bytes: [8_388_608n],

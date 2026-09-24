@@ -23,7 +23,7 @@ test('transaction classification remains a separate bounded browser query', asyn
   assert.deepEqual(response.status, { NotYetObserved: null });
 });
 
-test('route queries enforce the committed refresh revision before UI state can consume them', async () => {
+test('route queries retain their own revision', async () => {
   const routes = [{ CyclesTopUp: { canister_id: 'target' } }];
   const historianActor = {
     async get_commitment_route_summaries(args) {
@@ -31,39 +31,21 @@ test('route queries enforce the committed refresh revision before UI state can c
       return { revision: [7n], items: [] };
     },
   };
-  await assert.rejects(
-    loadHistorianEndowmentRoutes({
-      agent: {},
-      historianActor,
-      routes,
-      minimumRevision: 8n,
-    }),
-    /older than the committed refresh revision/i,
-  );
-  const current = await loadHistorianEndowmentRoutes({
-    agent: {},
-    historianActor,
-    routes,
-    minimumRevision: 7n,
-  });
+  const current = await loadHistorianEndowmentRoutes({ agent: {}, historianActor, routes });
   assert.equal(current.revision[0], 7n);
 });
 
-test('browser Candid keeps polling queries but omits the canister-only refresh update', () => {
+test('browser Candid keeps queries and omits Event Horizon poke', () => {
   const productionDid = readFileSync(new URL('../../../historian/jupiter_historian.did', import.meta.url), 'utf8');
   const debugDid = readFileSync(new URL('../../../historian/jupiter_historian_debug.did', import.meta.url), 'utf8');
   const browserDid = readFileSync(new URL('../declarations/jupiter_historian/jupiter_historian.did.js', import.meta.url), 'utf8');
   for (const source of [productionDid, debugDid]) {
-    assert.match(source, /refresh_endowments/);
+    assert.match(source, /poke\s*:\s*\(vec nat64\)\s*->\s*\(\)/);
     assert.match(source, /get_endowment_transaction_status/);
-    assert.match(source, /newly_indexed_qualifying_endowments/);
-    assert.match(source, /revision/);
+    assert.doesNotMatch(source, /refresh_endowments|RefreshEndowments|EndowmentIndexProgress/);
   }
   assert.match(browserDid, /get_endowment_transaction_status/);
   assert.match(browserDid, /get_commitment_route_summaries/);
-  assert.doesNotMatch(browserDid, /refresh_endowments|RefreshEndowments/);
-  assert.match(productionDid, /refresh_endowments\s*:\s*\(\)\s*->/);
-  assert.doesNotMatch(productionDid, /RefreshEndowmentsArgs/);
+  assert.doesNotMatch(browserDid, /poke|refresh_endowments|RefreshEndowments/);
   assert.doesNotMatch(productionDid, /debug_driver_tick|debug_state/);
-  assert.doesNotMatch(productionDid, /public.*tick|trigger.*scheduler/i);
 });

@@ -116,7 +116,7 @@ The Active view shows Relay's default account, staging subaccount 1, and splitte
 
 ### Dashboard loader behavior
 
-The browser does not call Historian's `refresh_endowments()` update directly. A protocol whose specific backend canister has been explicitly whitelisted in Historian code may offer expedited indexing from its UI after an ICP Ledger endowment transfer; that backend makes the optional argument-free inter-canister call without attached cycles. Arbitrary protocol canisters are not authorized automatically. The browser uses only `get_endowment_transaction_status(transaction_id)` plus exact revision-aware route queries for bounded polling. Normal scheduled Historian indexing remains the complete fallback while the production whitelist is empty and whenever that backend request is unavailable, busy, or rate-limited.
+The browser does not call `poke`. Event Horizon supplies best-effort notifications to Historian, while its hourly scheduled scan remains the complete fallback. Browser-facing Historian methods, including transaction status and route summaries, remain queries.
 
 The browser data loader is intentionally defensive:
 

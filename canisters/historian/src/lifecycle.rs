@@ -889,10 +889,8 @@ pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs
 
 #[ic_cdk::inspect_message]
 pub(super) fn inspect_message() {
-    if ic_cdk::api::msg_method_name() == "refresh_endowments" {
-        // Cost-saving ingress filter only. Inter-canister calls bypass this hook,
-        // and the replicated update guard performs the authoritative exact-principal
-        // whitelist check before dispatch or any ICP Index call.
+    if ic_cdk::api::msg_method_name() == "poke" {
+        // Reject ingress; the update guard authorizes the Event Horizon caller.
         return;
     }
     ic_cdk::api::accept_message();

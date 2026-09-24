@@ -1570,7 +1570,7 @@ fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
     )?;
     assert_eq!(status.staking_account, staking_account);
     assert_eq!(status.ledger_canister_id, ledger);
-    assert_eq!(status.index_interval_seconds, 60);
+    assert_eq!(status.index_interval_seconds, 3_600);
     assert_eq!(status.cycles_interval_seconds, 1);
     assert!(status.last_index_run_ts.is_some());
     assert!(status.last_completed_cycles_sweep_ts.is_some());

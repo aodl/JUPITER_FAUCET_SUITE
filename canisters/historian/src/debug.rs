@@ -41,8 +41,7 @@ pub struct DebugState {
     pub last_index_run_ts: Option<u64>,
     pub commitment_index_lock_expires_at_ts: Option<u64>,
     pub commitment_index_lock_generation: u64,
-    pub endowment_refresh_next_allowed_ts: u64,
-    pub endowment_refresh_ineffective_streak: u8,
+    pub poke_next_allowed_ts: u64,
 }
 
 #[cfg(feature = "debug_api")]
@@ -133,8 +132,7 @@ pub(super) fn debug_state() -> DebugState {
         last_index_run_ts: st.last_index_run_ts,
         commitment_index_lock_expires_at_ts: st.commitment_index_lock_expires_at_ts,
         commitment_index_lock_generation: st.commitment_index_lock_generation,
-        endowment_refresh_next_allowed_ts: st.endowment_refresh_next_allowed_ts,
-        endowment_refresh_ineffective_streak: st.endowment_refresh_ineffective_streak,
+        poke_next_allowed_ts: st.endowment_refresh_next_allowed_ts,
     })
 }
 
@@ -247,6 +245,20 @@ pub(super) fn debug_reset_runtime_state() {
 pub(super) fn debug_set_main_lock_expires_at_ts(ts: Option<u64>) {
     guard_debug_api_not_production();
     state::with_root_state_mut(|st| st.main_lock_state_ts = Some(ts.unwrap_or(0)));
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+pub(super) fn debug_seed_legacy_poke_lease() {
+    guard_debug_api_not_production();
+    let now_secs = ic_cdk::api::time() / 1_000_000_000;
+    state::with_root_state_mut(|st| {
+        st.commitment_index_lock_expires_at_ts = Some(now_secs.saturating_add(3_600));
+        st.commitment_index_lock_generation = st.commitment_index_lock_generation.saturating_add(1);
+        st.commitment_index_lock_owner = Some(state::CommitmentIndexLeaseOwner::EndowmentRefresh);
+        st.endowment_refresh_next_allowed_ts = now_secs.saturating_add(60);
+        st.endowment_refresh_ineffective_streak = 3;
+    });
 }
 
 #[cfg(feature = "debug_api")]
