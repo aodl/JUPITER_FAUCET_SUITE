@@ -165,6 +165,7 @@ type RewardState = record {
   pending_payout : opt PendingRewardPayout;
 };
 service : (InitArgs) -> {
+  poke : (vec nat64) -> ();
   debug_main_tick : () -> ();
   debug_state : () -> (DebugState) query;
   debug_config : () -> (DebugConfig) query;

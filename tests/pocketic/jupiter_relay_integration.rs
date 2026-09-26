@@ -44,6 +44,13 @@ static RELAY_PROD_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_REWARDS_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+
+const EVENT_HORIZON_ID: u64 = 42;
+
+fn event_horizon_proxy() -> Principal {
+    Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1])
+}
 
 fn ledger_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&LEDGER_WASM, "mock-icrc-ledger", None)
@@ -62,6 +69,10 @@ fn relay_wasm() -> Result<Vec<u8>> {
 }
 fn relay_prod_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&RELAY_PROD_WASM, "jupiter-relay", None)
+}
+
+fn status_proxy_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(&STATUS_PROXY_WASM, "mock-status-proxy", None)
 }
 
 fn sns_rewards_wasm() -> Result<Vec<u8>> {
@@ -108,6 +119,12 @@ struct RewardRelayInitArg {
     max_transfers_per_tick: Option<u32>,
     surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
     surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct PokeProxyArgs {
+    canister_id: Principal,
+    subaccount_ids: Vec<u64>,
 }
 
 #[derive(CandidType)]
@@ -996,6 +1013,98 @@ fn assert_splitter_transfer_pair_records(
     {
         bail!("splitter {splitter_number} did not conserve its pinned balance");
     }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> Result<()> {
+    let env = RelayEnv::new(None)?;
+    let proxy = event_horizon_proxy();
+    env.pic
+        .create_canister_with_id(None, None, proxy)
+        .map_err(anyhow::Error::msg)?;
+    env.pic.add_cycles(proxy, 5_000_000_000_000);
+    env.pic
+        .install_canister(proxy, status_proxy_wasm()?, vec![], None);
+    let attacker = env.pic.create_canister();
+    env.pic.add_cycles(attacker, 5_000_000_000_000);
+    env.pic
+        .install_canister(attacker, status_proxy_wasm()?, vec![], None);
+
+    let before: DebugState = query_one(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    for caller in [
+        Principal::anonymous(),
+        Principal::self_authenticating([42; 32]),
+    ] {
+        assert!(env
+            .pic
+            .update_call(
+                env.relay,
+                caller,
+                "poke",
+                encode_args((vec![EVENT_HORIZON_ID],))?,
+            )
+            .is_err());
+    }
+    let rejected: Result<(), String> = update_one(
+        &env.pic,
+        attacker,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: env.relay,
+            subaccount_ids: vec![EVENT_HORIZON_ID],
+        },
+    )?;
+    assert!(rejected
+        .unwrap_err()
+        .contains("caller is not Event Horizon"));
+
+    for ids in [vec![], vec![7, 8]] {
+        let accepted: Result<(), String> = update_one(
+            &env.pic,
+            proxy,
+            Principal::anonymous(),
+            "debug_poke",
+            PokeProxyArgs {
+                canister_id: env.relay,
+                subaccount_ids: ids,
+            },
+        )?;
+        accepted.map_err(anyhow::Error::msg)?;
+    }
+    env.credit_relay_numbered_subaccount(10, 200_000_000)?;
+    env.credit_relay_subaccount_one(100_010_000)?;
+    env.credit_relay(5_000_000_000)?;
+    let accepted: Result<(), String> = update_one(
+        &env.pic,
+        proxy,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: env.relay,
+            subaccount_ids: vec![7, 42, 42],
+        },
+    )?;
+    accepted.map_err(anyhow::Error::msg)?;
+    assert_eq!(env.relay_numbered_subaccount_balance(10)?, 0);
+    assert_eq!(env.relay_subaccount_one_balance()?, 0);
+    assert!(env.summary().is_ok());
+    let after: DebugState = query_one(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    assert_eq!(after.last_main_run_ts, before.last_main_run_ts);
     Ok(())
 }
 

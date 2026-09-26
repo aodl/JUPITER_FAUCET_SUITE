@@ -38,6 +38,7 @@ debug_api = []
 [dev-dependencies]
 anyhow = { workspace = true }
 candid = { workspace = true }
+candid_parser = "0.1.4"
 hex = { workspace = true }
 pocket-ic = { workspace = true }
 serde = { workspace = true }

@@ -368,7 +368,10 @@ mod tests {
             &ledger,
             &gov,
         ));
-        assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+        assert!(matches!(
+            poll_once(fut.as_mut()),
+            Poll::Ready(MainTickOutcome::Completed)
+        ));
         assert_eq!(
             gov.claim_or_refresh_calls(),
             1,
@@ -415,7 +418,10 @@ mod tests {
             &ledger,
             &gov,
         ));
-        assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+        assert!(matches!(
+            poll_once(fut.as_mut()),
+            Poll::Ready(MainTickOutcome::Completed)
+        ));
         assert_eq!(gov.get_full_neuron_calls(), 1);
         assert_eq!(gov.disburse_calls(), 0);
         assert_eq!(gov.claim_or_refresh_calls(), 1);
@@ -451,7 +457,10 @@ mod tests {
             &ledger,
             &gov,
         ));
-        assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+        assert!(matches!(
+            poll_once(fut.as_mut()),
+            Poll::Ready(MainTickOutcome::Completed)
+        ));
         assert_eq!(
             ledger.transfer_calls(),
             0,
@@ -468,6 +477,111 @@ mod tests {
             777,
             "skipped ticks must preserve the previously captured age snapshot"
         );
+    }
+
+    #[test]
+    fn poke_preserves_in_flight_maturity_and_daily_cadence() {
+        let now_secs = 2_000_u64;
+        let mut st = state::State::new(test_config(), 1_000);
+        st.prev_age_seconds = 777;
+        let last_main_run_ts = st.last_main_run_ts;
+        state::set_state(st);
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = CountingLedger::new(50_000_000);
+        let gov = ScriptedGovernance::new(
+            vec![Ok(Neuron {
+                maturity_disbursements_in_progress: Some(vec![MaturityDisbursement {
+                    amount_e8s: Some(50),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })],
+            vec![],
+        );
+
+        run_ready(run_poke_with_clients(
+            now_secs * 1_000_000_000,
+            now_secs,
+            &cfg,
+            &ledger,
+            &gov,
+        ));
+
+        assert_eq!(ledger.transfer_calls(), 0);
+        assert_eq!(gov.disburse_calls(), 0);
+        assert_eq!(gov.claim_or_refresh_calls(), 0);
+        assert_eq!(gov.refresh_voting_power_calls(), 0);
+        assert_eq!(state::with_state(|st| st.prev_age_seconds), 777);
+        assert_eq!(
+            state::with_state(|st| st.last_main_run_ts),
+            last_main_run_ts
+        );
+        assert_eq!(state::with_state(|st| st.main_lock_state_ts), Some(0));
+    }
+
+    #[test]
+    fn busy_scheduled_main_attempt_retries_governance_work_after_poke_lease_releases() {
+        let now_secs = 2_000_u64;
+        let mut st = state::State::new(test_config(), 0);
+        st.last_main_run_ts = 0;
+        state::set_state(st);
+        let cfg = state::with_state(|st| st.config.clone());
+        let poke_guard = MainGuard::acquire(now_secs).expect("poke main lease");
+        let ledger = CountingLedger::new(0);
+        let gov = ScriptedGovernance::new(
+            vec![Ok(Neuron {
+                aging_since_timestamp_seconds: 100,
+                maturity_disbursements_in_progress: None,
+                ..Default::default()
+            })],
+            vec![Ok(Some(1))],
+        );
+
+        assert_eq!(
+            run_ready(run_main_tick_with_clients(
+                false,
+                now_secs * 1_000_000_000,
+                now_secs,
+                &cfg,
+                &ledger,
+                &gov,
+            )),
+            MainTickOutcome::MainGuardBusy
+        );
+        assert_eq!(gov.claim_or_refresh_calls(), 0);
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), 0);
+
+        drop(poke_guard);
+        let retry_secs = now_secs + SCHEDULED_MAIN_RETRY_SECONDS;
+        assert_eq!(
+            run_ready(run_main_tick_with_clients(
+                false,
+                retry_secs * 1_000_000_000,
+                retry_secs,
+                &cfg,
+                &ledger,
+                &gov,
+            )),
+            MainTickOutcome::Completed
+        );
+        assert_eq!(gov.claim_or_refresh_calls(), 1);
+        assert_eq!(gov.refresh_voting_power_calls(), 1);
+        assert_eq!(gov.disburse_calls(), 1);
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), retry_secs);
+    }
+
+    #[test]
+    fn scheduled_main_retry_requests_coalesce_until_timer_begins() {
+        clear_scheduled_main_retry();
+
+        assert!(reserve_scheduled_main_retry());
+        assert!(!reserve_scheduled_main_retry());
+
+        clear_scheduled_main_retry();
+        assert!(reserve_scheduled_main_retry());
+        assert!(!reserve_scheduled_main_retry());
+
+        clear_scheduled_main_retry();
     }
 
     #[derive(Clone)]
@@ -597,6 +711,48 @@ mod tests {
                 )),
             }
         }
+    }
+
+    #[test]
+    fn poke_pays_staged_icp_without_governance_maintenance_or_cadence_movement() {
+        let now_secs = 2_100_u64;
+        let st = state::State::new(test_config(), 1_000);
+        let last_main_run_ts = st.last_main_run_ts;
+        state::set_state(st);
+        let cfg = state::with_state(|st| st.config.clone());
+        let ledger = ScriptedTransferLedger::new(
+            100_000_000,
+            10_000,
+            vec![
+                TransferScriptStep::Ok(Nat::from(1_u64)),
+                TransferScriptStep::Ok(Nat::from(2_u64)),
+                TransferScriptStep::Ok(Nat::from(3_u64)),
+            ],
+        );
+        let gov = ScriptedGovernance::new(
+            vec![Ok(Neuron {
+                maturity_disbursements_in_progress: None,
+                ..Default::default()
+            })],
+            vec![],
+        );
+
+        run_ready(run_poke_with_clients(
+            now_secs * 1_000_000_000,
+            now_secs,
+            &cfg,
+            &ledger,
+            &gov,
+        ));
+
+        assert_eq!(ledger.transfer_calls(), 1);
+        assert_eq!(gov.disburse_calls(), 0);
+        assert_eq!(gov.claim_or_refresh_calls(), 0);
+        assert_eq!(gov.refresh_voting_power_calls(), 0);
+        assert_eq!(
+            state::with_state(|st| st.last_main_run_ts),
+            last_main_run_ts
+        );
     }
 
     struct QueuedFeeLedger {
@@ -736,7 +892,10 @@ mod tests {
                 &ledger,
                 &gov,
             ));
-            assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+            assert!(matches!(
+                poll_once(fut.as_mut()),
+                Poll::Ready(MainTickOutcome::Completed)
+            ));
             assert_eq!(ledger.transfer_calls(), 1);
             assert!(
                 state::with_state(|st| st.payout_plan.is_none()),
@@ -775,7 +934,10 @@ mod tests {
             &ledger,
             &gov,
         ));
-        assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+        assert!(matches!(
+            poll_once(fut.as_mut()),
+            Poll::Ready(MainTickOutcome::Completed)
+        ));
         assert_eq!(ledger.transfer_calls(), 1);
         assert!(
             state::with_state(|st| st.payout_plan.is_some()),
@@ -818,7 +980,10 @@ mod tests {
                 &ledger,
                 &gov,
             ));
-            assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+            assert!(matches!(
+                poll_once(fut.as_mut()),
+                Poll::Ready(MainTickOutcome::Completed)
+            ));
             assert_eq!(ledger.transfer_calls(), 1);
             assert!(
                 state::with_state(|st| st.payout_plan.is_none()),
@@ -973,7 +1138,10 @@ mod tests {
             &ledger,
             &gov,
         ));
-        assert!(matches!(poll_once(fut.as_mut()), Poll::Ready(())));
+        assert!(matches!(
+            poll_once(fut.as_mut()),
+            Poll::Ready(MainTickOutcome::Completed)
+        ));
         assert_eq!(gov.disburse_calls(), 1);
         assert_eq!(gov.claim_or_refresh_calls(), 1);
         assert_eq!(
@@ -1055,7 +1223,10 @@ mod tests {
             &ledger,
             &gov,
         ));
-        assert!(matches!(poll_once(first.as_mut()), Poll::Ready(())));
+        assert!(matches!(
+            poll_once(first.as_mut()),
+            Poll::Ready(MainTickOutcome::Completed)
+        ));
         assert_eq!(
             ledger.transfer_calls(),
             2,
@@ -1081,7 +1252,10 @@ mod tests {
             &ledger,
             &gov,
         ));
-        assert!(matches!(poll_once(second.as_mut()), Poll::Ready(())));
+        assert!(matches!(
+            poll_once(second.as_mut()),
+            Poll::Ready(MainTickOutcome::Completed)
+        ));
         assert_eq!(ledger.transfer_calls(), 3, "second run should attempt exactly one transfer from the replanned remainder before the scripted transport failure");
 
         let replanned = state::with_state(|st| st.payout_plan.clone())
@@ -1149,7 +1323,10 @@ mod tests {
             &ledger,
             &gov,
         ));
-        assert!(matches!(poll_once(first.as_mut()), Poll::Ready(())));
+        assert!(matches!(
+            poll_once(first.as_mut()),
+            Poll::Ready(MainTickOutcome::Completed)
+        ));
         assert_eq!(gov.get_full_neuron_calls(), 1);
         assert_eq!(gov.disburse_calls(), 1);
         assert_eq!(gov.claim_or_refresh_calls(), 1);
@@ -1168,7 +1345,10 @@ mod tests {
             &ledger,
             &gov,
         ));
-        assert!(matches!(poll_once(second.as_mut()), Poll::Ready(())));
+        assert!(matches!(
+            poll_once(second.as_mut()),
+            Poll::Ready(MainTickOutcome::Completed)
+        ));
         assert_eq!(gov.get_full_neuron_calls(), 2);
         assert_eq!(
             gov.disburse_calls(),

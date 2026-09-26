@@ -1116,6 +1116,87 @@ mod tests {
     }
 
     #[test]
+    fn poke_worker_releases_main_guard_without_advancing_daily_cadence() {
+        let now_secs = 1_000;
+        let mut st = state::State::new(test_config(), now_secs);
+        st.last_main_run_ts = 777;
+        state::set_state(st);
+
+        run_ready(super::super::poke::run_worker_with_clients(
+            now_secs * 1_000_000_000,
+            now_secs,
+            &BalanceRecordingLedger::new(10_000, 0, 0, vec![]),
+            &RecordingIndex::new(vec![]),
+            &ScriptedCmc::new(vec![]),
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+        ));
+
+        state::with_state(|st| {
+            assert_eq!(st.last_main_run_ts, 777);
+            assert_eq!(st.main_lock_state_ts, Some(0));
+        });
+    }
+
+    #[test]
+    fn busy_scheduled_main_attempt_can_retry_after_poke_lease_releases() {
+        let now_secs = 1_000;
+        let mut st = state::State::new(test_config(), 0);
+        st.last_main_run_ts = 0;
+        state::set_state(st);
+        let poke_guard = MainGuard::acquire(now_secs).expect("poke main lease");
+        let ledger = BalanceRecordingLedger::new(0, 0, 0, vec![]);
+        let index = RecordingIndex::new(vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+
+        assert_eq!(
+            run_ready(run_main_tick_with_clients(
+                false,
+                now_secs * 1_000_000_000,
+                now_secs,
+                &ledger,
+                &index,
+                &cmc,
+                &NoopGovernance,
+                &crate::clients::canister_info::NoopCanisterStatusClient,
+            )),
+            MainTickOutcome::MainGuardBusy
+        );
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), 0);
+
+        drop(poke_guard);
+        let retry_secs = now_secs + SCHEDULED_MAIN_RETRY_SECONDS;
+        assert_eq!(
+            run_ready(run_main_tick_with_clients(
+                false,
+                retry_secs * 1_000_000_000,
+                retry_secs,
+                &ledger,
+                &index,
+                &cmc,
+                &NoopGovernance,
+                &crate::clients::canister_info::NoopCanisterStatusClient,
+            )),
+            MainTickOutcome::Completed
+        );
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), retry_secs);
+    }
+
+    #[test]
+    fn scheduled_main_retry_requests_coalesce_until_timer_begins() {
+        clear_scheduled_main_retry();
+
+        assert!(reserve_scheduled_main_retry());
+        assert!(!reserve_scheduled_main_retry());
+
+        clear_scheduled_main_retry();
+        assert!(reserve_scheduled_main_retry());
+        assert!(!reserve_scheduled_main_retry());
+
+        clear_scheduled_main_retry();
+    }
+
+    #[test]
     fn superseded_funding_discovery_cannot_recreate_completed_tranche() {
         let now_secs = 2_000;
         let cfg = test_config();

@@ -41,6 +41,13 @@ static GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static BLACKHOLE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static FAUCET_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static LIFELINE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+
+const EVENT_HORIZON_ID: u64 = 42;
+
+fn event_horizon_proxy() -> Principal {
+    Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1])
+}
 
 fn ledger_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&LEDGER_WASM, "mock-icrc-ledger", None)
@@ -62,6 +69,9 @@ fn faucet_wasm() -> Result<Vec<u8>> {
 }
 fn lifeline_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&LIFELINE_WASM, "jupiter-lifeline", None)
+}
+fn status_proxy_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(&STATUS_PROXY_WASM, "mock-status-proxy", None)
 }
 
 use support::account_identifier::account_identifier_text;
@@ -110,6 +120,12 @@ struct FaucetInitArg {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+struct PokeProxyArgs {
+    canister_id: Principal,
+    subaccount_ids: Vec<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 struct FaucetUpgradeArg {
     autonomous_rescue_armed: Option<bool>,
     clear_forced_rescue: Option<bool>,
@@ -135,6 +151,7 @@ enum ForcedRescueReason {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugState {
+    last_main_run_ts: u64,
     active_payout_job_present: bool,
     last_summary_present: bool,
     last_successful_transfer_ts: Option<u64>,
@@ -1180,6 +1197,90 @@ impl RealNnsFaucetEnv {
             (),
         )
     }
+}
+
+#[test]
+#[ignore]
+fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> Result<()> {
+    let env = FaucetEnv::new_with_init_overrides(|init| {
+        init.main_interval_seconds = Some(31_536_000);
+        init.rescue_interval_seconds = Some(31_536_000);
+    })?;
+    let proxy = event_horizon_proxy();
+    env.pic
+        .create_canister_with_id(None, None, proxy)
+        .map_err(anyhow::Error::msg)?;
+    env.pic.add_cycles(proxy, 5_000_000_000_000);
+    env.pic
+        .install_canister(proxy, status_proxy_wasm()?, vec![], None);
+    let attacker = env.pic.create_canister();
+    env.pic.add_cycles(attacker, 5_000_000_000_000);
+    env.pic
+        .install_canister(attacker, status_proxy_wasm()?, vec![], None);
+    let before = env.state()?;
+
+    for caller in [
+        Principal::anonymous(),
+        Principal::self_authenticating([42; 32]),
+    ] {
+        assert!(env
+            .pic
+            .update_call(
+                env.faucet,
+                caller,
+                "poke",
+                encode_args((vec![EVENT_HORIZON_ID],))?
+            )
+            .is_err());
+    }
+    let rejected: Result<(), String> = update_one(
+        &env.pic,
+        attacker,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: env.faucet,
+            subaccount_ids: vec![EVENT_HORIZON_ID],
+        },
+    )?;
+    assert!(rejected
+        .unwrap_err()
+        .contains("caller is not Event Horizon"));
+    for ids in [vec![], vec![7, 8]] {
+        let accepted: Result<(), String> = update_one(
+            &env.pic,
+            proxy,
+            Principal::anonymous(),
+            "debug_poke",
+            PokeProxyArgs {
+                canister_id: env.faucet,
+                subaccount_ids: ids,
+            },
+        )?;
+        accepted.map_err(anyhow::Error::msg)?;
+    }
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    let accepted: Result<(), String> = update_one(
+        &env.pic,
+        proxy,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: env.faucet,
+            subaccount_ids: vec![7, 42, 42],
+        },
+    )?;
+    accepted.map_err(anyhow::Error::msg)?;
+    assert!(!env.state()?.last_summary_present);
+    env.append_pending_funding_tranches()?;
+    env.pic.advance_time(Duration::from_secs(10));
+    tick_n(&env.pic, 10);
+    assert!(env.state()?.last_summary_present);
+    assert_eq!(env.state()?.last_main_run_ts, before.last_main_run_ts);
+    Ok(())
 }
 
 #[test]

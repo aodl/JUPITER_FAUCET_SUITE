@@ -405,8 +405,13 @@ def validate_relay_prod_did(path: Path) -> None:
         fail(f"{path} relay production DID must expose a service")
     body = service_match.group("body")
     methods = set(re.findall(r"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:", body))
-    if methods:
-        fail(f"{path} relay production DID must expose an empty service, got methods {sorted(methods)}")
+    if methods != {"poke"}:
+        fail(
+            f"{path} relay production DID must expose only Event Horizon poke, "
+            f"got methods {sorted(methods)}"
+        )
+    if not re.search(r"(?m)^\s*poke\s*:\s*\(\s*vec\s+nat64\s*\)\s*->\s*\(\s*\)\s*;", body):
+        fail(f"{path} relay poke must have signature (vec nat64) -> ()")
     forbidden = [
         "Relay" + "Status",
         "relay_" + "status",

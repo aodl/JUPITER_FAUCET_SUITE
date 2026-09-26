@@ -20,4 +20,6 @@ type InitArgs = record {
   stake_recognition_delay_seconds : opt nat64;
 };
 
-service : (InitArgs) -> {};
+service : (InitArgs) -> {
+  poke : (vec nat64) -> ();
+};

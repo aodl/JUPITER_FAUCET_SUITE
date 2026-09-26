@@ -2,6 +2,7 @@ pub(crate) mod cycles_probe;
 mod guards;
 mod ledger_fee;
 mod logging;
+mod poke;
 mod reward_history;
 mod reward_splitter;
 mod reward_sweep;
@@ -11,6 +12,7 @@ mod tick;
 mod transfer;
 
 pub(crate) use logging::log_lifecycle;
+pub(crate) use poke::handle_event_horizon_poke;
 #[cfg(feature = "debug_api")]
 pub(crate) use tick::debug_main_tick_impl;
 pub(crate) use tick::{install_timers, schedule_startup_liveness_tick};

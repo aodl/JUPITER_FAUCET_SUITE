@@ -253,6 +253,18 @@ static INDEX_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 static CMC_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 
+const EVENT_HORIZON_ID: u64 = 42;
+
+fn event_horizon_proxy() -> Principal {
+    Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1])
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct PokeProxyArgs {
+    canister_id: Principal,
+    subaccount_ids: Vec<u64>,
+}
+
 fn build_wasm_cached(
     cache: &OnceLock<Vec<u8>>,
     package: &str,
@@ -1459,6 +1471,92 @@ fn set_self_only_controllers(pic: &PocketIc, canister: Principal) -> Result<()> 
 }
 
 // ------------------------- Tests -------------------------
+
+#[test]
+#[ignore]
+fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> Result<()> {
+    let pic = build_pic();
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let governance = Principal::from_text(NNS_GOVERNANCE_ID)?;
+    let disburser = pic.create_canister();
+    pic.add_cycles(disburser, 5_000_000_000_000);
+    let init = InitArg {
+        neuron_id: 1,
+        normal_recipient: Account {
+            owner: fixture_principal(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: Some([1; 32]),
+        },
+        age_bonus_recipient_2: Account {
+            owner: Principal::management_canister(),
+            subaccount: Some([2; 32]),
+        },
+        ledger_canister_id: Some(ledger),
+        governance_canister_id: Some(governance),
+        rescue_controller: fixture_principal(),
+        autonomous_rescue_armed: Some(false),
+        main_interval_seconds: Some(31_536_000),
+        rescue_interval_seconds: Some(31_536_000),
+    };
+    pic.install_canister(disburser, build_disburser_wasm()?, encode_one(init)?, None);
+    let proxy = event_horizon_proxy();
+    pic.create_canister_with_id(None, None, proxy)
+        .map_err(anyhow::Error::msg)?;
+    pic.add_cycles(proxy, 5_000_000_000_000);
+    pic.install_canister(proxy, build_status_proxy_wasm()?, vec![], None);
+    let attacker = pic.create_canister();
+    pic.add_cycles(attacker, 5_000_000_000_000);
+    pic.install_canister(attacker, build_status_proxy_wasm()?, vec![], None);
+    let before: DebugState =
+        query_call(&pic, disburser, Principal::anonymous(), "debug_state", ())?;
+
+    for caller in [
+        Principal::anonymous(),
+        Principal::self_authenticating([42; 32]),
+    ] {
+        assert!(pic
+            .update_call(
+                disburser,
+                caller,
+                "poke",
+                encode_args((vec![EVENT_HORIZON_ID],))?
+            )
+            .is_err());
+    }
+    let rejected: Result<(), String> = update_call(
+        &pic,
+        attacker,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: disburser,
+            subaccount_ids: vec![EVENT_HORIZON_ID],
+        },
+    )?;
+    assert!(rejected
+        .unwrap_err()
+        .contains("caller is not Event Horizon"));
+    for ids in [vec![], vec![7, 8], vec![7, 42, 42]] {
+        let accepted: Result<(), String> = update_call(
+            &pic,
+            proxy,
+            Principal::anonymous(),
+            "debug_poke",
+            PokeProxyArgs {
+                canister_id: disburser,
+                subaccount_ids: ids,
+            },
+        )?;
+        accepted.map_err(anyhow::Error::msg)?;
+    }
+    let after: DebugState = query_call(&pic, disburser, Principal::anonymous(), "debug_state", ())?;
+    assert_eq!(after.last_main_run_ts, before.last_main_run_ts);
+    assert_eq!(after.prev_age_seconds, before.prev_age_seconds);
+    Ok(())
+}
 
 #[test]
 #[ignore]

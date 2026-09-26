@@ -58,6 +58,7 @@ type DebugFootprint = record {
   last_summary_candid_bytes : nat64;
 };
 type DebugState = record {
+  last_main_run_ts : nat64;
   last_successful_transfer_ts : opt nat64;
   last_rescue_check_ts : nat64;
   rescue_triggered : bool;
@@ -104,6 +105,7 @@ type Summary = record {
   remainder_to_relay_e8s : nat64;
 };
 service : (InitArgs) -> {
+  poke : (vec nat64) -> ();
   debug_accounts : () -> (DebugAccounts) query;
   debug_canister_info_probe : (principal) -> (DebugCanisterInfoProbeResult);
   debug_config : () -> (DebugConfig) query;

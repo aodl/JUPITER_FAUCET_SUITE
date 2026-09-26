@@ -411,6 +411,48 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     log_lifecycle("post_upgrade_complete");
 }
 
+#[cfg(not(feature = "debug_api"))]
+const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[];
+#[cfg(feature = "debug_api")]
+const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
+
+#[cfg(not(feature = "debug_api"))]
+const EVENT_HORIZON_PAYOUT_SUBACCOUNT_IDS: &[u64] = &[];
+#[cfg(feature = "debug_api")]
+const EVENT_HORIZON_PAYOUT_SUBACCOUNT_IDS: &[u64] = &[42];
+
+fn event_horizon_caller_is_whitelisted(caller: Principal) -> bool {
+    EVENT_HORIZON_CALLER_WHITELIST
+        .iter()
+        .any(|allowed| caller.as_slice() == *allowed)
+}
+
+fn guard_event_horizon_caller() -> Result<(), String> {
+    event_horizon_caller_is_whitelisted(ic_cdk::api::msg_caller())
+        .then_some(())
+        .ok_or_else(|| "caller is not Event Horizon".to_string())
+}
+
+fn has_relevant_event_horizon_id(subaccount_ids: &[u64]) -> bool {
+    subaccount_ids
+        .iter()
+        .any(|id| EVENT_HORIZON_PAYOUT_SUBACCOUNT_IDS.contains(id))
+}
+
+#[ic_cdk::update(guard = "guard_event_horizon_caller")]
+async fn poke(subaccount_ids: Vec<u64>) {
+    if has_relevant_event_horizon_id(&subaccount_ids) {
+        scheduler::handle_event_horizon_poke().await;
+    }
+}
+
+#[ic_cdk::inspect_message]
+fn inspect_message() {
+    if ic_cdk::api::msg_method_name() != "poke" {
+        ic_cdk::api::accept_message();
+    }
+}
+
 fn log_lifecycle(event: &str) {
     let main_interval_seconds = crate::state::with_state(|st| st.config.main_interval_seconds);
     ic_cdk::println!(
@@ -433,6 +475,7 @@ fn log_lifecycle(event: &str) {
 #[cfg(feature = "debug_api")]
 #[derive(CandidType, Deserialize)]
 pub struct DebugState {
+    pub last_main_run_ts: u64,
     pub last_successful_transfer_ts: Option<u64>,
     pub last_rescue_check_ts: u64,
     pub rescue_triggered: bool,
@@ -498,6 +541,7 @@ pub struct DebugFootprint {
 fn debug_state() -> DebugState {
     guard_debug_api_not_production();
     crate::state::with_state(|st| DebugState {
+        last_main_run_ts: st.last_main_run_ts,
         last_successful_transfer_ts: st.last_successful_transfer_ts,
         last_rescue_check_ts: st.last_rescue_check_ts,
         rescue_triggered: st.rescue_triggered,
@@ -1368,3 +1412,48 @@ mod tests {
 }
 
 ic_cdk::export_candid!();
+
+#[cfg(test)]
+fn assert_committed_did_matches_rust_service(did_file: &str) {
+    use candid_parser::utils::{service_equal, CandidSource};
+    use std::path::Path;
+
+    let did_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(did_file);
+    service_equal(
+        CandidSource::Text(&__export_service()),
+        CandidSource::File(&did_path),
+    )
+    .unwrap_or_else(|err| {
+        panic!("committed faucet DID {did_file} diverged from Rust service: {err}")
+    });
+}
+
+#[cfg(not(feature = "debug_api"))]
+#[test]
+fn production_event_horizon_policy_is_disabled_and_exact() {
+    assert!(EVENT_HORIZON_CALLER_WHITELIST.is_empty());
+    assert!(EVENT_HORIZON_PAYOUT_SUBACCOUNT_IDS.is_empty());
+    assert!(!event_horizon_caller_is_whitelisted(Principal::anonymous()));
+    assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
+        &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1,]
+    )));
+    let did = include_str!("../jupiter_faucet.did");
+    assert!(did.contains("poke : (vec nat64) -> ();"));
+    assert_eq!(did.matches("poke : (vec nat64) -> ();").count(), 1);
+    assert!(!did.contains("debug_"));
+    assert_committed_did_matches_rust_service("jupiter_faucet.did");
+}
+
+#[cfg(feature = "debug_api")]
+#[test]
+fn debug_event_horizon_policy_accepts_only_exact_fixture() {
+    let exact = Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]);
+    let near = Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 2]);
+    assert!(event_horizon_caller_is_whitelisted(exact));
+    assert!(!event_horizon_caller_is_whitelisted(near));
+    assert_eq!(EVENT_HORIZON_PAYOUT_SUBACCOUNT_IDS, &[42]);
+    assert!(!has_relevant_event_horizon_id(&[]));
+    assert!(!has_relevant_event_horizon_id(&[7, 8]));
+    assert!(has_relevant_event_horizon_id(&[7, 42, 42]));
+    assert_committed_did_matches_rust_service("jupiter_faucet_debug.did");
+}

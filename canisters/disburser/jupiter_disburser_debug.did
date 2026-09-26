@@ -50,6 +50,7 @@ type DebugConfig = record {
 };
 
 service : (InitArgs) -> {
+  poke : (vec nat64) -> ();
   debug_state : () -> (DebugState) query;
   debug_config : () -> (DebugConfig) query;
   debug_state_size_bytes : () -> (nat64) query;

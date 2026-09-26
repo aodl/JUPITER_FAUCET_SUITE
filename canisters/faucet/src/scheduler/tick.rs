@@ -1,5 +1,17 @@
 use super::*;
 use jupiter_ic_clients::timer_guard::{LeaseFinish, TimerLeaseGuard};
+use std::cell::Cell;
+pub(super) const SCHEDULED_MAIN_RETRY_SECONDS: u64 = 60;
+
+thread_local! {
+    static SCHEDULED_MAIN_RETRY_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MainTickOutcome {
+    Completed,
+    MainGuardBusy,
+}
 pub(super) struct MainGuard {
     inner: TimerLeaseGuard,
 }
@@ -78,7 +90,7 @@ pub(crate) fn install_timers() {
         )
     });
     ic_cdk_timers::set_timer_interval(Duration::from_secs(main_s.max(60)), || async {
-        main_tick(false).await;
+        scheduled_main_tick().await;
     });
     ic_cdk_timers::set_timer_interval(Duration::from_secs(rescue_s.max(60)), || async {
         rescue_tick().await;
@@ -91,7 +103,31 @@ pub(crate) fn schedule_immediate_rescue_reconcile() {
     });
 }
 
-pub(super) async fn main_tick(force: bool) {
+async fn scheduled_main_tick() {
+    if main_tick(false).await == MainTickOutcome::MainGuardBusy {
+        schedule_scheduled_main_retry();
+    }
+}
+
+fn schedule_scheduled_main_retry() {
+    if !reserve_scheduled_main_retry() {
+        return;
+    }
+    ic_cdk_timers::set_timer(Duration::from_secs(SCHEDULED_MAIN_RETRY_SECONDS), async {
+        clear_scheduled_main_retry();
+        scheduled_main_tick().await;
+    });
+}
+
+pub(super) fn reserve_scheduled_main_retry() -> bool {
+    SCHEDULED_MAIN_RETRY_PENDING.with(|pending| !pending.replace(true))
+}
+
+pub(super) fn clear_scheduled_main_retry() {
+    SCHEDULED_MAIN_RETRY_PENDING.with(|pending| pending.set(false));
+}
+
+pub(super) async fn main_tick(force: bool) -> MainTickOutcome {
     let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
     let cfg = state::with_state(|st| st.config.clone());
@@ -113,7 +149,7 @@ pub(super) async fn main_tick(force: bool) {
         &governance,
         &status_client,
     )
-    .await;
+    .await
 }
 
 // The scheduler takes explicit clients so tests can verify async/state invariants without canister calls.
@@ -133,9 +169,9 @@ pub(super) async fn run_main_tick_with_clients<
     cmc: &C,
     governance: &G,
     status_client: &S,
-) {
+) -> MainTickOutcome {
     let Some(guard) = MainGuard::acquire(now_secs) else {
-        return;
+        return MainTickOutcome::MainGuardBusy;
     };
     let lease = guard.lease_token();
     debug_reset_successful_transfer_counter();
@@ -145,7 +181,7 @@ pub(super) async fn run_main_tick_with_clients<
             state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
         if recently_ran {
             guard.finish(now_secs, None);
-            return;
+            return MainTickOutcome::Completed;
         }
     }
     let ok = process_payout_with_lease(
@@ -163,6 +199,7 @@ pub(super) async fn run_main_tick_with_clients<
         attempt_rescue_with_main_lease(now_secs, lease).await;
     }
     guard.finish(now_secs, if ok { None } else { Some(3001) });
+    MainTickOutcome::Completed
 }
 
 pub(super) fn self_canister_principal() -> Principal {

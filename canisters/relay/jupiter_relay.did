@@ -13,4 +13,6 @@ type InitArgs = record {
   surplus_canister_recipients : opt vec SurplusCanisterRecipient;
   surplus_neuron_recipients : vec SurplusNeuronRecipient;
 };
-service : (InitArgs) -> {}
+service : (InitArgs) -> {
+  poke : (vec nat64) -> ();
+}

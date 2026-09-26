@@ -21,4 +21,5 @@ type InitArgs = record {
 };
 
 service : (InitArgs) -> {
+  poke : (vec nat64) -> ();
 }

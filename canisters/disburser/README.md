@@ -42,6 +42,10 @@ By default the canister talks to:
 
 Both can be overridden at install time. Status and cycles observation is provided by protocol-native public `canister_status`; it is independent of controller authority.
 
+## Event Horizon acceleration
+
+Event Horizon may watch the Disburser's default staging account and call the permissioned `poke(vec nat64)` callback. A relevant hint requests one immediate payout opportunity and one trailing opportunity 10 seconds after the latest hint. Before routing staged ICP, the poke worker reads Governance and proceeds only when no maturity disbursement is in progress, preserving the authoritative age-snapshot invariant. It never initiates maturity, runs Governance maintenance, or advances the daily cadence; daily polling remains the fallback. Production caller and subscription values remain disabled until separately reviewed.
+
 ## Runtime model
 
 ### Timer cadence
@@ -250,7 +254,7 @@ The [faucet production install args](../faucet/mainnet-install-args.did) separat
 
 ## Public interface
 
-Production builds expose **no public methods**.
+Production builds expose exactly the permissioned Event Horizon `poke(vec nat64)` callback and no user or administrator methods.
 
 Debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC tests only. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production disburser principal. The operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is desired for these debug surfaces. The committed debug Candid file is:
 
