@@ -255,8 +255,12 @@ const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[];
 const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
 
 #[cfg(not(feature = "debug_api"))]
+// Event Horizon subscription IDs for Relay subaccount 1 and fixed splitter
+// subaccounts 10..90 only. The default account is intentionally excluded:
+// fresh default allocation advances daily cycles-burn sampling.
 const EVENT_HORIZON_FUNDING_SUBACCOUNT_IDS: &[u64] = &[];
 #[cfg(feature = "debug_api")]
+// Debug fixture for the same subaccount-1/fixed-splitter subscription scope.
 const EVENT_HORIZON_FUNDING_SUBACCOUNT_IDS: &[u64] = &[42];
 
 fn event_horizon_caller_is_whitelisted(caller: Principal) -> bool {

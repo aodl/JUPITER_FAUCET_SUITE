@@ -1,15 +1,12 @@
 use std::cell::Cell;
 use std::time::Duration;
 
-use jupiter_ic_clients::cycles_probe::IcCyclesProbeClient;
-
 use crate::clients::cmc::CyclesMintingCanister;
 use crate::clients::governance::NnsGovernanceCanister;
 use crate::clients::ledger::IcrcLedgerCanister;
 use crate::clients::{CmcClient, GovernanceClient, LedgerClient};
 use crate::state;
 use candid::Principal;
-use jupiter_ic_clients::cycles_probe::CyclesProbeClient;
 
 pub(super) const EVENT_HORIZON_POKE_INTERVAL_SECONDS: u64 = 10;
 pub(super) const NANOS_PER_SECOND: u64 = 1_000_000_000;
@@ -88,45 +85,28 @@ async fn run_worker() {
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
     let cmc = CyclesMintingCanister::new(cfg.cmc_canister_id);
     let governance = NnsGovernanceCanister::new(cfg.governance_canister_id);
-    let cycles_probe = IcCyclesProbeClient::new(jupiter_ic_clients::constants::sns_wasm_id());
     run_worker_with_clients(
         now_nanos,
         now_secs,
         ic_cdk::api::canister_self(),
-        ic_cdk::api::canister_cycle_balance(),
         &ledger,
         &cmc,
         &governance,
-        &cycles_probe,
     )
     .await;
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn run_worker_with_clients<
-    L: LedgerClient,
-    C: CmcClient,
-    G: GovernanceClient,
-    P: CyclesProbeClient,
->(
+pub(super) async fn run_worker_with_clients<L: LedgerClient, C: CmcClient, G: GovernanceClient>(
     now_nanos: u64,
     now_secs: u64,
     relay_id: Principal,
-    relay_cycles: u128,
     ledger: &L,
     cmc: &C,
     governance: &G,
-    cycles_probe: &P,
 ) {
     let _ = super::tick::run_poke_funding_with_clients(
-        now_nanos,
-        now_secs,
-        relay_id,
-        relay_cycles,
-        ledger,
-        cmc,
-        governance,
-        cycles_probe,
+        now_nanos, now_secs, relay_id, ledger, cmc, governance,
     )
     .await;
 }

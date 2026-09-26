@@ -1039,6 +1039,7 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_state",
         (),
     )?;
+    let transfers_before = env.transfers()?.len();
     for caller in [
         Principal::anonymous(),
         Principal::self_authenticating([42; 32]),
@@ -1096,15 +1097,80 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
     accepted.map_err(anyhow::Error::msg)?;
     assert_eq!(env.relay_numbered_subaccount_balance(10)?, 0);
     assert_eq!(env.relay_subaccount_one_balance()?, 0);
-    assert!(env.summary().is_ok());
-    let after: DebugState = query_one(
-        &env.pic,
-        env.relay,
-        Principal::anonymous(),
-        "debug_state",
-        (),
-    )?;
+    assert!(env.relay_balance()? >= 5_000_000_000);
+    let new_transfers = env.transfers()?;
+    assert!(!new_transfers[transfers_before..].iter().any(|transfer| {
+        transfer.from
+            == Account {
+                owner: env.relay,
+                subaccount: None,
+            }
+    }));
+    let after = env.debug_state()?;
     assert_eq!(after.last_main_run_ts, before.last_main_run_ts);
+    assert_eq!(after.active_job_present, before.active_job_present);
+    assert_eq!(after.next_job_id, before.next_job_id);
+    assert_eq!(
+        after.last_completed_cycles_count,
+        before.last_completed_cycles_count
+    );
+    assert_eq!(
+        after.relay_minted_cycles_since_sample_count,
+        before.relay_minted_cycles_since_sample_count
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn event_horizon_poke_resumes_but_does_not_replace_active_default_job() -> Result<()> {
+    let env = RelayEnv::new_with_config(Some(1), |ledger, cmc, _, _| {
+        (vec![ledger, cmc], None, Vec::new())
+    })?;
+    env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+    env.credit_relay(5_000_000_000)?;
+    let _ = env.tick_relay()?;
+
+    env.set_canister_cycles(env.ledger, 8_000_000_000_000)?;
+    env.set_managed_cycles(8_000_000_000_000)?;
+    let _ = env.tick_relay()?;
+    let before = env.debug_state()?;
+    let transfers_before = env.transfers()?.len();
+    if !before.active_job_present || transfers_before != 1 {
+        bail!("expected ordinary main to leave one pinned active job after one transfer");
+    }
+
+    let proxy = event_horizon_proxy();
+    env.pic
+        .create_canister_with_id(None, None, proxy)
+        .map_err(anyhow::Error::msg)?;
+    env.pic.add_cycles(proxy, 5_000_000_000_000);
+    env.pic
+        .install_canister(proxy, status_proxy_wasm()?, vec![], None);
+    let accepted: Result<(), String> = update_one(
+        &env.pic,
+        proxy,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: env.relay,
+            subaccount_ids: vec![EVENT_HORIZON_ID],
+        },
+    )?;
+    accepted.map_err(anyhow::Error::msg)?;
+
+    let after = env.debug_state()?;
+    let transfers_after = env.transfers()?.len();
+    if transfers_after != transfers_before + 1 {
+        bail!("expected poke to resume exactly one transfer-limited active-job step");
+    }
+    if after.last_main_run_ts != before.last_main_run_ts {
+        bail!("poke advanced the daily main cadence while resuming an active job");
+    }
+    if after.next_job_id != before.next_job_id {
+        bail!("poke replaced the pinned active job with a new job generation");
+    }
     Ok(())
 }
 
