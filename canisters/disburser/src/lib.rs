@@ -5,12 +5,14 @@ mod scheduler;
 mod state;
 
 use candid::types::value::{IDLArgs, IDLValue};
-use candid::{CandidType, Deserialize, Principal};
+use candid::{CandidType, Deserialize, Nat, Principal};
+use ic_cdk::call::Call;
 use icrc_ledger_types::icrc1::account::Account;
 use jupiter_canister_logging::{
     format_event_line, FIELD_EVENT, FIELD_MAIN_INTERVAL_SECONDS, FIELD_TIMERS_INSTALLED,
 };
 use jupiter_ic_clients::constants;
+use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
 
 use crate::state::State;
 
@@ -284,14 +286,9 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
 }
 
 #[cfg(not(feature = "debug_api"))]
-const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[];
+const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 17, 226, 1, 1]];
 #[cfg(feature = "debug_api")]
 const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
-
-#[cfg(not(feature = "debug_api"))]
-const EVENT_HORIZON_STAGING_SUBACCOUNT_IDS: &[u64] = &[];
-#[cfg(feature = "debug_api")]
-const EVENT_HORIZON_STAGING_SUBACCOUNT_IDS: &[u64] = &[42];
 
 fn event_horizon_caller_is_whitelisted(caller: Principal) -> bool {
     EVENT_HORIZON_CALLER_WHITELIST
@@ -305,15 +302,47 @@ fn guard_event_horizon_caller() -> Result<(), String> {
         .ok_or_else(|| "caller is not Event Horizon".to_string())
 }
 
-fn has_relevant_event_horizon_id(subaccount_ids: &[u64]) -> bool {
-    subaccount_ids
-        .iter()
-        .any(|id| EVENT_HORIZON_STAGING_SUBACCOUNT_IDS.contains(id))
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RelevantEventHorizonMatches {
+    staging_account: bool,
+    staking_max_amount: Option<Nat>,
+}
+
+fn classify_event_horizon_matches(
+    matches: &[EventHorizonPokeMatch],
+) -> RelevantEventHorizonMatches {
+    let mut relevant = RelevantEventHorizonMatches::default();
+    for item in matches {
+        match item.target {
+            EventHorizonPokeTarget::Subaccount(0) => relevant.staging_account = true,
+            EventHorizonPokeTarget::NeuronNonce(0) => {
+                if relevant
+                    .staking_max_amount
+                    .as_ref()
+                    .is_none_or(|current| item.max_amount > *current)
+                {
+                    relevant.staking_max_amount = Some(item.max_amount.clone());
+                }
+            }
+            EventHorizonPokeTarget::Subaccount(_) | EventHorizonPokeTarget::NeuronNonce(_) => {}
+        }
+    }
+    relevant
+}
+
+fn notify_historian_staking_best_effort(max_amount: Nat) {
+    let _ = Call::bounded_wait(constants::jupiter_historian_id(), "poke_staking")
+        .with_arg(&max_amount)
+        .oneway();
 }
 
 #[ic_cdk::update(guard = "guard_event_horizon_caller")]
-async fn poke(subaccount_ids: Vec<u64>) {
-    if has_relevant_event_horizon_id(&subaccount_ids) {
+async fn poke(matches: Vec<EventHorizonPokeMatch>) {
+    let relevant = classify_event_horizon_matches(&matches);
+    if let Some(max_amount) = relevant.staking_max_amount {
+        notify_historian_staking_best_effort(max_amount);
+    }
+    if relevant.staging_account {
         scheduler::handle_event_horizon_poke().await;
     }
 }
@@ -798,16 +827,19 @@ fn assert_committed_did_matches_rust_service(did_file: &str) {
 
 #[cfg(not(feature = "debug_api"))]
 #[test]
-fn production_event_horizon_policy_is_disabled_and_exact() {
-    assert!(EVENT_HORIZON_CALLER_WHITELIST.is_empty());
-    assert!(EVENT_HORIZON_STAGING_SUBACCOUNT_IDS.is_empty());
+fn production_event_horizon_policy_is_enabled_and_exact() {
+    assert!(event_horizon_caller_is_whitelisted(Principal::from_slice(
+        &[0, 0, 0, 0, 2, 48, 17, 226, 1, 1]
+    )));
+    assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
+        &[0, 0, 0, 0, 2, 48, 17, 226, 1, 2]
+    )));
     assert!(!event_horizon_caller_is_whitelisted(Principal::anonymous()));
     assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
         &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1,]
     )));
     let did = include_str!("../jupiter_disburser.did");
-    assert!(did.contains("poke : (vec nat64) -> ();"));
-    assert_eq!(did.matches("poke : (vec nat64) -> ();").count(), 1);
+    assert!(did.contains("poke : (vec EventHorizonPokeMatch) -> ();"));
     assert!(!did.contains("debug_"));
     assert_committed_did_matches_rust_service("jupiter_disburser.did");
 }
@@ -819,9 +851,18 @@ fn debug_event_horizon_policy_accepts_only_exact_fixture() {
     let near = Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 2]);
     assert!(event_horizon_caller_is_whitelisted(exact));
     assert!(!event_horizon_caller_is_whitelisted(near));
-    assert_eq!(EVENT_HORIZON_STAGING_SUBACCOUNT_IDS, &[42]);
-    assert!(!has_relevant_event_horizon_id(&[]));
-    assert!(!has_relevant_event_horizon_id(&[7, 8]));
-    assert!(has_relevant_event_horizon_id(&[7, 42, 42]));
+    let item = |target, amount| EventHorizonPokeMatch {
+        target,
+        max_amount: Nat::from(amount),
+    };
+    assert_eq!(classify_event_horizon_matches(&[]), Default::default());
+    let relevant = classify_event_horizon_matches(&[
+        item(EventHorizonPokeTarget::Subaccount(0), 1),
+        item(EventHorizonPokeTarget::NeuronNonce(0), 2),
+        item(EventHorizonPokeTarget::NeuronNonce(0), 3),
+        item(EventHorizonPokeTarget::NeuronNonce(1), 9),
+    ]);
+    assert!(relevant.staging_account);
+    assert_eq!(relevant.staking_max_amount, Some(Nat::from(3u64)));
     assert_committed_did_matches_rust_service("jupiter_disburser_debug.did");
 }

@@ -32,7 +32,7 @@ By default the canister talks to:
 
 ## Event Horizon acceleration
 
-The production `poke(vec nat64)` callback is inter-canister-only and accepts only an explicitly allowlisted Event Horizon caller. Only the Event Horizon subscription ID for the configured Faucet payout account is relevant. A relevant hint requests one immediate bounded payout opportunity and one trailing opportunity 10 seconds after the latest hint; the daily main poll remains authoritative. Poke does not move the daily cadence or run controller reconciliation. The production caller and subscription lists intentionally remain empty until their real values are separately reviewed.
+The production target-aware `poke(vec PokeMatch)` callback is inter-canister-only and accepts only Event Horizon (`eo6ei-gaaaa-aaaar-qchra-cai`). Faucet reacts only to `subaccount(0)`, declared as `X.acjuzliaaaaaaarqb4qqcai.0`. `max_amount` is only a hint; Faucet reconciles ICP Index authoritatively. Because Index may lag Event Horizon, a relevant hint requests one immediate bounded payout opportunity and one trailing opportunity 10 seconds after the latest hint. The daily main poll remains authoritative. Poke does not move the daily cadence or run controller reconciliation.
 
 ## High-level payout model
 
@@ -680,7 +680,7 @@ The committed mainnet install args wire the production constants used by the sui
 
 ## Public interface
 
-Production builds expose exactly the permissioned Event Horizon `poke(vec nat64)` callback and no user or administrator methods.
+Production builds expose exactly the permissioned Event Horizon `poke(vec PokeMatch)` callback and no user or administrator methods.
 
 Debug builds expose helper surfaces behind `debug_api`, including:
 

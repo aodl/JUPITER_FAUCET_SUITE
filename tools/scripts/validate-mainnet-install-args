@@ -410,8 +410,14 @@ def validate_relay_prod_did(path: Path) -> None:
             f"{path} relay production DID must expose only Event Horizon poke, "
             f"got methods {sorted(methods)}"
         )
-    if not re.search(r"(?m)^\s*poke\s*:\s*\(\s*vec\s+nat64\s*\)\s*->\s*\(\s*\)\s*;", body):
-        fail(f"{path} relay poke must have signature (vec nat64) -> ()")
+    if not re.search(
+        r"(?m)^\s*poke\s*:\s*\(\s*vec\s+EventHorizonPokeMatch\s*\)\s*->\s*\(\s*\)\s*;",
+        body,
+    ):
+        fail(f"{path} relay poke must have signature (vec EventHorizonPokeMatch) -> ()")
+    require_contains(text, "subaccount : nat64", str(path))
+    require_contains(text, "neuron_nonce : nat64", str(path))
+    require_contains(text, "max_amount : nat", str(path))
     forbidden = [
         "Relay" + "Status",
         "relay_" + "status",

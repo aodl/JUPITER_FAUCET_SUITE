@@ -61,7 +61,9 @@ function rawIcpDeclaredMemo(item) {
   const right = Array.isArray(item?.raw_icp_memo_text) ? item.raw_icp_memo_text[0] : item?.raw_icp_memo_text;
   if (!canister || right === undefined || right === null) return '';
   const left = canister.toText ? canister.toText() : String(canister);
-  return `${left.split('-').join('')}.${String(right)}`;
+  const memoText = String(right);
+  if (left === 'eo6ei-gaaaa-aaaar-qchra-cai' && memoText.length > 0) return `X.${memoText}`;
+  return `${left.split('-').join('')}.${memoText}`;
 }
 
 function neuronDeclaredMemo(item) {

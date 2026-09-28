@@ -1,5 +1,6 @@
 use candid::{CandidType, Deserialize, Nat, Principal};
 use ic_cdk::call::Call;
+use jupiter_ic_clients::event_horizon::EventHorizonPokeMatch;
 use jupiter_ic_clients::management::{
     self, CanisterStatusArgs as ManagementCanisterStatusArgs,
     CanisterStatusResult as ManagementCanisterStatusResult, UpdateSettingsArgs,
@@ -39,11 +40,24 @@ struct DebugCall {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct PokeArgs {
     canister_id: Principal,
-    subaccount_ids: Vec<u64>,
+    matches: Vec<EventHorizonPokeMatch>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct DebugStakingPoke {
+    caller: Principal,
+    max_amount: Nat,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct StakingPokeArgs {
+    canister_id: Principal,
+    max_amount: Nat,
 }
 
 thread_local! {
     static CALLS: RefCell<Vec<DebugCall>> = const { RefCell::new(Vec::new()) };
+    static STAKING_POKES: RefCell<Vec<DebugStakingPoke>> = const { RefCell::new(Vec::new()) };
 }
 
 #[ic_cdk::init]
@@ -85,12 +99,37 @@ async fn debug_management_update_settings(args: UpdateSettingsArgs) -> Result<()
 #[ic_cdk::update]
 async fn debug_poke(args: PokeArgs) -> Result<(), String> {
     let response = Call::bounded_wait(args.canister_id, "poke")
-        .with_arg(args.subaccount_ids)
+        .with_arg(&args.matches)
         .await
         .map_err(|err| format!("poke call failed: {err:?}"))?;
     response
         .candid()
         .map_err(|err| format!("poke decode failed: {err:?}"))
+}
+
+#[ic_cdk::update]
+fn poke_staking(max_amount: Nat) {
+    STAKING_POKES.with(|pokes| {
+        pokes.borrow_mut().push(DebugStakingPoke {
+            caller: ic_cdk::api::msg_caller(),
+            max_amount,
+        });
+    });
+}
+
+#[ic_cdk::update]
+async fn debug_poke_staking(args: StakingPokeArgs) -> Result<(), String> {
+    Call::bounded_wait(args.canister_id, "poke_staking")
+        .with_arg(&args.max_amount)
+        .await
+        .map_err(|err| format!("poke_staking call failed: {err:?}"))?
+        .candid()
+        .map_err(|err| format!("poke_staking decode failed: {err:?}"))
+}
+
+#[ic_cdk::query]
+fn debug_staking_pokes() -> Vec<DebugStakingPoke> {
+    STAKING_POKES.with(|pokes| pokes.borrow().clone())
 }
 
 #[ic_cdk::query]
@@ -101,4 +140,5 @@ fn debug_calls() -> Vec<DebugCall> {
 #[ic_cdk::update]
 fn debug_reset() {
     CALLS.with(|calls| calls.borrow_mut().clear());
+    STAKING_POKES.with(|pokes| pokes.borrow_mut().clear());
 }

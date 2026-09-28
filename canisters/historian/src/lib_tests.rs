@@ -67,8 +67,8 @@ mod tests {
     }
 
     #[test]
-    fn poke_candid_matches_event_horizon_callback() {
-        let expected = "poke : (vec nat64) -> ();";
+    fn poke_staking_candid_matches_disburser_notification() {
+        let expected = "poke_staking : (nat) -> ();";
         for (label, service) in [
             ("Rust export", __export_service()),
             (
@@ -82,13 +82,30 @@ mod tests {
         ] {
             let signature = service
                 .lines()
-                .find(|line| line.contains("poke :"))
-                .unwrap_or_else(|| panic!("{label} omits poke"));
+                .find(|line| line.contains("poke_staking :"))
+                .unwrap_or_else(|| panic!("{label} omits poke_staking"));
             assert_eq!(signature.trim(), expected, "{label} signature diverged");
             assert!(!service.contains("refresh_endowments"));
             assert!(!service.contains("RefreshEndowments"));
             assert!(!service.contains("EndowmentIndexProgress"));
         }
+    }
+
+    #[test]
+    fn committed_historian_did_matches_rust_service_semantically() {
+        use candid_parser::utils::{service_equal, CandidSource};
+        use std::path::Path;
+
+        #[cfg(not(feature = "debug_api"))]
+        let did_file = "jupiter_historian.did";
+        #[cfg(feature = "debug_api")]
+        let did_file = "jupiter_historian_debug.did";
+        let did_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(did_file);
+        service_equal(
+            CandidSource::Text(&__export_service()),
+            CandidSource::File(&did_path),
+        )
+        .unwrap_or_else(|err| panic!("committed Historian DID diverged from Rust service: {err}"));
     }
 
     #[test]
@@ -963,7 +980,7 @@ mod tests {
             principal("jufzc-caaaa-aaaar-qb5da-cai")
         );
         assert_eq!(status.last_index_run_ts, Some(777));
-        assert_eq!(status.index_interval_seconds, 3_600);
+        assert_eq!(status.index_interval_seconds, 600);
         assert_eq!(status.last_completed_cycles_sweep_ts, Some(888));
         assert!(status.heap_memory_bytes.is_some());
         assert!(status.stable_memory_bytes.is_some());
@@ -979,6 +996,16 @@ mod tests {
 
         state::with_state_mut(|st| st.config.scan_interval_seconds = 7_200);
         assert_eq!(get_public_status().index_interval_seconds, 7_200);
+    }
+
+    #[test]
+    fn staking_poke_prefilter_uses_runtime_minimum_with_nat_precision() {
+        let mut st = base_state();
+        st.config.min_tx_e8s = 100_000_000;
+        state::set_state(st);
+        assert!(!staking_poke_is_relevant(&Nat::from(99_999_999u64)));
+        assert!(staking_poke_is_relevant(&Nat::from(100_000_000u64)));
+        assert!(staking_poke_is_relevant(&Nat::from(u128::MAX)));
     }
 
     #[test]

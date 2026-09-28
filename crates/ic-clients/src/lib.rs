@@ -3,6 +3,7 @@ pub mod account_identifier;
 pub mod cmc;
 pub mod constants;
 pub mod cycles_probe;
+pub mod event_horizon;
 pub mod generated;
 pub mod governance;
 pub mod icrc_index;

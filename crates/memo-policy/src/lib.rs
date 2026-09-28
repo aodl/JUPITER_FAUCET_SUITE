@@ -4,6 +4,7 @@ pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = 32;
 pub const MAX_NEURON_ID_MEMO_BYTES: usize = 20;
 /// Maximum exact-byte memo carried by an immutable Relay surplus recipient.
 pub const MAX_RELAY_SURPLUS_MEMO_BYTES: usize = 32;
+pub const EVENT_HORIZON_CANISTER_ID: &str = "eo6ei-gaaaa-aaaar-qchra-cai";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemoDirective {
@@ -63,6 +64,16 @@ pub fn parse_memo_directive(memo: &[u8]) -> Option<MemoDirective> {
         return None;
     }
     let memo_text = std::str::from_utf8(memo).ok()?;
+    if let Some(suffix) = memo_text.strip_prefix("X.") {
+        if suffix.is_empty() {
+            return None;
+        }
+        return Some(MemoDirective::RawIcp {
+            canister_id: Principal::from_text(EVENT_HORIZON_CANISTER_ID)
+                .expect("invalid hardcoded Event Horizon principal"),
+            memo: suffix.as_bytes().to_vec(),
+        });
+    }
     let trimmed = memo_text.trim();
     if trimmed.is_empty() {
         return None;
@@ -102,7 +113,7 @@ pub fn parse_target_canister_principal_from_memo(memo: &[u8]) -> Option<Principa
 mod tests {
     use crate::{
         parse_memo_directive, parse_target_canister_principal_from_memo, MemoDirective,
-        MAX_TARGET_CANISTER_MEMO_BYTES,
+        EVENT_HORIZON_CANISTER_ID, MAX_TARGET_CANISTER_MEMO_BYTES,
     };
     use candid::Principal;
     use serde::Deserialize;
@@ -279,6 +290,36 @@ mod tests {
                 memo: b"swap.7".to_vec(),
             })
         );
+    }
+
+    #[test]
+    fn event_horizon_alias_is_exact_bounded_and_preserves_suffix() {
+        let event_horizon = principal(EVENT_HORIZON_CANISTER_ID);
+        for memo in [
+            "X.acjuzliaaaaaaarqb4qqcai.0",
+            "X.uccpicqaaaaaaarqby3qcai.0",
+            "X.uccpicqaaaaaaarqby3qcai.n0:1",
+            "X.u2qkpaqaaaaaaarqb7eacai.0-90",
+            "X.foo.bar",
+        ] {
+            let suffix = memo.strip_prefix("X.").unwrap();
+            assert_eq!(
+                parse_memo_directive(memo.as_bytes()),
+                Some(MemoDirective::RawIcp {
+                    canister_id: event_horizon,
+                    memo: suffix.as_bytes().to_vec(),
+                })
+            );
+            assert_eq!(
+                parse_target_canister_principal_from_memo(memo.as_bytes()),
+                Some(event_horizon)
+            );
+        }
+        assert!(parse_memo_directive(b"X.").is_none());
+        assert!(parse_memo_directive(b"x.foo").is_none());
+        assert!(parse_memo_directive(b"X").is_none());
+        assert!(parse_memo_directive(b"X.123456789012345678901234567890").is_some());
+        assert!(parse_memo_directive(b"X.1234567890123456789012345678901").is_none());
     }
 
     #[test]

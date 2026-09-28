@@ -283,10 +283,7 @@ pub(super) fn get_public_status() -> PublicStatus {
         rewards_account: Some(st.config.rewards_account),
         index_canister_id: Some(st.config.index_canister_id),
         last_index_run_ts: st.last_index_run_ts.or(Some(st.last_main_run_ts)),
-        index_interval_seconds: st
-            .config
-            .scan_interval_seconds
-            .max(crate::scheduler::SCHEDULED_COMMITMENT_SCAN_INTERVAL_SECONDS),
+        index_interval_seconds: st.config.scan_interval_seconds,
         last_completed_cycles_sweep_ts: if st.last_completed_cycles_sweep_ts == 0 {
             None
         } else {
@@ -315,41 +312,37 @@ pub(super) async fn notify_relay_configuration(args: RelaySetupArgs) -> RelaySet
     crate::relay_setup::notify_relay_configuration(args).await
 }
 
-// Explicit production Event Horizon callers are required before enabling poke.
+// Production accepts staking wake-ups only from Jupiter Disburser.
 #[cfg(not(feature = "debug_api"))]
-const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[];
+const STAKING_POKE_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 14, 55, 1, 1]];
 
-// Debug builds allow the fixed PocketIC Event Horizon proxy.
+// Debug builds use the fixed PocketIC proxy to simulate Jupiter Disburser.
 #[cfg(feature = "debug_api")]
-const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
+const STAKING_POKE_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
 
-// IDs are Event Horizon subscription scalars, not ICRC subaccount blobs.
-#[cfg(not(feature = "debug_api"))]
-const EVENT_HORIZON_ENDOWMENT_SUBACCOUNT_IDS: &[u64] = &[];
-#[cfg(feature = "debug_api")]
-pub(crate) const EVENT_HORIZON_ENDOWMENT_SUBACCOUNT_IDS: &[u64] = &[42];
-
-fn event_horizon_caller_is_whitelisted(caller: Principal) -> bool {
-    EVENT_HORIZON_CALLER_WHITELIST
+fn staking_poke_caller_is_whitelisted(caller: Principal) -> bool {
+    STAKING_POKE_CALLER_WHITELIST
         .iter()
         .any(|allowed| caller.as_slice() == *allowed)
 }
 
-fn guard_event_horizon_caller() -> Result<(), String> {
+fn guard_staking_poke_caller() -> Result<(), String> {
     let caller = ic_cdk::api::msg_caller();
-    event_horizon_caller_is_whitelisted(caller)
+    staking_poke_caller_is_whitelisted(caller)
         .then_some(())
-        .ok_or_else(|| "caller is not Event Horizon".to_string())
+        .ok_or_else(|| "caller is not Jupiter Disburser".to_string())
 }
 
-#[ic_cdk::update(guard = "guard_event_horizon_caller")]
-pub(super) async fn poke(subaccount_ids: Vec<u64>) {
-    // Ingress is rejected; the replicated guard authorizes Event Horizon.
-    if subaccount_ids
-        .iter()
-        .any(|id| EVENT_HORIZON_ENDOWMENT_SUBACCOUNT_IDS.contains(id))
-    {
-        crate::scheduler::handle_endowment_poke().await;
+pub(crate) fn staking_poke_is_relevant(max_amount: &Nat) -> bool {
+    let min_tx_e8s = state::with_state(|st| st.config.min_tx_e8s);
+    max_amount >= &Nat::from(min_tx_e8s)
+}
+
+#[ic_cdk::update(guard = "guard_staking_poke_caller")]
+pub(super) async fn poke_staking(max_amount: Nat) {
+    // Ingress is rejected; the replicated guard authorizes Jupiter Disburser.
+    if staking_poke_is_relevant(&max_amount) {
+        crate::scheduler::handle_staking_poke().await;
     }
 }
 
@@ -732,24 +725,26 @@ mod tests {
 
     #[cfg(not(feature = "debug_api"))]
     #[test]
-    fn production_event_horizon_whitelist_is_empty_by_default() {
-        assert!(EVENT_HORIZON_CALLER_WHITELIST.is_empty());
-        assert!(!event_horizon_caller_is_whitelisted(Principal::anonymous()));
-        assert!(!event_horizon_caller_is_whitelisted(
+    fn production_staking_poke_whitelist_accepts_only_disburser() {
+        assert!(staking_poke_caller_is_whitelisted(Principal::from_slice(
+            &[0, 0, 0, 0, 2, 48, 14, 55, 1, 1]
+        )));
+        assert!(!staking_poke_caller_is_whitelisted(Principal::anonymous()));
+        assert!(!staking_poke_caller_is_whitelisted(
             Principal::self_authenticating(b"authenticated ingress")
         ));
-        assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
+        assert!(!staking_poke_caller_is_whitelisted(Principal::from_slice(
             &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]
         )));
     }
 
     #[cfg(feature = "debug_api")]
     #[test]
-    fn debug_event_horizon_whitelist_is_exact() {
-        assert!(event_horizon_caller_is_whitelisted(Principal::from_slice(
+    fn debug_staking_poke_whitelist_is_exact() {
+        assert!(staking_poke_caller_is_whitelisted(Principal::from_slice(
             &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]
         )));
-        assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
+        assert!(!staking_poke_caller_is_whitelisted(Principal::from_slice(
             &[0, 0, 0, 0, 2, 48, 15, 70, 2, 1]
         )));
     }

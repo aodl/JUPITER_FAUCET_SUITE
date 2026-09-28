@@ -1,4 +1,6 @@
 type Account = record { owner : principal; subaccount : opt vec nat8 };
+type EventHorizonPokeTarget = variant { subaccount : nat64; neuron_nonce : nat64 };
+type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; max_amount : nat };
 
 type InitArgs = record {
   staking_account : Account;
@@ -21,5 +23,5 @@ type InitArgs = record {
 };
 
 service : (InitArgs) -> {
-  poke : (vec nat64) -> ();
+  poke : (vec EventHorizonPokeMatch) -> ();
 };

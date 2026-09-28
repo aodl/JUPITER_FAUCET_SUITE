@@ -11,6 +11,7 @@ use jupiter_canister_logging::{
     format_event_line, FIELD_EVENT, FIELD_MAIN_INTERVAL_SECONDS, FIELD_TIMERS_INSTALLED,
 };
 use jupiter_ic_clients::constants;
+use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
 
 use crate::state::State;
 
@@ -412,14 +413,9 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
 }
 
 #[cfg(not(feature = "debug_api"))]
-const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[];
+const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 17, 226, 1, 1]];
 #[cfg(feature = "debug_api")]
 const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
-
-#[cfg(not(feature = "debug_api"))]
-const EVENT_HORIZON_PAYOUT_SUBACCOUNT_IDS: &[u64] = &[];
-#[cfg(feature = "debug_api")]
-const EVENT_HORIZON_PAYOUT_SUBACCOUNT_IDS: &[u64] = &[42];
 
 fn event_horizon_caller_is_whitelisted(caller: Principal) -> bool {
     EVENT_HORIZON_CALLER_WHITELIST
@@ -433,15 +429,15 @@ fn guard_event_horizon_caller() -> Result<(), String> {
         .ok_or_else(|| "caller is not Event Horizon".to_string())
 }
 
-fn has_relevant_event_horizon_id(subaccount_ids: &[u64]) -> bool {
-    subaccount_ids
+fn has_relevant_event_horizon_match(matches: &[EventHorizonPokeMatch]) -> bool {
+    matches
         .iter()
-        .any(|id| EVENT_HORIZON_PAYOUT_SUBACCOUNT_IDS.contains(id))
+        .any(|item| matches!(item.target, EventHorizonPokeTarget::Subaccount(0)))
 }
 
 #[ic_cdk::update(guard = "guard_event_horizon_caller")]
-async fn poke(subaccount_ids: Vec<u64>) {
-    if has_relevant_event_horizon_id(&subaccount_ids) {
+async fn poke(matches: Vec<EventHorizonPokeMatch>) {
+    if has_relevant_event_horizon_match(&matches) {
         scheduler::handle_event_horizon_poke().await;
     }
 }
@@ -1430,16 +1426,19 @@ fn assert_committed_did_matches_rust_service(did_file: &str) {
 
 #[cfg(not(feature = "debug_api"))]
 #[test]
-fn production_event_horizon_policy_is_disabled_and_exact() {
-    assert!(EVENT_HORIZON_CALLER_WHITELIST.is_empty());
-    assert!(EVENT_HORIZON_PAYOUT_SUBACCOUNT_IDS.is_empty());
+fn production_event_horizon_policy_is_enabled_and_exact() {
+    assert!(event_horizon_caller_is_whitelisted(Principal::from_slice(
+        &[0, 0, 0, 0, 2, 48, 17, 226, 1, 1]
+    )));
+    assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
+        &[0, 0, 0, 0, 2, 48, 17, 226, 1, 2]
+    )));
     assert!(!event_horizon_caller_is_whitelisted(Principal::anonymous()));
     assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
         &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1,]
     )));
     let did = include_str!("../jupiter_faucet.did");
-    assert!(did.contains("poke : (vec nat64) -> ();"));
-    assert_eq!(did.matches("poke : (vec nat64) -> ();").count(), 1);
+    assert!(did.contains("poke : (vec EventHorizonPokeMatch) -> ();"));
     assert!(!did.contains("debug_"));
     assert_committed_did_matches_rust_service("jupiter_faucet.did");
 }
@@ -1451,9 +1450,19 @@ fn debug_event_horizon_policy_accepts_only_exact_fixture() {
     let near = Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 2]);
     assert!(event_horizon_caller_is_whitelisted(exact));
     assert!(!event_horizon_caller_is_whitelisted(near));
-    assert_eq!(EVENT_HORIZON_PAYOUT_SUBACCOUNT_IDS, &[42]);
-    assert!(!has_relevant_event_horizon_id(&[]));
-    assert!(!has_relevant_event_horizon_id(&[7, 8]));
-    assert!(has_relevant_event_horizon_id(&[7, 42, 42]));
+    let item = |target| EventHorizonPokeMatch {
+        target,
+        max_amount: candid::Nat::from(1u64),
+    };
+    assert!(!has_relevant_event_horizon_match(&[]));
+    assert!(!has_relevant_event_horizon_match(&[item(
+        EventHorizonPokeTarget::Subaccount(7)
+    )]));
+    assert!(!has_relevant_event_horizon_match(&[item(
+        EventHorizonPokeTarget::NeuronNonce(0)
+    )]));
+    assert!(has_relevant_event_horizon_match(&[item(
+        EventHorizonPokeTarget::Subaccount(0)
+    )]));
     assert_committed_did_matches_rust_service("jupiter_faucet_debug.did");
 }

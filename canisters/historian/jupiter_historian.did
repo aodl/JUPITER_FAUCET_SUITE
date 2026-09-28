@@ -352,7 +352,7 @@ service : (InitArgs) -> {
   get_neuron_commitment_history : (GetNeuronCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
   get_commitment_route_summaries : (GetCommitmentRouteSummariesArgs) -> (GetCommitmentRouteSummariesResponse) query;
   get_endowment_transaction_status : (nat64) -> (EndowmentTransactionStatusResponse) query;
-  poke : (vec nat64) -> ();
+  poke_staking : (nat) -> ();
   get_canister_overview : (principal) -> (opt CanisterOverview) query;
   get_public_counts : () -> (PublicCounts) query;
   get_public_status : () -> (PublicStatus) query;

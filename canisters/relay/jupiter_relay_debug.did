@@ -2,6 +2,8 @@ type Account = record { owner : principal; subaccount : opt blob };
 type SurplusTarget = variant { Canister : principal; Neuron : nat64 };
 type SurplusCanisterRecipient = record { canister_id : principal; memo : blob };
 type SurplusNeuronRecipient = record { neuron_id : nat64; memo : blob };
+type EventHorizonPokeTarget = variant { subaccount : nat64; neuron_nonce : nat64 };
+type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; max_amount : nat };
 type InitArgs = record {
   managed_canisters : vec principal;
   ledger_canister_id : opt principal;
@@ -165,7 +167,7 @@ type RewardState = record {
   pending_payout : opt PendingRewardPayout;
 };
 service : (InitArgs) -> {
-  poke : (vec nat64) -> ();
+  poke : (vec EventHorizonPokeMatch) -> ();
   debug_main_tick : () -> ();
   debug_state : () -> (DebugState) query;
   debug_config : () -> (DebugConfig) query;

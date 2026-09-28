@@ -1439,6 +1439,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "candid",
+ "candid_parser 0.1.4",
  "futures",
  "hex",
  "ic-cdk",

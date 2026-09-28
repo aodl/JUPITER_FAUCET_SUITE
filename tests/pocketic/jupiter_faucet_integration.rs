@@ -6,6 +6,7 @@ use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use jupiter_ic_clients::account::principal_to_subaccount;
+use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
 use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResult,
 };
@@ -43,7 +44,12 @@ static FAUCET_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static LIFELINE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
-const EVENT_HORIZON_ID: u64 = 42;
+fn subaccount_match(id: u64) -> EventHorizonPokeMatch {
+    EventHorizonPokeMatch {
+        target: EventHorizonPokeTarget::Subaccount(id),
+        max_amount: Nat::from(100_000_000u64),
+    }
+}
 
 fn event_horizon_proxy() -> Principal {
     Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1])
@@ -122,7 +128,7 @@ struct FaucetInitArg {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct PokeProxyArgs {
     canister_id: Principal,
-    subaccount_ids: Vec<u64>,
+    matches: Vec<EventHorizonPokeMatch>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -1229,7 +1235,7 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
                 env.faucet,
                 caller,
                 "poke",
-                encode_args((vec![EVENT_HORIZON_ID],))?
+                encode_args((vec![subaccount_match(0)],))?
             )
             .is_err());
     }
@@ -1240,7 +1246,7 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_poke",
         PokeProxyArgs {
             canister_id: env.faucet,
-            subaccount_ids: vec![EVENT_HORIZON_ID],
+            matches: vec![subaccount_match(0)],
         },
     )?;
     assert!(rejected
@@ -1254,7 +1260,7 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
             "debug_poke",
             PokeProxyArgs {
                 canister_id: env.faucet,
-                subaccount_ids: ids,
+                matches: ids.into_iter().map(subaccount_match).collect(),
             },
         )?;
         accepted.map_err(anyhow::Error::msg)?;
@@ -1270,7 +1276,11 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_poke",
         PokeProxyArgs {
             canister_id: env.faucet,
-            subaccount_ids: vec![7, 42, 42],
+            matches: vec![
+                subaccount_match(7),
+                subaccount_match(0),
+                subaccount_match(0),
+            ],
         },
     )?;
     accepted.map_err(anyhow::Error::msg)?;

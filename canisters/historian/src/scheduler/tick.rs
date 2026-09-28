@@ -1,8 +1,6 @@
 use super::*;
 use jupiter_ic_clients::timer_guard::{LeaseFinish, TimerLeaseGuard};
 
-pub(crate) const SCHEDULED_COMMITMENT_SCAN_INTERVAL_SECONDS: u64 = 60 * 60;
-
 pub(super) struct MainGuard {
     inner: TimerLeaseGuard,
 }
@@ -127,8 +125,6 @@ pub async fn main_tick(force: bool) {
     let sns_root = SnsRootCanister;
     let governance = NnsGovernanceCanister::new(governance_id);
     let xrc = XrcCanister::with_canister_id(xrc_id);
-    let run_scheduled_commitment_indexing =
-        state::with_state(|st| scheduled_commitment_indexing_due(st, now_secs, force));
     let result = run_main_tick_with_clients(
         now_nanos,
         now_secs,
@@ -138,7 +134,6 @@ pub async fn main_tick(force: bool) {
         &sns_root,
         &governance,
         &xrc,
-        run_scheduled_commitment_indexing,
         lease,
         &|| ic_cdk::api::time() / 1_000_000_000,
     )
@@ -152,19 +147,6 @@ pub async fn main_tick(force: bool) {
         state::persist_dirty_state();
         state::clear_loaded_history_caches_after_flush();
     }
-}
-
-pub(super) fn scheduled_commitment_indexing_due(
-    st: &state::State,
-    now_secs: u64,
-    force: bool,
-) -> bool {
-    force
-        || st.staking_backfill_complete != Some(true)
-        || st.active_staking_catch_up.is_some()
-        || st.commitment_route_rollups_complete_from_genesis != Some(true)
-        || now_secs / SCHEDULED_COMMITMENT_SCAN_INTERVAL_SECONDS
-            != st.last_main_run_ts / SCHEDULED_COMMITMENT_SCAN_INTERVAL_SECONDS
 }
 
 pub(super) async fn refresh_icp_xdr_rate<X: ExchangeRateClient>(
@@ -246,7 +228,6 @@ pub(super) async fn run_main_tick_with_clients<
     sns_root: &R,
     governance: &G,
     xrc: &X,
-    run_scheduled_commitment_indexing: bool,
     lease: MainLeaseToken,
     lease_now_secs: &dyn Fn() -> u64,
 ) -> Result<(), String> {
@@ -265,22 +246,20 @@ pub(super) async fn run_main_tick_with_clients<
     if !lease.is_current() {
         return Ok(());
     }
-    if run_scheduled_commitment_indexing {
-        if let Some(index_guard) = CommitmentIndexGuard::acquire(
-            lease_now_secs(),
-            state::CommitmentIndexLeaseOwner::Scheduled,
-        ) {
-            if let Err(err) = process_commitment_indexing_bounded(
-                index,
-                now_secs,
-                state::with_state(|st| st.config.max_index_pages_per_tick),
-                Some(index_guard.token()),
-                lease_now_secs,
-            )
-            .await
-            {
-                log_error(&format!("historian commitment indexing degraded: {err}"));
-            }
+    if let Some(index_guard) = CommitmentIndexGuard::acquire(
+        lease_now_secs(),
+        state::CommitmentIndexLeaseOwner::Scheduled,
+    ) {
+        if let Err(err) = process_commitment_indexing_bounded(
+            index,
+            now_secs,
+            state::with_state(|st| st.config.max_index_pages_per_tick),
+            Some(index_guard.token()),
+            lease_now_secs,
+        )
+        .await
+        {
+            log_error(&format!("historian commitment indexing degraded: {err}"));
         }
     }
     if !lease.is_current() {

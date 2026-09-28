@@ -70,11 +70,11 @@ A newly installed Relay is a replenishment controller, not an initial rescue mec
 
 ## Event Horizon acceleration
 
-Relay funding subscriptions cover subaccount 1 and fixed splitter accounts 10, 20, 30, 40, 50, 60, 70, 80, and 90. The default account is deliberately not subscribed. These values are Event Horizon subscription IDs, not ICP subaccount numbers; production wiring must include the separately assigned ID for each of those ten accounts. A relevant hint runs fixed splitters, subaccount-1 Faucet forwarding, and then resumes an already-active default allocation job if one exists, with an immediate opportunity and one trailing opportunity 10 seconds after the latest hint.
+Relay uses the single declaration `X.u2qkpaqaaaaaaarqb7eacai.0-90`. Event Horizon expands that numeric subaccount range, while Relay reacts only to actual subaccounts `0`, `1`, `10`, `20`, `30`, `40`, `50`, `60`, `70`, `80`, and `90`; intermediate matches such as `37` are ignored. `max_amount` is only a hint. A relevant callback runs fixed splitters, subaccount-1 Faucet forwarding, and then resumes an already-active default allocation job if one exists.
 
-A poke never starts a new default allocation job, takes a fresh cycles sample, establishes a burn baseline, or makes a new infrastructure-demand or surplus decision. Existing active jobs may be resumed because their economic sample and plan are already pinned. Newly arrived default-account ICP, including a splitter's default-account leg, remains for the next ordinary daily sample unless an existing pinned job is being resumed. Poke neither runs the independent SNS reward sweep nor advances Relay's daily cadence, and all durable splitter fencing and quarantine rules remain unchanged. Production caller and subscription lists remain empty until the real values are reviewed.
+A poke never starts a new default allocation job, takes a fresh cycles sample, establishes a burn baseline, or makes a new infrastructure-demand or surplus decision. Subaccount `0` is therefore intentionally relevant: existing active jobs may resume using their pinned economic plan, while new default-account funds remain for the next ordinary daily sample. Poke neither runs the independent SNS reward sweep nor advances Relay's daily cadence, and all durable splitter fencing and quarantine rules remain unchanged.
 
-Existing controllerless self-service Relays cannot be upgraded and remain polling-only. Future self-service Relays gain this endpoint only after a newly reviewed Relay artifact is embedded in an upgraded Historian factory and production wiring confirms how Event Horizon assigns the ten subscription IDs per Relay; globally unique per-instance IDs require a separate design.
+Existing controllerless self-service Relays cannot be upgraded and remain polling-only. A future Relay using the new artifact needs only `X.<compact-relay-principal>.0-90`; no per-instance callback IDs are embedded in Wasm.
 
 If a scheduled target probe fails, Relay fails closed for that target. After three consecutive scheduled failures it may classify the target as unavailable **for that run only**, allowing other observable targets to progress. Later ticks keep probing it, and any successful sample resets the failure count.
 
@@ -297,7 +297,7 @@ Relay's sole production post-init method is the permissioned Event Horizon `poke
 
 ```did
 service : (InitArgs) -> {
-  poke : (vec nat64) -> ();
+  poke : (vec EventHorizonPokeMatch) -> ();
 }
 ```
 
@@ -351,7 +351,7 @@ type InitArgs = record {
   surplus_neuron_recipients : vec SurplusNeuronRecipient;
 };
 service : (InitArgs) -> {
-  poke : (vec nat64) -> ();
+  poke : (vec EventHorizonPokeMatch) -> ();
 };
 ```
 

@@ -920,10 +920,10 @@ test('zero historian index timestamp shows fallback cadence without a last-updat
 
   const label = nextRunLabel({
     last_index_run_ts: [0n],
-    index_interval_seconds: 3_600n,
+    index_interval_seconds: 600n,
   });
 
-  assert.equal(label, 'Scheduled endowment-index fallback about every 1 hour.');
+  assert.equal(label, 'Scheduled endowment-index fallback about every 10 minutes.');
   assert.doesNotMatch(label, /Last endowment-index update/);
 });
 

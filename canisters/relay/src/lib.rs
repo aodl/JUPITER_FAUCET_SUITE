@@ -9,6 +9,7 @@ mod state;
 use candid::{CandidType, Deserialize, Principal};
 use jupiter_ic_clients::constants;
 use jupiter_ic_clients::cycles_probe::CyclesProbePolicy;
+use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
 
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
@@ -250,18 +251,11 @@ fn post_upgrade(args: InitArgs) {
 }
 
 #[cfg(not(feature = "debug_api"))]
-const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[];
+const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 17, 226, 1, 1]];
 #[cfg(feature = "debug_api")]
 const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
 
-#[cfg(not(feature = "debug_api"))]
-// Event Horizon subscription IDs for Relay subaccount 1 and fixed splitter
-// subaccounts 10..90 only. The default account is intentionally excluded:
-// fresh default allocation advances daily cycles-burn sampling.
-const EVENT_HORIZON_FUNDING_SUBACCOUNT_IDS: &[u64] = &[];
-#[cfg(feature = "debug_api")]
-// Debug fixture for the same subaccount-1/fixed-splitter subscription scope.
-const EVENT_HORIZON_FUNDING_SUBACCOUNT_IDS: &[u64] = &[42];
+const EVENT_HORIZON_FUNDING_SUBACCOUNTS: &[u64] = &[0, 1, 10, 20, 30, 40, 50, 60, 70, 80, 90];
 
 fn event_horizon_caller_is_whitelisted(caller: Principal) -> bool {
     EVENT_HORIZON_CALLER_WHITELIST
@@ -275,15 +269,16 @@ fn guard_event_horizon_caller() -> Result<(), String> {
         .ok_or_else(|| "caller is not Event Horizon".to_string())
 }
 
-fn has_relevant_event_horizon_id(subaccount_ids: &[u64]) -> bool {
-    subaccount_ids
-        .iter()
-        .any(|id| EVENT_HORIZON_FUNDING_SUBACCOUNT_IDS.contains(id))
+fn has_relevant_event_horizon_match(matches: &[EventHorizonPokeMatch]) -> bool {
+    matches.iter().any(|item| match item.target {
+        EventHorizonPokeTarget::Subaccount(id) => EVENT_HORIZON_FUNDING_SUBACCOUNTS.contains(&id),
+        EventHorizonPokeTarget::NeuronNonce(_) => false,
+    })
 }
 
 #[ic_cdk::update(guard = "guard_event_horizon_caller")]
-async fn poke(subaccount_ids: Vec<u64>) {
-    if has_relevant_event_horizon_id(&subaccount_ids) {
+async fn poke(matches: Vec<EventHorizonPokeMatch>) {
+    if has_relevant_event_horizon_match(&matches) {
         scheduler::handle_event_horizon_poke().await;
     }
 }
@@ -555,8 +550,7 @@ mod tests {
     #[test]
     fn production_did_exposes_only_event_horizon_poke() {
         let did = include_str!("../jupiter_relay.did");
-        assert!(did.contains("poke : (vec nat64) -> ();"));
-        assert_eq!(did.matches("poke : (vec nat64) -> ();").count(), 1);
+        assert!(did.contains("poke : (vec EventHorizonPokeMatch) -> ();"));
         assert!(!did.contains(concat!("Relay", "Status")));
         assert!(!did.contains(concat!("relay_", "status")));
         assert!(!did.contains("admin_schedule_main_tick_now"));
@@ -564,9 +558,13 @@ mod tests {
 
     #[cfg(not(feature = "debug_api"))]
     #[test]
-    fn production_event_horizon_policy_is_disabled() {
-        assert!(EVENT_HORIZON_CALLER_WHITELIST.is_empty());
-        assert!(EVENT_HORIZON_FUNDING_SUBACCOUNT_IDS.is_empty());
+    fn production_event_horizon_policy_is_enabled() {
+        assert!(event_horizon_caller_is_whitelisted(Principal::from_slice(
+            &[0, 0, 0, 0, 2, 48, 17, 226, 1, 1]
+        )));
+        assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
+            &[0, 0, 0, 0, 2, 48, 17, 226, 1, 2]
+        )));
         assert!(!event_horizon_caller_is_whitelisted(Principal::anonymous()));
         assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
             &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1,]
@@ -580,10 +578,20 @@ mod tests {
         let near = Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 2]);
         assert!(event_horizon_caller_is_whitelisted(exact));
         assert!(!event_horizon_caller_is_whitelisted(near));
-        assert_eq!(EVENT_HORIZON_FUNDING_SUBACCOUNT_IDS, &[42]);
-        assert!(!has_relevant_event_horizon_id(&[]));
-        assert!(!has_relevant_event_horizon_id(&[7, 8]));
-        assert!(has_relevant_event_horizon_id(&[7, 42, 42]));
+        let item = |target| EventHorizonPokeMatch {
+            target,
+            max_amount: candid::Nat::from(1u64),
+        };
+        assert!(!has_relevant_event_horizon_match(&[]));
+        assert!(!has_relevant_event_horizon_match(&[item(
+            EventHorizonPokeTarget::Subaccount(37)
+        )]));
+        assert!(!has_relevant_event_horizon_match(&[item(
+            EventHorizonPokeTarget::NeuronNonce(0)
+        )]));
+        assert!(has_relevant_event_horizon_match(&[item(
+            EventHorizonPokeTarget::Subaccount(0)
+        )]));
     }
 
     #[cfg(feature = "debug_api")]

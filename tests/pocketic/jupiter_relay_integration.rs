@@ -16,6 +16,7 @@ use ic_stable_structures::{
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::TransferArg;
 use jupiter_ic_clients::account_identifier::account_identifier_text;
+use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
 use jupiter_ic_clients::icrc_index::{
     GetAccountTransactionsArgs as IcrcGetAccountTransactionsArgs,
     GetAccountTransactionsResult as IcrcGetAccountTransactionsResult,
@@ -46,7 +47,12 @@ static SNS_ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
-const EVENT_HORIZON_ID: u64 = 42;
+fn subaccount_match(id: u64) -> EventHorizonPokeMatch {
+    EventHorizonPokeMatch {
+        target: EventHorizonPokeTarget::Subaccount(id),
+        max_amount: Nat::from(1u64),
+    }
+}
 
 fn event_horizon_proxy() -> Principal {
     Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1])
@@ -124,7 +130,7 @@ struct RewardRelayInitArg {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct PokeProxyArgs {
     canister_id: Principal,
-    subaccount_ids: Vec<u64>,
+    matches: Vec<EventHorizonPokeMatch>,
 }
 
 #[derive(CandidType)]
@@ -1050,7 +1056,7 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
                 env.relay,
                 caller,
                 "poke",
-                encode_args((vec![EVENT_HORIZON_ID],))?,
+                encode_args((vec![subaccount_match(0)],))?,
             )
             .is_err());
     }
@@ -1061,7 +1067,7 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_poke",
         PokeProxyArgs {
             canister_id: env.relay,
-            subaccount_ids: vec![EVENT_HORIZON_ID],
+            matches: vec![subaccount_match(0)],
         },
     )?;
     assert!(rejected
@@ -1076,7 +1082,7 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
             "debug_poke",
             PokeProxyArgs {
                 canister_id: env.relay,
-                subaccount_ids: ids,
+                matches: ids.into_iter().map(subaccount_match).collect(),
             },
         )?;
         accepted.map_err(anyhow::Error::msg)?;
@@ -1091,7 +1097,12 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_poke",
         PokeProxyArgs {
             canister_id: env.relay,
-            subaccount_ids: vec![7, 42, 42],
+            matches: vec![
+                subaccount_match(37),
+                subaccount_match(10),
+                subaccount_match(1),
+                subaccount_match(0),
+            ],
         },
     )?;
     accepted.map_err(anyhow::Error::msg)?;
@@ -1155,7 +1166,7 @@ fn event_horizon_poke_resumes_but_does_not_replace_active_default_job() -> Resul
         "debug_poke",
         PokeProxyArgs {
             canister_id: env.relay,
-            subaccount_ids: vec![EVENT_HORIZON_ID],
+            matches: vec![subaccount_match(0)],
         },
     )?;
     accepted.map_err(anyhow::Error::msg)?;

@@ -8,10 +8,11 @@
 )]
 
 use anyhow::{anyhow, bail, Context, Result};
-use candid::{encode_args, encode_one, CandidType, Deserialize, Principal};
+use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{TransferArg, TransferError};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
+use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
 use jupiter_ic_clients::management::{
     CanisterStatusArgs, CanisterStatusResult, LogVisibility, StatusVisibility,
 };
@@ -253,7 +254,19 @@ static INDEX_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 static CMC_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 
-const EVENT_HORIZON_ID: u64 = 42;
+fn subaccount_match(id: u64) -> EventHorizonPokeMatch {
+    EventHorizonPokeMatch {
+        target: EventHorizonPokeTarget::Subaccount(id),
+        max_amount: Nat::from(100_000_000u64),
+    }
+}
+
+fn neuron_match(nonce: u64, max_amount: u64) -> EventHorizonPokeMatch {
+    EventHorizonPokeMatch {
+        target: EventHorizonPokeTarget::NeuronNonce(nonce),
+        max_amount: Nat::from(max_amount),
+    }
+}
 
 fn event_horizon_proxy() -> Principal {
     Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1])
@@ -262,7 +275,13 @@ fn event_horizon_proxy() -> Principal {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct PokeProxyArgs {
     canister_id: Principal,
-    subaccount_ids: Vec<u64>,
+    matches: Vec<EventHorizonPokeMatch>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct DebugStakingPoke {
+    caller: Principal,
+    max_amount: Nat,
 }
 
 fn build_wasm_cached(
@@ -1507,6 +1526,11 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         .map_err(anyhow::Error::msg)?;
     pic.add_cycles(proxy, 5_000_000_000_000);
     pic.install_canister(proxy, build_status_proxy_wasm()?, vec![], None);
+    let historian = jupiter_ic_clients::constants::jupiter_historian_id();
+    pic.create_canister_with_id(None, None, historian)
+        .map_err(anyhow::Error::msg)?;
+    pic.add_cycles(historian, 5_000_000_000_000);
+    pic.install_canister(historian, build_status_proxy_wasm()?, vec![], None);
     let attacker = pic.create_canister();
     pic.add_cycles(attacker, 5_000_000_000_000);
     pic.install_canister(attacker, build_status_proxy_wasm()?, vec![], None);
@@ -1522,7 +1546,7 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
                 disburser,
                 caller,
                 "poke",
-                encode_args((vec![EVENT_HORIZON_ID],))?
+                encode_args((vec![subaccount_match(0)],))?
             )
             .is_err());
     }
@@ -1533,13 +1557,13 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_poke",
         PokeProxyArgs {
             canister_id: disburser,
-            subaccount_ids: vec![EVENT_HORIZON_ID],
+            matches: vec![subaccount_match(0)],
         },
     )?;
     assert!(rejected
         .unwrap_err()
         .contains("caller is not Event Horizon"));
-    for ids in [vec![], vec![7, 8], vec![7, 42, 42]] {
+    for ids in [vec![], vec![7, 8], vec![7, 0, 0]] {
         let accepted: Result<(), String> = update_call(
             &pic,
             proxy,
@@ -1547,11 +1571,37 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
             "debug_poke",
             PokeProxyArgs {
                 canister_id: disburser,
-                subaccount_ids: ids,
+                matches: ids.into_iter().map(subaccount_match).collect(),
             },
         )?;
         accepted.map_err(anyhow::Error::msg)?;
     }
+    let accepted: Result<(), String> = update_call(
+        &pic,
+        proxy,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: disburser,
+            matches: vec![
+                neuron_match(0, 250_000_000),
+                neuron_match(0, 300_000_000),
+                neuron_match(1, 900_000_000),
+            ],
+        },
+    )?;
+    accepted.map_err(anyhow::Error::msg)?;
+    tick_n(&pic, 4);
+    let staking_pokes: Vec<DebugStakingPoke> = query_call(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "debug_staking_pokes",
+        (),
+    )?;
+    assert_eq!(staking_pokes.len(), 1);
+    assert_eq!(staking_pokes[0].caller, disburser);
+    assert_eq!(staking_pokes[0].max_amount, Nat::from(300_000_000u64));
     let after: DebugState = query_call(&pic, disburser, Principal::anonymous(), "debug_state", ())?;
     assert_eq!(after.last_main_run_ts, before.last_main_run_ts);
     assert_eq!(after.prev_age_seconds, before.prev_age_seconds);

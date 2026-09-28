@@ -1,5 +1,15 @@
 [
   {
+    "name": "Event Horizon X alias preserves exact suffix",
+    "memo_text": "X.uccpicqaaaaaaarqby3qcai.n0:1",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "eo6ei-gaaaa-aaaar-qchra-cai",
+      "memo_text": "uccpicqaaaaaaarqby3qcai.n0:1"
+    },
+    "builder": null
+  },
+  {
     "name": "valid compact cycles canister memo",
     "memo_text": "22255zqaaaaaaasqf6uqcai",
     "expected_directive": { "kind": "top_up", "canister_id": "22255-zqaaa-aaaas-qf6uq-cai" },

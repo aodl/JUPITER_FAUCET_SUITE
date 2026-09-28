@@ -411,6 +411,41 @@ mod tests {
     }
 
     #[test]
+    fn event_horizon_alias_is_indexed_as_the_exact_raw_icp_route() {
+        let staking =
+            "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
+        let tx = IndexTransactionWithId {
+            id: 40,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(b"X.uccpicqaaaaaaarqby3qcai.n0:1".to_vec()),
+                operation: IndexOperation::Transfer {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "sender".into(),
+                    amount: Tokens::new(100_000_000),
+                    spender: None,
+                },
+                created_at_time: Some(IndexTimeStamp {
+                    timestamp_nanos: 125,
+                }),
+                timestamp: None,
+            },
+        };
+        let entry = indexed_commitment_from_tx(&tx, &staking, 100).unwrap();
+        match entry {
+            IndexedCommitmentEntry::Valid(commitment) => assert_eq!(
+                commitment.target,
+                IndexedCommitmentTarget::RawIcp {
+                    canister_id: Principal::from_text("eo6ei-gaaaa-aaaar-qchra-cai").unwrap(),
+                    memo_text: "uccpicqaaaaaaarqby3qcai.n0:1".to_string(),
+                }
+            ),
+            IndexedCommitmentEntry::Invalid(_) => panic!("expected valid commitment"),
+        }
+    }
+
+    #[test]
     fn neuron_id_directive_is_indexed_as_neuron_commitment() {
         let staking =
             "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();

@@ -1,5 +1,7 @@
 type SurplusCanisterRecipient = record { canister_id : principal; memo : blob };
 type SurplusNeuronRecipient = record { neuron_id : nat64; memo : blob };
+type EventHorizonPokeTarget = variant { subaccount : nat64; neuron_nonce : nat64 };
+type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; max_amount : nat };
 type InitArgs = record {
   managed_canisters : vec principal;
   ledger_canister_id : opt principal;
@@ -14,5 +16,5 @@ type InitArgs = record {
   surplus_neuron_recipients : vec SurplusNeuronRecipient;
 };
 service : (InitArgs) -> {
-  poke : (vec nat64) -> ();
+  poke : (vec EventHorizonPokeMatch) -> ();
 }

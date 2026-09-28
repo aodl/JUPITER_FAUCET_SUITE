@@ -889,8 +889,8 @@ pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs
 
 #[ic_cdk::inspect_message]
 pub(super) fn inspect_message() {
-    if ic_cdk::api::msg_method_name() == "poke" {
-        // Reject ingress; the update guard authorizes the Event Horizon caller.
+    if ic_cdk::api::msg_method_name() == "poke_staking" {
+        // Reject ingress; the update guard authorizes Jupiter Disburser.
         return;
     }
     ic_cdk::api::accept_message();

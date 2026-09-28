@@ -2,6 +2,7 @@ import { Principal } from '@icp-sdk/core/principal';
 
 export const MAX_TARGET_CANISTER_MEMO_BYTES = 32;
 export const MAX_NEURON_ID_MEMO_BYTES = 20;
+export const EVENT_HORIZON_CANISTER_TEXT = 'eo6ei-gaaaa-aaaar-qchra-cai';
 
 const ANONYMOUS_PRINCIPAL_TEXT = '2vxsx-fae';
 const MANAGEMENT_PRINCIPAL_TEXT = 'aaaaa-aa';
@@ -57,6 +58,19 @@ export function parseJupiterMemo(input) {
   }
   const trimmed = memoText.trim();
   if (!trimmed) return { kind: 'invalid', reason: 'Paste a non-empty memo first.' };
+
+  if (memoText.startsWith('X.')) {
+    const suffix = memoText.slice(2);
+    if (!suffix) return { kind: 'invalid', reason: 'Event Horizon alias suffix is empty.' };
+    const canisterId = Principal.fromText(EVENT_HORIZON_CANISTER_TEXT);
+    return {
+      kind: 'rawIcpCanister',
+      canisterId,
+      canisterText: EVENT_HORIZON_CANISTER_TEXT,
+      outgoingMemoText: suffix,
+      normalizedMemoText: memoText,
+    };
+  }
 
   const dotIndex = memoText.indexOf('.');
   if (dotIndex >= 0) {

@@ -174,11 +174,11 @@ icp canister call j5gs6-uiaaa-aaaar-qb5cq-cai get_commitment_route_summaries \
 
 Up to 100 exact routes can be queried in one call, so consumers can batch the records they display. The complete machine-readable public interface is [`jupiter_historian.did`](jupiter_historian.did).
 
-### Event Horizon notifications
+### Staking wake-up notifications
 
-Event Horizon makes best-effort inter-canister `poke(vec nat64)` calls with affected subscription IDs. Only the configured endowment ID requests one bounded ICP Index check; a batch or duplicate ID cannot cause duplicate scans. The call is a hint, not payment evidence. Production caller and ID allowlists require the actual Event Horizon principal and subscription ID before this path is enabled. The browser does not call `poke`.
+Historian does not subscribe to or trust Event Horizon directly. Jupiter Disburser may call the permissioned `poke_staking(nat)` method with Event Horizon's largest observed raw ICP transfer for `neuron_nonce(0)`. This is the Jupiter Faucet neuron's NNS Governance-owned staking account, derived from Jupiter Disburser as controller with nonce zero. Historian compares the arbitrary-precision hint with its runtime `min_tx_e8s` before touching admission state, then checks ICP Index authoritatively.
 
-Historian checks at most one 500-transaction Index page per attempt. Each relevant hint requests an immediate bounded check when admission and the commitment writer permit it, plus one coalesced trailing check 10 seconds after the most recent relevant hint. Scheduled hourly commitment indexing is the complete fallback when notifications are missed or cannot be acted upon. `get_endowment_transaction_status(transaction_id)` remains a bounded read query.
+Historian checks at most one 500-transaction Index page per admitted attempt. A relevant hint requests an immediate bounded check plus one coalesced trailing check 10 seconds after the latest hint. The forwarding is best effort; missed notifications affect latency only because every normal driver run indexes commitments. `get_endowment_transaction_status(transaction_id)` remains unchanged.
 
 ## Self-service Relay configurations
 
@@ -205,13 +205,13 @@ Defaults are:
 - `max_index_pages_per_tick = 10`
 - `max_canisters_per_cycles_tick = 25`
 
-The historian also schedules an immediate one-shot tick roughly 1 second after install or upgrade so local and fresh deployments do not have to wait for the first full scan interval. In steady state, scheduled commitment/endowment indexing runs once per hourly wall-clock window. Event Horizon hints independently request an immediate bounded commitment check plus one trailing-edge check 10 seconds after the latest relevant hint. Incomplete commitment backfill, catch-up, or authoritative route roll-up work can advance on every 10-minute main-driver run.
+The historian also schedules an immediate one-shot tick roughly 1 second after install or upgrade so local and fresh deployments do not have to wait for the first full scan interval. In steady state, commitment/endowment indexing runs on every normal 10-minute main-driver execution. Disburser staking hints independently request an earlier bounded check plus one trailing-edge check 10 seconds after the latest relevant hint.
 
 ### What the driver does
 
 On each driver run it:
 
-1. advances scheduled commitment/endowment indexing when its hourly fallback is due, or on every run while catch-up/backfill remains incomplete
+1. advances bounded commitment/endowment indexing on every normal driver run
 2. advances output and rewards indexing
 3. performs SNS discovery when the SNS / cycles cadence is due and SNS tracking is enabled
 4. advances the initial cycles-probe queue

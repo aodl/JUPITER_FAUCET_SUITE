@@ -48,7 +48,7 @@ static CYCLE_BURNER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static NNS_GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 const EVENT_HORIZON_PROXY_BYTES: &[u8] = &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1];
-const EVENT_HORIZON_ENDOWMENT_ID: u64 = 42;
+const RELEVANT_STAKING_MAX_AMOUNT: u64 = 100_000_000;
 
 fn event_horizon_proxy() -> Principal {
     Principal::from_slice(EVENT_HORIZON_PROXY_BYTES)
@@ -298,16 +298,16 @@ fn poke_via_proxy(
     pic: &PocketIc,
     proxy: Principal,
     historian: Principal,
-    subaccount_ids: Vec<u64>,
+    max_amount: u64,
 ) -> Result<()> {
     let response: Result<(), String> = update_one(
         pic,
         proxy,
         Principal::anonymous(),
-        "debug_poke",
-        PokeProxyArgs {
+        "debug_poke_staking",
+        StakingPokeProxyArgs {
             canister_id: historian,
-            subaccount_ids,
+            max_amount: Nat::from(max_amount),
         },
     )?;
     response.map_err(|message| anyhow!(message))
@@ -323,9 +323,9 @@ struct EndowmentTransactionStatusResponse {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct PokeProxyArgs {
+struct StakingPokeProxyArgs {
     canister_id: Principal,
-    subaccount_ids: Vec<u64>,
+    max_amount: Nat,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -2571,6 +2571,18 @@ impl Harness {
         enable_sns_tracking: bool,
         scan_interval_seconds: u64,
     ) -> Result<Self> {
+        Self::new_with_scan_interval_and_min_tx(
+            enable_sns_tracking,
+            scan_interval_seconds,
+            10_000_000,
+        )
+    }
+
+    fn new_with_scan_interval_and_min_tx(
+        enable_sns_tracking: bool,
+        scan_interval_seconds: u64,
+        min_tx_e8s: u64,
+    ) -> Result<Self> {
         let pic = support::pocketic::builder()
             .with_application_subnet()
             .build();
@@ -2615,7 +2627,7 @@ impl Harness {
             enable_sns_tracking: Some(enable_sns_tracking),
             scan_interval_seconds: Some(scan_interval_seconds),
             cycles_interval_seconds: Some(1),
-            min_tx_e8s: Some(10_000_000),
+            min_tx_e8s: Some(min_tx_e8s),
             max_cycles_entries_per_canister: Some(100),
             max_commitment_entries_per_canister: Some(100),
             max_index_pages_per_tick: Some(10),
@@ -2693,8 +2705,8 @@ fn debug_index_calls(h: &Harness) -> Result<Vec<DebugIndexGetCall>> {
 
 #[test]
 #[ignore]
-fn event_horizon_poke_filters_ids_and_checks_one_bounded_page() -> Result<()> {
-    let h = Harness::new_with_scan_interval(false, 3_600)?;
+fn staking_poke_prefilters_amount_and_checks_one_bounded_page() -> Result<()> {
+    let h = Harness::new_with_scan_interval_and_min_tx(false, 3_600, 100_000_000)?;
     let staking_id = h.staking_identifier()?;
     let target = Principal::from_slice(&[71]);
     let _: u64 = update_bytes(
@@ -2718,8 +2730,8 @@ fn event_horizon_poke_filters_ids_and_checks_one_bounded_page() -> Result<()> {
     )?;
     let stable_before = h.pic.get_stable_memory(h.historian);
     let calls_before = debug_index_calls(&h)?.len();
-    poke_via_proxy(&h.pic, h.proxy, h.historian, vec![])?;
-    poke_via_proxy(&h.pic, h.proxy, h.historian, vec![7, 8])?;
+    poke_via_proxy(&h.pic, h.proxy, h.historian, 0)?;
+    poke_via_proxy(&h.pic, h.proxy, h.historian, 99_999_999)?;
     assert_eq!(debug_index_calls(&h)?.len(), calls_before);
     assert_eq!(h.pic.get_stable_memory(h.historian), stable_before);
     let after_irrelevant: DebugState = query_one(
@@ -2730,12 +2742,7 @@ fn event_horizon_poke_filters_ids_and_checks_one_bounded_page() -> Result<()> {
         (),
     )?;
     assert_eq!(after_irrelevant, before);
-    poke_via_proxy(
-        &h.pic,
-        h.proxy,
-        h.historian,
-        vec![7, EVENT_HORIZON_ENDOWMENT_ID, EVENT_HORIZON_ENDOWMENT_ID],
-    )?;
+    poke_via_proxy(&h.pic, h.proxy, h.historian, RELEVANT_STAKING_MAX_AMOUNT)?;
     let calls = debug_index_calls(&h)?;
     assert_eq!(calls.len(), calls_before + 1);
     assert_eq!(calls.last().unwrap().max_results, 500);
@@ -2777,8 +2784,8 @@ fn event_horizon_poke_rejects_ingress_and_untrusted_canisters() -> Result<()> {
             .update_call(
                 h.historian,
                 caller,
-                "poke",
-                encode_args((vec![EVENT_HORIZON_ENDOWMENT_ID],))?
+                "poke_staking",
+                encode_args((Nat::from(100_000_000u64),))?
             )
             .is_err());
     }
@@ -2786,39 +2793,29 @@ fn event_horizon_poke_rejects_ingress_and_untrusted_canisters() -> Result<()> {
         &h.pic,
         attacker,
         Principal::anonymous(),
-        "debug_poke",
-        PokeProxyArgs {
+        "debug_poke_staking",
+        StakingPokeProxyArgs {
             canister_id: h.historian,
-            subaccount_ids: vec![EVENT_HORIZON_ENDOWMENT_ID],
+            max_amount: Nat::from(100_000_000u64),
         },
     )?;
     assert!(rejection
         .unwrap_err()
-        .contains("caller is not Event Horizon"));
+        .contains("caller is not Jupiter Disburser"));
     assert_eq!(debug_index_calls(&h)?.len(), calls_before);
     assert_eq!(h.pic.get_stable_memory(h.historian), before);
-    poke_via_proxy(
-        &h.pic,
-        h.proxy,
-        h.historian,
-        vec![EVENT_HORIZON_ENDOWMENT_ID],
-    )?;
+    poke_via_proxy(&h.pic, h.proxy, h.historian, RELEVANT_STAKING_MAX_AMOUNT)?;
     assert_eq!(debug_index_calls(&h)?.len(), calls_before + 1);
     Ok(())
 }
 
 #[test]
 #[ignore]
-fn event_horizon_poke_trailing_check_and_hourly_poll_remain_fallbacks() -> Result<()> {
+fn staking_poke_trailing_check_and_normal_poll_remain_independent() -> Result<()> {
     let h = Harness::new_with_scan_interval(false, 3_600)?;
     let initial = h.skip_install_main_tick()?;
     let calls_before = debug_index_calls(&h)?.len();
-    poke_via_proxy(
-        &h.pic,
-        h.proxy,
-        h.historian,
-        vec![EVENT_HORIZON_ENDOWMENT_ID],
-    )?;
+    poke_via_proxy(&h.pic, h.proxy, h.historian, RELEVANT_STAKING_MAX_AMOUNT)?;
     assert_eq!(debug_index_calls(&h)?.len(), calls_before + 1);
     let staking_id = h.staking_identifier()?;
     let target = Principal::from_slice(&[72]);
@@ -2873,12 +2870,7 @@ fn event_horizon_poke_trailing_check_and_hourly_poll_remain_fallbacks() -> Resul
         ))?,
     )?;
     // A new hint requests its own immediate attempt and moves the one trailing deadline.
-    poke_via_proxy(
-        &h.pic,
-        h.proxy,
-        h.historian,
-        vec![EVENT_HORIZON_ENDOWMENT_ID],
-    )?;
+    poke_via_proxy(&h.pic, h.proxy, h.historian, RELEVANT_STAKING_MAX_AMOUNT)?;
     h.pic.advance_time(Duration::from_secs(11));
     tick_n(&h.pic, 8);
     let after_coalesced: PublicCounts = query_one(
@@ -2903,20 +2895,20 @@ fn event_horizon_poke_trailing_check_and_hourly_poll_remain_fallbacks() -> Resul
     )?;
     h.pic.advance_time(Duration::from_secs(3_600));
     tick_n(&h.pic, 12);
-    let after_hour: PublicCounts = query_one(
+    let after_normal_interval: PublicCounts = query_one(
         &h.pic,
         h.historian,
         Principal::anonymous(),
         "get_public_counts",
         (),
     )?;
-    assert_eq!(after_hour.qualifying_commitment_count, 3);
+    assert_eq!(after_normal_interval.qualifying_commitment_count, 3);
     Ok(())
 }
 
 #[test]
 #[ignore]
-fn real_icp_index_lag_is_resolved_by_trailing_check_before_hourly_scan() -> Result<()> {
+fn real_icp_index_lag_is_resolved_by_trailing_check_before_normal_scan() -> Result<()> {
     let pic = build_pic_with_real_icp();
     let ledger = real_icp_ledger_principal();
     let index = real_icp_index_principal();
@@ -3003,7 +2995,7 @@ fn real_icp_index_lag_is_resolved_by_trailing_check_before_hourly_scan() -> Resu
             .all(|tx| tx.id != tx_id),
         "Ledger accepted the transfer, but ICP Index must still lag"
     );
-    poke_via_proxy(&pic, proxy, historian, vec![EVENT_HORIZON_ENDOWMENT_ID])?;
+    poke_via_proxy(&pic, proxy, historian, RELEVANT_STAKING_MAX_AMOUNT)?;
     let pending: EndowmentTransactionStatusResponse = query_one(
         &pic,
         historian,
@@ -3061,21 +3053,11 @@ fn event_horizon_trailing_check_follows_the_most_recent_rapid_poke() -> Result<(
     let h = Harness::new_with_scan_interval(false, 3_600)?;
     h.skip_install_main_tick()?;
     let baseline = debug_index_calls(&h)?.len();
-    poke_via_proxy(
-        &h.pic,
-        h.proxy,
-        h.historian,
-        vec![EVENT_HORIZON_ENDOWMENT_ID],
-    )?;
+    poke_via_proxy(&h.pic, h.proxy, h.historian, RELEVANT_STAKING_MAX_AMOUNT)?;
     assert_eq!(debug_index_calls(&h)?.len(), baseline + 1);
     h.pic.advance_time(Duration::from_millis(9_900));
     for _ in 0..4 {
-        poke_via_proxy(
-            &h.pic,
-            h.proxy,
-            h.historian,
-            vec![EVENT_HORIZON_ENDOWMENT_ID],
-        )?;
+        poke_via_proxy(&h.pic, h.proxy, h.historian, RELEVANT_STAKING_MAX_AMOUNT)?;
     }
     assert_eq!(debug_index_calls(&h)?.len(), baseline + 1);
     h.pic.advance_time(Duration::from_millis(200));
@@ -3148,12 +3130,7 @@ fn pending_genesis_backfill_survives_an_actual_historian_upgrade() -> Result<()>
     let staking_id = h.staking_identifier()?;
     let target = Principal::from_slice(&[72]);
 
-    poke_via_proxy(
-        &h.pic,
-        h.proxy,
-        h.historian,
-        vec![EVENT_HORIZON_ENDOWMENT_ID],
-    )?;
+    poke_via_proxy(&h.pic, h.proxy, h.historian, RELEVANT_STAKING_MAX_AMOUNT)?;
     let _: () = update_noargs(
         &h.pic,
         h.historian,
@@ -3191,12 +3168,7 @@ fn pending_genesis_backfill_survives_an_actual_historian_upgrade() -> Result<()>
     )?;
     support::governance::start_canister_as(&h.pic, h.historian, historian_controller)?;
 
-    poke_via_proxy(
-        &h.pic,
-        h.proxy,
-        h.historian,
-        vec![EVENT_HORIZON_ENDOWMENT_ID],
-    )?;
+    poke_via_proxy(&h.pic, h.proxy, h.historian, RELEVANT_STAKING_MAX_AMOUNT)?;
     let first: PublicCounts = query_one(
         &h.pic,
         h.historian,
@@ -5550,8 +5522,8 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
             .iter()
             .filter(|call| call.account_identifier == staking_id)
             .count(),
-        staking_calls_after,
-        "a same-hour steady-state driver tick must not repeat scheduled commitment indexing"
+        staking_calls_after + 1,
+        "every eligible normal driver tick must repeat bounded commitment indexing"
     );
     Ok(())
 }
@@ -5838,7 +5810,7 @@ fn historian_public_queries_surface_expected_counts_and_recent_items() -> Result
     );
     assert_eq!(status.staking_account.subaccount, Some([9u8; 32]));
     assert_eq!(status.ledger_canister_id, h.index);
-    assert_eq!(status.index_interval_seconds, 3_600);
+    assert_eq!(status.index_interval_seconds, 60);
     assert_eq!(status.cycles_interval_seconds, 1);
     assert!(status.last_index_run_ts.is_some());
     assert!(status.heap_memory_bytes.is_some());
