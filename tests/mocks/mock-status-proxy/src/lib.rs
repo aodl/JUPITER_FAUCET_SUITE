@@ -44,20 +44,14 @@ struct PokeArgs {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct DebugStakingPoke {
+struct DebugReceivedPoke {
     caller: Principal,
-    max_amount: Nat,
-}
-
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct StakingPokeArgs {
-    canister_id: Principal,
-    max_amount: Nat,
+    matches: Vec<EventHorizonPokeMatch>,
 }
 
 thread_local! {
     static CALLS: RefCell<Vec<DebugCall>> = const { RefCell::new(Vec::new()) };
-    static STAKING_POKES: RefCell<Vec<DebugStakingPoke>> = const { RefCell::new(Vec::new()) };
+    static RECEIVED_POKES: RefCell<Vec<DebugReceivedPoke>> = const { RefCell::new(Vec::new()) };
 }
 
 #[ic_cdk::init]
@@ -108,28 +102,18 @@ async fn debug_poke(args: PokeArgs) -> Result<(), String> {
 }
 
 #[ic_cdk::update]
-fn poke_staking(max_amount: Nat) {
-    STAKING_POKES.with(|pokes| {
-        pokes.borrow_mut().push(DebugStakingPoke {
+fn poke(matches: Vec<EventHorizonPokeMatch>) {
+    RECEIVED_POKES.with(|pokes| {
+        pokes.borrow_mut().push(DebugReceivedPoke {
             caller: ic_cdk::api::msg_caller(),
-            max_amount,
+            matches,
         });
     });
 }
 
-#[ic_cdk::update]
-async fn debug_poke_staking(args: StakingPokeArgs) -> Result<(), String> {
-    Call::bounded_wait(args.canister_id, "poke_staking")
-        .with_arg(&args.max_amount)
-        .await
-        .map_err(|err| format!("poke_staking call failed: {err:?}"))?
-        .candid()
-        .map_err(|err| format!("poke_staking decode failed: {err:?}"))
-}
-
 #[ic_cdk::query]
-fn debug_staking_pokes() -> Vec<DebugStakingPoke> {
-    STAKING_POKES.with(|pokes| pokes.borrow().clone())
+fn debug_received_pokes() -> Vec<DebugReceivedPoke> {
+    RECEIVED_POKES.with(|pokes| pokes.borrow().clone())
 }
 
 #[ic_cdk::query]
@@ -140,5 +124,5 @@ fn debug_calls() -> Vec<DebugCall> {
 #[ic_cdk::update]
 fn debug_reset() {
     CALLS.with(|calls| calls.borrow_mut().clear());
-    STAKING_POKES.with(|pokes| pokes.borrow_mut().clear());
+    RECEIVED_POKES.with(|pokes| pokes.borrow_mut().clear());
 }

@@ -67,8 +67,7 @@ mod tests {
     }
 
     #[test]
-    fn poke_staking_candid_matches_disburser_notification() {
-        let expected = "poke_staking : (nat) -> ();";
+    fn target_aware_poke_candid_matches_disburser_notification() {
         for (label, service) in [
             ("Rust export", __export_service()),
             (
@@ -80,11 +79,18 @@ mod tests {
                 include_str!("../jupiter_historian_debug.did").into(),
             ),
         ] {
-            let signature = service
-                .lines()
-                .find(|line| line.contains("poke_staking :"))
-                .unwrap_or_else(|| panic!("{label} omits poke_staking"));
-            assert_eq!(signature.trim(), expected, "{label} signature diverged");
+            assert!(
+                service.contains("poke : (vec EventHorizonPokeMatch) -> ();"),
+                "{label} omits the target-aware poke method"
+            );
+            assert!(
+                service.contains("subaccount : nat64")
+                    && service.contains("neuron_nonce : nat64")
+                    && service.contains("target : EventHorizonPokeTarget")
+                    && service.contains("max_amount : nat"),
+                "{label} target-aware poke types diverged"
+            );
+            assert!(!service.contains(&["poke", "staking"].join("_")));
             assert!(!service.contains("refresh_endowments"));
             assert!(!service.contains("RefreshEndowments"));
             assert!(!service.contains("EndowmentIndexProgress"));

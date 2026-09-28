@@ -331,8 +331,12 @@ fn classify_event_horizon_matches(
 }
 
 fn notify_historian_staking_best_effort(max_amount: Nat) {
-    let _ = Call::bounded_wait(constants::jupiter_historian_id(), "poke_staking")
-        .with_arg(&max_amount)
+    let matches = vec![EventHorizonPokeMatch {
+        target: EventHorizonPokeTarget::NeuronNonce(0),
+        max_amount,
+    }];
+    let _ = Call::bounded_wait(constants::jupiter_historian_id(), "poke")
+        .with_arg(&matches)
         .oneway();
 }
 

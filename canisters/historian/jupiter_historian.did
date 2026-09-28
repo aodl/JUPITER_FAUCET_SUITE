@@ -1,4 +1,6 @@
 type Account = record { owner : principal; subaccount : opt vec nat8 };
+type EventHorizonPokeTarget = variant { subaccount : nat64; neuron_nonce : nat64 };
+type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; max_amount : nat };
 type CanisterTrackingReason = variant { MemoCommitment; SnsDiscovery; RelayTarget; RelayInstance };
 type CommitmentSample = record {
   tx_id : nat64;
@@ -352,7 +354,7 @@ service : (InitArgs) -> {
   get_neuron_commitment_history : (GetNeuronCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
   get_commitment_route_summaries : (GetCommitmentRouteSummariesArgs) -> (GetCommitmentRouteSummariesResponse) query;
   get_endowment_transaction_status : (nat64) -> (EndowmentTransactionStatusResponse) query;
-  poke_staking : (nat) -> ();
+  poke : (vec EventHorizonPokeMatch) -> ();
   get_canister_overview : (principal) -> (opt CanisterOverview) query;
   get_public_counts : () -> (PublicCounts) query;
   get_public_status : () -> (PublicStatus) query;

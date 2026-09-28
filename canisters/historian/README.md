@@ -176,7 +176,7 @@ Up to 100 exact routes can be queried in one call, so consumers can batch the re
 
 ### Staking wake-up notifications
 
-Historian does not subscribe to or trust Event Horizon directly. Jupiter Disburser may call the permissioned `poke_staking(nat)` method with Event Horizon's largest observed raw ICP transfer for `neuron_nonce(0)`. This is the Jupiter Faucet neuron's NNS Governance-owned staking account, derived from Jupiter Disburser as controller with nonce zero. Historian compares the arbitrary-precision hint with its runtime `min_tx_e8s` before touching admission state, then checks ICP Index authoritatively.
+Historian intentionally uses the same target-aware `poke(vec PokeMatch)` wire ABI as the direct Event Horizon subscribers, but it does not subscribe to or trust Event Horizon directly. Production authorizes only Jupiter Disburser, which forwards one `neuron_nonce(0)` match containing Event Horizon's greatest observed `max_amount`; Historian ignores every other target. This target identifies the Jupiter Faucet neuron's NNS Governance-owned staking account, derived from Jupiter Disburser as controller with nonce zero. Historian compares the arbitrary-precision hint with its runtime `min_tx_e8s` before touching admission state, then checks ICP Index authoritatively.
 
 Historian checks at most one 500-transaction Index page per admitted attempt. A relevant hint requests an immediate bounded check plus one coalesced trailing check 10 seconds after the latest hint. The forwarding is best effort; missed notifications affect latency only because every normal driver run indexes commitments. `get_endowment_transaction_status(transaction_id)` remains unchanged.
 

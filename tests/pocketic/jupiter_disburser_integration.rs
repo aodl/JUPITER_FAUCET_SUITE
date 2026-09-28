@@ -279,9 +279,9 @@ struct PokeProxyArgs {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
-struct DebugStakingPoke {
+struct DebugReceivedPoke {
     caller: Principal,
-    max_amount: Nat,
+    matches: Vec<EventHorizonPokeMatch>,
 }
 
 fn build_wasm_cached(
@@ -1592,16 +1592,19 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
     )?;
     accepted.map_err(anyhow::Error::msg)?;
     tick_n(&pic, 4);
-    let staking_pokes: Vec<DebugStakingPoke> = query_call(
+    let received_pokes: Vec<DebugReceivedPoke> = query_call(
         &pic,
         historian,
         Principal::anonymous(),
-        "debug_staking_pokes",
+        "debug_received_pokes",
         (),
     )?;
-    assert_eq!(staking_pokes.len(), 1);
-    assert_eq!(staking_pokes[0].caller, disburser);
-    assert_eq!(staking_pokes[0].max_amount, Nat::from(300_000_000u64));
+    assert_eq!(received_pokes.len(), 1);
+    assert_eq!(received_pokes[0].caller, disburser);
+    assert_eq!(
+        received_pokes[0].matches,
+        vec![neuron_match(0, 300_000_000)]
+    );
     let after: DebugState = query_call(&pic, disburser, Principal::anonymous(), "debug_state", ())?;
     assert_eq!(after.last_main_run_ts, before.last_main_run_ts);
     assert_eq!(after.prev_age_seconds, before.prev_age_seconds);

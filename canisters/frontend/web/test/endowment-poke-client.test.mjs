@@ -35,17 +35,18 @@ test('route queries retain their own revision', async () => {
   assert.equal(current.revision[0], 7n);
 });
 
-test('browser Candid keeps queries and omits permissioned staking poke', () => {
+test('browser Candid keeps queries and omits permissioned Historian poke', () => {
   const productionDid = readFileSync(new URL('../../../historian/jupiter_historian.did', import.meta.url), 'utf8');
   const debugDid = readFileSync(new URL('../../../historian/jupiter_historian_debug.did', import.meta.url), 'utf8');
   const browserDid = readFileSync(new URL('../declarations/jupiter_historian/jupiter_historian.did.js', import.meta.url), 'utf8');
   for (const source of [productionDid, debugDid]) {
-    assert.match(source, /poke_staking\s*:\s*\(nat\)\s*->\s*\(\)/);
+    assert.match(source, /poke\s*:\s*\(vec EventHorizonPokeMatch\)\s*->\s*\(\)/);
     assert.match(source, /get_endowment_transaction_status/);
     assert.doesNotMatch(source, /refresh_endowments|RefreshEndowments|EndowmentIndexProgress/);
   }
   assert.match(browserDid, /get_endowment_transaction_status/);
   assert.match(browserDid, /get_commitment_route_summaries/);
-  assert.doesNotMatch(browserDid, /poke_staking|refresh_endowments|RefreshEndowments/);
+  assert.doesNotMatch(browserDid, /['"]poke['"]\s*:/);
+  assert.doesNotMatch(browserDid, /refresh_endowments|RefreshEndowments/);
   assert.doesNotMatch(productionDid, /debug_driver_tick|debug_state/);
 });
