@@ -756,6 +756,24 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.doesNotMatch(howItWorks, /More information coming soon/);
 });
 
+test('Advanced Usage documents the reviewed Event Horizon memo alias and contribution path', () => {
+  const howItWorks = sectionMarkup('how-it-works');
+  const advancedUsageStart = howItWorks.indexOf('<div class="nav-panel-page" data-page="2">');
+  const advancedUsageEnd = howItWorks.indexOf('<div class="nav-panel-page" data-page="3">');
+  assert.ok(advancedUsageStart >= 0 && advancedUsageEnd > advancedUsageStart);
+  const advancedUsage = howItWorks.slice(advancedUsageStart, advancedUsageEnd);
+
+  assert.match(advancedUsage, /reviewed memo aliases/);
+  assert.match(advancedUsage, /<p class="nav-panel-content memo-builder-safety-notice">\s*<strong>Aliases:<\/strong>/);
+  assert.match(advancedUsage, /<code>'X'<\/code> is\s*currently reserved/);
+  assert.match(advancedUsage, /<code>X\.&lt;Event Horizon declaration&gt;<\/code>/);
+  assert.match(advancedUsage, /Event Horizon/);
+  assert.match(advancedUsage, /href="#about"[^>]*>social channels<\/a>/);
+  assert.match(advancedUsage, /href="https:\/\/github\.com\/aodl\/JUPITER_FAUCET_SUITE\/pulls"[^>]*>raise a pull request<\/a>/);
+  assert.match(advancedUsage, /that includes your proposed alias/);
+  assert.match(advancedUsage, /memo-builder-example-list[\s\S]*<strong>Aliases:<\/strong>[\s\S]*that includes your proposed alias\.\s*<\/p>\s*<\/div>\s*$/);
+});
+
 test('simulator pane keeps controls outside the scroll region and places intro directly above charts', () => {
   const simulator = sectionMarkup('simulator');
   const headerIndex = simulator.indexOf('simulator-pane-header');

@@ -57,6 +57,8 @@ The operational path is intentionally split across small canisters:
 
 At a high level, a participant declares a faucet target by transferring ICP to the configured staking account and placing a supported ASCII directive in `icrc1_memo`. Plain declared canister ID text is the primary cycles top-up form. The faucet also supports `canister_id.memo` for raw ICP routing and decimal NNS neuron IDs, optionally with `.memo`, for neuron staking-account top-ups. The exact eligibility, memo, fee, retry, and rescue rules live in the component READMEs:
 
+For integrations that require a compact declaration within Jupiter Faucet's 32-character memo limit, Jupiter may support [reviewed memo aliases](canisters/faucet/README.md#reviewed-memo-aliases). [`'X'`](canisters/faucet/README.md#reviewed-memo-aliases) is currently reserved for Event Horizon. If your project has a compelling alias use case, please start a discussion through Jupiter Faucet's [social channels](https://www.jupiter-faucet.com/#about) and/or [raise a pull request](https://github.com/aodl/JUPITER_FAUCET_SUITE/pulls) that includes your proposed alias; aliases are reviewed source-controlled protocol policy, not a runtime registry.
+
 - [`canisters/disburser/README.md`](canisters/disburser/README.md)
 - [`canisters/faucet/README.md`](canisters/faucet/README.md)
 - [`canisters/relay/README.md`](canisters/relay/README.md)

@@ -100,6 +100,18 @@ The faucet also intentionally does **not** perform an eager canister-existence p
 
 This is an explicit economic trade-off, not an oversight. A patron can still submit syntactically valid memo text that leads to a useless top-up attempt, so the faucet may spend ledger fee / CMC work on a target that never turns into a productive canister top-up. If some short non-canister principal text exists and passes the current CMC path, that is parser / CMC behavior rather than a supported user-facing target. The design accepts that bounded griefing surface because the alternative -- probing canister existence on the hot path -- would permanently add more complexity, cost, and failure surface to the value-moving path. The mitigation is the endowment floor itself: repeated attempts remain expensive for the attacker and still send real ICP into the protocol's funding source.
 
+### Reviewed memo aliases
+
+Reviewed memo aliases are static mappings implemented in Jupiter Faucet's source-controlled memo policy. They support integrations whose useful declarations would otherwise be awkward or impossible within the 32-byte ASCII memo constraint. Aliases are case-sensitive protocol policy, not a mutable runtime registry, and an existing alias's meaning must not be silently changed or repointed after deployment so that historical endowments retain their meaning.
+
+| Alias | Destination | Purpose |
+| --- | --- | --- |
+| `X` | `eo6ei-gaaaa-aaaar-qchra-cai` | Compact Event Horizon declaration routing |
+
+`X.<suffix>` maps to Event Horizon and preserves `<suffix>` exactly as the outgoing raw ICP memo. Jupiter Faucet does not need to understand or validate Event Horizon's internal suffix grammar; Event Horizon owns the meaning of that suffix.
+
+Other projects may propose an alias when they have a compelling interoperability use case. A future alias addition requires a reviewed source change coordinated across the shared backend memo policy, frontend memo policy, documentation, and regression tests; proposing an alias does not guarantee acceptance. If your project has a compelling use case for a memo alias, please start a discussion on one of Jupiter Faucet's [social channels](https://www.jupiter-faucet.com/#about) and/or [raise a pull request](https://github.com/aodl/JUPITER_FAUCET_SUITE/pulls) that includes your proposed alias.
+
 ### How a participant declares a target
 
 <img src="../frontend/public/faucet.svg">
