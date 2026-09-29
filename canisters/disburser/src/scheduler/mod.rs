@@ -14,6 +14,8 @@ mod tick;
 pub(crate) use tick::*;
 mod payout_plan;
 use payout_plan::*;
+mod poke;
+pub(crate) use poke::handle_event_horizon_poke;
 mod rescue;
 use rescue::*;
 #[cfg(feature = "debug_api")]

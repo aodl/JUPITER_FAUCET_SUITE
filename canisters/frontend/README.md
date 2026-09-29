@@ -116,7 +116,7 @@ The Active view shows Relay's default account, staging subaccount 1, and splitte
 
 ### Dashboard loader behavior
 
-The browser does not call `poke`. Event Horizon supplies best-effort notifications to Historian, while its hourly scheduled scan remains the complete fallback. Browser-facing Historian methods, including transaction status and route summaries, remain queries.
+The browser does not call Historian's permissioned `poke(vec PokeMatch)` method. Disburser may supply best-effort staking wake-ups through that shared target-aware ABI, while every normal 10-minute scan remains authoritative. Browser-facing Historian methods, including transaction status and route summaries, remain queries.
 
 The browser data loader is intentionally defensive:
 

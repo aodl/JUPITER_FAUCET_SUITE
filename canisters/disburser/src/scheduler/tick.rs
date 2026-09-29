@@ -1,11 +1,23 @@
 use super::*;
 use jupiter_ic_clients::timer_guard::{LeaseFinish, TimerLeaseGuard};
+use std::cell::Cell;
+pub(super) const SCHEDULED_MAIN_RETRY_SECONDS: u64 = 60;
+
+thread_local! {
+    static SCHEDULED_MAIN_RETRY_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MainTickOutcome {
+    Completed,
+    MainGuardBusy,
+}
 pub(super) struct MainGuard {
     inner: TimerLeaseGuard,
 }
 
 impl MainGuard {
-    fn acquire(now_secs: u64) -> Option<Self> {
+    pub(super) fn acquire(now_secs: u64) -> Option<Self> {
         state::with_state_mut(|st| {
             let inner =
                 TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
@@ -52,6 +64,28 @@ impl Drop for MainGuard {
     }
 }
 
+pub(super) async fn run_poke_with_clients<L: LedgerClient, G: GovernanceClient>(
+    now_nanos: u64,
+    now_secs: u64,
+    cfg: &state::Config,
+    ledger: &L,
+    gov: &G,
+) {
+    let Some(_guard) = MainGuard::acquire(now_secs) else {
+        return;
+    };
+    let Ok(neuron) = gov.get_full_neuron(cfg.neuron_id).await else {
+        return;
+    };
+    let in_flight = neuron
+        .maturity_disbursements_in_progress
+        .as_ref()
+        .is_some_and(|items| !items.is_empty());
+    if !in_flight {
+        let _ = process_payout(ledger, cfg, now_nanos, now_secs).await;
+    }
+}
+
 /// Install two independent interval timers:
 /// - main tick (daily by default)
 /// - rescue tick (daily by default)
@@ -64,7 +98,7 @@ pub(crate) fn install_timers() {
     });
 
     ic_cdk_timers::set_timer_interval(Duration::from_secs(main_s.max(60)), || async {
-        main_tick(false).await;
+        scheduled_main_tick().await;
     });
 
     ic_cdk_timers::set_timer_interval(Duration::from_secs(rescue_s.max(60)), || async {
@@ -93,13 +127,37 @@ pub(crate) fn schedule_immediate_rescue_reconcile() {
 /// - always logs "Cycles: <amount>" once per run
 /// - logs "CONFIG ..." only when the tick reaches the payout / maturity-disbursement path
 /// - logs only errors otherwise
-pub(super) async fn main_tick(force: bool) {
+async fn scheduled_main_tick() {
+    if main_tick(false).await == MainTickOutcome::MainGuardBusy {
+        schedule_scheduled_main_retry();
+    }
+}
+
+fn schedule_scheduled_main_retry() {
+    if !reserve_scheduled_main_retry() {
+        return;
+    }
+    ic_cdk_timers::set_timer(Duration::from_secs(SCHEDULED_MAIN_RETRY_SECONDS), async {
+        clear_scheduled_main_retry();
+        scheduled_main_tick().await;
+    });
+}
+
+pub(super) fn reserve_scheduled_main_retry() -> bool {
+    SCHEDULED_MAIN_RETRY_PENDING.with(|pending| !pending.replace(true))
+}
+
+pub(super) fn clear_scheduled_main_retry() {
+    SCHEDULED_MAIN_RETRY_PENDING.with(|pending| pending.set(false));
+}
+
+pub(super) async fn main_tick(force: bool) -> MainTickOutcome {
     let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
     let cfg = state::with_state(|st| st.config.clone());
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
     let gov = NnsGovernanceCanister::new(cfg.governance_canister_id);
-    run_main_tick_with_clients(force, now_nanos, now_secs, &cfg, &ledger, &gov).await;
+    run_main_tick_with_clients(force, now_nanos, now_secs, &cfg, &ledger, &gov).await
 }
 
 pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceClient>(
@@ -109,9 +167,9 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
     cfg: &state::Config,
     ledger: &L,
     gov: &G,
-) {
+) -> MainTickOutcome {
     let Some(guard) = MainGuard::acquire(now_secs) else {
-        return;
+        return MainTickOutcome::MainGuardBusy;
     };
 
     if !force {
@@ -121,7 +179,7 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
             state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
         if recently_ran {
             guard.finish(now_secs, None, false);
-            return;
+            return MainTickOutcome::Completed;
         }
     }
 
@@ -132,7 +190,7 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
         // Debug-only: simulate low cycles by refusing to perform any external calls.
         err = Some(1004);
         guard.finish(now_secs, err, false);
-        return;
+        return MainTickOutcome::Completed;
     }
 
     #[cfg(feature = "debug_api")]
@@ -142,7 +200,7 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
         // governance maintenance. Production builds never take this branch.
         let payout_ok = process_payout(ledger, cfg, now_nanos, now_secs).await;
         guard.finish(now_secs, if payout_ok { None } else { Some(1002) }, true);
-        return;
+        return MainTickOutcome::Completed;
     }
 
     // Best-effort maintenance runs independently of the payout / maturity path. These
@@ -164,7 +222,7 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
         Err(_) => {
             err = Some(1001);
             guard.finish(now_secs, err, false);
-            return;
+            return MainTickOutcome::Completed;
         }
     };
 
@@ -214,4 +272,5 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
     }
 
     guard.finish(now_secs, err, log_config);
+    MainTickOutcome::Completed
 }

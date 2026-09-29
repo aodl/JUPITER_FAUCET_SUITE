@@ -2,6 +2,8 @@ type Account = record {
   owner : principal;
   subaccount : opt blob;
 };
+type EventHorizonPokeTarget = variant { subaccount : nat64; neuron_nonce : nat64 };
+type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; max_amount : nat };
 
 type InitArgs = record {
   neuron_id : nat64;
@@ -50,6 +52,7 @@ type DebugConfig = record {
 };
 
 service : (InitArgs) -> {
+  poke : (vec EventHorizonPokeMatch) -> ();
   debug_state : () -> (DebugState) query;
   debug_config : () -> (DebugConfig) query;
   debug_state_size_bytes : () -> (nat64) query;

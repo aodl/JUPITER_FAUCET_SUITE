@@ -30,6 +30,10 @@ By default the canister talks to:
 - ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`)
 - Cycles Minting Canister / CMC (`rkp4c-7iaaa-aaaaa-aaaca-cai`)
 
+## Event Horizon acceleration
+
+The production target-aware `poke(vec PokeMatch)` callback is inter-canister-only and accepts only Event Horizon (`eo6ei-gaaaa-aaaar-qchra-cai`). Faucet reacts only to `subaccount(0)`, declared as `X.acjuzliaaaaaaarqb4qqcai.0`. `max_amount` is only a hint; Faucet reconciles ICP Index authoritatively. Because Index may lag Event Horizon, a relevant hint requests one immediate bounded payout opportunity and one trailing opportunity 10 seconds after the latest hint. The daily main poll remains authoritative. Poke does not move the daily cadence or run controller reconciliation.
+
 ## High-level payout model
 
 Each Disburser-to-Faucet transfer into the faucet payout account creates one payout pot. The faucet requires a configured `funding_source_account`, scans the payout account history, selects the oldest unprocessed inbound transfer from that account, and processes exactly that transfer amount as one chronological tranche.
@@ -676,7 +680,7 @@ The committed mainnet install args wire the production constants used by the sui
 
 ## Public interface
 
-Production builds expose **no public methods**.
+Production builds expose exactly the permissioned Event Horizon `poke(vec PokeMatch)` callback and no user or administrator methods.
 
 Debug builds expose helper surfaces behind `debug_api`, including:
 

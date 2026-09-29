@@ -74,6 +74,20 @@ test('raw and neuron endowment rows link full declared memos to tracker', () => 
           timestamp_nanos: [1_700_000_000_000_000_000n],
           amount_e8s: 100_000_000n,
         },
+        {
+          canister_id: ['eo6ei-gaaaa-aaaar-qchra-cai'],
+          raw_icp_memo_text: ['uccpicqaaaaaaarqby3qcai.n0:1'],
+          tx_id: 9n,
+          timestamp_nanos: [1_700_000_000_000_000_000n],
+          amount_e8s: 100_000_000n,
+        },
+        {
+          canister_id: ['eo6ei-gaaaa-aaaar-qchra-cai'],
+          raw_icp_memo_text: [''],
+          tx_id: 10n,
+          timestamp_nanos: [1_700_000_000_000_000_000n],
+          amount_e8s: 100_000_000n,
+        },
       ],
     },
     errors: {},
@@ -92,6 +106,10 @@ test('raw and neuron endowment rows link full declared memos to tracker', () => 
   assert.match(rawHtml, new RegExp(`data-tracker-memo="${compactCanister}\\.vault"`));
   assert.doesNotMatch(rawHtml, new RegExp(`${canister}\\.vault`));
   assert.doesNotMatch(rawHtml, />vault<\/td>/);
+  assert.match(rawHtml, /data-tracker-memo="X\.uccpicqaaaaaaarqby3qcai\.n0:1"/);
+  assert.doesNotMatch(rawHtml, /eo6eigaaaaaaaarqchracai\.uccpic/);
+  assert.match(rawHtml, /data-tracker-memo="eo6eigaaaaaaaarqchracai\."/);
+  assert.doesNotMatch(rawHtml, /data-tracker-memo="X\."/);
 
   const neuronHtml = nodes.get('commitments-neurons-pane-body').innerHTML;
   assert.match(neuronHtml, /href="#metric-tracker\?memo=123456789\.donor"/);

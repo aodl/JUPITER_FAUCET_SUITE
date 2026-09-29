@@ -19,6 +19,7 @@ pub const ORDERED_PRODUCTION_BLACKHOLE_CANISTER_IDS: [&str; 2] = [
 pub const NNS_ROOT_ID: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
 pub const SNS_WASM_ID: &str = "qaa6y-5yaaa-aaaaa-aaafa-cai";
 pub const JUPITER_SNS_REWARDS_ID: &str = "alk7f-5aaaa-aaaar-qb4ra-cai";
+pub const JUPITER_HISTORIAN_ID: &str = "j5gs6-uiaaa-aaaar-qb5cq-cai";
 
 fn principal_from_text(text: &str, label: &str) -> Principal {
     Principal::from_text(text).unwrap_or_else(|_| panic!("invalid hardcoded {label} principal"))
@@ -81,9 +82,14 @@ pub fn jupiter_sns_rewards_id() -> Principal {
     principal_from_text(JUPITER_SNS_REWARDS_ID, "Jupiter SNS rewards")
 }
 
+pub fn jupiter_historian_id() -> Principal {
+    principal_from_text(JUPITER_HISTORIAN_ID, "Jupiter Historian")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     #[test]
     fn mainnet_principal_constants_preserve_external_ids() {
@@ -107,6 +113,7 @@ mod tests {
         assert_eq!(NNS_ROOT_ID, "r7inp-6aaaa-aaaaa-aaabq-cai");
         assert_eq!(SNS_WASM_ID, "qaa6y-5yaaa-aaaaa-aaafa-cai");
         assert_eq!(JUPITER_SNS_REWARDS_ID, "alk7f-5aaaa-aaaar-qb4ra-cai");
+        assert_eq!(JUPITER_HISTORIAN_ID, "j5gs6-uiaaa-aaaar-qb5cq-cai");
     }
 
     #[test]
@@ -141,5 +148,19 @@ mod tests {
         assert_eq!(nns_root_id().to_text(), NNS_ROOT_ID);
         assert_eq!(sns_wasm_id().to_text(), SNS_WASM_ID);
         assert_eq!(jupiter_sns_rewards_id().to_text(), JUPITER_SNS_REWARDS_ID);
+        assert_eq!(jupiter_historian_id().to_text(), JUPITER_HISTORIAN_ID);
+    }
+
+    #[test]
+    fn disburser_nonce_zero_derives_production_faucet_staking_subaccount() {
+        let controller = Principal::from_text("uccpi-cqaaa-aaaar-qby3q-cai").unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(b"\x0cneuron-stake");
+        hasher.update(controller.as_slice());
+        hasher.update(0u64.to_be_bytes());
+        assert_eq!(
+            hex::encode(hasher.finalize()),
+            "ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68"
+        );
     }
 }

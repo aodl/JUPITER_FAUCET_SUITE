@@ -61,3 +61,14 @@ test('parseJupiterMemo preserves right-side raw memo text exactly', () => {
   assert.equal(parsed.kind, 'rawIcpCanister');
   assert.equal(parsed.outgoingMemoText, ' abc ');
 });
+
+test('parseJupiterMemo resolves the exact Event Horizon X alias without expanding display text', () => {
+  const memo = 'X.uccpicqaaaaaaarqby3qcai.n0:1';
+  const parsed = parseJupiterMemo(memo);
+  assert.equal(parsed.kind, 'rawIcpCanister');
+  assert.equal(parsed.canisterId.toText(), 'eo6ei-gaaaa-aaaar-qchra-cai');
+  assert.equal(parsed.outgoingMemoText, 'uccpicqaaaaaaarqby3qcai.n0:1');
+  assert.equal(parsed.normalizedMemoText, memo);
+  assert.equal(parseJupiterMemo('X.').kind, 'invalid');
+  assert.equal(parseJupiterMemo('x.foo').kind, 'invalid');
+});

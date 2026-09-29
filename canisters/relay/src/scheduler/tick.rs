@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{cell::Cell, time::Duration};
 
 use candid::Principal;
 use icrc_ledger_types::icrc1::account::Account;
@@ -27,8 +27,13 @@ use crate::state::{
 };
 
 const SPLITTER_MAIN_CONTINUATION_DELAY_SECONDS: u64 = 1;
+const SCHEDULED_MAIN_RETRY_SECONDS: u64 = 60;
 #[cfg(not(test))]
 const SPLITTER_MAIN_CONTINUATION_BUSY_RETRY_SECONDS: u64 = 60;
+
+thread_local! {
+    static SCHEDULED_MAIN_RETRY_PENDING: Cell<bool> = const { Cell::new(false) };
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MainTickOutcome {
@@ -45,17 +50,27 @@ enum TransferPlanStep {
     Done,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FundingPipelineOutcome {
+    Completed,
+    MainLeaseLost,
+    SplitterGuardBusy,
+    SplitterUnresolved,
+    SplitterQuarantined,
+    DebugStopped,
+}
+
 pub(crate) fn install_timers() {
     let main_s = state::with_state(|st| st.config.main_interval_seconds.max(60));
     ic_cdk_timers::set_timer_interval(Duration::from_secs(main_s), || async {
-        let _ = main_tick(false, Some(SPLITTER_MAIN_CONTINUATION_DELAY_SECONDS)).await;
+        scheduled_main_tick().await;
     });
     super::splitter::install_retry_timer();
 }
 
 pub(crate) fn schedule_startup_liveness_tick() {
     ic_cdk_timers::set_timer(Duration::from_secs(1), async {
-        let _ = main_tick(false, Some(SPLITTER_MAIN_CONTINUATION_DELAY_SECONDS)).await;
+        scheduled_main_tick().await;
     });
 }
 
@@ -88,6 +103,32 @@ async fn main_tick(force: bool, splitter_busy_retry_delay: Option<u64>) -> MainT
         }
     }
     outcome
+}
+
+async fn scheduled_main_tick() {
+    if main_tick(false, Some(SPLITTER_MAIN_CONTINUATION_DELAY_SECONDS)).await
+        == MainTickOutcome::MainGuardBusy
+    {
+        schedule_scheduled_main_retry();
+    }
+}
+
+fn schedule_scheduled_main_retry() {
+    if !reserve_scheduled_main_retry() {
+        return;
+    }
+    ic_cdk_timers::set_timer(Duration::from_secs(SCHEDULED_MAIN_RETRY_SECONDS), async {
+        clear_scheduled_main_retry();
+        scheduled_main_tick().await;
+    });
+}
+
+fn reserve_scheduled_main_retry() -> bool {
+    SCHEDULED_MAIN_RETRY_PENDING.with(|pending| !pending.replace(true))
+}
+
+fn clear_scheduled_main_retry() {
+    SCHEDULED_MAIN_RETRY_PENDING.with(|pending| pending.set(false));
 }
 
 fn request_splitter_main_continuation() {
@@ -208,42 +249,73 @@ async fn run_main_tick_with_clients_for_relay<
     if !guard.is_current() {
         return MainTickOutcome::Completed;
     }
-    let splitter_result =
-        super::splitter::process_main_stage(now_nanos, now_secs, relay_id, ledger).await;
-    if !guard.is_current() {
-        return MainTickOutcome::Completed;
-    }
-    match splitter_result {
-        super::splitter::MainStageResult::Ready => {}
-        super::splitter::MainStageResult::GuardBusy => {
+    let funding_outcome = run_funding_pipeline_with_clients(
+        now_nanos,
+        now_secs,
+        relay_id,
+        relay_cycles,
+        ledger,
+        cmc,
+        governance,
+        cycles_probe,
+        lease,
+    )
+    .await;
+    match funding_outcome {
+        FundingPipelineOutcome::Completed => {}
+        FundingPipelineOutcome::MainLeaseLost => return MainTickOutcome::Completed,
+        FundingPipelineOutcome::SplitterGuardBusy => {
             log_error("relay tick paused while another splitter driver holds the lease");
             request_splitter_main_continuation();
             guard.release_without_finishing();
             return MainTickOutcome::SplitterGuardBusy;
         }
-        super::splitter::MainStageResult::Unresolved => {
+        FundingPipelineOutcome::SplitterUnresolved => {
             log_error("relay tick paused with an unresolved splitter transaction");
             request_splitter_main_continuation();
             guard.release_without_finishing();
             return MainTickOutcome::SplitterPaused;
         }
-        super::splitter::MainStageResult::Quarantined => {
+        FundingPipelineOutcome::SplitterQuarantined => {
             log_error("relay tick paused after quarantining a splitter transaction");
             request_splitter_main_continuation();
             guard.release_without_finishing();
             schedule_splitter_main_continuation_if_requested();
             return MainTickOutcome::SplitterPaused;
         }
+        FundingPipelineOutcome::DebugStopped => {
+            log_error("relay tick stopped after debug transfer injection");
+            guard.finish(now_secs);
+            return MainTickOutcome::Completed;
+        }
     }
-    if !resume_or_start_faucet_commitment_with_self(now_nanos, relay_id, ledger, governance, lease)
-        .await
-    {
-        log_error("relay tick stopped after debug faucet commitment transfer injection");
-        guard.finish(now_secs);
-        return MainTickOutcome::Completed;
-    }
-    if !guard.is_current() {
-        return MainTickOutcome::Completed;
+    guard.finish(now_secs);
+    MainTickOutcome::Completed
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn run_funding_pipeline_with_clients<
+    L: LedgerClient,
+    C: CmcClient,
+    G: GovernanceClient,
+    P: CyclesProbeClient,
+>(
+    now_nanos: u64,
+    now_secs: u64,
+    relay_id: Principal,
+    relay_cycles: u128,
+    ledger: &L,
+    cmc: &C,
+    governance: &G,
+    cycles_probe: &P,
+    lease: MainLeaseToken,
+) -> FundingPipelineOutcome {
+    let reactive_outcome = run_reactive_funding_stages_with_clients(
+        now_nanos, now_secs, relay_id, ledger, governance, lease,
+    )
+    .await;
+    if reactive_outcome != FundingPipelineOutcome::Completed {
+        return reactive_outcome;
     }
     if !resume_or_start_job_with_self(
         now_nanos,
@@ -257,16 +329,98 @@ async fn run_main_tick_with_clients_for_relay<
     )
     .await
     {
-        log_error("relay tick stopped after debug transfer injection");
-        guard.finish(now_secs);
-        return MainTickOutcome::Completed;
+        return FundingPipelineOutcome::DebugStopped;
     }
-    if !guard.is_current() {
-        return MainTickOutcome::Completed;
+    if !lease.is_current() {
+        return FundingPipelineOutcome::MainLeaseLost;
     }
     clear_splitter_main_continuation_request();
-    guard.finish(now_secs);
-    MainTickOutcome::Completed
+    FundingPipelineOutcome::Completed
+}
+
+async fn run_reactive_funding_stages_with_clients<L: LedgerClient, G: GovernanceClient>(
+    now_nanos: u64,
+    now_secs: u64,
+    relay_id: Principal,
+    ledger: &L,
+    governance: &G,
+    lease: MainLeaseToken,
+) -> FundingPipelineOutcome {
+    let splitter_result =
+        super::splitter::process_main_stage(now_nanos, now_secs, relay_id, ledger).await;
+    if !lease.is_current() {
+        return FundingPipelineOutcome::MainLeaseLost;
+    }
+    match splitter_result {
+        super::splitter::MainStageResult::Ready => {}
+        super::splitter::MainStageResult::GuardBusy => {
+            return FundingPipelineOutcome::SplitterGuardBusy
+        }
+        super::splitter::MainStageResult::Unresolved => {
+            return FundingPipelineOutcome::SplitterUnresolved
+        }
+        super::splitter::MainStageResult::Quarantined => {
+            return FundingPipelineOutcome::SplitterQuarantined
+        }
+    }
+    if !resume_or_start_faucet_commitment_with_self(now_nanos, relay_id, ledger, governance, lease)
+        .await
+    {
+        return FundingPipelineOutcome::DebugStopped;
+    }
+    if !lease.is_current() {
+        return FundingPipelineOutcome::MainLeaseLost;
+    }
+    FundingPipelineOutcome::Completed
+}
+
+pub(super) async fn run_poke_funding_with_clients<
+    L: LedgerClient,
+    C: CmcClient,
+    G: GovernanceClient,
+>(
+    now_nanos: u64,
+    now_secs: u64,
+    relay_id: Principal,
+    ledger: &L,
+    cmc: &C,
+    governance: &G,
+) -> FundingPipelineOutcome {
+    let Some(guard) = MainGuard::acquire(now_secs) else {
+        return FundingPipelineOutcome::MainLeaseLost;
+    };
+    let lease = guard.lease_token();
+    let mut outcome = run_reactive_funding_stages_with_clients(
+        now_nanos, now_secs, relay_id, ledger, governance, lease,
+    )
+    .await;
+    if outcome == FundingPipelineOutcome::Completed {
+        outcome = resume_existing_job_with_self(now_nanos, ledger, cmc, governance, lease).await;
+    }
+    if outcome == FundingPipelineOutcome::Completed {
+        clear_splitter_main_continuation_request();
+    }
+    guard.release_without_finishing();
+    outcome
+}
+
+async fn resume_existing_job_with_self<L: LedgerClient, C: CmcClient, G: GovernanceClient>(
+    now_nanos: u64,
+    ledger: &L,
+    cmc: &C,
+    governance: &G,
+    lease: MainLeaseToken,
+) -> FundingPipelineOutcome {
+    if state::with_state(|st| st.active_job.is_none()) {
+        return FundingPipelineOutcome::Completed;
+    }
+    if !drive_active_job(now_nanos, ledger, cmc, governance, lease).await {
+        return FundingPipelineOutcome::DebugStopped;
+    }
+    if !lease.is_current() {
+        return FundingPipelineOutcome::MainLeaseLost;
+    }
+    FundingPipelineOutcome::Completed
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3540,5 +3694,196 @@ mod tests {
         assert!(!state::with_state(|state| {
             state.splitter_main_continuation_requested
         }));
+    }
+
+    #[test]
+    fn busy_scheduled_main_attempt_can_retry_full_daily_path_after_lease_releases() {
+        reset_daily_cadence_state();
+        crate::reward_state::reset_for_test();
+        crate::reward_state::mutate(|reward| {
+            reward.last_sweep_attempt_timestamp_seconds = 7;
+        });
+        let now_secs = 100_000;
+        let poke_guard = MainGuard::acquire(now_secs).expect("poke main lease");
+        let ledger = CadenceLedger::new(Vec::new());
+
+        assert_eq!(
+            block_on(run_daily_cadence_tick(false, now_secs, &ledger)),
+            MainTickOutcome::MainGuardBusy
+        );
+        assert_eq!(state::with_state(|state| state.last_main_run_ts), 0);
+        assert_eq!(
+            crate::reward_state::get().last_sweep_attempt_timestamp_seconds,
+            7
+        );
+
+        drop(poke_guard);
+        let retry_secs = now_secs + SCHEDULED_MAIN_RETRY_SECONDS;
+        assert_eq!(
+            block_on(run_daily_cadence_tick(false, retry_secs, &ledger)),
+            MainTickOutcome::Completed
+        );
+        assert_eq!(
+            state::with_state(|state| state.last_main_run_ts),
+            retry_secs
+        );
+        assert_eq!(
+            crate::reward_state::get().last_sweep_attempt_timestamp_seconds,
+            7,
+            "unit builds omit external reward calls; the retry still traverses the ordinary main path"
+        );
+    }
+
+    #[test]
+    fn scheduled_main_retry_requests_coalesce_until_timer_begins() {
+        clear_scheduled_main_retry();
+
+        assert!(reserve_scheduled_main_retry());
+        assert!(!reserve_scheduled_main_retry());
+
+        clear_scheduled_main_retry();
+        assert!(reserve_scheduled_main_retry());
+        assert!(!reserve_scheduled_main_retry());
+
+        clear_scheduled_main_retry();
+    }
+
+    #[test]
+    fn poke_without_active_job_does_not_advance_default_allocation_sampling() {
+        let sentinel = relay_self();
+        let mut relay_state = State::new(base_config(), 0);
+        relay_state.last_main_run_ts = 0;
+        relay_state
+            .relay_minted_cycles_since_sample
+            .insert(sentinel, 123);
+        state::set_state(relay_state);
+        crate::splitter_state::reset_for_test();
+        crate::reward_state::reset_for_test();
+        crate::reward_state::mutate(|reward| {
+            reward.last_sweep_attempt_timestamp_seconds = 7;
+        });
+        let ledger = CadenceLedger::new(Vec::new());
+        let before = state::with_state(|state| {
+            (
+                state.last_completed_cycles.clone(),
+                state.relay_minted_cycles_since_sample.clone(),
+                state.next_job_id,
+                state.last_summary.clone(),
+                state.last_main_run_ts,
+            )
+        });
+        let outcome = block_on(run_poke_funding_with_clients(
+            100_000 * 1_000_000_000,
+            100_000,
+            relay_self(),
+            &ledger,
+            &MockSchedulerCmc::new(10_000_000_000_000),
+            &MockSchedulerGovernance,
+        ));
+        assert_eq!(outcome, FundingPipelineOutcome::Completed);
+        state::with_state(|state| {
+            assert!(state.active_job.is_none());
+            assert_eq!(state.last_completed_cycles, before.0);
+            assert_eq!(state.relay_minted_cycles_since_sample, before.1);
+            assert_eq!(state.next_job_id, before.2);
+            assert_eq!(state.last_summary, before.3);
+            assert_eq!(state.last_main_run_ts, before.4);
+            assert!(state.last_completed_cycles.is_empty());
+            assert!(
+                state.last_summary.is_none(),
+                "poke must not create BaselineOnly"
+            );
+        });
+        assert_eq!(
+            crate::reward_state::get().last_sweep_attempt_timestamp_seconds,
+            7
+        );
+        let queries = ledger.balance_queries();
+        assert!(queries
+            .iter()
+            .any(|account| account.subaccount == Some(logic::relay_subaccount_one())));
+        assert!(!queries
+            .iter()
+            .any(|account| *account == logic::default_account(relay_self())));
+    }
+
+    #[test]
+    fn poke_resumes_existing_default_allocation_without_replanning_it() {
+        let mut config = base_config();
+        config.max_transfers_per_tick = Some(1);
+        let mut relay_state = State::new(config, 0);
+        relay_state.last_main_run_ts = 77;
+        relay_state.next_job_id = 2;
+        relay_state.active_job = Some(job_with_three_topups());
+        state::set_state(relay_state);
+        crate::splitter_state::reset_for_test();
+
+        let before = state::with_state(|state| {
+            let job = state.active_job.as_ref().unwrap();
+            (
+                job.id,
+                job.started_at_ts_nanos,
+                job.balance_start_e8s,
+                job.current_cycles.clone(),
+                job.next_transfer_index,
+                state.next_job_id,
+            )
+        });
+        let ledger = CadenceLedger::new(Vec::new());
+        let outcome = block_on(run_poke_funding_with_clients(
+            100_000 * 1_000_000_000,
+            100_000,
+            relay_self(),
+            &ledger,
+            &MockSchedulerCmc::new(10_000_000_000_000),
+            &MockSchedulerGovernance,
+        ));
+        assert_eq!(outcome, FundingPipelineOutcome::Completed);
+        state::with_state(|state| {
+            let job = state
+                .active_job
+                .as_ref()
+                .expect("transfer-limited job remains active");
+            assert_eq!(job.id, before.0);
+            assert_eq!(job.started_at_ts_nanos, before.1);
+            assert_eq!(job.balance_start_e8s, before.2);
+            assert_eq!(job.current_cycles, before.3);
+            assert!(job.next_transfer_index > before.4 || job.pending_transfer.is_some());
+            assert_eq!(state.next_job_id, before.5);
+            assert_eq!(state.last_main_run_ts, 77);
+        });
+    }
+
+    #[test]
+    fn ordinary_main_still_establishes_initial_cycles_baseline() {
+        let mut config = base_config();
+        config.managed_canisters.clear();
+        config.surplus_recipients.clear();
+        state::set_state(State::new(config, 0));
+        crate::splitter_state::reset_for_test();
+        let ledger = CadenceLedger::new(Vec::new());
+        let guard = MainGuard::acquire(100_000).expect("ordinary main lease");
+
+        let outcome = block_on(run_funding_pipeline_with_clients(
+            100_000 * 1_000_000_000,
+            100_000,
+            relay_self(),
+            10_000_000_000_000,
+            &ledger,
+            &MockSchedulerCmc::new(10_000_000_000_000),
+            &MockSchedulerGovernance,
+            &MockSchedulerCyclesProbe::new(BTreeMap::new()),
+            guard.lease_token(),
+        ));
+        assert_eq!(outcome, FundingPipelineOutcome::Completed);
+        state::with_state(|state| {
+            assert!(state.active_job.is_none());
+            assert!(!state.last_completed_cycles.is_empty());
+            assert_eq!(
+                state.last_summary.as_ref().map(|summary| &summary.mode),
+                Some(&RelayMode::BaselineOnly)
+            );
+        });
+        guard.release_without_finishing();
     }
 }

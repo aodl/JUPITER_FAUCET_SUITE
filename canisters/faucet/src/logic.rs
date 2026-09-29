@@ -622,6 +622,17 @@ mod tests {
     }
 
     #[test]
+    fn event_horizon_alias_uses_shared_policy_for_exact_raw_route() {
+        assert_eq!(
+            parse_payout_target_from_memo(b"X.uccpicqaaaaaaarqby3qcai.n0:1"),
+            Some(PayoutTarget::RawIcp {
+                canister_id: Principal::from_text("eo6ei-gaaaa-aaaar-qchra-cai").unwrap(),
+                memo: b"uccpicqaaaaaaarqby3qcai.n0:1".to_vec(),
+            })
+        );
+    }
+
+    #[test]
     fn translates_neuron_stake_memo_to_payout_target() {
         assert_eq!(
             parse_payout_target_from_memo(b"11614578985374291210"),

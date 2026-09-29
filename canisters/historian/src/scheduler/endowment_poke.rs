@@ -209,7 +209,7 @@ pub(super) async fn handle_endowment_poke_with_client<I: IndexClient>(
         return PokeAttempt::Skipped;
     }
     if let Err(message) = &result {
-        ic_cdk::println!("Event Horizon poke Index check failed: {message}");
+        ic_cdk::println!("staking poke Index check failed: {message}");
     }
     state::with_root_state_mut(|st| {
         st.endowment_refresh_next_allowed_ts =
@@ -238,7 +238,7 @@ fn schedule_poke_deferred_check(delay: Duration) {
     });
 }
 
-pub(crate) async fn handle_endowment_poke() {
+pub(crate) async fn handle_staking_poke() {
     // Establish the trailing check before an Index await or a busy lease can
     // coalesce this call. New hints move the one pending deadline forward.
     let now_ns = ic_cdk::api::time();

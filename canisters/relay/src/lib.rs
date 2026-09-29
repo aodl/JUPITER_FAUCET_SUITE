@@ -9,6 +9,7 @@ mod state;
 use candid::{CandidType, Deserialize, Principal};
 use jupiter_ic_clients::constants;
 use jupiter_ic_clients::cycles_probe::CyclesProbePolicy;
+use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
 
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
@@ -247,6 +248,46 @@ fn initialize_from_args(args: InitArgs, lifecycle_event: &'static str) {
 #[ic_cdk::post_upgrade]
 fn post_upgrade(args: InitArgs) {
     initialize_from_args(args, "post_upgrade_complete");
+}
+
+#[cfg(not(feature = "debug_api"))]
+const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 17, 226, 1, 1]];
+#[cfg(feature = "debug_api")]
+const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
+
+const EVENT_HORIZON_FUNDING_SUBACCOUNTS: &[u64] = &[0, 1, 10, 20, 30, 40, 50, 60, 70, 80, 90];
+
+fn event_horizon_caller_is_whitelisted(caller: Principal) -> bool {
+    EVENT_HORIZON_CALLER_WHITELIST
+        .iter()
+        .any(|allowed| caller.as_slice() == *allowed)
+}
+
+fn guard_event_horizon_caller() -> Result<(), String> {
+    event_horizon_caller_is_whitelisted(ic_cdk::api::msg_caller())
+        .then_some(())
+        .ok_or_else(|| "caller is not Event Horizon".to_string())
+}
+
+fn has_relevant_event_horizon_match(matches: &[EventHorizonPokeMatch]) -> bool {
+    matches.iter().any(|item| match item.target {
+        EventHorizonPokeTarget::Subaccount(id) => EVENT_HORIZON_FUNDING_SUBACCOUNTS.contains(&id),
+        EventHorizonPokeTarget::NeuronNonce(_) => false,
+    })
+}
+
+#[ic_cdk::update(guard = "guard_event_horizon_caller")]
+async fn poke(matches: Vec<EventHorizonPokeMatch>) {
+    if has_relevant_event_horizon_match(&matches) {
+        scheduler::handle_event_horizon_poke().await;
+    }
+}
+
+#[ic_cdk::inspect_message]
+fn inspect_message() {
+    if ic_cdk::api::msg_method_name() != "poke" {
+        ic_cdk::api::accept_message();
+    }
 }
 
 #[cfg(feature = "debug_api")]
@@ -507,12 +548,50 @@ mod tests {
 
     #[cfg(not(feature = "debug_api"))]
     #[test]
-    fn production_did_exposes_empty_service() {
+    fn production_did_exposes_only_event_horizon_poke() {
         let did = include_str!("../jupiter_relay.did");
-        assert!(did.trim_end().ends_with("service : (InitArgs) -> {}"));
+        assert!(did.contains("poke : (vec EventHorizonPokeMatch) -> ();"));
         assert!(!did.contains(concat!("Relay", "Status")));
         assert!(!did.contains(concat!("relay_", "status")));
         assert!(!did.contains("admin_schedule_main_tick_now"));
+    }
+
+    #[cfg(not(feature = "debug_api"))]
+    #[test]
+    fn production_event_horizon_policy_is_enabled() {
+        assert!(event_horizon_caller_is_whitelisted(Principal::from_slice(
+            &[0, 0, 0, 0, 2, 48, 17, 226, 1, 1]
+        )));
+        assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
+            &[0, 0, 0, 0, 2, 48, 17, 226, 1, 2]
+        )));
+        assert!(!event_horizon_caller_is_whitelisted(Principal::anonymous()));
+        assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
+            &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1,]
+        )));
+    }
+
+    #[cfg(feature = "debug_api")]
+    #[test]
+    fn debug_event_horizon_policy_accepts_only_exact_fixture() {
+        let exact = Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]);
+        let near = Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 2]);
+        assert!(event_horizon_caller_is_whitelisted(exact));
+        assert!(!event_horizon_caller_is_whitelisted(near));
+        let item = |target| EventHorizonPokeMatch {
+            target,
+            max_amount: candid::Nat::from(1u64),
+        };
+        assert!(!has_relevant_event_horizon_match(&[]));
+        assert!(!has_relevant_event_horizon_match(&[item(
+            EventHorizonPokeTarget::Subaccount(37)
+        )]));
+        assert!(!has_relevant_event_horizon_match(&[item(
+            EventHorizonPokeTarget::NeuronNonce(0)
+        )]));
+        assert!(has_relevant_event_horizon_match(&[item(
+            EventHorizonPokeTarget::Subaccount(0)
+        )]));
     }
 
     #[cfg(feature = "debug_api")]

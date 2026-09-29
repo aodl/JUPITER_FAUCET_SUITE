@@ -16,6 +16,7 @@ use ic_stable_structures::{
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::TransferArg;
 use jupiter_ic_clients::account_identifier::account_identifier_text;
+use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
 use jupiter_ic_clients::icrc_index::{
     GetAccountTransactionsArgs as IcrcGetAccountTransactionsArgs,
     GetAccountTransactionsResult as IcrcGetAccountTransactionsResult,
@@ -44,6 +45,18 @@ static RELAY_PROD_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_REWARDS_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+
+fn subaccount_match(id: u64) -> EventHorizonPokeMatch {
+    EventHorizonPokeMatch {
+        target: EventHorizonPokeTarget::Subaccount(id),
+        max_amount: Nat::from(1u64),
+    }
+}
+
+fn event_horizon_proxy() -> Principal {
+    Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1])
+}
 
 fn ledger_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&LEDGER_WASM, "mock-icrc-ledger", None)
@@ -62,6 +75,10 @@ fn relay_wasm() -> Result<Vec<u8>> {
 }
 fn relay_prod_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&RELAY_PROD_WASM, "jupiter-relay", None)
+}
+
+fn status_proxy_wasm() -> Result<Vec<u8>> {
+    support::wasm::build_wasm_cached_for_test(&STATUS_PROXY_WASM, "mock-status-proxy", None)
 }
 
 fn sns_rewards_wasm() -> Result<Vec<u8>> {
@@ -108,6 +125,12 @@ struct RewardRelayInitArg {
     max_transfers_per_tick: Option<u32>,
     surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
     surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct PokeProxyArgs {
+    canister_id: Principal,
+    matches: Vec<EventHorizonPokeMatch>,
 }
 
 #[derive(CandidType)]
@@ -995,6 +1018,169 @@ fn assert_splitter_transfer_pair_records(
         != starting_balance_e8s
     {
         bail!("splitter {splitter_number} did not conserve its pinned balance");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> Result<()> {
+    let env = RelayEnv::new(None)?;
+    let proxy = event_horizon_proxy();
+    env.pic
+        .create_canister_with_id(None, None, proxy)
+        .map_err(anyhow::Error::msg)?;
+    env.pic.add_cycles(proxy, 5_000_000_000_000);
+    env.pic
+        .install_canister(proxy, status_proxy_wasm()?, vec![], None);
+    let attacker = env.pic.create_canister();
+    env.pic.add_cycles(attacker, 5_000_000_000_000);
+    env.pic
+        .install_canister(attacker, status_proxy_wasm()?, vec![], None);
+
+    let before: DebugState = query_one(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    let transfers_before = env.transfers()?.len();
+    for caller in [
+        Principal::anonymous(),
+        Principal::self_authenticating([42; 32]),
+    ] {
+        assert!(env
+            .pic
+            .update_call(
+                env.relay,
+                caller,
+                "poke",
+                encode_args((vec![subaccount_match(0)],))?,
+            )
+            .is_err());
+    }
+    let rejected: Result<(), String> = update_one(
+        &env.pic,
+        attacker,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: env.relay,
+            matches: vec![subaccount_match(0)],
+        },
+    )?;
+    assert!(rejected
+        .unwrap_err()
+        .contains("caller is not Event Horizon"));
+
+    for ids in [vec![], vec![7, 8]] {
+        let accepted: Result<(), String> = update_one(
+            &env.pic,
+            proxy,
+            Principal::anonymous(),
+            "debug_poke",
+            PokeProxyArgs {
+                canister_id: env.relay,
+                matches: ids.into_iter().map(subaccount_match).collect(),
+            },
+        )?;
+        accepted.map_err(anyhow::Error::msg)?;
+    }
+    env.credit_relay_numbered_subaccount(10, 200_000_000)?;
+    env.credit_relay_subaccount_one(100_010_000)?;
+    env.credit_relay(5_000_000_000)?;
+    let accepted: Result<(), String> = update_one(
+        &env.pic,
+        proxy,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: env.relay,
+            matches: vec![
+                subaccount_match(37),
+                subaccount_match(10),
+                subaccount_match(1),
+                subaccount_match(0),
+            ],
+        },
+    )?;
+    accepted.map_err(anyhow::Error::msg)?;
+    assert_eq!(env.relay_numbered_subaccount_balance(10)?, 0);
+    assert_eq!(env.relay_subaccount_one_balance()?, 0);
+    assert!(env.relay_balance()? >= 5_000_000_000);
+    let new_transfers = env.transfers()?;
+    assert!(!new_transfers[transfers_before..].iter().any(|transfer| {
+        transfer.from
+            == Account {
+                owner: env.relay,
+                subaccount: None,
+            }
+    }));
+    let after = env.debug_state()?;
+    assert_eq!(after.last_main_run_ts, before.last_main_run_ts);
+    assert_eq!(after.active_job_present, before.active_job_present);
+    assert_eq!(after.next_job_id, before.next_job_id);
+    assert_eq!(
+        after.last_completed_cycles_count,
+        before.last_completed_cycles_count
+    );
+    assert_eq!(
+        after.relay_minted_cycles_since_sample_count,
+        before.relay_minted_cycles_since_sample_count
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn event_horizon_poke_resumes_but_does_not_replace_active_default_job() -> Result<()> {
+    let env = RelayEnv::new_with_config(Some(1), |ledger, cmc, _, _| {
+        (vec![ledger, cmc], None, Vec::new())
+    })?;
+    env.set_canister_cycles(env.ledger, 10_000_000_000_000)?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+    env.credit_relay(5_000_000_000)?;
+    let _ = env.tick_relay()?;
+
+    env.set_canister_cycles(env.ledger, 8_000_000_000_000)?;
+    env.set_managed_cycles(8_000_000_000_000)?;
+    let _ = env.tick_relay()?;
+    let before = env.debug_state()?;
+    let transfers_before = env.transfers()?.len();
+    if !before.active_job_present || transfers_before != 1 {
+        bail!("expected ordinary main to leave one pinned active job after one transfer");
+    }
+
+    let proxy = event_horizon_proxy();
+    env.pic
+        .create_canister_with_id(None, None, proxy)
+        .map_err(anyhow::Error::msg)?;
+    env.pic.add_cycles(proxy, 5_000_000_000_000);
+    env.pic
+        .install_canister(proxy, status_proxy_wasm()?, vec![], None);
+    let accepted: Result<(), String> = update_one(
+        &env.pic,
+        proxy,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: env.relay,
+            matches: vec![subaccount_match(0)],
+        },
+    )?;
+    accepted.map_err(anyhow::Error::msg)?;
+
+    let after = env.debug_state()?;
+    let transfers_after = env.transfers()?.len();
+    if transfers_after != transfers_before + 1 {
+        bail!("expected poke to resume exactly one transfer-limited active-job step");
+    }
+    if after.last_main_run_ts != before.last_main_run_ts {
+        bail!("poke advanced the daily main cadence while resuming an active job");
+    }
+    if after.next_job_id != before.next_job_id {
+        bail!("poke replaced the pinned active job with a new job generation");
     }
     Ok(())
 }

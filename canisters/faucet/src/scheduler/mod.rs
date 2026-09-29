@@ -22,6 +22,8 @@ mod index_health;
 use index_health::*;
 mod route_accounting;
 use route_accounting::*;
+mod poke;
+pub(crate) use poke::handle_event_horizon_poke;
 mod rescue;
 use rescue::*;
 #[cfg(feature = "debug_api")]

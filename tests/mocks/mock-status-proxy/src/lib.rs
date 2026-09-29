@@ -1,5 +1,6 @@
 use candid::{CandidType, Deserialize, Nat, Principal};
 use ic_cdk::call::Call;
+use jupiter_ic_clients::event_horizon::EventHorizonPokeMatch;
 use jupiter_ic_clients::management::{
     self, CanisterStatusArgs as ManagementCanisterStatusArgs,
     CanisterStatusResult as ManagementCanisterStatusResult, UpdateSettingsArgs,
@@ -39,11 +40,18 @@ struct DebugCall {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct PokeArgs {
     canister_id: Principal,
-    subaccount_ids: Vec<u64>,
+    matches: Vec<EventHorizonPokeMatch>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct DebugReceivedPoke {
+    caller: Principal,
+    matches: Vec<EventHorizonPokeMatch>,
 }
 
 thread_local! {
     static CALLS: RefCell<Vec<DebugCall>> = const { RefCell::new(Vec::new()) };
+    static RECEIVED_POKES: RefCell<Vec<DebugReceivedPoke>> = const { RefCell::new(Vec::new()) };
 }
 
 #[ic_cdk::init]
@@ -85,12 +93,27 @@ async fn debug_management_update_settings(args: UpdateSettingsArgs) -> Result<()
 #[ic_cdk::update]
 async fn debug_poke(args: PokeArgs) -> Result<(), String> {
     let response = Call::bounded_wait(args.canister_id, "poke")
-        .with_arg(args.subaccount_ids)
+        .with_arg(&args.matches)
         .await
         .map_err(|err| format!("poke call failed: {err:?}"))?;
     response
         .candid()
         .map_err(|err| format!("poke decode failed: {err:?}"))
+}
+
+#[ic_cdk::update]
+fn poke(matches: Vec<EventHorizonPokeMatch>) {
+    RECEIVED_POKES.with(|pokes| {
+        pokes.borrow_mut().push(DebugReceivedPoke {
+            caller: ic_cdk::api::msg_caller(),
+            matches,
+        });
+    });
+}
+
+#[ic_cdk::query]
+fn debug_received_pokes() -> Vec<DebugReceivedPoke> {
+    RECEIVED_POKES.with(|pokes| pokes.borrow().clone())
 }
 
 #[ic_cdk::query]
@@ -101,4 +124,5 @@ fn debug_calls() -> Vec<DebugCall> {
 #[ic_cdk::update]
 fn debug_reset() {
     CALLS.with(|calls| calls.borrow_mut().clear());
+    RECEIVED_POKES.with(|pokes| pokes.borrow_mut().clear());
 }

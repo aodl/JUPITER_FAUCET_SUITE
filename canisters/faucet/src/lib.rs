@@ -11,6 +11,7 @@ use jupiter_canister_logging::{
     format_event_line, FIELD_EVENT, FIELD_MAIN_INTERVAL_SECONDS, FIELD_TIMERS_INSTALLED,
 };
 use jupiter_ic_clients::constants;
+use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
 
 use crate::state::State;
 
@@ -411,6 +412,43 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     log_lifecycle("post_upgrade_complete");
 }
 
+#[cfg(not(feature = "debug_api"))]
+const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 17, 226, 1, 1]];
+#[cfg(feature = "debug_api")]
+const EVENT_HORIZON_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
+
+fn event_horizon_caller_is_whitelisted(caller: Principal) -> bool {
+    EVENT_HORIZON_CALLER_WHITELIST
+        .iter()
+        .any(|allowed| caller.as_slice() == *allowed)
+}
+
+fn guard_event_horizon_caller() -> Result<(), String> {
+    event_horizon_caller_is_whitelisted(ic_cdk::api::msg_caller())
+        .then_some(())
+        .ok_or_else(|| "caller is not Event Horizon".to_string())
+}
+
+fn has_relevant_event_horizon_match(matches: &[EventHorizonPokeMatch]) -> bool {
+    matches
+        .iter()
+        .any(|item| matches!(item.target, EventHorizonPokeTarget::Subaccount(0)))
+}
+
+#[ic_cdk::update(guard = "guard_event_horizon_caller")]
+async fn poke(matches: Vec<EventHorizonPokeMatch>) {
+    if has_relevant_event_horizon_match(&matches) {
+        scheduler::handle_event_horizon_poke().await;
+    }
+}
+
+#[ic_cdk::inspect_message]
+fn inspect_message() {
+    if ic_cdk::api::msg_method_name() != "poke" {
+        ic_cdk::api::accept_message();
+    }
+}
+
 fn log_lifecycle(event: &str) {
     let main_interval_seconds = crate::state::with_state(|st| st.config.main_interval_seconds);
     ic_cdk::println!(
@@ -433,6 +471,7 @@ fn log_lifecycle(event: &str) {
 #[cfg(feature = "debug_api")]
 #[derive(CandidType, Deserialize)]
 pub struct DebugState {
+    pub last_main_run_ts: u64,
     pub last_successful_transfer_ts: Option<u64>,
     pub last_rescue_check_ts: u64,
     pub rescue_triggered: bool,
@@ -498,6 +537,7 @@ pub struct DebugFootprint {
 fn debug_state() -> DebugState {
     guard_debug_api_not_production();
     crate::state::with_state(|st| DebugState {
+        last_main_run_ts: st.last_main_run_ts,
         last_successful_transfer_ts: st.last_successful_transfer_ts,
         last_rescue_check_ts: st.last_rescue_check_ts,
         rescue_triggered: st.rescue_triggered,
@@ -1368,3 +1408,61 @@ mod tests {
 }
 
 ic_cdk::export_candid!();
+
+#[cfg(test)]
+fn assert_committed_did_matches_rust_service(did_file: &str) {
+    use candid_parser::utils::{service_equal, CandidSource};
+    use std::path::Path;
+
+    let did_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(did_file);
+    service_equal(
+        CandidSource::Text(&__export_service()),
+        CandidSource::File(&did_path),
+    )
+    .unwrap_or_else(|err| {
+        panic!("committed faucet DID {did_file} diverged from Rust service: {err}")
+    });
+}
+
+#[cfg(not(feature = "debug_api"))]
+#[test]
+fn production_event_horizon_policy_is_enabled_and_exact() {
+    assert!(event_horizon_caller_is_whitelisted(Principal::from_slice(
+        &[0, 0, 0, 0, 2, 48, 17, 226, 1, 1]
+    )));
+    assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
+        &[0, 0, 0, 0, 2, 48, 17, 226, 1, 2]
+    )));
+    assert!(!event_horizon_caller_is_whitelisted(Principal::anonymous()));
+    assert!(!event_horizon_caller_is_whitelisted(Principal::from_slice(
+        &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1,]
+    )));
+    let did = include_str!("../jupiter_faucet.did");
+    assert!(did.contains("poke : (vec EventHorizonPokeMatch) -> ();"));
+    assert!(!did.contains("debug_"));
+    assert_committed_did_matches_rust_service("jupiter_faucet.did");
+}
+
+#[cfg(feature = "debug_api")]
+#[test]
+fn debug_event_horizon_policy_accepts_only_exact_fixture() {
+    let exact = Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]);
+    let near = Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 2]);
+    assert!(event_horizon_caller_is_whitelisted(exact));
+    assert!(!event_horizon_caller_is_whitelisted(near));
+    let item = |target| EventHorizonPokeMatch {
+        target,
+        max_amount: candid::Nat::from(1u64),
+    };
+    assert!(!has_relevant_event_horizon_match(&[]));
+    assert!(!has_relevant_event_horizon_match(&[item(
+        EventHorizonPokeTarget::Subaccount(7)
+    )]));
+    assert!(!has_relevant_event_horizon_match(&[item(
+        EventHorizonPokeTarget::NeuronNonce(0)
+    )]));
+    assert!(has_relevant_event_horizon_match(&[item(
+        EventHorizonPokeTarget::Subaccount(0)
+    )]));
+    assert_committed_did_matches_rust_service("jupiter_faucet_debug.did");
+}

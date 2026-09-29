@@ -8,10 +8,11 @@
 )]
 
 use anyhow::{anyhow, bail, Context, Result};
-use candid::{encode_args, encode_one, CandidType, Deserialize, Principal};
+use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{TransferArg, TransferError};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
+use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
 use jupiter_ic_clients::management::{
     CanisterStatusArgs, CanisterStatusResult, LogVisibility, StatusVisibility,
 };
@@ -252,6 +253,36 @@ static FAUCET_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 static INDEX_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 static CMC_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
+
+fn subaccount_match(id: u64) -> EventHorizonPokeMatch {
+    EventHorizonPokeMatch {
+        target: EventHorizonPokeTarget::Subaccount(id),
+        max_amount: Nat::from(100_000_000u64),
+    }
+}
+
+fn neuron_match(nonce: u64, max_amount: u64) -> EventHorizonPokeMatch {
+    EventHorizonPokeMatch {
+        target: EventHorizonPokeTarget::NeuronNonce(nonce),
+        max_amount: Nat::from(max_amount),
+    }
+}
+
+fn event_horizon_proxy() -> Principal {
+    Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1])
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct PokeProxyArgs {
+    canister_id: Principal,
+    matches: Vec<EventHorizonPokeMatch>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct DebugReceivedPoke {
+    caller: Principal,
+    matches: Vec<EventHorizonPokeMatch>,
+}
 
 fn build_wasm_cached(
     cache: &OnceLock<Vec<u8>>,
@@ -1459,6 +1490,126 @@ fn set_self_only_controllers(pic: &PocketIc, canister: Principal) -> Result<()> 
 }
 
 // ------------------------- Tests -------------------------
+
+#[test]
+#[ignore]
+fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> Result<()> {
+    let pic = build_pic();
+    let ledger = Principal::from_text(ICP_LEDGER_ID)?;
+    let governance = Principal::from_text(NNS_GOVERNANCE_ID)?;
+    let disburser = pic.create_canister();
+    pic.add_cycles(disburser, 5_000_000_000_000);
+    let init = InitArg {
+        neuron_id: 1,
+        normal_recipient: Account {
+            owner: fixture_principal(),
+            subaccount: None,
+        },
+        age_bonus_recipient_1: Account {
+            owner: Principal::management_canister(),
+            subaccount: Some([1; 32]),
+        },
+        age_bonus_recipient_2: Account {
+            owner: Principal::management_canister(),
+            subaccount: Some([2; 32]),
+        },
+        ledger_canister_id: Some(ledger),
+        governance_canister_id: Some(governance),
+        rescue_controller: fixture_principal(),
+        autonomous_rescue_armed: Some(false),
+        main_interval_seconds: Some(31_536_000),
+        rescue_interval_seconds: Some(31_536_000),
+    };
+    pic.install_canister(disburser, build_disburser_wasm()?, encode_one(init)?, None);
+    let proxy = event_horizon_proxy();
+    pic.create_canister_with_id(None, None, proxy)
+        .map_err(anyhow::Error::msg)?;
+    pic.add_cycles(proxy, 5_000_000_000_000);
+    pic.install_canister(proxy, build_status_proxy_wasm()?, vec![], None);
+    let historian = jupiter_ic_clients::constants::jupiter_historian_id();
+    pic.create_canister_with_id(None, None, historian)
+        .map_err(anyhow::Error::msg)?;
+    pic.add_cycles(historian, 5_000_000_000_000);
+    pic.install_canister(historian, build_status_proxy_wasm()?, vec![], None);
+    let attacker = pic.create_canister();
+    pic.add_cycles(attacker, 5_000_000_000_000);
+    pic.install_canister(attacker, build_status_proxy_wasm()?, vec![], None);
+    let before: DebugState =
+        query_call(&pic, disburser, Principal::anonymous(), "debug_state", ())?;
+
+    for caller in [
+        Principal::anonymous(),
+        Principal::self_authenticating([42; 32]),
+    ] {
+        assert!(pic
+            .update_call(
+                disburser,
+                caller,
+                "poke",
+                encode_args((vec![subaccount_match(0)],))?
+            )
+            .is_err());
+    }
+    let rejected: Result<(), String> = update_call(
+        &pic,
+        attacker,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: disburser,
+            matches: vec![subaccount_match(0)],
+        },
+    )?;
+    assert!(rejected
+        .unwrap_err()
+        .contains("caller is not Event Horizon"));
+    for ids in [vec![], vec![7, 8], vec![7, 0, 0]] {
+        let accepted: Result<(), String> = update_call(
+            &pic,
+            proxy,
+            Principal::anonymous(),
+            "debug_poke",
+            PokeProxyArgs {
+                canister_id: disburser,
+                matches: ids.into_iter().map(subaccount_match).collect(),
+            },
+        )?;
+        accepted.map_err(anyhow::Error::msg)?;
+    }
+    let accepted: Result<(), String> = update_call(
+        &pic,
+        proxy,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: disburser,
+            matches: vec![
+                neuron_match(0, 250_000_000),
+                neuron_match(0, 300_000_000),
+                neuron_match(1, 900_000_000),
+            ],
+        },
+    )?;
+    accepted.map_err(anyhow::Error::msg)?;
+    tick_n(&pic, 4);
+    let received_pokes: Vec<DebugReceivedPoke> = query_call(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "debug_received_pokes",
+        (),
+    )?;
+    assert_eq!(received_pokes.len(), 1);
+    assert_eq!(received_pokes[0].caller, disburser);
+    assert_eq!(
+        received_pokes[0].matches,
+        vec![neuron_match(0, 300_000_000)]
+    );
+    let after: DebugState = query_call(&pic, disburser, Principal::anonymous(), "debug_state", ())?;
+    assert_eq!(after.last_main_run_ts, before.last_main_run_ts);
+    assert_eq!(after.prev_age_seconds, before.prev_age_seconds);
+    Ok(())
+}
 
 #[test]
 #[ignore]

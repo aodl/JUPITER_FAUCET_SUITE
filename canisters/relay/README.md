@@ -68,6 +68,14 @@ A manually installed Relay can instead set `blackhole_canister_id`, selecting a 
 
 A newly installed Relay is a replenishment controller, not an initial rescue mechanism: the first complete sample establishes a baseline and spends no default-account ICP. Targets should start with enough cycles to survive until a later sample can measure burn and fund them.
 
+## Event Horizon acceleration
+
+Relay uses the single declaration `X.u2qkpaqaaaaaaarqb7eacai.0-90`. Event Horizon expands that numeric subaccount range, while Relay reacts only to actual subaccounts `0`, `1`, `10`, `20`, `30`, `40`, `50`, `60`, `70`, `80`, and `90`; intermediate matches such as `37` are ignored. `max_amount` is only a hint. A relevant callback runs fixed splitters, subaccount-1 Faucet forwarding, and then resumes an already-active default allocation job if one exists.
+
+A poke never starts a new default allocation job, takes a fresh cycles sample, establishes a burn baseline, or makes a new infrastructure-demand or surplus decision. Subaccount `0` is therefore intentionally relevant: existing active jobs may resume using their pinned economic plan, while new default-account funds remain for the next ordinary daily sample. Poke neither runs the independent SNS reward sweep nor advances Relay's daily cadence, and all durable splitter fencing and quarantine rules remain unchanged.
+
+Existing controllerless self-service Relays cannot be upgraded and remain polling-only. A future Relay using the new artifact needs only `X.<compact-relay-principal>.0-90`; no per-instance callback IDs are embedded in Wasm.
+
 If a scheduled target probe fails, Relay fails closed for that target. After three consecutive scheduled failures it may classify the target as unavailable **for that run only**, allowing other observable targets to progress. Later ticks keep probing it, and any successful sample resets the failure count.
 
 ## Allocation model
@@ -285,13 +293,15 @@ The value-moving paths are designed around fixed transfer identities and bounded
 
 ## Public interface and observability
 
-Production Relay intentionally exposes **no application methods** after initialization:
+Relay's sole production post-init method is the permissioned Event Horizon `poke` callback. Ordinary ingress and callers outside the compiled allowlist cannot invoke it:
 
 ```did
-service : (InitArgs) -> {}
+service : (InitArgs) -> {
+  poke : (vec EventHorizonPokeMatch) -> ();
+}
 ```
 
-Targets, recipients, withdrawals, transfers, and recovery cannot be changed through a production endpoint. Debug builds expose test helpers such as `debug_state`, `debug_config`, `debug_last_summary`, `debug_main_tick`, reward helpers and fault injection; they are for local/PocketIC use only and are guarded against use at the embedded canonical production Relay principal. See [`jupiter_relay_debug.did`](jupiter_relay_debug.did).
+Targets, recipients, scheduler controls, withdrawals, transfers, and recovery cannot be changed through production methods. Debug builds expose test helpers such as `debug_state`, `debug_config`, `debug_last_summary`, `debug_main_tick`, reward helpers and fault injection; they are for local/PocketIC use only and are guarded against use at the embedded canonical production Relay principal. See [`jupiter_relay_debug.did`](jupiter_relay_debug.did).
 
 Public canister logs are therefore an important verification surface. Every main tick that actually runs emits the Relay cycles balance and a `CONFIG` record describing the effective runtime wiring. Operational records include:
 
@@ -340,7 +350,9 @@ type InitArgs = record {
   surplus_canister_recipients : opt vec SurplusCanisterRecipient;
   surplus_neuron_recipients : vec SurplusNeuronRecipient;
 };
-service : (InitArgs) -> {};
+service : (InitArgs) -> {
+  poke : (vec EventHorizonPokeMatch) -> ();
+};
 ```
 
 Omitted dependency IDs use the canonical mainnet defaults compiled into the Wasm. `blackhole_canister_id = null` selects Auto probe mode; providing one selects Fixed mode. `max_transfers_per_tick = null` removes the default-account transfer cap. No raw-ICP recipients selects all-cycles mode.
