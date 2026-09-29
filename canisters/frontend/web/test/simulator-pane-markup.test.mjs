@@ -422,6 +422,16 @@ test('diagram links open a dark full-size viewer without exposing SVGs as standa
   for (const diagram of ['overview', 'topups', 'disburser', 'faucet', 'relay']) {
     assert.match(indexHtml, new RegExp(`<figure class="[^"]*pane-diagram[^"]*" id="diagram-${diagram}">`));
   }
+  const reservedDiagramSizes = [
+    ['jupiter-faucet-overview.svg', 1705, 760],
+    ['perpetual-canister-topups.svg', 1190, 330],
+    ['disburser.svg', 1160, 380],
+    ['faucet.svg', 1180, 520],
+    ['relay.svg', 1840, 1200],
+  ];
+  for (const [file, width, height] of reservedDiagramSizes) {
+    assert.match(indexHtml, new RegExp(`<img src="/${file.replace('.', '\\.')}\\?v=__ASSET_VERSION__" alt="[^"]+" width="${width}" height="${height}" loading="lazy"`));
+  }
   assert.doesNotMatch(indexHtml, /href="\/(?:perpetual-canister-topups|disburser|faucet|relay|jupiter-faucet-overview)\.svg/);
   assert.match(diagramViewerHtml, /<meta name="color-scheme" content="dark" \/>/);
   assert.match(diagramViewerHtml, /id="diagram-viewer-image"[^>]*hidden/);
@@ -953,6 +963,8 @@ test('Actions nav button exposes Plan, Endow, Optimize, and Track Memos pane lin
   assert.match(indexHtml, /id="actions-menu-toggle"[\s\S]*aria-controls="actions-menu"[\s\S]*>Actions<\/button>/);
   assert.match(indexHtml, /id="metrics-menu-toggle"[\s\S]*aria-controls="metrics-menu"[\s\S]*>Metrics<\/button>/);
   assert.match(actionsRail, /href="#simulator"[^>]*data-panel="simulator"[\s\S]*>Plan<\/span>[\s\S]*href="#memo-builder"[^>]*data-panel="memo-builder"[\s\S]*>Endow<\/span>[\s\S]*href="#relay-setup"[^>]*data-panel="relay-setup"[\s\S]*>Optimize<\/span>[\s\S]*href="#metric-tracker"[^>]*data-panel="metric-tracker"[\s\S]*>Track Memos<\/span>/);
+  assert.match(indexHtml, /href="#metric-stake" class="metric-rail-link metric-rail-link--summary nav-item"[^>]*>[\s\S]*class="metric-rail-link-value"[\s\S]*class="metric-rail-link-label nav-item">Jupiter Stake<\/span>/);
+  assert.match(indexHtml, /href="#metric-commitments" class="metric-rail-link metric-rail-link--summary nav-item"[^>]*>[\s\S]*class="metric-rail-link-value"[\s\S]*class="metric-rail-link-label nav-item">Patron Endowments<\/span>/);
   assert.match(indexHtml, /<div class="nav-disclosure" data-nav-group="actions">\s*<button[\s\S]*id="actions-menu-toggle"[\s\S]*<\/button>\s*<div class="nav-popover action-rail" id="actions-menu"[^>]*hidden>/);
   assert.match(indexHtml, /<div class="nav-disclosure nav-disclosure--end" data-nav-group="metrics">\s*<button[\s\S]*id="metrics-menu-toggle"[\s\S]*<\/button>\s*<div class="nav-popover metric-rail" id="metrics-menu"[^>]*hidden>/);
   const navItemRule = navbarCss.match(/\.nav-item \{[^}]*\}/)?.[0] || '';
@@ -966,6 +978,9 @@ test('Actions nav button exposes Plan, Endow, Optimize, and Track Memos pane lin
   assert.match(metricsCss, /\.action-rail-list \{[\s\S]*align-items: flex-start;[\s\S]*\}/);
   assert.match(metricsCss, /\.action-rail \.metric-rail-link \{[\s\S]*align-self: flex-start;[\s\S]*background: #000;[\s\S]*justify-content: flex-start;[\s\S]*text-align: left;[\s\S]*white-space: nowrap;[\s\S]*\}/);
   assert.match(metricsCss, /\.action-rail \.metric-rail-link\.nav-item--active \{[\s\S]*background: #000;[\s\S]*color: #fff;[\s\S]*\}/);
+  assert.match(metricsCss, /\.metric-rail-link--summary\.nav-item,[\s\S]*background: transparent;[\s\S]*transform: none;/);
+  assert.match(metricsCss, /\.metric-rail-link--summary \.metric-rail-link-label\.nav-item \{[\s\S]*display: inline-flex;[\s\S]*border-color: rgba\(255, 255, 255, 0\.28\);[\s\S]*background: #000;[\s\S]*white-space: nowrap;/);
+  assert.match(metricsCss, /\.metric-rail-link--summary\.nav-item--active \.metric-rail-link-label\.nav-item \{[\s\S]*background: #fff;[\s\S]*color: #0b0e13;/);
   assert.match(metricsCss, /\.metric-rail-subtitle \{[\s\S]*max-width: none;[\s\S]*white-space: nowrap;[\s\S]*\}/);
   assert.match(metricsCss, /@media \(max-width: 720px\) \{[\s\S]*\.metric-rail-link \{[\s\S]*white-space: normal;[\s\S]*\}/);
   assert.match(metricsCss, /@media \(max-width: 720px\) \{[\s\S]*\.metric-rail-subtitle \{[\s\S]*max-width: min\(78vw, 340px\);[\s\S]*white-space: normal;[\s\S]*overflow-wrap: anywhere;[\s\S]*\}/);

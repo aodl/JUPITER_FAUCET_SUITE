@@ -106,6 +106,44 @@
   overflow-wrap: anywhere;
 }
 
+.metric-rail-link--summary {
+  align-items: center;
+}
+
+.metric-rail-link--summary.nav-item,
+.metric-rail-link--summary.nav-item.nav-item--active {
+  padding: 0;
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+  color: #fff;
+  transform: none;
+}
+
+.metric-rail-link--summary .metric-rail-link-label.nav-item {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border-color: rgba(255, 255, 255, 0.28);
+  background: #000;
+  white-space: nowrap;
+  opacity: 1;
+  overflow-wrap: normal;
+}
+
+.metric-rail-link--summary:hover .metric-rail-link-label.nav-item {
+  border-color: #fff;
+  transform: translateY(-1px);
+}
+
+.metric-rail-link--summary:active .metric-rail-link-label.nav-item {
+  transform: translateY(0);
+}
+
+.metric-rail-link--summary.nav-item--active .metric-rail-link-label.nav-item {
+  background: #fff;
+  color: #0b0e13;
+}
+
 .metric-rail-note {
   display: block;
   margin-top: 10px;
