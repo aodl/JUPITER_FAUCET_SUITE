@@ -698,7 +698,7 @@ async fn start_job_with_self_with_lease<L: LedgerClient, C: CmcClient, P: Cycles
         summary.target_probe_statuses = probe_update.statuses;
         log_summary(&summary);
         state::with_state_mut(|st| {
-            complete_baseline_sample(st, current_cycles, &allocation_managed, summary);
+            complete_baseline_sample(st, current_cycles, &managed, summary);
         });
         return;
     }
@@ -758,7 +758,7 @@ async fn start_job_with_self_with_lease<L: LedgerClient, C: CmcClient, P: Cycles
         summary.surplus_allowed_despite_unavailable_targets = unavailable_targets_present;
         log_summary(&summary);
         state::with_state_mut(|st| {
-            complete_no_funds_sample(st, current_cycles, summary);
+            complete_no_funds_sample(st, current_cycles, &managed, summary);
         });
         return;
     }
@@ -779,7 +779,8 @@ async fn start_job_with_self_with_lease<L: LedgerClient, C: CmcClient, P: Cycles
             )
         });
     state::with_state_mut(|st| {
-        for canister_id in relay_minted.keys() {
+        // Only an observed target's old baseline/correction pair is consumed by this job.
+        for canister_id in current_cycles.keys() {
             st.relay_minted_cycles_since_sample.remove(canister_id);
         }
     });
@@ -1452,27 +1453,32 @@ fn complete_baseline_sample(
     managed: &[candid::Principal],
     summary: RelaySummary,
 ) {
-    st.last_completed_cycles
-        .retain(|canister_id, _| managed.contains(canister_id));
+    let effective = managed.iter().copied().collect();
+    retain_effective_targets(st, &effective);
     for (canister_id, snapshot) in current_cycles {
-        st.last_completed_cycles.insert(canister_id, snapshot);
+        // Baseline-only runs do not consume established accounting intervals.
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            st.last_completed_cycles.entry(canister_id)
+        {
+            entry.insert(snapshot);
+            st.relay_minted_cycles_since_sample.remove(&canister_id);
+        }
     }
-    st.relay_minted_cycles_since_sample.clear();
-    st.recovery_deficit_cycles
-        .retain(|canister_id, _| managed.contains(canister_id));
     st.last_summary = Some(summary);
 }
 
 fn complete_no_funds_sample(
     st: &mut crate::state::State,
     current_cycles: std::collections::BTreeMap<candid::Principal, crate::state::CyclesSnapshot>,
+    managed: &[candid::Principal],
     summary: RelaySummary,
 ) {
-    retain_current_effective_targets(st, &summary);
+    let effective = managed.iter().copied().collect();
+    retain_effective_targets(st, &effective);
     for (canister_id, snapshot) in current_cycles {
         st.last_completed_cycles.insert(canister_id, snapshot);
+        st.relay_minted_cycles_since_sample.remove(&canister_id);
     }
-    st.relay_minted_cycles_since_sample.clear();
     persist_recovery_deficits_from_samples(st, &summary.canisters);
     st.last_summary = Some(summary);
 }
@@ -1484,19 +1490,26 @@ fn retain_current_effective_targets(st: &mut crate::state::State, summary: &Rela
         .map(|status| status.canister_id)
         .collect::<std::collections::BTreeSet<_>>();
     if !effective.is_empty() {
-        st.last_completed_cycles
-            .retain(|canister_id, _| effective.contains(canister_id));
+        retain_effective_targets(st, &effective);
     }
+}
+
+fn retain_effective_targets(
+    st: &mut crate::state::State,
+    effective: &std::collections::BTreeSet<candid::Principal>,
+) {
+    st.last_completed_cycles
+        .retain(|canister_id, _| effective.contains(canister_id));
+    st.relay_minted_cycles_since_sample
+        .retain(|canister_id, _| effective.contains(canister_id));
+    st.recovery_deficit_cycles
+        .retain(|canister_id, _| effective.contains(canister_id));
 }
 
 fn persist_recovery_deficits_from_samples(
     st: &mut crate::state::State,
     samples: &[CanisterBurnSample],
 ) {
-    let sampled_canisters = samples
-        .iter()
-        .map(|sample| sample.canister_id)
-        .collect::<std::collections::BTreeSet<_>>();
     for sample in samples {
         if sample.remaining_deficit_cycles > 0 {
             st.recovery_deficit_cycles
@@ -1505,8 +1518,6 @@ fn persist_recovery_deficits_from_samples(
             st.recovery_deficit_cycles.remove(&sample.canister_id);
         }
     }
-    st.recovery_deficit_cycles
-        .retain(|canister_id, _| sampled_canisters.contains(canister_id));
 }
 
 fn log_active_job_summary() {
@@ -1785,6 +1796,28 @@ mod tests {
             .iter()
             .find(|status| status.canister_id == canister_id)
             .expect("target status")
+    }
+
+    fn observable_target_status(canister_id: Principal) -> TargetProbeStatus {
+        TargetProbeStatus {
+            canister_id,
+            consecutive_probe_failures: 0,
+            classification: TargetProbeClassification::Observable,
+            skipped_reason: None,
+        }
+    }
+
+    fn unavailable_target_status(canister_id: Principal) -> TargetProbeStatus {
+        TargetProbeStatus {
+            canister_id,
+            consecutive_probe_failures: logic::TARGET_UNAVAILABLE_FAILURE_THRESHOLD,
+            classification: TargetProbeClassification::UnavailableAfterConsecutiveFailures {
+                consecutive_failures: logic::TARGET_UNAVAILABLE_FAILURE_THRESHOLD,
+            },
+            skipped_reason: Some(
+                logic::SKIP_REASON_TARGET_UNAVAILABLE_AFTER_CONSECUTIVE_PROBE_FAILURES.to_string(),
+            ),
+        }
     }
 
     fn config_with_managed(managed: Vec<Principal>) -> Config {
@@ -2287,13 +2320,26 @@ mod tests {
         ledger: &MockSchedulerLedger,
         cmc: &MockSchedulerCmc,
     ) -> (Principal, u128) {
+        run_start_job_for_balances(
+            target_cycles.into_iter().collect(),
+            controllers,
+            ledger,
+            cmc,
+        )
+    }
+
+    fn run_start_job_for_balances(
+        target_cycles: BTreeMap<Principal, u128>,
+        controllers: Vec<Principal>,
+        ledger: &MockSchedulerLedger,
+        cmc: &MockSchedulerCmc,
+    ) -> (Principal, u128) {
         block_on(async {
             let now_nanos = 10_000_000_000;
             let now_secs = 10;
             let guard = MainGuard::acquire(now_secs).expect("main guard");
             let self_id = relay_self();
             let self_cycles = 9_000_000_u128;
-            let target_cycles = target_cycles.into_iter().collect::<BTreeMap<_, _>>();
             let cycles_probe =
                 MockSchedulerCyclesProbe::new(target_cycles).with_controllers(controllers);
 
@@ -3080,6 +3126,278 @@ mod tests {
     }
 
     #[test]
+    fn funded_partial_observation_preserves_accounting_and_consumes_returning_correction_once() {
+        const T: u128 = 1_000_000_000_000;
+        let unavailable = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let healthy = Principal::from_slice(&[43]);
+        let blackhole = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+
+        for (has_surplus_recipients, expected_target) in
+            [(true, 50_300_000_000_000_u128), (false, 50 * T)]
+        {
+            let mut config = config_with_managed(vec![unavailable, healthy]);
+            if !has_surplus_recipients {
+                config.surplus_recipients.clear();
+            }
+            let self_id = relay_self();
+            let self_cycles = 9_000_000_u128;
+            let mut st = State::new(config, 0);
+            st.consecutive_probe_failures.insert(unavailable, 2);
+            st.last_completed_cycles
+                .insert(self_id, snapshot(self_cycles));
+            st.last_completed_cycles
+                .insert(unavailable, snapshot(100 * T));
+            st.last_completed_cycles.insert(healthy, snapshot(200 * T));
+            st.relay_minted_cycles_since_sample
+                .insert(unavailable, 40 * T);
+            st.recovery_deficit_cycles.insert(unavailable, 20 * T);
+            state::set_state(st);
+
+            let ledger = MockSchedulerLedger::new(1_000_000_000, 10_000);
+            let cmc = MockSchedulerCmc::new(10 * T);
+            run_start_job_for_balances(
+                BTreeMap::from([(healthy, 199 * T)]),
+                vec![blackhole],
+                &ledger,
+                &cmc,
+            );
+
+            state::with_state(|st| {
+                let summary = st.last_summary.as_ref().expect("partial-run summary");
+                assert!(matches!(
+                    target_status(&summary.target_probe_statuses, unavailable).classification,
+                    TargetProbeClassification::UnavailableAfterConsecutiveFailures { .. }
+                ));
+                assert!(!summary
+                    .canisters
+                    .iter()
+                    .any(|sample| sample.canister_id == unavailable));
+                assert_eq!(
+                    st.last_completed_cycles.get(&unavailable),
+                    Some(&snapshot(100 * T))
+                );
+                assert_eq!(
+                    st.relay_minted_cycles_since_sample.get(&unavailable),
+                    Some(&(40 * T))
+                );
+                assert_eq!(
+                    st.recovery_deficit_cycles.get(&unavailable),
+                    Some(&(20 * T))
+                );
+            });
+            assert!(!cmc.notify_calls().contains(&unavailable));
+
+            run_start_job_for_balances(
+                BTreeMap::from([(unavailable, 110 * T), (healthy, 209 * T)]),
+                vec![blackhole],
+                &ledger,
+                &cmc,
+            );
+
+            state::with_state(|st| {
+                let summary = st.last_summary.as_ref().expect("return-run summary");
+                let sample = summary
+                    .canisters
+                    .iter()
+                    .find(|sample| sample.canister_id == unavailable)
+                    .expect("returning target sample");
+                assert_eq!(sample.previous_cycles, Some(100 * T));
+                assert_eq!(sample.relay_minted_cycles, 40 * T);
+                assert_eq!(sample.burn_cycles, 30 * T);
+                assert_eq!(sample.carried_deficit_cycles, 20 * T);
+                assert_eq!(sample.target_topup_cycles, expected_target);
+                assert_eq!(
+                    st.relay_minted_cycles_since_sample.get(&unavailable),
+                    Some(&(10 * T)),
+                    "the old correction is consumed and the newly confirmed top-up is retained"
+                );
+            });
+
+            run_start_job_for_balances(
+                BTreeMap::from([(unavailable, 115 * T), (healthy, 209 * T)]),
+                vec![blackhole],
+                &ledger,
+                &cmc,
+            );
+            state::with_state(|st| {
+                let sample = st
+                    .last_summary
+                    .as_ref()
+                    .unwrap()
+                    .canisters
+                    .iter()
+                    .find(|sample| sample.canister_id == unavailable)
+                    .expect("next returning-target sample");
+                assert_eq!(sample.previous_cycles, Some(110 * T));
+                assert_eq!(sample.relay_minted_cycles, 10 * T);
+                assert_eq!(sample.burn_cycles, 5 * T);
+            });
+        }
+    }
+
+    #[test]
+    fn repeated_no_funds_partial_observations_preserve_unavailable_accounting() {
+        const T: u128 = 1_000_000_000_000;
+        let unavailable = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let healthy = Principal::from_slice(&[44]);
+        let self_id = relay_self();
+        let self_cycles = 9_000_000_u128;
+        let blackhole = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+        let mut st = State::new(config_with_managed(vec![unavailable, healthy]), 0);
+        st.last_completed_cycles
+            .insert(self_id, snapshot(self_cycles));
+        st.last_completed_cycles
+            .insert(unavailable, snapshot(100 * T));
+        st.last_completed_cycles.insert(healthy, snapshot(200 * T));
+        st.relay_minted_cycles_since_sample
+            .insert(unavailable, 40 * T);
+        st.recovery_deficit_cycles.insert(unavailable, 20 * T);
+        state::set_state(st);
+
+        let ledger = MockSchedulerLedger::new(0, 10_000);
+        let cmc = MockSchedulerCmc::new(10 * T);
+        for healthy_cycles in [199 * T, 198 * T, 197 * T, 196 * T] {
+            run_start_job_for_balances(
+                BTreeMap::from([(healthy, healthy_cycles)]),
+                vec![blackhole],
+                &ledger,
+                &cmc,
+            );
+            state::with_state(|st| {
+                assert_eq!(
+                    st.last_completed_cycles.get(&unavailable),
+                    Some(&snapshot(100 * T))
+                );
+                assert_eq!(
+                    st.relay_minted_cycles_since_sample.get(&unavailable),
+                    Some(&(40 * T))
+                );
+                assert_eq!(
+                    st.recovery_deficit_cycles.get(&unavailable),
+                    Some(&(20 * T))
+                );
+            });
+        }
+        assert_eq!(ledger.transfer_count(), 0);
+
+        run_start_job_for_balances(
+            BTreeMap::from([(unavailable, 110 * T), (healthy, 196 * T)]),
+            vec![blackhole],
+            &ledger,
+            &cmc,
+        );
+        state::with_state(|st| {
+            let sample = st
+                .last_summary
+                .as_ref()
+                .unwrap()
+                .canisters
+                .iter()
+                .find(|sample| sample.canister_id == unavailable)
+                .expect("re-observed no-funds target sample");
+            assert_eq!(sample.burn_cycles, 30 * T);
+            assert_eq!(sample.carried_deficit_cycles, 20 * T);
+            assert_eq!(sample.target_topup_cycles, 50_300_000_000_000);
+            assert_eq!(sample.remaining_deficit_cycles, 50_300_000_000_000);
+        });
+    }
+
+    #[test]
+    fn mixed_baseline_only_run_seeds_new_target_and_preserves_established_intervals() {
+        const T: u128 = 1_000_000_000_000;
+        let established = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let unavailable = Principal::from_slice(&[45]);
+        let newly_observed = Principal::from_slice(&[46]);
+        let self_id = relay_self();
+        let self_cycles = 9_000_000_u128;
+        let blackhole = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
+        let mut st = State::new(
+            config_with_managed(vec![established, unavailable, newly_observed]),
+            0,
+        );
+        st.consecutive_probe_failures.insert(unavailable, 2);
+        st.last_completed_cycles
+            .insert(self_id, snapshot(self_cycles));
+        st.last_completed_cycles
+            .insert(established, snapshot(100 * T));
+        st.last_completed_cycles
+            .insert(unavailable, snapshot(90 * T));
+        st.relay_minted_cycles_since_sample
+            .insert(established, 40 * T);
+        st.relay_minted_cycles_since_sample
+            .insert(unavailable, 5 * T);
+        st.recovery_deficit_cycles.insert(established, 20 * T);
+        st.recovery_deficit_cycles.insert(unavailable, 7 * T);
+        state::set_state(st);
+
+        let ledger = MockSchedulerLedger::new(1_000_000_000, 10_000);
+        let cmc = MockSchedulerCmc::new(10 * T);
+        run_start_job_for_balances(
+            BTreeMap::from([(established, 95 * T), (newly_observed, 50 * T)]),
+            vec![blackhole],
+            &ledger,
+            &cmc,
+        );
+
+        state::with_state(|st| {
+            assert_eq!(
+                st.last_summary.as_ref().map(|summary| &summary.mode),
+                Some(&RelayMode::BaselineOnly)
+            );
+            assert_eq!(
+                st.last_completed_cycles.get(&established),
+                Some(&snapshot(100 * T))
+            );
+            assert_eq!(
+                st.relay_minted_cycles_since_sample.get(&established),
+                Some(&(40 * T))
+            );
+            assert_eq!(
+                st.recovery_deficit_cycles.get(&established),
+                Some(&(20 * T))
+            );
+            assert_eq!(
+                st.last_completed_cycles.get(&unavailable),
+                Some(&snapshot(90 * T))
+            );
+            assert_eq!(
+                st.relay_minted_cycles_since_sample.get(&unavailable),
+                Some(&(5 * T))
+            );
+            assert_eq!(st.recovery_deficit_cycles.get(&unavailable), Some(&(7 * T)));
+            assert_eq!(
+                st.last_completed_cycles
+                    .get(&newly_observed)
+                    .map(|snapshot| snapshot.cycles),
+                Some(50 * T)
+            );
+        });
+        assert_eq!(ledger.transfer_count(), 0, "baseline-only remains no-spend");
+
+        run_start_job_for_balances(
+            BTreeMap::from([(established, 105 * T), (newly_observed, 50 * T)]),
+            vec![blackhole],
+            &ledger,
+            &cmc,
+        );
+        state::with_state(|st| {
+            let sample = st
+                .last_summary
+                .as_ref()
+                .unwrap()
+                .canisters
+                .iter()
+                .find(|sample| sample.canister_id == established)
+                .expect("established target sample after baseline-only run");
+            assert_eq!(sample.previous_cycles, Some(100 * T));
+            assert_eq!(sample.relay_minted_cycles, 40 * T);
+            assert_eq!(sample.burn_cycles, 35 * T);
+            assert_eq!(sample.carried_deficit_cycles, 20 * T);
+            assert_eq!(sample.target_topup_cycles, 55_350_000_000_000);
+        });
+    }
+
+    #[test]
     fn relay_scheduler_auto_policy_caches_positive_route_after_probe() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = State::new(config_with_managed(vec![target]), 0);
@@ -3356,21 +3674,63 @@ mod tests {
     }
 
     #[test]
-    fn new_baseline_clears_consumed_relay_minted_cycles_since_sample() {
-        let managed = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let removed = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+    fn baseline_only_seeds_missing_target_without_resetting_established_accounting() {
+        let established = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let newly_observed = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        let unavailable = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let removed = Principal::from_slice(&[42]);
         let mut st = State::new(base_config(), 0);
-        st.relay_minted_cycles_since_sample.insert(managed, 123);
+        st.last_completed_cycles
+            .insert(established, snapshot(1_000));
+        st.last_completed_cycles.insert(unavailable, snapshot(800));
+        st.relay_minted_cycles_since_sample.insert(established, 123);
+        st.relay_minted_cycles_since_sample
+            .insert(newly_observed, 321);
+        st.relay_minted_cycles_since_sample.insert(unavailable, 234);
         st.relay_minted_cycles_since_sample.insert(removed, 456);
+        st.recovery_deficit_cycles.insert(established, 25);
+        st.recovery_deficit_cycles.insert(unavailable, 35);
+        st.recovery_deficit_cycles.insert(removed, 45);
 
         complete_baseline_sample(
             &mut st,
-            BTreeMap::from([(managed, snapshot(900))]),
-            &[managed],
+            BTreeMap::from([
+                (established, snapshot(900)),
+                (newly_observed, snapshot(700)),
+            ]),
+            &[established, newly_observed, unavailable],
             RelaySummary::started(RelayMode::BaselineOnly, 1, 1),
         );
 
-        assert!(st.relay_minted_cycles_since_sample.is_empty());
+        assert_eq!(
+            st.last_completed_cycles.get(&established),
+            Some(&snapshot(1_000))
+        );
+        assert_eq!(
+            st.last_completed_cycles.get(&newly_observed),
+            Some(&snapshot(700))
+        );
+        assert_eq!(
+            st.last_completed_cycles.get(&unavailable),
+            Some(&snapshot(800))
+        );
+        assert_eq!(st.last_completed_cycles.get(&removed), None);
+        assert_eq!(
+            st.relay_minted_cycles_since_sample.get(&established),
+            Some(&123)
+        );
+        assert_eq!(
+            st.relay_minted_cycles_since_sample.get(&newly_observed),
+            None
+        );
+        assert_eq!(
+            st.relay_minted_cycles_since_sample.get(&unavailable),
+            Some(&234)
+        );
+        assert_eq!(st.relay_minted_cycles_since_sample.get(&removed), None);
+        assert_eq!(st.recovery_deficit_cycles.get(&established), Some(&25));
+        assert_eq!(st.recovery_deficit_cycles.get(&unavailable), Some(&35));
+        assert_eq!(st.recovery_deficit_cycles.get(&removed), None);
     }
 
     #[test]
@@ -3406,15 +3766,21 @@ mod tests {
     }
 
     #[test]
-    fn completed_job_prunes_recovery_deficits_absent_from_completed_samples() {
+    fn completed_job_updates_sampled_deficits_and_only_prunes_non_effective_targets() {
         let sampled = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let unavailable = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let removed = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
         let mut st = State::new(base_config(), 0);
         st.recovery_deficit_cycles.insert(sampled, 25);
+        st.recovery_deficit_cycles.insert(unavailable, 55);
         st.recovery_deficit_cycles.insert(removed, 77);
         let mut job = job_with_three_topups();
         job.canisters.retain(|sample| sample.canister_id == sampled);
         job.summary.canisters = job.canisters.clone();
+        job.summary.target_probe_statuses = vec![
+            observable_target_status(sampled),
+            unavailable_target_status(unavailable),
+        ];
         for sample in &mut job.canisters {
             sample.actual_minted_cycles = sample.target_topup_cycles;
             sample.remaining_deficit_cycles = 0;
@@ -3425,7 +3791,9 @@ mod tests {
         complete_job(2);
 
         state::with_state(|st| {
-            assert!(st.recovery_deficit_cycles.is_empty());
+            assert_eq!(st.recovery_deficit_cycles.get(&sampled), None);
+            assert_eq!(st.recovery_deficit_cycles.get(&unavailable), Some(&55));
+            assert_eq!(st.recovery_deficit_cycles.get(&removed), None);
         });
     }
 
@@ -3528,15 +3896,25 @@ mod tests {
     }
 
     #[test]
-    fn no_funds_sample_persists_sampled_deficits_and_prunes_removed_deficits() {
+    fn no_funds_sample_preserves_unavailable_accounting_and_prunes_removed_targets() {
         let sampled = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let unavailable = principal("jufzc-caaaa-aaaar-qb5da-cai");
         let removed = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
         let mut st = State::new(base_config(), 0);
+        st.last_completed_cycles.insert(sampled, snapshot(1_000));
+        st.last_completed_cycles.insert(unavailable, snapshot(800));
+        st.last_completed_cycles.insert(removed, snapshot(700));
         st.relay_minted_cycles_since_sample.insert(sampled, 50);
+        st.relay_minted_cycles_since_sample.insert(unavailable, 65);
         st.relay_minted_cycles_since_sample.insert(removed, 75);
         st.recovery_deficit_cycles.insert(sampled, 25);
+        st.recovery_deficit_cycles.insert(unavailable, 55);
         st.recovery_deficit_cycles.insert(removed, 77);
         let mut summary = RelaySummary::started(RelayMode::NoFunds, 1, 1);
+        summary.target_probe_statuses = vec![
+            observable_target_status(sampled),
+            unavailable_target_status(unavailable),
+        ];
         summary.canisters = vec![CanisterBurnSample {
             canister_id: sampled,
             previous_cycles: Some(1_000),
@@ -3553,10 +3931,27 @@ mod tests {
             skipped_reason: None,
         }];
 
-        complete_no_funds_sample(&mut st, BTreeMap::from([(sampled, snapshot(900))]), summary);
+        complete_no_funds_sample(
+            &mut st,
+            BTreeMap::from([(sampled, snapshot(900))]),
+            &[sampled, unavailable],
+            summary,
+        );
 
-        assert!(st.relay_minted_cycles_since_sample.is_empty());
+        assert_eq!(st.last_completed_cycles.get(&sampled), Some(&snapshot(900)));
+        assert_eq!(
+            st.last_completed_cycles.get(&unavailable),
+            Some(&snapshot(800))
+        );
+        assert_eq!(st.last_completed_cycles.get(&removed), None);
+        assert_eq!(st.relay_minted_cycles_since_sample.get(&sampled), None);
+        assert_eq!(
+            st.relay_minted_cycles_since_sample.get(&unavailable),
+            Some(&65)
+        );
+        assert_eq!(st.relay_minted_cycles_since_sample.get(&removed), None);
         assert_eq!(st.recovery_deficit_cycles.get(&sampled), Some(&177));
+        assert_eq!(st.recovery_deficit_cycles.get(&unavailable), Some(&55));
         assert_eq!(st.recovery_deficit_cycles.get(&removed), None);
     }
 

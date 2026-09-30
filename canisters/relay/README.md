@@ -62,11 +62,11 @@ The detailed factory state machine, funding formula, fail-closed reconciliation,
 
 New managed targets cannot be anonymous, the management canister, Historian itself, the Fiduciary blackhole, or the configured ICP Ledger, ICP Index, or CMC. The canonical production Relay target set is separately reserved regardless of surplus-recipient choices. These are target rules, not recipient-account rules: a target and Principal recipient may overlap when each is independently valid, while duplicate targets and duplicate recipient destinations remain disallowed.
 
-Relay must be able to measure cycles balances before it can allocate by burn. Self-service Historian therefore probes every target before spending setup ICP, and the child uses the shared **Auto** observation policy at runtime. Auto tries local self balance, then protocol-native direct `canister_status`, then cached/recognized blackhole and SNS fallbacks. Ordinary sampling can use `public` or caller-specific `allowed_viewers` access. Preflight for a not-yet-created child accepts direct status only when visibility is exactly `public`; Historian-only access is not reusable, though a recognized blackhole/SNS fallback can still qualify the target. Public status exposes the management canister's status response, not only the cycles number.
+Relay must be able to measure cycles balances before it can allocate by burn. Self-service Historian therefore probes every target before spending setup ICP, and the child uses the shared **Auto** observation policy at runtime. Auto tries local self balance, then protocol-native direct `canister_status`, then a cached compatibility route. Fresh compatibility discovery uses authoritative controller information to select an applicable production blackhole or canonical NNS Root route; SNS routes remain authenticated through SNS-W and membership checks. Arbitrary controllers are not treated as status proxies. Ordinary sampling can use `public` or caller-specific `allowed_viewers` access. Preflight for a not-yet-created child accepts direct status only when visibility is exactly `public`; Historian-only access is not reusable, though a recognized blackhole, NNS Root, or authenticated SNS fallback can still qualify the target. Public status exposes the management canister's status response, not only the cycles number.
 
 A manually installed Relay can instead set `blackhole_canister_id`, selecting a fixed blackhole route for non-self targets.
 
-A newly installed Relay is a replenishment controller, not an initial rescue mechanism: the first complete sample establishes a baseline and spends no default-account ICP. Targets should start with enough cycles to survive until a later sample can measure burn and fund them.
+A newly installed Relay is a replenishment controller, not an initial rescue mechanism: the first complete sample establishes a baseline and spends no default-account ICP. If a later baseline-only run contains a newly observable target, it seeds only that target's missing baseline and preserves established targets' accounting intervals. Targets should start with enough cycles to survive until a later sample can measure burn and fund them.
 
 ## Event Horizon acceleration
 
@@ -76,7 +76,7 @@ A poke never starts a new default allocation job, takes a fresh cycles sample, e
 
 Existing controllerless self-service Relays cannot be upgraded and remain polling-only. A future Relay using the new artifact needs only `X.<compact-relay-principal>.0-90`; no per-instance callback IDs are embedded in Wasm.
 
-If a scheduled target probe fails, Relay fails closed for that target. After three consecutive scheduled failures it may classify the target as unavailable **for that run only**, allowing other observable targets to progress. Later ticks keep probing it, and any successful sample resets the failure count.
+If a scheduled target probe fails, Relay fails closed for that target. After three consecutive scheduled failures it may classify the target as unavailable **for that run only**, allowing other observable targets to progress. Temporary unavailability excludes the target from that run's allocation without erasing its previous baseline, Relay-minted correction, or carried recovery deficit. Later ticks keep probing it, and any successful sample resets the failure count.
 
 ## Allocation model
 
