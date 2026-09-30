@@ -752,6 +752,7 @@ mod tests {
         nns_root_response: Mutex<ProbeResponse>,
         root_responses: Mutex<BTreeMap<Principal, ProbeResponse>>,
         swap_responses: Mutex<BTreeMap<Principal, ProbeResponse>>,
+        controllers: Mutex<Vec<Principal>>,
         blackhole_calls: Mutex<Vec<(Principal, Principal)>>,
         nns_root_calls: Mutex<Vec<Principal>>,
         root_calls: Mutex<Vec<(Principal, Principal)>>,
@@ -866,6 +867,7 @@ mod tests {
                 )),
                 root_responses: Mutex::new(BTreeMap::new()),
                 swap_responses: Mutex::new(BTreeMap::new()),
+                controllers: Mutex::new(Vec::new()),
                 blackhole_calls: Mutex::new(Vec::new()),
                 nns_root_calls: Mutex::new(Vec::new()),
                 root_calls: Mutex::new(Vec::new()),
@@ -904,6 +906,11 @@ mod tests {
 
         fn with_nns_root_response(self, response: ProbeResponse) -> Self {
             *self.nns_root_response.lock().unwrap() = response;
+            self
+        }
+
+        fn with_controllers(self, controllers: Vec<Principal>) -> Self {
+            *self.controllers.lock().unwrap() = controllers;
             self
         }
 
@@ -993,7 +1000,7 @@ mod tests {
             &self,
             _target: Principal,
         ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
-            Ok(jupiter_ic_clients::constants::ordered_production_blackhole_canister_ids().to_vec())
+            Ok(self.controllers.lock().unwrap().clone())
         }
 
         async fn list_sns_canisters(
@@ -1391,7 +1398,9 @@ mod tests {
             empty_index_page(),
             empty_index_page(),
         ]);
-        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777).with_controllers(vec![
+            jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+        ]);
         let governance = RecordingGovernanceClient::new();
         let xrc = MockXrcClient::success(720_000_000, 8, 9_900);
 
@@ -1532,6 +1541,9 @@ mod tests {
         });
         let index = MockIndexClient::new(vec![empty_index_page(), empty_index_page()]);
         let cycles_probe = RecordingCyclesProbeClient::blackhole(0)
+            .with_controllers(vec![
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ])
             .with_blackhole_target_response(initial_target, ProbeResponse::Ok(111))
             .with_blackhole_target_response(sweep_target, ProbeResponse::Ok(222));
         let sns_wasm = MockSnsWasmClient::new(vec![Err(crate::clients::ClientError::Call(
@@ -1635,7 +1647,9 @@ mod tests {
             });
 
             let index = MockIndexClient::new(Vec::new());
-            let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+            let cycles_probe = RecordingCyclesProbeClient::blackhole(777).with_controllers(vec![
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ]);
             let sns_wasm = MockSnsWasmClient::new(vec![Ok(
                 crate::clients::sns_wasm::ListDeployedSnsesResponse {
                     instances: Vec::new(),
@@ -1899,7 +1913,9 @@ mod tests {
             );
             st.initial_cycles_probe_queue.push(beneficiary);
         });
-        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777).with_controllers(vec![
+            jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+        ]);
         let governance = RecordingGovernanceClient::new();
 
         block_on(process_initial_cycles_probe_queue(
@@ -1948,7 +1964,9 @@ mod tests {
                 next_index: 0,
             });
         });
-        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777).with_controllers(vec![
+            jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+        ]);
         let governance = RecordingGovernanceClient::new();
 
         block_on(process_initial_cycles_probe_queue(
@@ -1989,7 +2007,9 @@ mod tests {
             );
             st.initial_cycles_probe_queue.push(target);
         });
-        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777).with_controllers(vec![
+            jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+        ]);
         let governance = RecordingGovernanceClient::new();
 
         block_on(process_initial_cycles_probe_queue(
@@ -2019,7 +2039,9 @@ mod tests {
             );
             st.initial_cycles_probe_queue.push(relay);
         });
-        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777).with_controllers(vec![
+            jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+        ]);
         let governance = RecordingGovernanceClient::new();
 
         block_on(process_initial_cycles_probe_queue(
@@ -2049,7 +2071,9 @@ mod tests {
             );
             st.initial_cycles_probe_queue.push(target);
         });
-        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777).with_controllers(vec![
+            jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+        ]);
         let governance = RecordingGovernanceClient::new();
 
         block_on(process_initial_cycles_probe_queue(
@@ -2079,6 +2103,9 @@ mod tests {
             });
         });
         let cycles_probe = RecordingCyclesProbeClient::blackhole(0)
+            .with_controllers(
+                jupiter_ic_clients::constants::ordered_production_blackhole_canister_ids().to_vec(),
+            )
             .with_blackhole_target_response(target_a, ProbeResponse::Err("target a down".into()))
             .with_blackhole_target_response(target_b, ProbeResponse::Ok(222));
 
@@ -2164,6 +2191,7 @@ mod tests {
             );
         });
         let cycles_probe = RecordingCyclesProbeClient::blackhole(444)
+            .with_controllers(vec![blackhole])
             .with_root_response(stale_root, ProbeResponse::Err("stale root".into()));
 
         block_on(probe_and_record_cycles(
@@ -2493,7 +2521,9 @@ mod tests {
             );
             st.initial_cycles_probe_queue.push(target);
         });
-        let cycles_probe = RecordingCyclesProbeClient::blackhole(777);
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(777).with_controllers(vec![
+            jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+        ]);
         let governance = RecordingGovernanceClient::new();
 
         block_on(process_initial_cycles_probe_queue(
@@ -3576,7 +3606,9 @@ mod tests {
             191,
         );
         let xrc = ClockAdvancingXrc { clock: &clock };
-        let cycles_probe = RecordingCyclesProbeClient::blackhole(0);
+        let cycles_probe = RecordingCyclesProbeClient::blackhole(0).with_controllers(vec![
+            jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+        ]);
         let sns_wasm = MockSnsWasmClient::new(Vec::new());
         let sns_root = MockSnsRootClient::new(BTreeMap::new());
         let governance = RecordingGovernanceClient::new();

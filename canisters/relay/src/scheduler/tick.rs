@@ -2073,11 +2073,20 @@ mod tests {
 
     struct MockSchedulerCyclesProbe {
         cycles: BTreeMap<Principal, u128>,
+        controllers: Vec<Principal>,
     }
 
     impl MockSchedulerCyclesProbe {
         fn new(cycles: BTreeMap<Principal, u128>) -> Self {
-            Self { cycles }
+            Self {
+                cycles,
+                controllers: Vec::new(),
+            }
+        }
+
+        fn with_controllers(mut self, controllers: Vec<Principal>) -> Self {
+            self.controllers = controllers;
+            self
         }
     }
 
@@ -2154,7 +2163,7 @@ mod tests {
             &self,
             _target: Principal,
         ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
-            Ok(jupiter_ic_clients::constants::ordered_production_blackhole_canister_ids().to_vec())
+            Ok(Vec::new())
         }
 
         async fn list_sns_canisters(
@@ -2239,7 +2248,7 @@ mod tests {
             &self,
             _target: Principal,
         ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
-            Ok(jupiter_ic_clients::constants::ordered_production_blackhole_canister_ids().to_vec())
+            Ok(self.controllers.clone())
         }
 
         async fn list_sns_canisters(
@@ -2274,6 +2283,7 @@ mod tests {
 
     fn run_start_job_for_test(
         target_cycles: Option<(Principal, u128)>,
+        controllers: Vec<Principal>,
         ledger: &MockSchedulerLedger,
         cmc: &MockSchedulerCmc,
     ) -> (Principal, u128) {
@@ -2284,7 +2294,8 @@ mod tests {
             let self_id = relay_self();
             let self_cycles = 9_000_000_u128;
             let target_cycles = target_cycles.into_iter().collect::<BTreeMap<_, _>>();
-            let cycles_probe = MockSchedulerCyclesProbe::new(target_cycles);
+            let cycles_probe =
+                MockSchedulerCyclesProbe::new(target_cycles).with_controllers(controllers);
 
             start_job_with_self(now_nanos, self_id, self_cycles, ledger, cmc, &cycles_probe).await;
 
@@ -2352,7 +2363,10 @@ mod tests {
             release: AtomicBool::new(false),
         };
         let cmc = MockSchedulerCmc::new(10_000_000_000_000);
-        let cycles_probe = MockSchedulerCyclesProbe::new(BTreeMap::from([(target, 5_000_000)]));
+        let cycles_probe = MockSchedulerCyclesProbe::new(BTreeMap::from([(target, 5_000_000)]))
+            .with_controllers(vec![
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ]);
         let mut future = Box::pin(start_job_with_self(
             10_000_000_000,
             relay_self(),
@@ -2981,7 +2995,7 @@ mod tests {
         let ledger = MockSchedulerLedger::new(1_000_000_000, 10_000);
         let cmc = MockSchedulerCmc::new(10_000_000_000_000);
 
-        let (self_id, _) = run_start_job_for_test(None, &ledger, &cmc);
+        let (self_id, _) = run_start_job_for_test(None, Vec::new(), &ledger, &cmc);
 
         let summary = state::with_state(|st| {
             assert_eq!(st.consecutive_probe_failures.get(&target), Some(&3));
@@ -3039,7 +3053,12 @@ mod tests {
         let ledger = MockSchedulerLedger::new(1_000_000_000, 10_000);
         let cmc = MockSchedulerCmc::new(10_000_000_000_000);
 
-        run_start_job_for_test(Some((target, target_cycles)), &ledger, &cmc);
+        run_start_job_for_test(
+            Some((target, target_cycles)),
+            vec![jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id()],
+            &ledger,
+            &cmc,
+        );
 
         let summary = state::with_state(|st| {
             assert_eq!(st.consecutive_probe_failures.get(&target), Some(&0));
@@ -3069,7 +3088,12 @@ mod tests {
         let ledger = MockSchedulerLedger::new(1_000_000_000, 10_000);
         let cmc = MockSchedulerCmc::new(10_000_000_000_000);
 
-        run_start_job_for_test(Some((target, 5_000_000)), &ledger, &cmc);
+        run_start_job_for_test(
+            Some((target, 5_000_000)),
+            vec![jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id()],
+            &ledger,
+            &cmc,
+        );
 
         state::with_state(|st| {
             assert_eq!(
@@ -3164,7 +3188,7 @@ mod tests {
         let ledger = MockSchedulerLedger::new(1_000_000_000, 10_000);
         let cmc = MockSchedulerCmc::new(10_000_000_000_000);
 
-        run_start_job_for_test(Some((target, 5_000_000)), &ledger, &cmc);
+        run_start_job_for_test(Some((target, 5_000_000)), Vec::new(), &ledger, &cmc);
 
         state::with_state(|st| {
             assert!(!st.cached_cycles_probe_routes.contains_key(&target));

@@ -2075,7 +2075,9 @@ mod tests {
             &self,
             _target: Principal,
         ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
-            Ok(jupiter_ic_clients::constants::ordered_production_blackhole_canister_ids().to_vec())
+            Ok(vec![
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ])
         }
 
         async fn list_sns_canisters(
@@ -2155,7 +2157,9 @@ mod tests {
             _target: Principal,
         ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            Ok(jupiter_ic_clients::constants::ordered_production_blackhole_canister_ids().to_vec())
+            Ok(vec![
+                jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id(),
+            ])
         }
 
         async fn list_sns_canisters(

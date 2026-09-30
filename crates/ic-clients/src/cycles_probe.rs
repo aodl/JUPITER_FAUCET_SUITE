@@ -651,6 +651,10 @@ mod tests {
         Principal::from_text(text).unwrap()
     }
 
+    fn synthetic_canister(tag: u8) -> Principal {
+        Principal::from_slice(&[0x7f, tag, 0x01])
+    }
+
     #[derive(Clone)]
     enum TestResponse {
         Ok(u128),
@@ -1147,7 +1151,7 @@ mod tests {
     fn auto_canonical_self_status_failure_continues_without_duplicate_target_call() {
         let target = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let client = RecordingClient {
             blackhole: BTreeMap::from([
                 (target, TestResponse::Err("not readable through itself")),
@@ -1198,7 +1202,7 @@ mod tests {
     #[test]
     fn cached_sns_root_success_stops_immediately() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let cached_root = constants::sns_wasm_id();
+        let cached_root = synthetic_canister(1);
         let cached = CyclesProbeRoute::SnsRoot {
             root_canister_id: cached_root,
         };
@@ -1229,7 +1233,7 @@ mod tests {
     #[test]
     fn direct_success_outranks_cached_sns_root() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let client = RecordingClient {
             direct: Ok(direct_observation(77, StatusVisibility::Public)),
             sns_root: BTreeMap::from([(root, TestResponse::Ok(99))]),
@@ -1340,7 +1344,7 @@ mod tests {
     #[test]
     fn cached_fiduciary_failure_then_13_node_failure_reaches_sns() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let cached = CyclesProbeRoute::Blackhole {
@@ -1402,7 +1406,7 @@ mod tests {
     #[test]
     fn cached_sns_swap_success_stops_immediately() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let swap = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
         let cached = CyclesProbeRoute::SnsSwap {
             root_canister_id: root,
@@ -1435,7 +1439,7 @@ mod tests {
     #[test]
     fn direct_success_outranks_cached_sns_swap() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let swap = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
         let client = RecordingClient {
             direct: Ok(direct_observation(77, StatusVisibility::Public)),
@@ -1548,7 +1552,7 @@ mod tests {
     #[test]
     fn canister_info_failure_does_not_block_framework_sns_root_resolution() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let client = RecordingClient {
             controllers: Err("metadata unavailable"),
             deployed: Ok(ListDeployedSnsesResponse {
@@ -1582,7 +1586,7 @@ mod tests {
     #[test]
     fn framework_swap_resolves_from_sns_w_and_uses_swap_get_canister_status() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let client = RecordingClient {
             controllers: Err("metadata unavailable"),
             deployed: Ok(ListDeployedSnsesResponse {
@@ -1614,7 +1618,7 @@ mod tests {
     #[test]
     fn dapp_discovery_uses_controller_metadata_then_authenticated_sns_root() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let client = auto_discovery_client(
             target,
             root,
@@ -1644,8 +1648,8 @@ mod tests {
     #[test]
     fn fake_controller_absent_from_sns_w_is_never_called() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let official_root = constants::sns_wasm_id();
-        let fake_root = constants::nns_governance_id();
+        let official_root = synthetic_canister(1);
+        let fake_root = synthetic_canister(2);
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let client = RecordingClient {
@@ -1672,8 +1676,8 @@ mod tests {
     #[test]
     fn candidate_root_response_with_root_not_candidate_is_rejected() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let candidate_root = constants::sns_wasm_id();
-        let other_root = constants::nns_governance_id();
+        let candidate_root = synthetic_canister(1);
+        let other_root = synthetic_canister(2);
         let client = auto_discovery_client(
             target,
             candidate_root,
@@ -1695,7 +1699,7 @@ mod tests {
     #[test]
     fn archive_membership_resolves() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let client = auto_discovery_client(
             target,
             root,
@@ -1719,7 +1723,7 @@ mod tests {
     #[test]
     fn extension_membership_resolves() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let client = auto_discovery_client(
             target,
             root,
@@ -1745,8 +1749,8 @@ mod tests {
     #[test]
     fn first_official_candidate_failure_followed_by_second_candidate_success() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root_a = constants::sns_wasm_id();
-        let root_b = constants::nns_governance_id();
+        let root_a = synthetic_canister(2);
+        let root_b = synthetic_canister(1);
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let client = RecordingClient {
@@ -1793,7 +1797,7 @@ mod tests {
     #[test]
     fn failed_cached_sns_route_is_not_executed_twice_during_rediscovery() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let cached = CyclesProbeRoute::SnsRoot {
@@ -1835,7 +1839,7 @@ mod tests {
     #[test]
     fn sns_w_response_with_only_root_canister_id_decodes() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let client = RecordingClient {
             deployed: Ok(ListDeployedSnsesResponse {
                 instances: vec![deployed(root)],
@@ -1853,7 +1857,7 @@ mod tests {
     #[test]
     fn list_sns_canisters_with_missing_extensions_decodes() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let list = ListSnsCanistersResponse {
             root: Some(root),
             dapps: vec![target],
@@ -1872,7 +1876,7 @@ mod tests {
     #[test]
     fn list_sns_canisters_with_populated_optional_extensions_decodes() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = constants::sns_wasm_id();
+        let root = synthetic_canister(1);
         let list = ListSnsCanistersResponse {
             root: Some(root),
             extensions: Some(SnsExtensions {
@@ -1892,8 +1896,8 @@ mod tests {
     #[test]
     fn all_candidate_root_failures_are_preserved() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root_a = constants::sns_wasm_id();
-        let root_b = constants::nns_governance_id();
+        let root_a = synthetic_canister(1);
+        let root_b = synthetic_canister(2);
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let client = RecordingClient {
@@ -1923,9 +1927,9 @@ mod tests {
     #[test]
     fn one_official_candidate_nonmatching_and_another_failing_is_not_definitively_absent() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root_a = constants::sns_wasm_id();
-        let root_b = constants::nns_governance_id();
-        let unrelated = principal("77deu-baaaa-aaaar-qb6za-cai");
+        let root_a = synthetic_canister(2);
+        let root_b = synthetic_canister(1);
+        let unrelated = synthetic_canister(3);
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let client = RecordingClient {
@@ -2140,6 +2144,41 @@ mod tests {
     }
 
     #[test]
+    fn any_canister_allowed_viewers_direct_reuses_controllers_for_nns_root() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let nns_root = constants::nns_root_id();
+        let client = RecordingClient {
+            direct: Ok(direct_observation_with_controllers(
+                123,
+                StatusVisibility::AllowedViewers(vec![synthetic_canister(9)]),
+                vec![nns_root],
+            )),
+            controllers: Err("must not call canister_info"),
+            nns_root: TestResponse::Ok(456),
+            ..Default::default()
+        };
+
+        let result = block_on(probe_cycles_for_audience(
+            &CyclesProbePolicy::Auto,
+            target,
+            None,
+            CyclesProbeAudience::AnyCanister,
+            &client,
+        ))
+        .unwrap();
+
+        assert_eq!(result.cycles, 456);
+        assert_eq!(result.route, Some(CyclesProbeRoute::NnsRoot));
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::DirectCanisterStatus(target),
+                TestCall::NnsRootStatus(target),
+            ]
+        );
+    }
+
+    #[test]
     fn direct_failure_discovers_nns_root_from_controller_metadata() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let client = RecordingClient {
@@ -2171,7 +2210,7 @@ mod tests {
     #[test]
     fn unrelated_controller_triggers_no_blackhole_or_nns_proxy_call() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let unrelated = constants::nns_governance_id();
+        let unrelated = synthetic_canister(3);
         let client = RecordingClient {
             controllers: Ok(vec![unrelated]),
             ..Default::default()
@@ -2187,6 +2226,37 @@ mod tests {
                 TestCall::ListDeployedSnses,
             ]
         );
+    }
+
+    #[test]
+    fn empty_controllers_run_sns_discovery_without_proxy_calls() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let client = RecordingClient::default();
+
+        assert!(block_on(probe_cycles_for_audience(
+            &CyclesProbePolicy::Auto,
+            target,
+            None,
+            CyclesProbeAudience::AnyCanister,
+            &client,
+        ))
+        .is_err());
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::DirectCanisterStatus(target),
+                TestCall::CanisterInfo(target),
+                TestCall::ListDeployedSnses,
+            ]
+        );
+        assert!(!client.calls().iter().any(|call| matches!(
+            call,
+            TestCall::Blackhole { .. }
+                | TestCall::NnsRootStatus(_)
+                | TestCall::ListSnsCanisters(_)
+                | TestCall::SnsRootStatus { .. }
+                | TestCall::SnsSwapStatus(_)
+        )));
     }
 
     #[test]
@@ -2214,7 +2284,7 @@ mod tests {
     #[test]
     fn nns_root_failure_can_fall_through_to_authenticated_sns_root() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let sns_root = constants::sns_wasm_id();
+        let sns_root = synthetic_canister(1);
         let client = RecordingClient {
             controllers: Ok(vec![constants::nns_root_id(), sns_root]),
             nns_root: TestResponse::Err("temporarily unavailable"),

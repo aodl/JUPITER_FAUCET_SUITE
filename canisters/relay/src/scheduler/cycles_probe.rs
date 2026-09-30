@@ -209,6 +209,10 @@ mod tests {
         Principal::from_text(text).unwrap()
     }
 
+    fn synthetic_canister(tag: u8) -> Principal {
+        Principal::from_slice(&[0x7f, tag, 0x01])
+    }
+
     #[derive(Clone)]
     enum TestResponse {
         Ok(u128),
@@ -246,7 +250,7 @@ mod tests {
                 sns_root: BTreeMap::new(),
                 sns_swap: BTreeMap::new(),
                 deployed: Ok(ListDeployedSnsesResponse::default()),
-                controllers: Ok(constants::ordered_production_blackhole_canister_ids().to_vec()),
+                controllers: Ok(Vec::new()),
                 root_lists: BTreeMap::new(),
                 calls: Mutex::new(Vec::new()),
             }
@@ -431,6 +435,7 @@ mod tests {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let client = RecordingClient {
+            controllers: Ok(vec![thirteen]),
             blackhole: BTreeMap::from([(thirteen, TestResponse::Ok(77))]),
             ..Default::default()
         };
@@ -464,6 +469,7 @@ mod tests {
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let client = RecordingClient {
+            controllers: Ok(vec![thirteen, fiduciary]),
             blackhole: BTreeMap::from([
                 (thirteen, TestResponse::Err("not controller")),
                 (fiduciary, TestResponse::Ok(88)),
@@ -495,7 +501,7 @@ mod tests {
     fn fixed_custom_blackhole_uses_only_configured_route_and_removes_old_cache() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let fixed = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
-        let stale_root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let stale_root = synthetic_canister(1);
         let client = RecordingClient {
             blackhole: BTreeMap::from([(fixed, TestResponse::Ok(42))]),
             ..Default::default()
@@ -568,7 +574,7 @@ mod tests {
     #[test]
     fn cached_route_success_stops_without_fallback_calls() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = synthetic_canister(1);
         let cached = CyclesProbeRoute::SnsRoot {
             root_canister_id: root,
         };
@@ -635,9 +641,10 @@ mod tests {
     #[test]
     fn stale_cached_sns_root_then_13_node_success_replaces_cache_without_failure() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = synthetic_canister(1);
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let client = RecordingClient {
+            controllers: Ok(vec![thirteen]),
             blackhole: BTreeMap::from([(thirteen, TestResponse::Ok(77))]),
             sns_root: BTreeMap::from([(root, TestResponse::Err("stale root"))]),
             ..Default::default()
@@ -673,10 +680,11 @@ mod tests {
     #[test]
     fn both_blackholes_fail_and_sns_root_route_succeeds() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = synthetic_canister(1);
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let client = RecordingClient {
+            controllers: Ok(vec![thirteen, fiduciary]),
             blackhole: BTreeMap::from([
                 (thirteen, TestResponse::Err("not controller")),
                 (fiduciary, TestResponse::Err("not controller")),
@@ -720,14 +728,8 @@ mod tests {
     #[test]
     fn framework_swap_success_maps_to_swap_source_and_cache() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
-        let thirteen = constants::thirteen_node_blackhole_canister_id();
-        let fiduciary = constants::fiduciary_blackhole_canister_id();
+        let root = synthetic_canister(1);
         let client = RecordingClient {
-            blackhole: BTreeMap::from([
-                (thirteen, TestResponse::Err("not controller")),
-                (fiduciary, TestResponse::Err("not controller")),
-            ]),
             deployed: Ok(ListDeployedSnsesResponse {
                 instances: vec![jupiter_ic_clients::sns::DeployedSns {
                     root_canister_id: Some(root),
@@ -757,8 +759,6 @@ mod tests {
             vec![
                 TestCall::DirectCanisterStatus(target),
                 TestCall::CanisterInfo(target),
-                blackhole_call(thirteen, target),
-                blackhole_call(fiduciary, target),
                 TestCall::ListDeployedSnses,
                 TestCall::SnsSwapStatus(target),
             ]
@@ -768,14 +768,8 @@ mod tests {
     #[test]
     fn final_failure_removes_old_cache_and_records_probe_failure() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
-        let thirteen = constants::thirteen_node_blackhole_canister_id();
-        let fiduciary = constants::fiduciary_blackhole_canister_id();
+        let root = synthetic_canister(1);
         let client = RecordingClient {
-            blackhole: BTreeMap::from([
-                (thirteen, TestResponse::Err("not controller")),
-                (fiduciary, TestResponse::Err("not controller")),
-            ]),
             sns_root: BTreeMap::from([(root, TestResponse::Err("stale root"))]),
             ..Default::default()
         };
@@ -806,7 +800,7 @@ mod tests {
             BTreeMap::from([(
                 failed,
                 CyclesProbeRoute::SnsRoot {
-                    root_canister_id: principal("r7inp-6aaaa-aaaaa-aaabq-cai"),
+                    root_canister_id: synthetic_canister(1),
                 },
             )]),
             123,
