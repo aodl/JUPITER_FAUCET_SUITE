@@ -942,6 +942,7 @@ enum HistorianCyclesSampleSource {
     BlackholeStatus,
     SelfCanister,
     DirectCanisterStatus,
+    NnsRootStatus,
     SnsRootStatus,
     SnsSwapStatus,
     SnsRootSummary,

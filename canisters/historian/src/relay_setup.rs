@@ -1893,6 +1893,8 @@ mod tests {
     struct MixedRouteCyclesProbe {
         direct_target: Principal,
         direct_visibility: StatusVisibility,
+        direct_controllers: Vec<Principal>,
+        nns_root_succeeds: bool,
         sns_swap_target: Principal,
         sns_root: Principal,
         expose_sns_route: bool,
@@ -1919,6 +1921,7 @@ mod tests {
                     jupiter_ic_clients::cycles_probe::DirectCanisterStatusObservation {
                         cycles: 1_000_000,
                         status_visibility: self.direct_visibility.clone(),
+                        controllers: self.direct_controllers.clone(),
                     },
                 )
             } else {
@@ -1939,6 +1942,19 @@ mod tests {
             Err(jupiter_ic_clients::ClientError::Call(
                 "not blackholed".to_string(),
             ))
+        }
+
+        async fn nns_root_cycles(
+            &self,
+            target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("nns_root:{target_canister_id}"));
+            self.nns_root_succeeds.then_some(1_000_000).ok_or_else(|| {
+                jupiter_ic_clients::ClientError::Call("not NNS-controlled".to_string())
+            })
         }
 
         async fn list_deployed_snses(
@@ -2042,6 +2058,13 @@ mod tests {
             Ok(1_000_000)
         }
 
+        async fn nns_root_cycles(
+            &self,
+            _target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            unreachable!()
+        }
+
         async fn list_deployed_snses(
             &self,
         ) -> Result<ListDeployedSnsesResponse, jupiter_ic_clients::ClientError> {
@@ -2052,7 +2075,7 @@ mod tests {
             &self,
             _target: Principal,
         ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
-            Ok(Vec::new())
+            Ok(jupiter_ic_clients::constants::ordered_production_blackhole_canister_ids().to_vec())
         }
 
         async fn list_sns_canisters(
@@ -2110,6 +2133,16 @@ mod tests {
                 .ok_or_else(|| jupiter_ic_clients::ClientError::Call("not observable".to_string()))
         }
 
+        async fn nns_root_cycles(
+            &self,
+            _target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(jupiter_ic_clients::ClientError::Call(
+                "not observable through NNS root".to_string(),
+            ))
+        }
+
         async fn list_deployed_snses(
             &self,
         ) -> Result<ListDeployedSnsesResponse, jupiter_ic_clients::ClientError> {
@@ -2122,7 +2155,7 @@ mod tests {
             _target: Principal,
         ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            Ok(Vec::new())
+            Ok(jupiter_ic_clients::constants::ordered_production_blackhole_canister_ids().to_vec())
         }
 
         async fn list_sns_canisters(
@@ -3457,6 +3490,8 @@ mod tests {
         let probe = MixedRouteCyclesProbe {
             direct_target,
             direct_visibility: StatusVisibility::Public,
+            direct_controllers: Vec::new(),
+            nns_root_succeeds: false,
             sns_swap_target,
             sns_root: principal(3),
             expose_sns_route: true,
@@ -3505,9 +3540,8 @@ mod tests {
             .iter()
             .position(|call| call == &format!("sns_swap:{sns_swap_target}"))
             .unwrap();
-        assert!(calls[2..list_position]
-            .iter()
-            .all(|call| call.starts_with("blackhole:")));
+        assert_eq!(calls[2], format!("controllers:{sns_swap_target}"));
+        assert!(!calls.iter().any(|call| call.starts_with("blackhole:")));
         assert!(list_position < swap_position);
         assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
     }
@@ -3519,6 +3553,8 @@ mod tests {
         let probe = MixedRouteCyclesProbe {
             direct_target: target,
             direct_visibility: StatusVisibility::Controllers,
+            direct_controllers: Vec::new(),
+            nns_root_succeeds: false,
             sns_swap_target: target,
             sns_root: principal(3),
             expose_sns_route: false,
@@ -3565,6 +3601,8 @@ mod tests {
         let probe = MixedRouteCyclesProbe {
             direct_target: target,
             direct_visibility: StatusVisibility::AllowedViewers(vec![principal(42)]),
+            direct_controllers: Vec::new(),
+            nns_root_succeeds: false,
             sns_swap_target: target,
             sns_root: root,
             expose_sns_route: true,
@@ -3609,6 +3647,53 @@ mod tests {
     }
 
     #[test]
+    fn non_public_direct_target_qualifies_through_nns_root_without_canister_info() {
+        reset();
+        let target = principal(1);
+        let probe = MixedRouteCyclesProbe {
+            direct_target: target,
+            direct_visibility: StatusVisibility::Controllers,
+            direct_controllers: vec![jupiter_ic_clients::constants::nns_root_id()],
+            nns_root_succeeds: true,
+            sns_swap_target: target,
+            sns_root: principal(3),
+            expose_sns_route: false,
+            calls: Mutex::new(Vec::new()),
+        };
+        let ledger = MockLedger::new(
+            [325_000_000, 322_990_000],
+            [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+        );
+        let (_, _, cmc, management) = mocks(MockLedger::new([], []), true, None);
+
+        let result = block_on(notify_with_clients_for_historian(
+            setup_args(vec![target]),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+
+        assert!(matches!(result, RelaySetupNotifyResult::Active { .. }));
+        assert_eq!(
+            state::with_state(|st| st.cached_cycles_probe_routes.get(&target).cloned()),
+            Some(CyclesProbeRoute::NnsRoot)
+        );
+        let calls = probe.calls.lock().unwrap();
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| *call == &format!("direct:{target}"))
+                .count(),
+            1
+        );
+        assert!(calls.contains(&format!("nns_root:{target}")));
+        assert!(!calls.contains(&format!("controllers:{target}")));
+        assert!(!calls.contains(&"list_sns".to_string()));
+    }
+
+    #[test]
     fn one_unobservable_target_prevents_all_irreversible_operations() {
         reset();
         let direct_target = principal(1);
@@ -3616,6 +3701,8 @@ mod tests {
         let probe = MixedRouteCyclesProbe {
             direct_target,
             direct_visibility: StatusVisibility::Public,
+            direct_controllers: Vec::new(),
+            nns_root_succeeds: false,
             sns_swap_target: unobservable_target,
             sns_root: principal(3),
             expose_sns_route: false,

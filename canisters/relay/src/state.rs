@@ -58,6 +58,7 @@ pub enum CyclesSampleSource {
     SelfCanister,
     DirectCanisterStatus,
     BlackholeStatus,
+    NnsRootStatus,
     SnsRootStatus,
     SnsSwapStatus,
 }
@@ -1031,6 +1032,19 @@ mod tests {
         let bytes = candid::encode_one(&snapshot).expect("encode direct status snapshot");
         let decoded: CyclesSnapshot =
             candid::decode_one(&bytes).expect("decode direct status snapshot");
+        assert_eq!(decoded, snapshot);
+    }
+
+    #[test]
+    fn nns_root_status_snapshot_candid_round_trips() {
+        let snapshot = CyclesSnapshot {
+            cycles: 1_234_567_890,
+            timestamp_nanos: 987_654_321,
+            source: CyclesSampleSource::NnsRootStatus,
+        };
+        let bytes = candid::encode_one(&snapshot).expect("encode NNS root status snapshot");
+        let decoded: CyclesSnapshot =
+            candid::decode_one(&bytes).expect("decode NNS root status snapshot");
         assert_eq!(decoded, snapshot);
     }
 }

@@ -875,6 +875,17 @@ mod tests {
     }
 
     #[test]
+    fn current_nns_root_status_sample_round_trips() {
+        let sample = CyclesSample {
+            timestamp_nanos: 123_456,
+            cycles: 987_654_321,
+            source: CyclesSampleSource::NnsRootStatus,
+        };
+        let bytes = sample.to_bytes();
+        assert_eq!(CyclesSample::from_bytes(bytes), sample);
+    }
+
+    #[test]
     fn legacy_source_set_decodes_as_tracking_reasons() {
         let frozen = FrozenMapTrackingReasonSet(BTreeSet::from([
             FrozenMapCanisterSource::MemoCommitment,

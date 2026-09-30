@@ -106,6 +106,7 @@ pub enum CyclesSampleSource {
     SelfCanister,
     DirectCanisterStatus,
     BlackholeStatus,
+    NnsRootStatus,
     SnsRootStatus,
     SnsSwapStatus,
     SnsRootSummary,

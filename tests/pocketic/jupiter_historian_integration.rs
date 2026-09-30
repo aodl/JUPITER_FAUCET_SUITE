@@ -366,6 +366,7 @@ enum CyclesSampleSource {
     BlackholeStatus,
     SelfCanister,
     DirectCanisterStatus,
+    NnsRootStatus,
     SnsRootStatus,
     SnsSwapStatus,
     SnsRootSummary,

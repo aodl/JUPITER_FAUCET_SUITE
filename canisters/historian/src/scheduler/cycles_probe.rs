@@ -41,6 +41,7 @@ fn cycles_sample_source_for_route(route: Option<&CyclesProbeRoute>) -> CyclesSam
         None => CyclesSampleSource::SelfCanister,
         Some(CyclesProbeRoute::DirectCanisterStatus) => CyclesSampleSource::DirectCanisterStatus,
         Some(CyclesProbeRoute::Blackhole { .. }) => CyclesSampleSource::BlackholeStatus,
+        Some(CyclesProbeRoute::NnsRoot) => CyclesSampleSource::NnsRootStatus,
         Some(CyclesProbeRoute::SnsRoot { .. }) => CyclesSampleSource::SnsRootStatus,
         Some(CyclesProbeRoute::SnsSwap { .. }) => CyclesSampleSource::SnsSwapStatus,
     }
@@ -353,6 +354,14 @@ mod direct_route_tests {
         assert_eq!(
             cycles_sample_source_for_route(Some(&CyclesProbeRoute::DirectCanisterStatus)),
             CyclesSampleSource::DirectCanisterStatus
+        );
+    }
+
+    #[test]
+    fn nns_root_route_maps_to_nns_root_sample_source() {
+        assert_eq!(
+            cycles_sample_source_for_route(Some(&CyclesProbeRoute::NnsRoot)),
+            CyclesSampleSource::NnsRootStatus
         );
     }
 }

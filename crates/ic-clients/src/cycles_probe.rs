@@ -27,6 +27,7 @@ pub enum CyclesProbeRoute {
     Blackhole {
         canister_id: Principal,
     },
+    NnsRoot,
     SnsRoot {
         root_canister_id: Principal,
     },
@@ -47,6 +48,7 @@ pub enum CyclesProbeAudience {
 pub struct DirectCanisterStatusObservation {
     pub cycles: u128,
     pub status_visibility: StatusVisibility,
+    pub controllers: Vec<Principal>,
 }
 
 #[derive(candid::CandidType, serde::Deserialize, serde::Serialize, Clone, Debug, PartialEq, Eq)]
@@ -81,6 +83,7 @@ pub trait CyclesProbeClient {
         probe_canister_id: Principal,
         target_canister_id: Principal,
     ) -> Result<u128, ClientError>;
+    async fn nns_root_cycles(&self, target_canister_id: Principal) -> Result<u128, ClientError>;
     async fn list_deployed_snses(&self) -> Result<ListDeployedSnsesResponse, ClientError>;
     async fn canister_info_controllers(
         &self,
@@ -150,6 +153,20 @@ impl CyclesProbeClient for IcCyclesProbeClient {
         nat_to_u128(&status.cycles)
     }
 
+    async fn nns_root_cycles(&self, target_canister_id: Principal) -> Result<u128, ClientError> {
+        let resp = ic_cdk::call::Call::bounded_wait(constants::nns_root_id(), "canister_status")
+            .with_arg(NnsRootCanisterStatusArgs {
+                canister_id: target_canister_id,
+            })
+            .change_timeout(60)
+            .await
+            .map_err(|e| ClientError::Call(format!("nns root canister_status failed: {e:?}")))?;
+        let status: NnsRootCanisterStatusResponse = resp.candid().map_err(|e| {
+            ClientError::Call(format!("decode nns root canister_status failed: {e:?}"))
+        })?;
+        nat_to_u128(&status.cycles)
+    }
+
     async fn list_deployed_snses(&self) -> Result<ListDeployedSnsesResponse, ClientError> {
         self.sns_wasm.list_deployed_snses().await
     }
@@ -195,9 +212,13 @@ impl CyclesProbeClient for IcCyclesProbeClient {
 fn direct_observation_from_status(
     status: CanisterStatusResult,
 ) -> Result<DirectCanisterStatusObservation, ClientError> {
+    let cycles = nat_to_u128(&status.cycles)?;
+    let controllers = status.settings.controllers;
+    let status_visibility = status.settings.status_visibility;
     Ok(DirectCanisterStatusObservation {
-        cycles: nat_to_u128(&status.cycles)?,
-        status_visibility: status.settings.status_visibility,
+        cycles,
+        status_visibility,
+        controllers,
     })
 }
 
@@ -208,6 +229,16 @@ struct BlackholeCanisterStatusArgs {
 
 #[derive(candid::CandidType, serde::Deserialize)]
 struct BlackholeCanisterStatus {
+    cycles: Nat,
+}
+
+#[derive(candid::CandidType, serde::Deserialize)]
+struct NnsRootCanisterStatusArgs {
+    canister_id: Principal,
+}
+
+#[derive(candid::CandidType, serde::Deserialize)]
+struct NnsRootCanisterStatusResponse {
     cycles: Nat,
 }
 
@@ -288,6 +319,24 @@ pub async fn probe_cycles_for_audience<C: CyclesProbeClient>(
         }
     }
 
+    if matches!(policy, CyclesProbePolicy::Auto) && target == constants::nns_root_id() {
+        match execute_route(
+            &mut state,
+            client,
+            target,
+            CyclesProbeRoute::NnsRoot,
+            audience,
+        )
+        .await
+        {
+            Ok(Some(success)) => return Ok(success),
+            Ok(None) => {}
+            Err(err) => state
+                .errors
+                .push(format!("canonical NNS root self-status failed: {err}")),
+        }
+    }
+
     match policy {
         CyclesProbePolicy::FixedBlackhole { canister_id } => {
             return match execute_route(
@@ -321,25 +370,60 @@ pub async fn probe_cycles_for_audience<C: CyclesProbeClient>(
         }
     }
 
-    for canister_id in constants::ordered_production_blackhole_canister_ids() {
-        match execute_route(
-            &mut state,
-            client,
-            target,
-            CyclesProbeRoute::Blackhole { canister_id },
-            audience,
-        )
-        .await
-        {
-            Ok(Some(success)) => return Ok(success),
-            Ok(None) => continue,
-            Err(err) => state
-                .errors
-                .push(format!("blackhole {} failed: {err}", canister_id.to_text())),
+    let controllers = if let Some(controllers) = &state.known_controllers {
+        Some(controllers.clone())
+    } else {
+        match client.canister_info_controllers(target).await {
+            Ok(controllers) => Some(controllers.into_iter().collect::<BTreeSet<_>>()),
+            Err(err) => {
+                state
+                    .errors
+                    .push(format!("canister_info controller discovery failed: {err}"));
+                None
+            }
+        }
+    };
+
+    if let Some(controllers) = &controllers {
+        for canister_id in constants::ordered_production_blackhole_canister_ids() {
+            if !controllers.contains(&canister_id) {
+                continue;
+            }
+            match execute_route(
+                &mut state,
+                client,
+                target,
+                CyclesProbeRoute::Blackhole { canister_id },
+                audience,
+            )
+            .await
+            {
+                Ok(Some(success)) => return Ok(success),
+                Ok(None) => continue,
+                Err(err) => state
+                    .errors
+                    .push(format!("blackhole {} failed: {err}", canister_id.to_text())),
+            }
+        }
+
+        if controllers.contains(&constants::nns_root_id()) {
+            match execute_route(
+                &mut state,
+                client,
+                target,
+                CyclesProbeRoute::NnsRoot,
+                audience,
+            )
+            .await
+            {
+                Ok(Some(success)) => return Ok(success),
+                Ok(None) => {}
+                Err(err) => state.errors.push(format!("NNS root route failed: {err}")),
+            }
         }
     }
 
-    match discover_sns_route(target, client).await {
+    match discover_sns_route(target, controllers.as_ref(), client).await {
         Ok(Some(route)) => match execute_route(&mut state, client, target, route, audience).await {
             Ok(Some(success)) => Ok(success),
             Ok(None) => state.failure("no cycles probe route could observe target".to_string()),
@@ -364,6 +448,7 @@ async fn execute_route<C: CyclesProbeClient>(
     let cycles = match route {
         CyclesProbeRoute::DirectCanisterStatus => {
             let observation = client.direct_canister_status(target).await?;
+            state.known_controllers = Some(observation.controllers.iter().copied().collect());
             if audience == CyclesProbeAudience::AnyCanister
                 && observation.status_visibility != StatusVisibility::Public
             {
@@ -378,6 +463,7 @@ async fn execute_route<C: CyclesProbeClient>(
         CyclesProbeRoute::Blackhole { canister_id } => {
             client.blackhole_cycles(canister_id, target).await?
         }
+        CyclesProbeRoute::NnsRoot => client.nns_root_cycles(target).await?,
         CyclesProbeRoute::SnsRoot { root_canister_id } => {
             client.sns_root_cycles(root_canister_id, target).await?
         }
@@ -399,6 +485,7 @@ fn status_visibility_label(visibility: &StatusVisibility) -> &'static str {
 
 async fn discover_sns_route<C: CyclesProbeClient>(
     target: Principal,
+    controllers: Option<&BTreeSet<Principal>>,
     client: &C,
 ) -> Result<Option<CyclesProbeRoute>, ClientError> {
     let deployed = client.list_deployed_snses().await?;
@@ -413,9 +500,9 @@ async fn discover_sns_route<C: CyclesProbeClient>(
         }
     }
 
-    let controllers = client.canister_info_controllers(target).await?;
     let candidate_roots = controllers
         .into_iter()
+        .flat_map(|controllers| controllers.iter().copied())
         .filter(|controller| roots.contains(controller))
         .collect::<BTreeSet<_>>();
     if candidate_roots.is_empty() {
@@ -510,6 +597,7 @@ struct ProbeState {
     attempted_routes: Vec<CyclesProbeRoute>,
     attempted_set: BTreeSet<CyclesProbeRoute>,
     errors: Vec<String>,
+    known_controllers: Option<BTreeSet<Principal>>,
 }
 
 impl ProbeState {
@@ -574,6 +662,7 @@ mod tests {
         SelfCycles(Principal),
         DirectCanisterStatus(Principal),
         Blackhole { probe: Principal, target: Principal },
+        NnsRootStatus(Principal),
         ListDeployedSnses,
         CanisterInfo(Principal),
         ListSnsCanisters(Principal),
@@ -586,6 +675,7 @@ mod tests {
         direct: Result<DirectCanisterStatusObservation, &'static str>,
         direct_status: Option<CanisterStatusResult>,
         blackhole: BTreeMap<Principal, TestResponse>,
+        nns_root: TestResponse,
         sns_root: BTreeMap<Principal, TestResponse>,
         sns_swap: BTreeMap<Principal, TestResponse>,
         deployed: Result<ListDeployedSnsesResponse, &'static str>,
@@ -601,6 +691,7 @@ mod tests {
                 direct: Err("direct status denied"),
                 direct_status: None,
                 blackhole: BTreeMap::new(),
+                nns_root: TestResponse::Err("missing"),
                 sns_root: BTreeMap::new(),
                 sns_swap: BTreeMap::new(),
                 deployed: Ok(ListDeployedSnsesResponse::default()),
@@ -660,6 +751,17 @@ mod tests {
                 target: target_canister_id,
             });
             response_to_result(self.blackhole.get(&probe_canister_id).cloned())
+        }
+
+        async fn nns_root_cycles(
+            &self,
+            target_canister_id: Principal,
+        ) -> Result<u128, ClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(TestCall::NnsRootStatus(target_canister_id));
+            response_to_result(Some(self.nns_root.clone()))
         }
 
         async fn list_deployed_snses(&self) -> Result<ListDeployedSnsesResponse, ClientError> {
@@ -866,6 +968,7 @@ mod tests {
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let client = RecordingClient {
+            controllers: Ok(vec![thirteen, fiduciary]),
             blackhole: BTreeMap::from([
                 (thirteen, TestResponse::Ok(77)),
                 (fiduciary, TestResponse::Ok(88)),
@@ -881,6 +984,7 @@ mod tests {
             vec![
                 TestCall::SelfCycles(target),
                 TestCall::DirectCanisterStatus(target),
+                TestCall::CanisterInfo(target),
                 blackhole_call(thirteen, target),
             ]
         );
@@ -892,6 +996,7 @@ mod tests {
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let client = RecordingClient {
+            controllers: Ok(vec![fiduciary, thirteen]),
             blackhole: BTreeMap::from([
                 (thirteen, TestResponse::Err("not controller")),
                 (fiduciary, TestResponse::Ok(88)),
@@ -907,6 +1012,7 @@ mod tests {
             vec![
                 TestCall::SelfCycles(target),
                 TestCall::DirectCanisterStatus(target),
+                TestCall::CanisterInfo(target),
                 blackhole_call(thirteen, target),
                 blackhole_call(fiduciary, target),
             ]
@@ -1041,7 +1147,7 @@ mod tests {
     fn auto_canonical_self_status_failure_continues_without_duplicate_target_call() {
         let target = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = constants::sns_wasm_id();
         let client = RecordingClient {
             blackhole: BTreeMap::from([
                 (target, TestResponse::Err("not readable through itself")),
@@ -1050,7 +1156,7 @@ mod tests {
             deployed: Ok(ListDeployedSnsesResponse {
                 instances: vec![deployed(root)],
             }),
-            controllers: Ok(vec![root]),
+            controllers: Ok(vec![fiduciary, root]),
             root_lists: BTreeMap::from([(
                 root,
                 Ok(ListSnsCanistersResponse {
@@ -1072,9 +1178,9 @@ mod tests {
                 TestCall::SelfCycles(target),
                 TestCall::DirectCanisterStatus(target),
                 blackhole_call(target, target),
+                TestCall::CanisterInfo(target),
                 blackhole_call(fiduciary, target),
                 TestCall::ListDeployedSnses,
-                TestCall::CanisterInfo(target),
                 TestCall::ListSnsCanisters(root),
                 root_status(root, target),
             ]
@@ -1092,7 +1198,7 @@ mod tests {
     #[test]
     fn cached_sns_root_success_stops_immediately() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let cached_root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let cached_root = constants::sns_wasm_id();
         let cached = CyclesProbeRoute::SnsRoot {
             root_canister_id: cached_root,
         };
@@ -1123,7 +1229,7 @@ mod tests {
     #[test]
     fn direct_success_outranks_cached_sns_root() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = constants::sns_wasm_id();
         let client = RecordingClient {
             direct: Ok(direct_observation(77, StatusVisibility::Public)),
             sns_root: BTreeMap::from([(root, TestResponse::Ok(99))]),
@@ -1194,6 +1300,7 @@ mod tests {
             canister_id: fiduciary,
         };
         let client = RecordingClient {
+            controllers: Ok(vec![thirteen, fiduciary]),
             blackhole: BTreeMap::from([
                 (fiduciary, TestResponse::Err("stale")),
                 (thirteen, TestResponse::Ok(1313)),
@@ -1216,6 +1323,7 @@ mod tests {
                 TestCall::SelfCycles(target),
                 TestCall::DirectCanisterStatus(target),
                 blackhole_call(fiduciary, target),
+                TestCall::CanisterInfo(target),
                 blackhole_call(thirteen, target),
             ]
         );
@@ -1232,7 +1340,7 @@ mod tests {
     #[test]
     fn cached_fiduciary_failure_then_13_node_failure_reaches_sns() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = constants::sns_wasm_id();
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let cached = CyclesProbeRoute::Blackhole {
@@ -1246,7 +1354,7 @@ mod tests {
             deployed: Ok(ListDeployedSnsesResponse {
                 instances: vec![deployed(root)],
             }),
-            controllers: Ok(vec![root]),
+            controllers: Ok(vec![thirteen, fiduciary, root]),
             root_lists: BTreeMap::from([(
                 root,
                 Ok(ListSnsCanistersResponse {
@@ -1274,9 +1382,9 @@ mod tests {
                 TestCall::SelfCycles(target),
                 TestCall::DirectCanisterStatus(target),
                 blackhole_call(fiduciary, target),
+                TestCall::CanisterInfo(target),
                 blackhole_call(thirteen, target),
                 TestCall::ListDeployedSnses,
-                TestCall::CanisterInfo(target),
                 TestCall::ListSnsCanisters(root),
                 root_status(root, target),
             ]
@@ -1294,7 +1402,7 @@ mod tests {
     #[test]
     fn cached_sns_swap_success_stops_immediately() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = constants::sns_wasm_id();
         let swap = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
         let cached = CyclesProbeRoute::SnsSwap {
             root_canister_id: root,
@@ -1327,7 +1435,7 @@ mod tests {
     #[test]
     fn direct_success_outranks_cached_sns_swap() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = constants::sns_wasm_id();
         let swap = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
         let client = RecordingClient {
             direct: Ok(direct_observation(77, StatusVisibility::Public)),
@@ -1365,6 +1473,7 @@ mod tests {
             canister_id: thirteen,
         };
         let client = RecordingClient {
+            controllers: Ok(vec![thirteen, fiduciary]),
             blackhole: BTreeMap::from([
                 (thirteen, TestResponse::Err("stale")),
                 (fiduciary, TestResponse::Ok(88)),
@@ -1387,6 +1496,7 @@ mod tests {
                 TestCall::SelfCycles(target),
                 TestCall::DirectCanisterStatus(target),
                 blackhole_call(thirteen, target),
+                TestCall::CanisterInfo(target),
                 blackhole_call(fiduciary, target),
             ]
         );
@@ -1409,6 +1519,7 @@ mod tests {
             canister_id: thirteen,
         };
         let client = RecordingClient {
+            controllers: Ok(vec![thirteen, fiduciary]),
             blackhole: BTreeMap::from([
                 (thirteen, TestResponse::Err("stale")),
                 (fiduciary, TestResponse::Ok(88)),
@@ -1435,16 +1546,11 @@ mod tests {
     }
 
     #[test]
-    fn framework_root_governance_ledger_index_resolve_from_sns_w_without_canister_info() {
+    fn canister_info_failure_does_not_block_framework_sns_root_resolution() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
-        let thirteen = constants::thirteen_node_blackhole_canister_id();
-        let fiduciary = constants::fiduciary_blackhole_canister_id();
+        let root = constants::sns_wasm_id();
         let client = RecordingClient {
-            blackhole: BTreeMap::from([
-                (thirteen, TestResponse::Err("not controller")),
-                (fiduciary, TestResponse::Err("not controller")),
-            ]),
+            controllers: Err("metadata unavailable"),
             deployed: Ok(ListDeployedSnsesResponse {
                 instances: vec![crate::sns::DeployedSns {
                     root_canister_id: Some(root),
@@ -1466,8 +1572,7 @@ mod tests {
             vec![
                 TestCall::SelfCycles(target),
                 TestCall::DirectCanisterStatus(target),
-                blackhole_call(thirteen, target),
-                blackhole_call(fiduciary, target),
+                TestCall::CanisterInfo(target),
                 TestCall::ListDeployedSnses,
                 root_status(root, target),
             ]
@@ -1477,14 +1582,9 @@ mod tests {
     #[test]
     fn framework_swap_resolves_from_sns_w_and_uses_swap_get_canister_status() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
-        let thirteen = constants::thirteen_node_blackhole_canister_id();
-        let fiduciary = constants::fiduciary_blackhole_canister_id();
+        let root = constants::sns_wasm_id();
         let client = RecordingClient {
-            blackhole: BTreeMap::from([
-                (thirteen, TestResponse::Err("not controller")),
-                (fiduciary, TestResponse::Err("not controller")),
-            ]),
+            controllers: Err("metadata unavailable"),
             deployed: Ok(ListDeployedSnsesResponse {
                 instances: vec![crate::sns::DeployedSns {
                     root_canister_id: Some(root),
@@ -1504,8 +1604,7 @@ mod tests {
             vec![
                 TestCall::SelfCycles(target),
                 TestCall::DirectCanisterStatus(target),
-                blackhole_call(thirteen, target),
-                blackhole_call(fiduciary, target),
+                TestCall::CanisterInfo(target),
                 TestCall::ListDeployedSnses,
                 TestCall::SnsSwapStatus(target),
             ]
@@ -1513,11 +1612,9 @@ mod tests {
     }
 
     #[test]
-    fn dapp_discovery_follows_blackholes_sns_w_canister_info_root_list_root_status() {
+    fn dapp_discovery_uses_controller_metadata_then_authenticated_sns_root() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
-        let thirteen = constants::thirteen_node_blackhole_canister_id();
-        let fiduciary = constants::fiduciary_blackhole_canister_id();
+        let root = constants::sns_wasm_id();
         let client = auto_discovery_client(
             target,
             root,
@@ -1536,10 +1633,8 @@ mod tests {
             vec![
                 TestCall::SelfCycles(target),
                 TestCall::DirectCanisterStatus(target),
-                blackhole_call(thirteen, target),
-                blackhole_call(fiduciary, target),
-                TestCall::ListDeployedSnses,
                 TestCall::CanisterInfo(target),
+                TestCall::ListDeployedSnses,
                 TestCall::ListSnsCanisters(root),
                 root_status(root, target),
             ]
@@ -1549,8 +1644,8 @@ mod tests {
     #[test]
     fn fake_controller_absent_from_sns_w_is_never_called() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let official_root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
-        let fake_root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let official_root = constants::sns_wasm_id();
+        let fake_root = constants::nns_governance_id();
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let client = RecordingClient {
@@ -1577,8 +1672,8 @@ mod tests {
     #[test]
     fn candidate_root_response_with_root_not_candidate_is_rejected() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let candidate_root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
-        let other_root = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let candidate_root = constants::sns_wasm_id();
+        let other_root = constants::nns_governance_id();
         let client = auto_discovery_client(
             target,
             candidate_root,
@@ -1600,7 +1695,7 @@ mod tests {
     #[test]
     fn archive_membership_resolves() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = constants::sns_wasm_id();
         let client = auto_discovery_client(
             target,
             root,
@@ -1624,7 +1719,7 @@ mod tests {
     #[test]
     fn extension_membership_resolves() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = constants::sns_wasm_id();
         let client = auto_discovery_client(
             target,
             root,
@@ -1650,8 +1745,8 @@ mod tests {
     #[test]
     fn first_official_candidate_failure_followed_by_second_candidate_success() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root_a = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
-        let root_b = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let root_a = constants::sns_wasm_id();
+        let root_b = constants::nns_governance_id();
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let client = RecordingClient {
@@ -1664,17 +1759,17 @@ mod tests {
             }),
             controllers: Ok(vec![root_a, root_b]),
             root_lists: BTreeMap::from([
-                (root_a, Err("temporarily unavailable")),
+                (root_b, Err("temporarily unavailable")),
                 (
-                    root_b,
+                    root_a,
                     Ok(ListSnsCanistersResponse {
-                        root: Some(root_b),
+                        root: Some(root_a),
                         dapps: vec![target],
                         ..Default::default()
                     }),
                 ),
             ]),
-            sns_root: BTreeMap::from([(root_b, TestResponse::Ok(456))]),
+            sns_root: BTreeMap::from([(root_a, TestResponse::Ok(456))]),
             ..Default::default()
         };
 
@@ -1686,13 +1781,11 @@ mod tests {
             vec![
                 TestCall::SelfCycles(target),
                 TestCall::DirectCanisterStatus(target),
-                blackhole_call(thirteen, target),
-                blackhole_call(fiduciary, target),
-                TestCall::ListDeployedSnses,
                 TestCall::CanisterInfo(target),
-                TestCall::ListSnsCanisters(root_a),
+                TestCall::ListDeployedSnses,
                 TestCall::ListSnsCanisters(root_b),
-                root_status(root_b, target),
+                TestCall::ListSnsCanisters(root_a),
+                root_status(root_a, target),
             ]
         );
     }
@@ -1700,7 +1793,7 @@ mod tests {
     #[test]
     fn failed_cached_sns_route_is_not_executed_twice_during_rediscovery() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = constants::sns_wasm_id();
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let cached = CyclesProbeRoute::SnsRoot {
@@ -1742,7 +1835,7 @@ mod tests {
     #[test]
     fn sns_w_response_with_only_root_canister_id_decodes() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = constants::sns_wasm_id();
         let client = RecordingClient {
             deployed: Ok(ListDeployedSnsesResponse {
                 instances: vec![deployed(root)],
@@ -1760,7 +1853,7 @@ mod tests {
     #[test]
     fn list_sns_canisters_with_missing_extensions_decodes() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = constants::sns_wasm_id();
         let list = ListSnsCanistersResponse {
             root: Some(root),
             dapps: vec![target],
@@ -1779,7 +1872,7 @@ mod tests {
     #[test]
     fn list_sns_canisters_with_populated_optional_extensions_decodes() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
+        let root = constants::sns_wasm_id();
         let list = ListSnsCanistersResponse {
             root: Some(root),
             extensions: Some(SnsExtensions {
@@ -1799,8 +1892,8 @@ mod tests {
     #[test]
     fn all_candidate_root_failures_are_preserved() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root_a = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
-        let root_b = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let root_a = constants::sns_wasm_id();
+        let root_b = constants::nns_governance_id();
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
         let client = RecordingClient {
@@ -1830,8 +1923,8 @@ mod tests {
     #[test]
     fn one_official_candidate_nonmatching_and_another_failing_is_not_definitively_absent() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let root_a = principal("r7inp-6aaaa-aaaaa-aaabq-cai");
-        let root_b = principal("qaa6y-5yaaa-aaaaa-aaafa-cai");
+        let root_a = constants::sns_wasm_id();
+        let root_b = constants::nns_governance_id();
         let unrelated = principal("77deu-baaaa-aaaar-qb6za-cai");
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let fiduciary = constants::fiduciary_blackhole_canister_id();
@@ -1865,12 +1958,10 @@ mod tests {
             vec![
                 TestCall::SelfCycles(target),
                 TestCall::DirectCanisterStatus(target),
-                blackhole_call(thirteen, target),
-                blackhole_call(fiduciary, target),
-                TestCall::ListDeployedSnses,
                 TestCall::CanisterInfo(target),
-                TestCall::ListSnsCanisters(root_a),
+                TestCall::ListDeployedSnses,
                 TestCall::ListSnsCanisters(root_b),
+                TestCall::ListSnsCanisters(root_a),
             ]
         );
         assert!(err.message.contains(&root_b.to_text()));
@@ -1881,9 +1972,18 @@ mod tests {
         cycles: u128,
         status_visibility: StatusVisibility,
     ) -> DirectCanisterStatusObservation {
+        direct_observation_with_controllers(cycles, status_visibility, Vec::new())
+    }
+
+    fn direct_observation_with_controllers(
+        cycles: u128,
+        status_visibility: StatusVisibility,
+        controllers: Vec<Principal>,
+    ) -> DirectCanisterStatusObservation {
         DirectCanisterStatusObservation {
             cycles,
             status_visibility,
+            controllers,
         }
     }
 
@@ -1917,6 +2017,7 @@ mod tests {
         let thirteen = constants::thirteen_node_blackhole_canister_id();
         let client = RecordingClient {
             direct: Err("denied"),
+            controllers: Ok(vec![thirteen]),
             blackhole: BTreeMap::from([(thirteen, TestResponse::Ok(88))]),
             ..Default::default()
         };
@@ -2008,10 +2109,15 @@ mod tests {
     #[test]
     fn any_canister_non_public_direct_continues_to_reusable_fallback() {
         let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let thirteen = constants::thirteen_node_blackhole_canister_id();
+        let nns_root = constants::nns_root_id();
         let client = RecordingClient {
-            direct: Ok(direct_observation(123, StatusVisibility::Controllers)),
-            blackhole: BTreeMap::from([(thirteen, TestResponse::Ok(456))]),
+            direct: Ok(direct_observation_with_controllers(
+                123,
+                StatusVisibility::Controllers,
+                vec![nns_root],
+            )),
+            controllers: Err("must not call canister_info"),
+            nns_root: TestResponse::Ok(456),
             ..Default::default()
         };
         let result = block_on(probe_cycles_for_audience(
@@ -2023,17 +2129,214 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(result.cycles, 456);
+        assert_eq!(result.route, Some(CyclesProbeRoute::NnsRoot));
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::DirectCanisterStatus(target),
+                TestCall::NnsRootStatus(target),
+            ]
+        );
+    }
+
+    #[test]
+    fn direct_failure_discovers_nns_root_from_controller_metadata() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let client = RecordingClient {
+            controllers: Ok(vec![constants::nns_root_id()]),
+            nns_root: TestResponse::Ok(123),
+            ..Default::default()
+        };
+
+        let result = probe_auto(target, None, &client).unwrap();
+
+        assert_eq!(
+            result,
+            CyclesProbeSuccess {
+                cycles: 123,
+                route: Some(CyclesProbeRoute::NnsRoot),
+            }
+        );
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+                TestCall::CanisterInfo(target),
+                TestCall::NnsRootStatus(target),
+            ]
+        );
+    }
+
+    #[test]
+    fn unrelated_controller_triggers_no_blackhole_or_nns_proxy_call() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let unrelated = constants::nns_governance_id();
+        let client = RecordingClient {
+            controllers: Ok(vec![unrelated]),
+            ..Default::default()
+        };
+
+        assert!(probe_auto(target, None, &client).is_err());
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+                TestCall::CanisterInfo(target),
+                TestCall::ListDeployedSnses,
+            ]
+        );
+    }
+
+    #[test]
+    fn only_controller_blackhole_is_called() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let fiduciary = constants::fiduciary_blackhole_canister_id();
+        let client = RecordingClient {
+            controllers: Ok(vec![fiduciary]),
+            blackhole: BTreeMap::from([(fiduciary, TestResponse::Ok(88))]),
+            ..Default::default()
+        };
+
+        assert_eq!(probe_auto(target, None, &client).unwrap().cycles, 88);
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+                TestCall::CanisterInfo(target),
+                blackhole_call(fiduciary, target),
+            ]
+        );
+    }
+
+    #[test]
+    fn nns_root_failure_can_fall_through_to_authenticated_sns_root() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let sns_root = constants::sns_wasm_id();
+        let client = RecordingClient {
+            controllers: Ok(vec![constants::nns_root_id(), sns_root]),
+            nns_root: TestResponse::Err("temporarily unavailable"),
+            deployed: Ok(ListDeployedSnsesResponse {
+                instances: vec![deployed(sns_root)],
+            }),
+            root_lists: BTreeMap::from([(
+                sns_root,
+                Ok(ListSnsCanistersResponse {
+                    root: Some(sns_root),
+                    dapps: vec![target],
+                    ..Default::default()
+                }),
+            )]),
+            sns_root: BTreeMap::from([(sns_root, TestResponse::Ok(456))]),
+            ..Default::default()
+        };
+
+        let result = probe_auto(target, None, &client).unwrap();
+
+        assert_eq!(result.cycles, 456);
         assert_eq!(
             result.route,
-            Some(CyclesProbeRoute::Blackhole {
-                canister_id: thirteen
+            Some(CyclesProbeRoute::SnsRoot {
+                root_canister_id: sns_root,
             })
         );
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+                TestCall::CanisterInfo(target),
+                TestCall::NnsRootStatus(target),
+                TestCall::ListDeployedSnses,
+                TestCall::ListSnsCanisters(sns_root),
+                root_status(sns_root, target),
+            ]
+        );
+    }
+
+    #[test]
+    fn auto_nns_root_self_status_does_not_require_controller_discovery() {
+        let target = constants::nns_root_id();
+        let client = RecordingClient {
+            nns_root: TestResponse::Ok(999),
+            ..Default::default()
+        };
+
+        let result = probe_auto(target, None, &client).unwrap();
+
+        assert_eq!(result.route, Some(CyclesProbeRoute::NnsRoot));
+        assert_eq!(result.cycles, 999);
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+                TestCall::NnsRootStatus(target),
+            ]
+        );
+    }
+
+    #[test]
+    fn cached_nns_root_succeeds_without_fresh_discovery() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let client = RecordingClient {
+            nns_root: TestResponse::Ok(321),
+            ..Default::default()
+        };
+
+        let result = probe_auto(target, Some(CyclesProbeRoute::NnsRoot), &client).unwrap();
+
+        assert_eq!(result.cycles, 321);
+        assert_eq!(result.route, Some(CyclesProbeRoute::NnsRoot));
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+                TestCall::NnsRootStatus(target),
+            ]
+        );
+    }
+
+    #[test]
+    fn public_direct_status_outranks_cached_nns_root() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let client = RecordingClient {
+            direct: Ok(direct_observation(777, StatusVisibility::Public)),
+            nns_root: TestResponse::Ok(321),
+            ..Default::default()
+        };
+
+        let result = probe_auto(target, Some(CyclesProbeRoute::NnsRoot), &client).unwrap();
+
+        assert_eq!(result.cycles, 777);
+        assert_eq!(result.route, Some(CyclesProbeRoute::DirectCanisterStatus));
+        assert_eq!(
+            client.calls(),
+            vec![
+                TestCall::SelfCycles(target),
+                TestCall::DirectCanisterStatus(target),
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_cached_nns_root_is_not_called_twice_after_rediscovery() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let client = RecordingClient {
+            controllers: Ok(vec![constants::nns_root_id()]),
+            nns_root: TestResponse::Err("stale"),
+            ..Default::default()
+        };
+
+        assert!(probe_auto(target, Some(CyclesProbeRoute::NnsRoot), &client).is_err());
         assert_eq!(
             client
                 .calls()
                 .iter()
-                .filter(|call| **call == TestCall::DirectCanisterStatus(target))
+                .filter(|call| **call == TestCall::NnsRootStatus(target))
                 .count(),
             1
         );
@@ -2077,11 +2380,12 @@ mod tests {
                 cycles: too_large,
                 module_hash: None,
                 settings: DefiniteCanisterSettings {
-                    controllers: Vec::new(),
+                    controllers: vec![thirteen],
                     log_visibility: LogVisibility::Public,
                     status_visibility: StatusVisibility::Public,
                 },
             }),
+            controllers: Ok(vec![thirteen]),
             blackhole: BTreeMap::from([(thirteen, TestResponse::Ok(88))]),
             ..Default::default()
         };
@@ -2100,8 +2404,21 @@ mod tests {
             vec![
                 TestCall::SelfCycles(target),
                 TestCall::DirectCanisterStatus(target),
+                TestCall::CanisterInfo(target),
                 blackhole_call(thirteen, target),
             ]
         );
+    }
+
+    #[test]
+    fn nns_root_response_cycles_use_checked_u128_conversion() {
+        let response = NnsRootCanisterStatusResponse {
+            cycles: Nat::from(u128::MAX) + Nat::from(1_u8),
+        };
+
+        let err = nat_to_u128(&response.cycles).unwrap_err();
+
+        assert!(matches!(err, ClientError::Convert(_)));
+        assert!(err.to_string().contains("does not fit u128"));
     }
 }

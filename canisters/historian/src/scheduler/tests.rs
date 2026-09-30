@@ -749,9 +749,11 @@ mod tests {
         self_cycles: Mutex<BTreeMap<Principal, u128>>,
         default_blackhole_response: Mutex<ProbeResponse>,
         blackhole_responses_by_target: Mutex<BTreeMap<Principal, ProbeResponse>>,
+        nns_root_response: Mutex<ProbeResponse>,
         root_responses: Mutex<BTreeMap<Principal, ProbeResponse>>,
         swap_responses: Mutex<BTreeMap<Principal, ProbeResponse>>,
         blackhole_calls: Mutex<Vec<(Principal, Principal)>>,
+        nns_root_calls: Mutex<Vec<Principal>>,
         root_calls: Mutex<Vec<(Principal, Principal)>>,
         swap_calls: Mutex<Vec<Principal>>,
     }
@@ -799,6 +801,13 @@ mod tests {
         async fn blackhole_cycles(
             &self,
             _probe_canister_id: Principal,
+            _target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            unreachable!("held self-cycle response resolves the probe")
+        }
+
+        async fn nns_root_cycles(
+            &self,
             _target_canister_id: Principal,
         ) -> Result<u128, jupiter_ic_clients::ClientError> {
             unreachable!("held self-cycle response resolves the probe")
@@ -852,9 +861,13 @@ mod tests {
                 self_cycles: Mutex::new(BTreeMap::new()),
                 default_blackhole_response: Mutex::new(ProbeResponse::Ok(cycles)),
                 blackhole_responses_by_target: Mutex::new(BTreeMap::new()),
+                nns_root_response: Mutex::new(ProbeResponse::Err(
+                    "missing NNS root response".to_string(),
+                )),
                 root_responses: Mutex::new(BTreeMap::new()),
                 swap_responses: Mutex::new(BTreeMap::new()),
                 blackhole_calls: Mutex::new(Vec::new()),
+                nns_root_calls: Mutex::new(Vec::new()),
                 root_calls: Mutex::new(Vec::new()),
                 swap_calls: Mutex::new(Vec::new()),
             }
@@ -886,6 +899,11 @@ mod tests {
 
         fn with_root_response(self, root: Principal, response: ProbeResponse) -> Self {
             self.root_responses.lock().unwrap().insert(root, response);
+            self
+        }
+
+        fn with_nns_root_response(self, response: ProbeResponse) -> Self {
+            *self.nns_root_response.lock().unwrap() = response;
             self
         }
 
@@ -951,6 +969,17 @@ mod tests {
             }
         }
 
+        async fn nns_root_cycles(
+            &self,
+            target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            self.nns_root_calls.lock().unwrap().push(target_canister_id);
+            match self.nns_root_response.lock().unwrap().clone() {
+                ProbeResponse::Ok(cycles) => Ok(cycles),
+                ProbeResponse::Err(message) => Err(jupiter_ic_clients::ClientError::Call(message)),
+            }
+        }
+
         async fn list_deployed_snses(
             &self,
         ) -> Result<
@@ -964,7 +993,7 @@ mod tests {
             &self,
             _target: Principal,
         ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
-            Ok(Vec::new())
+            Ok(jupiter_ic_clients::constants::ordered_production_blackhole_canister_ids().to_vec())
         }
 
         async fn list_sns_canisters(
@@ -2221,6 +2250,41 @@ mod tests {
                 .expect("SNS root sample");
             assert_eq!(sample.source, CyclesSampleSource::SnsRootStatus);
         });
+    }
+
+    #[test]
+    fn nns_root_success_is_cached_and_records_nns_root_status_source() {
+        configure_state(10);
+        let target = principal("jufzc-caaaa-aaaar-qb5da-cai");
+        state::with_state_mut(|st| {
+            st.cached_cycles_probe_routes
+                .insert(target, CyclesProbeRoute::NnsRoot);
+        });
+        let cycles_probe = RecordingCyclesProbeClient::failing_blackhole("not controller")
+            .with_nns_root_response(ProbeResponse::Ok(888));
+
+        block_on(probe_and_record_cycles(
+            123_000_000_000,
+            123,
+            target,
+            100,
+            &cycles_probe,
+        ))
+        .unwrap();
+
+        state::with_state(|st| {
+            assert_eq!(
+                st.cached_cycles_probe_routes.get(&target),
+                Some(&CyclesProbeRoute::NnsRoot)
+            );
+            let sample = st
+                .cycles_history
+                .get(&target)
+                .and_then(|history| history.last())
+                .expect("NNS root sample");
+            assert_eq!(sample.source, CyclesSampleSource::NnsRootStatus);
+        });
+        assert_eq!(*cycles_probe.nns_root_calls.lock().unwrap(), vec![target]);
     }
 
     #[test]

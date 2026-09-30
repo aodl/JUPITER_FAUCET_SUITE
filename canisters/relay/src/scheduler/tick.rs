@@ -2132,6 +2132,15 @@ mod tests {
                 .map_err(jupiter_ic_clients::ClientError::Call)
         }
 
+        async fn nns_root_cycles(
+            &self,
+            _target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            Err(jupiter_ic_clients::ClientError::Call(
+                "mock NNS root probe failed".to_string(),
+            ))
+        }
+
         async fn list_deployed_snses(
             &self,
         ) -> Result<
@@ -2145,7 +2154,7 @@ mod tests {
             &self,
             _target: Principal,
         ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
-            Ok(Vec::new())
+            Ok(jupiter_ic_clients::constants::ordered_production_blackhole_canister_ids().to_vec())
         }
 
         async fn list_sns_canisters(
@@ -2208,6 +2217,15 @@ mod tests {
                 })
         }
 
+        async fn nns_root_cycles(
+            &self,
+            _target_canister_id: Principal,
+        ) -> Result<u128, jupiter_ic_clients::ClientError> {
+            Err(jupiter_ic_clients::ClientError::Call(
+                "mock NNS root probe failed".to_string(),
+            ))
+        }
+
         async fn list_deployed_snses(
             &self,
         ) -> Result<
@@ -2221,7 +2239,7 @@ mod tests {
             &self,
             _target: Principal,
         ) -> Result<Vec<Principal>, jupiter_ic_clients::ClientError> {
-            Ok(Vec::new())
+            Ok(jupiter_ic_clients::constants::ordered_production_blackhole_canister_ids().to_vec())
         }
 
         async fn list_sns_canisters(

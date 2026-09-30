@@ -67,6 +67,7 @@ export const idlFactory = ({ IDL }) => {
     'SnsSwapStatus' : IDL.Null,
     'DirectCanisterStatus' : IDL.Null,
     'BlackholeStatus' : IDL.Null,
+    'NnsRootStatus' : IDL.Null,
     'SnsRootStatus' : IDL.Null,
     'SelfCanister' : IDL.Null,
     'SnsRootSummary' : IDL.Null,

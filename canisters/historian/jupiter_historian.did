@@ -29,6 +29,7 @@ type CyclesSampleSource = variant {
   SelfCanister;
   DirectCanisterStatus;
   BlackholeStatus;
+  NnsRootStatus;
   SnsRootStatus;
   SnsSwapStatus;
   SnsRootSummary;
