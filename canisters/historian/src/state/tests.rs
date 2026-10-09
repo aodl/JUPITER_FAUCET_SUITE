@@ -31,6 +31,24 @@ mod tests {
     }
 
     #[derive(CandidType, Serialize)]
+    struct FrozenCommitmentSample {
+        tx_id: u64,
+        timestamp_nanos: Option<u64>,
+        amount_e8s: u64,
+        counts_toward_faucet: bool,
+    }
+
+    #[derive(CandidType, Serialize)]
+    struct FrozenRecentCommitment {
+        canister_id: Principal,
+        raw_icp_memo_text: Option<String>,
+        tx_id: u64,
+        timestamp_nanos: Option<u64>,
+        amount_e8s: u64,
+        counts_toward_faucet: bool,
+    }
+
+    #[derive(CandidType, Serialize)]
     struct DeployedStableRootState {
         config: StableConfig,
         last_indexed_staking_tx_id: Option<u64>,
@@ -252,6 +270,86 @@ mod tests {
         CommitmentRouteKey::from_public(&route).expect("valid commitment route")
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    enum FrozenLegacyCommitmentRouteKey {
+        CyclesTopUp {
+            canister: PrincipalKey,
+        },
+        RawIcp {
+            destination_canister: PrincipalKey,
+            memo: Vec<u8>,
+        },
+        NeuronStake {
+            neuron_id: u64,
+            memo: Option<Vec<u8>>,
+        },
+    }
+
+    impl Storable for FrozenLegacyCommitmentRouteKey {
+        fn to_bytes(&self) -> Cow<'_, [u8]> {
+            Cow::Owned(self.clone().into_bytes())
+        }
+
+        fn into_bytes(self) -> Vec<u8> {
+            match self {
+                Self::CyclesTopUp { canister } => {
+                    let canister = canister.into_bytes();
+                    let mut out = vec![0, canister.len() as u8];
+                    out.extend_from_slice(&canister);
+                    out
+                }
+                Self::RawIcp {
+                    destination_canister,
+                    memo,
+                } => {
+                    let destination_canister = destination_canister.into_bytes();
+                    let mut out = vec![1, destination_canister.len() as u8];
+                    out.extend_from_slice(&destination_canister);
+                    out.push(memo.len() as u8);
+                    out.extend_from_slice(&memo);
+                    out
+                }
+                Self::NeuronStake { neuron_id, memo } => {
+                    let mut out = vec![2];
+                    out.extend_from_slice(&neuron_id.to_be_bytes());
+                    match memo {
+                        None => out.push(0),
+                        Some(memo) => {
+                            out.push(1);
+                            out.push(memo.len() as u8);
+                            out.extend_from_slice(&memo);
+                        }
+                    }
+                    out
+                }
+            }
+        }
+
+        fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+            match CommitmentRouteKey::from_bytes(bytes) {
+                CommitmentRouteKey::CyclesTopUp { canister } => Self::CyclesTopUp { canister },
+                CommitmentRouteKey::RawIcp {
+                    destination_canister,
+                    memo,
+                } => Self::RawIcp {
+                    destination_canister,
+                    memo,
+                },
+                CommitmentRouteKey::NeuronStake { neuron_id, memo } => {
+                    Self::NeuronStake { neuron_id, memo }
+                }
+                CommitmentRouteKey::RawIcpSubaccount { .. } => {
+                    panic!("legacy route key cannot decode numbered subaccounts")
+                }
+            }
+        }
+
+        const BOUND: Bound = Bound::Bounded {
+            max_size: 64,
+            is_fixed_size: false,
+        };
+    }
+
     #[test]
     fn commitment_route_key_round_trips_and_keeps_exact_routes_isolated() {
         let short = principal(&[1]);
@@ -264,16 +362,29 @@ mod tests {
                 canister_id: maximum,
             },
             crate::CommitmentRoute::RawIcp {
+                destination_subaccount: None,
                 destination_canister_id: short,
                 memo: Vec::new(),
             },
             crate::CommitmentRoute::RawIcp {
+                destination_subaccount: None,
                 destination_canister_id: short,
                 memo: b"target-1".to_vec(),
             },
             crate::CommitmentRoute::RawIcp {
+                destination_subaccount: None,
                 destination_canister_id: short,
                 memo: max_memo.clone(),
+            },
+            crate::CommitmentRoute::RawIcp {
+                destination_subaccount: jupiter_memo_policy::numbered_subaccount(1).map(Vec::from),
+                destination_canister_id: short,
+                memo: b"target-1".to_vec(),
+            },
+            crate::CommitmentRoute::RawIcp {
+                destination_subaccount: jupiter_memo_policy::numbered_subaccount(50).map(Vec::from),
+                destination_canister_id: short,
+                memo: b"target-1".to_vec(),
             },
             crate::CommitmentRoute::NeuronStake {
                 neuron_id: 1,
@@ -302,15 +413,28 @@ mod tests {
         let distinct = BTreeSet::from([
             route_key(crate::CommitmentRoute::CyclesTopUp { canister_id: short }),
             route_key(crate::CommitmentRoute::RawIcp {
+                destination_subaccount: None,
                 destination_canister_id: short,
                 memo: Vec::new(),
             }),
             route_key(crate::CommitmentRoute::RawIcp {
+                destination_subaccount: None,
                 destination_canister_id: short,
                 memo: b"x".to_vec(),
             }),
             route_key(crate::CommitmentRoute::RawIcp {
+                destination_subaccount: None,
                 destination_canister_id: other,
+                memo: Vec::new(),
+            }),
+            route_key(crate::CommitmentRoute::RawIcp {
+                destination_subaccount: jupiter_memo_policy::numbered_subaccount(1).map(Vec::from),
+                destination_canister_id: short,
+                memo: Vec::new(),
+            }),
+            route_key(crate::CommitmentRoute::RawIcp {
+                destination_subaccount: jupiter_memo_policy::numbered_subaccount(50).map(Vec::from),
+                destination_canister_id: short,
                 memo: Vec::new(),
             }),
             route_key(crate::CommitmentRoute::NeuronStake {
@@ -330,7 +454,126 @@ mod tests {
                 memo: Some(b"x".to_vec()),
             }),
         ]);
-        assert_eq!(distinct.len(), 8);
+        assert_eq!(distinct.len(), 10);
+
+        let legacy_default = route_key(crate::CommitmentRoute::RawIcp {
+            destination_subaccount: None,
+            destination_canister_id: short,
+            memo: b"same".to_vec(),
+        });
+        let explicit_zero = route_key(crate::CommitmentRoute::RawIcp {
+            destination_subaccount: Some(vec![0; 32]),
+            destination_canister_id: short,
+            memo: b"same".to_vec(),
+        });
+        assert_eq!(legacy_default, explicit_zero);
+        assert_eq!(legacy_default.to_bytes()[0], 1);
+        assert_eq!(
+            route_key(crate::CommitmentRoute::RawIcp {
+                destination_subaccount: jupiter_memo_policy::numbered_subaccount(1).map(Vec::from),
+                destination_canister_id: short,
+                memo: b"same".to_vec(),
+            })
+            .to_bytes()[0],
+            3
+        );
+    }
+
+    #[test]
+    fn legacy_route_key_map_reopens_with_numbered_routes_without_rewriting_old_keys() {
+        use ic_stable_structures::{StableBTreeMap, VectorMemory};
+
+        let memory = VectorMemory::default();
+        let owner = PrincipalKey::from(&principal(&[1]));
+        let cycles = FrozenLegacyCommitmentRouteKey::CyclesTopUp {
+            canister: owner.clone(),
+        };
+        let raw = FrozenLegacyCommitmentRouteKey::RawIcp {
+            destination_canister: owner.clone(),
+            memo: b"x".to_vec(),
+        };
+        let neuron = FrozenLegacyCommitmentRouteKey::NeuronStake {
+            neuron_id: 7,
+            memo: Some(b"n".to_vec()),
+        };
+        {
+            let mut legacy: StableBTreeMap<
+                FrozenLegacyCommitmentRouteKey,
+                CommitmentRouteRollup,
+                _,
+            > = StableBTreeMap::init(memory.clone());
+            legacy.insert(
+                cycles.clone(),
+                CommitmentRouteRollup {
+                    qualifying_commitment_count: 1,
+                    total_qualifying_committed_e8s: 11,
+                },
+            );
+            legacy.insert(
+                raw.clone(),
+                CommitmentRouteRollup {
+                    qualifying_commitment_count: 2,
+                    total_qualifying_committed_e8s: 22,
+                },
+            );
+            legacy.insert(
+                neuron.clone(),
+                CommitmentRouteRollup {
+                    qualifying_commitment_count: 3,
+                    total_qualifying_committed_e8s: 33,
+                },
+            );
+        }
+
+        let mut current: StableBTreeMap<CommitmentRouteKey, CommitmentRouteRollup, _> =
+            StableBTreeMap::init(memory);
+        for (legacy, expected) in [(cycles, 11), (raw, 22), (neuron, 33)] {
+            let key = CommitmentRouteKey::from_bytes(legacy.to_bytes());
+            assert_eq!(
+                current.get(&key).unwrap().total_qualifying_committed_e8s,
+                expected
+            );
+        }
+        let numbered = CommitmentRouteKey::RawIcpSubaccount {
+            destination_canister: owner,
+            subaccount_number: 50,
+            memo: b"x".to_vec(),
+        };
+        current.insert(
+            numbered.clone(),
+            CommitmentRouteRollup {
+                qualifying_commitment_count: 4,
+                total_qualifying_committed_e8s: 44,
+            },
+        );
+        assert_eq!(current.len(), 4);
+        assert_eq!(
+            current
+                .get(&numbered)
+                .unwrap()
+                .total_qualifying_committed_e8s,
+            44
+        );
+        assert_eq!(
+            current
+                .iter()
+                .map(|entry| entry.key().clone())
+                .collect::<Vec<_>>(),
+            vec![
+                CommitmentRouteKey::CyclesTopUp {
+                    canister: PrincipalKey::from(&principal(&[1])),
+                },
+                CommitmentRouteKey::RawIcp {
+                    destination_canister: PrincipalKey::from(&principal(&[1])),
+                    memo: b"x".to_vec(),
+                },
+                CommitmentRouteKey::NeuronStake {
+                    neuron_id: 7,
+                    memo: Some(b"n".to_vec()),
+                },
+                numbered,
+            ]
+        );
     }
 
     #[test]
@@ -346,6 +589,19 @@ mod tests {
                 bytes
             },
             vec![0, 1, 1, 0],
+            vec![3, 1, 1],
+            {
+                let mut bytes = vec![3, 1, 1];
+                bytes.extend_from_slice(&0u64.to_be_bytes());
+                bytes.push(0);
+                bytes
+            },
+            {
+                let mut bytes = vec![3, 1, 1];
+                bytes.extend_from_slice(&1u64.to_be_bytes());
+                bytes.extend_from_slice(&[0, 9]);
+                bytes
+            },
         ];
         for bytes in malformed {
             assert!(std::panic::catch_unwind(|| {
@@ -359,8 +615,35 @@ mod tests {
     fn public_commitment_route_conversion_is_bounded_and_policy_safe() {
         assert!(
             CommitmentRouteKey::from_public(&crate::CommitmentRoute::RawIcp {
+                destination_subaccount: None,
                 destination_canister_id: principal(&[1]),
                 memo: vec![0; 33],
+            })
+            .is_none()
+        );
+        assert!(
+            CommitmentRouteKey::from_public(&crate::CommitmentRoute::RawIcp {
+                destination_subaccount: Some(vec![0; 31]),
+                destination_canister_id: principal(&[1]),
+                memo: Vec::new(),
+            })
+            .is_none()
+        );
+        let mut unsupported_subaccount = vec![0; 32];
+        unsupported_subaccount[0] = 1;
+        assert!(
+            CommitmentRouteKey::from_public(&crate::CommitmentRoute::RawIcp {
+                destination_subaccount: Some(unsupported_subaccount),
+                destination_canister_id: principal(&[1]),
+                memo: Vec::new(),
+            })
+            .is_none()
+        );
+        assert!(
+            CommitmentRouteKey::from_public(&crate::CommitmentRoute::RawIcp {
+                destination_subaccount: jupiter_memo_policy::numbered_subaccount(1).map(Vec::from),
+                destination_canister_id: principal(&[7; 29]),
+                memo: vec![b'x'; 25],
             })
             .is_none()
         );
@@ -388,6 +671,7 @@ mod tests {
         }
         assert!(
             CommitmentRouteKey::from_public(&crate::CommitmentRoute::RawIcp {
+                destination_subaccount: None,
                 destination_canister_id: principal(&[1]),
                 memo: Vec::new(),
             })
@@ -481,6 +765,7 @@ mod tests {
             canister_id: principal(&[21]),
         });
         let raw_key = route_key(crate::CommitmentRoute::RawIcp {
+            destination_subaccount: None,
             destination_canister_id: principal(&[22]),
             memo: b"exact".to_vec(),
         });
@@ -886,6 +1171,43 @@ mod tests {
     }
 
     #[test]
+    fn old_commitment_sample_decodes_as_default_account_and_new_metadata_round_trips() {
+        let old_bytes = candid::encode_one(FrozenCommitmentSample {
+            tx_id: 7,
+            timestamp_nanos: Some(8),
+            amount_e8s: 9,
+            counts_toward_faucet: true,
+        })
+        .unwrap();
+        let old = CommitmentSample::from_bytes(Cow::Owned(old_bytes));
+        assert_eq!(old.raw_icp_destination_subaccount, None);
+
+        let current = CommitmentSample {
+            tx_id: 10,
+            timestamp_nanos: Some(11),
+            amount_e8s: 12,
+            counts_toward_faucet: true,
+            raw_icp_destination_subaccount: jupiter_memo_policy::numbered_subaccount(256)
+                .map(Vec::from),
+        };
+        assert_eq!(CommitmentSample::from_bytes(current.to_bytes()), current);
+
+        let owner = principal(&[1]);
+        let old_recent_bytes = candid::encode_one(FrozenRecentCommitment {
+            canister_id: owner,
+            raw_icp_memo_text: Some("memo".to_string()),
+            tx_id: 13,
+            timestamp_nanos: Some(14),
+            amount_e8s: 15,
+            counts_toward_faucet: true,
+        })
+        .unwrap();
+        let old_recent: RecentCommitment = candid::decode_one(&old_recent_bytes).unwrap();
+        assert_eq!(old_recent.canister_id, owner);
+        assert_eq!(old_recent.raw_icp_destination_subaccount, None);
+    }
+
+    #[test]
     fn legacy_source_set_decodes_as_tracking_reasons() {
         let frozen = FrozenMapTrackingReasonSet(BTreeSet::from([
             FrozenMapCanisterSource::MemoCommitment,
@@ -1167,6 +1489,7 @@ mod tests {
                 timestamp_nanos: Some(77),
                 amount_e8s: 100_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.raw_icp_commitment_history.insert(
@@ -1176,6 +1499,7 @@ mod tests {
                 timestamp_nanos: Some(78),
                 amount_e8s: 200_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.neuron_commitment_history.insert(
@@ -1185,6 +1509,7 @@ mod tests {
                 timestamp_nanos: Some(79),
                 amount_e8s: 300_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.cycles_history.insert(
@@ -1328,6 +1653,7 @@ mod tests {
                 timestamp_nanos: Some(310),
                 amount_e8s: 500,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.raw_icp_commitment_history.insert(
@@ -1337,6 +1663,7 @@ mod tests {
                 timestamp_nanos: Some(315),
                 amount_e8s: 550,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.neuron_commitment_history.insert(
@@ -1346,6 +1673,7 @@ mod tests {
                 timestamp_nanos: Some(318),
                 amount_e8s: 575,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.cycles_history.insert(
@@ -1417,6 +1745,7 @@ mod tests {
                 timestamp_nanos: Some(410),
                 amount_e8s: 1_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.cycles_history.insert(
@@ -1434,6 +1763,7 @@ mod tests {
                 timestamp_nanos: Some(430),
                 amount_e8s: 3_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.neuron_commitment_history.insert(
@@ -1443,6 +1773,7 @@ mod tests {
                 timestamp_nanos: Some(440),
                 amount_e8s: 4_000,
                 counts_toward_faucet: false,
+                raw_icp_destination_subaccount: None,
             }],
         );
         set_state(st);
@@ -1478,6 +1809,7 @@ mod tests {
                 timestamp_nanos: Some(510),
                 amount_e8s: 1_100,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.cycles_history.insert(
@@ -1495,6 +1827,7 @@ mod tests {
                 timestamp_nanos: Some(530),
                 amount_e8s: 3_100,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.neuron_commitment_history.insert(
@@ -1504,6 +1837,7 @@ mod tests {
                 timestamp_nanos: Some(540),
                 amount_e8s: 4_100,
                 counts_toward_faucet: false,
+                raw_icp_destination_subaccount: None,
             }],
         );
         set_state(st);
@@ -1519,6 +1853,7 @@ mod tests {
                     timestamp_nanos: Some(550),
                     amount_e8s: 1_200,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 });
         });
         with_root_registry_and_cycles_canister_state_mut(canister_id, |st| {
@@ -1542,6 +1877,7 @@ mod tests {
                     timestamp_nanos: Some(570),
                     amount_e8s: 3_200,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 });
         });
         with_root_and_neuron_commitments_state_mut(neuron_id, |st| {
@@ -1554,6 +1890,7 @@ mod tests {
                     timestamp_nanos: Some(580),
                     amount_e8s: 4_200,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 });
         });
 
@@ -1601,6 +1938,7 @@ mod tests {
                 timestamp_nanos: Some(610),
                 amount_e8s: 1_300,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.cycles_history.insert(
@@ -1618,6 +1956,7 @@ mod tests {
                 timestamp_nanos: Some(630),
                 amount_e8s: 3_300,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.neuron_commitment_history.insert(
@@ -1627,6 +1966,7 @@ mod tests {
                 timestamp_nanos: Some(640),
                 amount_e8s: 4_300,
                 counts_toward_faucet: false,
+                raw_icp_destination_subaccount: None,
             }],
         );
         set_state(st);
@@ -1678,6 +2018,7 @@ mod tests {
                 timestamp_nanos: Some(910),
                 amount_e8s: 111,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.cycles_history.insert(
@@ -1718,6 +2059,7 @@ mod tests {
                 timestamp_nanos: Some(10),
                 amount_e8s: 100,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.commitment_history.insert(
@@ -1727,6 +2069,7 @@ mod tests {
                 timestamp_nanos: Some(20),
                 amount_e8s: 200,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         set_state(st);
@@ -1743,6 +2086,7 @@ mod tests {
                     timestamp_nanos: Some(30),
                     amount_e8s: 300,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 });
             st.per_canister_meta
                 .entry(canister_a)

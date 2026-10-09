@@ -61,6 +61,206 @@
     "builder": null
   },
   {
+    "name": "raw ICP explicit zero selects the default account",
+    "memo_text": "22255zqaaaaaaasqf6uqcai:0.",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "22255-zqaaa-aaaas-qf6uq-cai",
+      "memo_text": "",
+      "destination_subaccount_hex": null
+    },
+    "builder": {
+      "mode": "rawIcp",
+      "canister_text": "22255zqaaaaaaasqf6uqcai",
+      "raw_icp_subaccount_text": "0",
+      "optional_memo_text": "",
+      "ok": true,
+      "output": "22255zqaaaaaaasqf6uqcai."
+    }
+  },
+  {
+    "name": "raw ICP leading-zero selector normalizes to subaccount 1",
+    "memo_text": "22255zqaaaaaaasqf6uqcai:0001.a",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "22255-zqaaa-aaaas-qf6uq-cai",
+      "memo_text": "a",
+      "destination_subaccount_hex": "0000000000000000000000000000000000000000000000000000000000000001"
+    },
+    "builder": {
+      "mode": "rawIcp",
+      "canister_text": "22255zqaaaaaaasqf6uqcai",
+      "raw_icp_subaccount_text": "0001",
+      "optional_memo_text": "a",
+      "ok": true,
+      "output": "22255zqaaaaaaasqf6uqcai:1.a"
+    }
+  },
+  {
+    "name": "raw ICP numbered subaccount 50 preserves colon suffix",
+    "memo_text": "22255zqaaaaaaasqf6uqcai:50.d:1",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "22255-zqaaa-aaaas-qf6uq-cai",
+      "memo_text": "d:1",
+      "destination_subaccount_hex": "0000000000000000000000000000000000000000000000000000000000000032"
+    },
+    "builder": null
+  },
+  {
+    "name": "raw ICP numbered subaccount 255",
+    "memo_text": "22255zqaaaaaaasqf6uqcai:255.",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "22255-zqaaa-aaaas-qf6uq-cai",
+      "memo_text": "",
+      "destination_subaccount_hex": "00000000000000000000000000000000000000000000000000000000000000ff"
+    },
+    "builder": null
+  },
+  {
+    "name": "raw ICP numbered subaccount 256 proves big-endian encoding",
+    "memo_text": "22255zqaaaaaaasqf6uqcai:256.abcd",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "22255-zqaaa-aaaas-qf6uq-cai",
+      "memo_text": "abcd",
+      "destination_subaccount_hex": "0000000000000000000000000000000000000000000000000000000000000100"
+    },
+    "builder": {
+      "mode": "rawIcp",
+      "canister_text": "22255zqaaaaaaasqf6uqcai",
+      "raw_icp_subaccount_text": "256",
+      "optional_memo_text": "abcde",
+      "ok": true,
+      "output": "22255zqaaaaaaasqf6uqcai:256.abcd",
+      "truncated_optional_memo": "e"
+    }
+  },
+  {
+    "name": "raw ICP numbered declaration over 32 bytes rejects",
+    "memo_text": "22255zqaaaaaaasqf6uqcai:256.abcde",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "raw ICP selector without dot rejects",
+    "memo_text": "22255zqaaaaaaasqf6uqcai:1",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "raw ICP selector missing number rejects",
+    "memo_text": "22255zqaaaaaaasqf6uqcai:.d",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "raw ICP selector with extra colon rejects",
+    "memo_text": "22255zqaaaaaaasqf6uqcai:1:2.d",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "raw ICP selector overflow rejects",
+    "memo_text": "2ibo7dia:18446744073709551616.",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "raw ICP selector invalid owner rejects",
+    "memo_text": "not-a-principal:1.d",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "raw ICP selector plus sign rejects",
+    "memo_text": "2ibo7dia:+1.d",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "raw ICP selector minus sign rejects",
+    "memo_text": "2ibo7dia:-1.d",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "raw ICP selector hexadecimal rejects",
+    "memo_text": "2ibo7dia:0x1.d",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "raw ICP selector exponent rejects",
+    "memo_text": "2ibo7dia:1e2.d",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "raw ICP selector internal whitespace rejects",
+    "memo_text": "2ibo7dia:1 0.d",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "raw ICP selector Unicode digits reject",
+    "memo_text": "2ibo7dia:١.d",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "raw ICP numbered suffix preserves dots and whitespace",
+    "memo_text": "22255zqaaaaaaasqf6uqcai:1. a. ",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "22255-zqaaa-aaaas-qf6uq-cai",
+      "memo_text": " a. ",
+      "destination_subaccount_hex": "0000000000000000000000000000000000000000000000000000000000000001"
+    },
+    "builder": null
+  },
+  {
+    "name": "neuron selector rejects",
+    "memo_text": "42:1.memo",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "colon after first dot remains default-account memo data",
+    "memo_text": "22255zqaaaaaaasqf6uqcai.a:1",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "22255-zqaaa-aaaas-qf6uq-cai",
+      "memo_text": "a:1",
+      "destination_subaccount_hex": null
+    },
+    "builder": null
+  },
+  {
+    "name": "X alias colon remains suffix data",
+    "memo_text": "X.suffix:1",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "eo6ei-gaaaa-aaaar-qchra-cai",
+      "memo_text": "suffix:1",
+      "destination_subaccount_hex": null
+    },
+    "builder": null
+  },
+  {
+    "name": "X selector syntax is not supported",
+    "memo_text": "X:1.suffix",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "X alias still rejects an empty suffix",
+    "memo_text": "X.",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
     "name": "valid bare neuron id memo",
     "memo_text": "42",
     "expected_directive": { "kind": "neuron_stake", "neuron_id": 42, "memo_text": null },

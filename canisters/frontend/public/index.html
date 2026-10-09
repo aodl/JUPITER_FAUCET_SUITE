@@ -605,6 +605,12 @@
               <p class="nav-panel-content">
                 To enable raw ICP transfer mode for a canister, add a full stop character
                 (<code>'.'</code>) after the declared canister ID in the ICP endowment memo.
+                To route to a numbered destination subaccount, place <code>:&lt;number&gt;</code>
+                before that full stop, for example <code>22255zqaaaaaaasqf6uqcai:50.d</code>.
+                Empty or <code>0</code> selects the default account; numbered subaccounts consume
+                part of the same 32-character memo budget. This form supports numbered subaccounts,
+                not arbitrary 32-byte values, and preserves everything after the first full stop
+                exactly as the outgoing memo.
                 To target a public neuron instead, use the neuron ID in the memo. In either mode,
                 the full stop may be followed by optional text; Jupiter Faucet uses that optional
                 text as the outgoing memo on the perpetual ICP transfer. Declared neurons must be
@@ -836,6 +842,12 @@
                 <div class="memo-builder-field" id="memo-builder-neuron-fields" hidden>
                   <label class="memo-builder-label" for="memo-builder-neuron">Declared public neuron ID</label>
                   <input class="memo-builder-input mono" id="memo-builder-neuron" type="text" autocomplete="off" spellcheck="false" inputmode="numeric" pattern="[0-9]*" />
+                </div>
+
+                <div class="memo-builder-field" id="memo-builder-raw-subaccount-fields" hidden>
+                  <label class="memo-builder-label" for="memo-builder-raw-subaccount">Destination subaccount number (optional)</label>
+                  <input class="memo-builder-input mono" id="memo-builder-raw-subaccount" type="text" autocomplete="off" spellcheck="false" inputmode="numeric" pattern="[0-9]*" />
+                  <p class="memo-builder-help">Empty or 0 means the default account. This numbered selector consumes memo bytes.</p>
                 </div>
 
                 <div class="memo-builder-field" id="memo-builder-optional-fields" hidden>

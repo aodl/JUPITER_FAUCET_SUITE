@@ -96,6 +96,15 @@ pub struct GetCommitmentHistoryArgs {
 }
 
 #[derive(CandidType, Deserialize, Clone)]
+pub struct GetRawIcpCommitmentHistoryArgs {
+    pub canister_id: Principal,
+    pub destination_subaccount: Option<Vec<u8>>,
+    pub start_after_tx_id: Option<u64>,
+    pub limit: Option<u32>,
+    pub descending: Option<bool>,
+}
+
+#[derive(CandidType, Deserialize, Clone)]
 pub struct GetNeuronCommitmentHistoryArgs {
     pub neuron_id: u64,
     pub start_after_tx_id: Option<u64>,
@@ -122,6 +131,7 @@ pub enum CommitmentRoute {
     },
     RawIcp {
         destination_canister_id: Principal,
+        destination_subaccount: Option<Vec<u8>>,
         memo: Vec<u8>,
     },
     NeuronStake {
@@ -380,6 +390,7 @@ pub struct RecentCommitmentListItem {
     pub canister_id: Option<Principal>,
     pub neuron_id: Option<u64>,
     pub raw_icp_memo_text: Option<String>,
+    pub raw_icp_destination_subaccount: Option<Vec<u8>>,
     pub neuron_memo_text: Option<String>,
     pub memo_text: Option<String>,
     pub tx_id: u64,

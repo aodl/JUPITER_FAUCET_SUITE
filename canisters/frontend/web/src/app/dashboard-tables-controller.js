@@ -7,6 +7,7 @@ import {
 import { setPaneValueText, setText } from '../dom-helpers.js';
 import { escapeHtml } from '../followee-links.js';
 import { mergeRegisteredLandingData } from '../registered-page-state.js';
+import { numberedSubaccountNumberText, parseJupiterMemo } from '../memo-policy.js';
 import { COMMITMENT_TABLE_PAGE_SIZE_ADJUSTMENT, calculateResponsiveTablePageSize } from './responsive-tables.js';
 import {
   DASH,
@@ -62,8 +63,34 @@ function rawIcpDeclaredMemo(item) {
   if (!canister || right === undefined || right === null) return '';
   const left = canister.toText ? canister.toText() : String(canister);
   const memoText = String(right);
-  if (left === 'eo6ei-gaaaa-aaaar-qchra-cai' && memoText.length > 0) return `X.${memoText}`;
-  return `${left.split('-').join('')}.${memoText}`;
+  const rawSubaccount = item?.raw_icp_destination_subaccount;
+  const subaccount = Array.isArray(rawSubaccount) && !(rawSubaccount instanceof Uint8Array)
+    ? rawSubaccount[0] ?? null
+    : rawSubaccount ?? null;
+  let subaccountNumberText = null;
+  try {
+    subaccountNumberText = numberedSubaccountNumberText(subaccount);
+  } catch {
+    return { memo: '', error: 'Unsupported raw ICP destination' };
+  }
+  const declaration = subaccountNumberText === null && left === 'eo6ei-gaaaa-aaaar-qchra-cai' && memoText.length > 0
+    ? `X.${memoText}`
+    : `${left.split('-').join('')}${subaccountNumberText === null ? '' : `:${subaccountNumberText}`}.${memoText}`;
+  const parsed = parseJupiterMemo(declaration);
+  if (parsed.kind !== 'rawIcpCanister'
+    || parsed.canisterText !== left
+    || parsed.destinationSubaccountNumberText !== subaccountNumberText
+    || parsed.outgoingMemoText !== memoText) {
+    return { memo: '', error: 'Invalid raw ICP declaration' };
+  }
+  return { memo: declaration, error: '' };
+}
+
+function renderRawIcpDeclaredMemo(item) {
+  const declaration = rawIcpDeclaredMemo(item);
+  return declaration.memo
+    ? renderMemoTrackerLink(declaration.memo)
+    : `<span class="pane-status-error">${escapeHtml(declaration.error)}</span>`;
 }
 
 function neuronDeclaredMemo(item) {
@@ -327,7 +354,7 @@ export function createDashboardTablesController({
         <tr>
           <td>${renderTimestampCell(item)}</td>
           <td>${escapeHtml(formatIcpE8s(item.amount_e8s))}</td>
-          <td>${renderMemoTrackerLink(rawIcpDeclaredMemo(item))}</td>
+          <td>${renderRawIcpDeclaredMemo(item)}</td>
         </tr>`,
       paneEmptyMessage(data, 'recent', 'No raw ICP endowments indexed yet.'),
       3,

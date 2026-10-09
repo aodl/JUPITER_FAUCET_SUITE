@@ -7,6 +7,7 @@ type CommitmentSample = record {
   timestamp_nanos : opt nat64;
   amount_e8s : nat64;
   counts_toward_faucet : bool;
+  raw_icp_destination_subaccount : opt blob;
 };
 type RecentCommitmentOutcomeCategory = variant {
   QualifyingCommitment;
@@ -17,6 +18,7 @@ type RecentCommitmentListItem = record {
   canister_id : opt principal;
   neuron_id : opt nat64;
   raw_icp_memo_text : opt text;
+  raw_icp_destination_subaccount : opt blob;
   neuron_memo_text : opt text;
   memo_text : opt text;
   tx_id : nat64;
@@ -139,6 +141,13 @@ type GetCommitmentHistoryArgs = record {
   limit : opt nat32;
   descending : opt bool;
 };
+type GetRawIcpCommitmentHistoryArgs = record {
+  canister_id : principal;
+  destination_subaccount : opt blob;
+  start_after_tx_id : opt nat64;
+  limit : opt nat32;
+  descending : opt bool;
+};
 type GetNeuronCommitmentHistoryArgs = record {
   neuron_id : nat64;
   start_after_tx_id : opt nat64;
@@ -151,7 +160,11 @@ type CommitmentHistoryPage = record {
 };
 type CommitmentRoute = variant {
   CyclesTopUp : record { canister_id : principal };
-  RawIcp : record { destination_canister_id : principal; memo : blob };
+  RawIcp : record {
+    destination_canister_id : principal;
+    destination_subaccount : opt blob;
+    memo : blob;
+  };
   NeuronStake : record { neuron_id : nat64; memo : opt blob };
 };
 type CommitmentRouteSummary = record {
@@ -351,7 +364,7 @@ service : (InitArgs) -> {
   list_canisters : (ListCanistersArgs) -> (ListCanistersResponse) query;
   get_cycles_history : (GetCyclesHistoryArgs) -> (CyclesHistoryPage) query;
   get_commitment_history : (GetCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
-  get_raw_icp_commitment_history : (GetCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
+  get_raw_icp_commitment_history : (GetRawIcpCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
   get_neuron_commitment_history : (GetNeuronCommitmentHistoryArgs) -> (CommitmentHistoryPage) query;
   get_commitment_route_summaries : (GetCommitmentRouteSummariesArgs) -> (GetCommitmentRouteSummariesResponse) query;
   get_endowment_transaction_status : (nat64) -> (EndowmentTransactionStatusResponse) query;

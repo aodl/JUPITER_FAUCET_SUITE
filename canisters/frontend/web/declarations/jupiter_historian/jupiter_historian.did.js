@@ -96,11 +96,19 @@ export const idlFactory = ({ IDL }) => {
     'start_after_tx_id' : IDL.Opt(IDL.Nat64),
     'limit' : IDL.Opt(IDL.Nat32),
   });
+  const GetRawIcpCommitmentHistoryArgs = IDL.Record({
+    'descending' : IDL.Opt(IDL.Bool),
+    'canister_id' : IDL.Principal,
+    'destination_subaccount' : IDL.Opt(IDL.Vec(IDL.Nat8)),
+    'start_after_tx_id' : IDL.Opt(IDL.Nat64),
+    'limit' : IDL.Opt(IDL.Nat32),
+  });
   const CommitmentSample = IDL.Record({
     'timestamp_nanos' : IDL.Opt(IDL.Nat64),
     'tx_id' : IDL.Nat64,
     'counts_toward_faucet' : IDL.Bool,
     'amount_e8s' : IDL.Nat64,
+    'raw_icp_destination_subaccount' : IDL.Opt(IDL.Vec(IDL.Nat8)),
   });
   const CommitmentHistoryPage = IDL.Record({
     'next_start_after_tx_id' : IDL.Opt(IDL.Nat64),
@@ -115,6 +123,7 @@ export const idlFactory = ({ IDL }) => {
     'RawIcp' : IDL.Record({
       'memo' : IDL.Vec(IDL.Nat8),
       'destination_canister_id' : IDL.Principal,
+      'destination_subaccount' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     }),
   });
   const GetCommitmentRouteSummariesArgs = IDL.Record({
@@ -328,6 +337,7 @@ export const idlFactory = ({ IDL }) => {
     'memo_text' : IDL.Opt(IDL.Text),
     'amount_e8s' : IDL.Nat64,
     'raw_icp_memo_text' : IDL.Opt(IDL.Text),
+    'raw_icp_destination_subaccount' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     'outcome_category' : RecentCommitmentOutcomeCategory,
     'neuron_id' : IDL.Opt(IDL.Nat64),
   });
@@ -402,7 +412,7 @@ export const idlFactory = ({ IDL }) => {
     'get_public_counts' : IDL.Func([], [PublicCounts], ['query']),
     'get_public_status' : IDL.Func([], [PublicStatus], ['query']),
     'get_raw_icp_commitment_history' : IDL.Func(
-        [GetCommitmentHistoryArgs],
+        [GetRawIcpCommitmentHistoryArgs],
         [CommitmentHistoryPage],
         ['query'],
       ),

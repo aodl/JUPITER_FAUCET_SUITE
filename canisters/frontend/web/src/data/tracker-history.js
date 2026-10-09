@@ -13,6 +13,7 @@ import {
   principalToText,
   readOptional,
 } from './dashboard-transforms.js';
+import { normalizeDestinationSubaccount } from '../memo-policy.js';
 
 const TRACKER_HISTORY_PAGE_SIZE = 100;
 export const RAW_ICP_TRACKER_TRANSFER_LIMIT = 10_000;
@@ -149,6 +150,19 @@ function buildGetCommitmentHistoryArgs({ canisterId, startAfter = null, limit = 
   };
 }
 
+function buildGetRawIcpCommitmentHistoryArgs({
+  canisterId,
+  destinationSubaccount = null,
+  startAfter = null,
+  limit = TRACKER_HISTORY_PAGE_SIZE,
+  descending = false,
+} = {}) {
+  return {
+    ...buildGetCommitmentHistoryArgs({ canisterId, startAfter, limit, descending }),
+    destination_subaccount: destinationSubaccount === null ? [] : [destinationSubaccount],
+  };
+}
+
 function buildGetNeuronCommitmentHistoryArgs({ neuronId, startAfter = null, limit = TRACKER_HISTORY_PAGE_SIZE, descending = false } = {}) {
   return {
     neuron_id: typeof neuronId === 'bigint' ? neuronId : BigInt(neuronId),
@@ -204,15 +218,21 @@ async function loadTrackerCommitments(historian, { canisterId, historyLimit, min
   });
 }
 
-async function loadRawIcpCanisterCommitments(historian, { canisterId, historyLimit, minTimestampNanos = null }) {
+async function loadRawIcpCanisterCommitments(historian, {
+  canisterId,
+  destinationSubaccount = null,
+  historyLimit,
+  minTimestampNanos = null,
+}) {
   if (typeof historian?.get_raw_icp_commitment_history !== 'function') {
     throw new Error('Historian raw ICP endowment history query is unavailable');
   }
   return loadCommitmentHistoryPages({
     historyLimit,
     minTimestampNanos,
-    fetchPage: ({ startAfter, limit, descending }) => historian.get_raw_icp_commitment_history(buildGetCommitmentHistoryArgs({
+    fetchPage: ({ startAfter, limit, descending }) => historian.get_raw_icp_commitment_history(buildGetRawIcpCommitmentHistoryArgs({
       canisterId,
+      destinationSubaccount,
       startAfter,
       limit,
       descending,
@@ -453,6 +473,7 @@ export async function loadRawIcpCanisterTrackerData({
   historianActorFactory = createHistorianActor,
   indexActorFactory = createIndexActor,
   canisterId,
+  destinationSubaccount = null,
   outgoingMemoText = null,
   prefixLimit = 10,
   historyLimit = RAW_ICP_TRACKER_TRANSFER_LIMIT,
@@ -461,6 +482,7 @@ export async function loadRawIcpCanisterTrackerData({
   onTransfersProgress = null,
 } = {}) {
   if (!canisterId) throw new Error('A canister ID is required');
+  const normalizedDestinationSubaccount = normalizeDestinationSubaccount(destinationSubaccount);
   const { agent: resolvedAgent, historian } = await createHistorianClient({
     historianCanisterId,
     host,
@@ -472,6 +494,7 @@ export async function loadRawIcpCanisterTrackerData({
   const progressCallback = typeof onProgress === 'function' ? onProgress : onTransfersProgress;
   const progress = {
     canisterId,
+    destinationSubaccount: normalizedDestinationSubaccount,
     status: null,
     relayInstances: progressPage(null, true),
     commitments: progressPage(null, true),
@@ -494,6 +517,7 @@ export async function loadRawIcpCanisterTrackerData({
   });
   const commitmentsPromise = trackProgressPromise(loadRawIcpCanisterCommitments(historian, {
     canisterId,
+    destinationSubaccount: normalizedDestinationSubaccount,
     historyLimit,
     minTimestampNanos,
   }), {
@@ -507,7 +531,10 @@ export async function loadRawIcpCanisterTrackerData({
     status,
     agent: resolvedAgent,
     indexActorFactory,
-    account: { owner: canisterId, subaccount: [] },
+    account: {
+      owner: canisterId,
+      subaccount: normalizedDestinationSubaccount === null ? [] : [normalizedDestinationSubaccount],
+    },
     memoText: outgoingMemoText,
     historyLimit,
     minTimestampNanos,
@@ -544,6 +571,7 @@ export async function loadRawIcpCanisterTrackerData({
   ]);
   return {
     canisterId,
+    destinationSubaccount: normalizedDestinationSubaccount,
     status: fulfilledOrNull(statusResult),
     relayInstances: fulfilledOrNull(relayInstancesResult) || { items: [] },
     commitments: fulfilledOrNull(commitmentsResult) || { items: [] },

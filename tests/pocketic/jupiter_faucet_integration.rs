@@ -8,7 +8,7 @@ use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use jupiter_ic_clients::account::principal_to_subaccount;
 use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
 use jupiter_ic_clients::index::{
-    GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResult,
+    GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResult, IndexOperation,
 };
 use jupiter_ic_clients::management::{
     CanisterStatusArgs, CanisterStatusResult, LogVisibility, StatusVisibility,
@@ -899,7 +899,8 @@ struct RealIcpIndexHealthEnv {
     index: Principal,
     faucet: Principal,
     staking_account: Account,
-    staking_id: String,
+    funding_source_account: Account,
+    accounts: DebugAccounts,
 }
 
 impl RealIcpIndexHealthEnv {
@@ -924,6 +925,10 @@ impl RealIcpIndexHealthEnv {
             owner: Principal::management_canister(),
             subaccount: Some([9u8; 32]),
         };
+        let funding_source_account = Account {
+            owner: Principal::from_slice(&[99]),
+            subaccount: None,
+        };
         pic.install_canister(
             faucet,
             faucet_wasm()?,
@@ -934,7 +939,7 @@ impl RealIcpIndexHealthEnv {
                 index_canister_id: Some(index),
                 cmc_canister_id: Some(cmc),
                 governance_canister_id: Some(governance),
-                funding_source_account: strict_funding_source_account()?,
+                funding_source_account,
                 rescue_controller: lifeline,
                 autonomous_rescue_armed: Some(false),
                 expected_first_staking_tx_id: None,
@@ -945,14 +950,16 @@ impl RealIcpIndexHealthEnv {
             })?,
             None,
         );
-        let staking_id = account_identifier_text(staking_account.owner, staking_account.subaccount);
+        let accounts: DebugAccounts =
+            query_one(&pic, faucet, Principal::anonymous(), "debug_accounts", ())?;
         Ok(Self {
             pic,
             ledger,
             index,
             faucet,
             staking_account,
-            staking_id,
+            funding_source_account,
+            accounts,
         })
     }
 
@@ -973,6 +980,11 @@ impl RealIcpIndexHealthEnv {
     }
 
     fn wait_for_index_tx(&self, tx_id: u64) -> Result<()> {
+        self.wait_for_account_index_tx(&self.staking_account, tx_id)
+    }
+
+    fn wait_for_account_index_tx(&self, account: &Account, tx_id: u64) -> Result<()> {
+        let account_identifier = support::account_identifier::account_id_for(account);
         for _ in 0..60 {
             let result: GetAccountIdentifierTransactionsResult = query_one(
                 &self.pic,
@@ -982,7 +994,7 @@ impl RealIcpIndexHealthEnv {
                 GetAccountIdentifierTransactionsArgs {
                     max_results: 1_000,
                     start: None,
-                    account_identifier: self.staking_id.clone(),
+                    account_identifier: account_identifier.clone(),
                 },
             )?;
             if matches!(result, GetAccountIdentifierTransactionsResult::Ok(ref page) if page.transactions.iter().any(|tx| tx.id == tx_id))
@@ -992,7 +1004,81 @@ impl RealIcpIndexHealthEnv {
             self.pic.advance_time(Duration::from_secs(1));
             tick_n(&self.pic, 5);
         }
-        bail!("real ICP Index did not expose staking transaction {tx_id}")
+        bail!("real ICP Index did not expose transaction {tx_id} for {account_identifier}")
+    }
+
+    fn wait_for_index_transfer(
+        &self,
+        from: &Account,
+        to: &Account,
+        amount_e8s: u64,
+        memo: &[u8],
+    ) -> Result<()> {
+        let from_identifier = support::account_identifier::account_id_for(from);
+        let to_identifier = support::account_identifier::account_id_for(to);
+        for _ in 0..60 {
+            let result: GetAccountIdentifierTransactionsResult = query_one(
+                &self.pic,
+                self.index,
+                Principal::anonymous(),
+                "get_account_identifier_transactions",
+                GetAccountIdentifierTransactionsArgs {
+                    max_results: 1_000,
+                    start: None,
+                    account_identifier: to_identifier.clone(),
+                },
+            )?;
+            if matches!(result, GetAccountIdentifierTransactionsResult::Ok(ref page) if page.transactions.iter().any(|tx| {
+                tx.transaction.icrc1_memo.as_deref() == Some(memo)
+                    && tx.transaction.created_at_time.is_some()
+                    && matches!(
+                        &tx.transaction.operation,
+                        IndexOperation::Transfer { to, fee, from, amount, spender: None }
+                            if to == &to_identifier
+                                && from == &from_identifier
+                                && fee.e8s() == ICP_LEDGER_FEE_E8S
+                                && amount.e8s() == amount_e8s
+                    )
+            })) {
+                return Ok(());
+            }
+            self.pic.advance_time(Duration::from_secs(1));
+            tick_n(&self.pic, 5);
+        }
+        bail!(
+            "real ICP Index did not expose the expected transfer from {from_identifier} to {to_identifier}"
+        )
+    }
+
+    fn credit_payout(&self, amount_e8s: u64) -> Result<u64> {
+        support::ledger::icrc1_transfer(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            TransferArg {
+                from_subaccount: None,
+                to: self.funding_source_account,
+                fee: Some(Nat::from(ICP_LEDGER_FEE_E8S)),
+                created_at_time: None,
+                memo: None,
+                amount: Nat::from(amount_e8s.saturating_add(ICP_LEDGER_FEE_E8S)),
+            },
+        )?;
+        let funding_tx = support::ledger::icrc1_transfer(
+            &self.pic,
+            self.ledger,
+            self.funding_source_account.owner,
+            TransferArg {
+                from_subaccount: self.funding_source_account.subaccount,
+                to: self.accounts.payout,
+                fee: Some(Nat::from(ICP_LEDGER_FEE_E8S)),
+                created_at_time: None,
+                memo: None,
+                amount: Nat::from(amount_e8s),
+            },
+        )?;
+        self.wait_for_account_index_tx(&self.accounts.payout, funding_tx)?;
+        Ok(funding_tx)
     }
 
     fn main_tick(&self) -> Result<()> {
@@ -1378,6 +1464,81 @@ fn faucet_raw_icp_memo_directive_sends_to_default_account_without_cmc_notify() -
         || summary.remainder_to_relay_e8s != 0
     {
         bail!("unexpected raw ICP summary: {summary:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_raw_icp_numbered_subaccounts_are_distinct_ledger_destinations() -> Result<()> {
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    let compact_target = target.to_text().replace('-', "");
+    let mut subaccount_1 = [0u8; 32];
+    subaccount_1[24..].copy_from_slice(&1u64.to_be_bytes());
+    let mut subaccount_50 = [0u8; 32];
+    subaccount_50[24..].copy_from_slice(&50u64.to_be_bytes());
+
+    env.credit_payout(300_000_000)?;
+    env.credit_staking(300_000_000)?;
+    for memo in [
+        format!("{compact_target}.d"),
+        format!("{compact_target}:1.d"),
+        format!("{compact_target}:50.d"),
+    ] {
+        env.append_transfer(100_000_000, Some(memo.into_bytes()))?;
+    }
+    env.main_tick()?;
+
+    let transfers = env.ledger_transfers()?;
+    if transfers.len() != 3 {
+        bail!(
+            "expected one raw ICP transfer to each destination account, got {}",
+            transfers.len()
+        );
+    }
+    let expected_accounts = [
+        Account {
+            owner: target,
+            subaccount: None,
+        },
+        Account {
+            owner: target,
+            subaccount: Some(subaccount_1),
+        },
+        Account {
+            owner: target,
+            subaccount: Some(subaccount_50),
+        },
+    ];
+    for expected in expected_accounts {
+        let matching = transfers
+            .iter()
+            .filter(|transfer| transfer.to == expected)
+            .collect::<Vec<_>>();
+        if matching.len() != 1 {
+            bail!("expected exactly one raw ICP transfer to {expected:?}, got {matching:?}");
+        }
+        let transfer = matching[0];
+        if transfer.from != env.accounts.payout
+            || transfer.memo.as_deref() != Some(b"d".as_slice())
+            || nat_to_u64(&transfer.amount) != 99_990_000
+            || nat_to_u64(&transfer.fee) != ICP_LEDGER_FEE_E8S
+            || transfer.created_at_time.is_none()
+        {
+            bail!("unexpected raw ICP transfer identity: {transfer:?}");
+        }
+    }
+    if !env.notifications()?.is_empty() {
+        bail!("expected numbered raw ICP routes not to call notify_top_up");
+    }
+    let summary = env.summary()?;
+    if summary.topped_up_count != 3
+        || summary.topped_up_sum_e8s != 299_970_000
+        || summary.remainder_to_relay_e8s != 0
+    {
+        bail!("unexpected numbered raw ICP summary: {summary:?}");
     }
 
     Ok(())
@@ -3304,6 +3465,69 @@ fn faucet_real_icp_index_head_advances_health_without_false_latest_invariant_lat
     {
         bail!("second real ICP Index advancement was not healthy: {second:?}");
     }
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn faucet_real_icp_ledger_and_index_preserve_numbered_raw_destinations() -> Result<()> {
+    let env = RealIcpIndexHealthEnv::new()?;
+    let target = Principal::from_slice(&[44]);
+    let compact_target = target.to_text().replace('-', "");
+    let mut subaccount_1 = [0u8; 32];
+    subaccount_1[24..].copy_from_slice(&1u64.to_be_bytes());
+    let mut subaccount_50 = [0u8; 32];
+    subaccount_50[24..].copy_from_slice(&50u64.to_be_bytes());
+    let destinations = [
+        Account {
+            owner: target,
+            subaccount: None,
+        },
+        Account {
+            owner: target,
+            subaccount: Some(subaccount_1),
+        },
+        Account {
+            owner: target,
+            subaccount: Some(subaccount_50),
+        },
+    ];
+    for destination in &destinations {
+        assert_eq!(icrc1_balance(&env.pic, env.ledger, destination)?, 0);
+    }
+
+    for declaration in [
+        format!("{compact_target}.d"),
+        format!("{compact_target}:1.d"),
+        format!("{compact_target}:50.d"),
+    ] {
+        let tx_id = env.transfer_to_staking(100_000_000, declaration.into_bytes())?;
+        env.wait_for_index_tx(tx_id)?;
+    }
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 5);
+    env.credit_payout(300_000_000)?;
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 5);
+    env.main_tick()?;
+
+    for destination in &destinations {
+        assert_eq!(
+            icrc1_balance(&env.pic, env.ledger, destination)?,
+            99_990_000,
+            "unexpected real-ledger balance for {destination:?}"
+        );
+        env.wait_for_index_transfer(&env.accounts.payout, destination, 99_990_000, b"d")?;
+    }
+    assert_eq!(
+        icrc1_balance(&env.pic, env.ledger, &env.accounts.payout)?,
+        0
+    );
+    assert_eq!(
+        icrc1_balance(&env.pic, env.ledger, &env.funding_source_account)?,
+        0
+    );
 
     Ok(())
 }

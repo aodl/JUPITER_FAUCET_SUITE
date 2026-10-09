@@ -678,6 +678,7 @@ enum HistorianCommitmentRoute {
     },
     RawIcp {
         destination_canister_id: Principal,
+        destination_subaccount: Option<Vec<u8>>,
         memo: Vec<u8>,
     },
     NeuronStake {
@@ -980,6 +981,7 @@ struct RecentCommitmentListItem {
     canister_id: Option<Principal>,
     neuron_id: Option<u64>,
     raw_icp_memo_text: Option<String>,
+    raw_icp_destination_subaccount: Option<Vec<u8>>,
     neuron_memo_text: Option<String>,
     memo_text: Option<String>,
     tx_id: u64,
@@ -4437,6 +4439,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 },
                 HistorianCommitmentRoute::RawIcp {
                     destination_canister_id: route_canister,
+                    destination_subaccount: None,
                     memo: Vec::new(),
                 },
                 HistorianCommitmentRoute::NeuronStake {

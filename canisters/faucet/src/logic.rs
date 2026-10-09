@@ -28,6 +28,7 @@ pub(crate) enum PayoutTarget {
     },
     RawIcp {
         canister_id: Principal,
+        destination_subaccount: Option<[u8; 32]>,
         memo: Vec<u8>,
     },
     NeuronStake {
@@ -51,9 +52,15 @@ impl PayoutTarget {
 fn parse_payout_target_from_memo(memo: &[u8]) -> Option<PayoutTarget> {
     match jupiter_memo_policy::parse_memo_directive(memo)? {
         MemoDirective::TopUp { canister_id } => Some(PayoutTarget::CyclesTopUp { canister_id }),
-        MemoDirective::RawIcp { canister_id, memo } => {
-            Some(PayoutTarget::RawIcp { canister_id, memo })
-        }
+        MemoDirective::RawIcp {
+            canister_id,
+            destination_subaccount,
+            memo,
+        } => Some(PayoutTarget::RawIcp {
+            canister_id,
+            destination_subaccount,
+            memo,
+        }),
         MemoDirective::NeuronStake { neuron_id, memo } => {
             Some(PayoutTarget::NeuronStake { neuron_id, memo })
         }
@@ -616,7 +623,30 @@ mod tests {
             parse_payout_target_from_memo(format!("{compact}.vault42").as_bytes()),
             Some(PayoutTarget::RawIcp {
                 canister_id: p,
+                destination_subaccount: None,
                 memo: b"vault42".to_vec(),
+            })
+        );
+    }
+
+    #[test]
+    fn translates_numbered_raw_icp_memo_to_pinned_destination() {
+        let p = target_canister();
+        let compact = p.to_text().replace('-', "");
+        assert_eq!(
+            parse_payout_target_from_memo(format!("{compact}:256.a:b").as_bytes()),
+            Some(PayoutTarget::RawIcp {
+                canister_id: p,
+                destination_subaccount: jupiter_memo_policy::numbered_subaccount(256),
+                memo: b"a:b".to_vec(),
+            })
+        );
+        assert_eq!(
+            parse_payout_target_from_memo(format!("{compact}:000.").as_bytes()),
+            Some(PayoutTarget::RawIcp {
+                canister_id: p,
+                destination_subaccount: None,
+                memo: Vec::new(),
             })
         );
     }
@@ -627,6 +657,7 @@ mod tests {
             parse_payout_target_from_memo(b"X.uccpicqaaaaaaarqby3qcai.n0:1"),
             Some(PayoutTarget::RawIcp {
                 canister_id: Principal::from_text("eo6ei-gaaaa-aaaar-qchra-cai").unwrap(),
+                destination_subaccount: None,
                 memo: b"uccpicqaaaaaaarqby3qcai.n0:1".to_vec(),
             })
         );

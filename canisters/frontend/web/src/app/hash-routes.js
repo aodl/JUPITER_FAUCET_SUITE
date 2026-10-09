@@ -20,9 +20,9 @@ function trackerRangeSuffix(range) {
 }
 
 export function trackerHashForMemo({ memo = '', protocolCanister = '', range = '' } = {}) {
-  const text = String(memo || '').trim();
+  const text = String(memo || '');
   const params = new URLSearchParams();
-  if (text) params.set('memo', text);
+  if (text.trim()) params.set('memo', text);
   if (protocolCanister) params.set('protocol-canister', String(protocolCanister).trim());
   appendTrackerRange(params, range);
   const query = params.toString();

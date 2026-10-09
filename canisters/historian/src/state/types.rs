@@ -125,6 +125,8 @@ pub struct CommitmentSample {
     pub timestamp_nanos: Option<u64>,
     pub amount_e8s: u64,
     pub counts_toward_faucet: bool,
+    #[serde(default)]
+    pub raw_icp_destination_subaccount: Option<Vec<u8>>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -140,6 +142,8 @@ pub(crate) struct RecentCommitment {
     pub canister_id: Principal,
     #[serde(default)]
     pub raw_icp_memo_text: Option<String>,
+    #[serde(default)]
+    pub raw_icp_destination_subaccount: Option<Vec<u8>>,
     pub tx_id: u64,
     pub timestamp_nanos: Option<u64>,
     pub amount_e8s: u64,
@@ -424,6 +428,11 @@ pub(crate) enum CommitmentRouteKey {
         neuron_id: u64,
         memo: Option<Vec<u8>>,
     },
+    RawIcpSubaccount {
+        destination_canister: PrincipalKey,
+        subaccount_number: u64,
+        memo: Vec<u8>,
+    },
 }
 
 impl CommitmentRouteKey {
@@ -436,13 +445,19 @@ impl CommitmentRouteKey {
             }
             crate::CommitmentRoute::RawIcp {
                 destination_canister_id,
+                destination_subaccount,
                 memo,
-            } => (valid_route_principal(destination_canister_id)
-                && memo.len() <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES)
-                .then(|| Self::RawIcp {
-                    destination_canister: PrincipalKey::from(destination_canister_id),
-                    memo: memo.clone(),
-                }),
+            } => {
+                let destination_subaccount = match destination_subaccount {
+                    None => None,
+                    Some(bytes) => Some(bytes.as_slice().try_into().ok()?),
+                };
+                Self::raw_icp(
+                    destination_canister_id,
+                    destination_subaccount,
+                    memo.clone(),
+                )
+            }
             crate::CommitmentRoute::NeuronStake { neuron_id, memo } => (*neuron_id != 0
                 && memo.as_ref().map(Vec::len).unwrap_or(0)
                     <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES)
@@ -462,13 +477,13 @@ impl CommitmentRouteKey {
             }
             crate::logic::IndexedCommitmentTarget::RawIcp {
                 canister_id,
+                destination_subaccount,
                 memo_text,
-            } => (valid_route_principal(canister_id)
-                && memo_text.len() <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES)
-                .then(|| Self::RawIcp {
-                    destination_canister: PrincipalKey::from(canister_id),
-                    memo: memo_text.as_bytes().to_vec(),
-                }),
+            } => Self::raw_icp(
+                canister_id,
+                *destination_subaccount,
+                memo_text.as_bytes().to_vec(),
+            ),
             crate::logic::IndexedCommitmentTarget::NeuronStake {
                 neuron_id,
                 memo_text,
@@ -479,6 +494,39 @@ impl CommitmentRouteKey {
                     neuron_id: *neuron_id,
                     memo: memo_text.as_ref().map(|memo| memo.as_bytes().to_vec()),
                 }),
+        }
+    }
+
+    fn raw_icp(
+        destination_canister_id: &Principal,
+        destination_subaccount: Option<[u8; 32]>,
+        memo: Vec<u8>,
+    ) -> Option<Self> {
+        if !valid_route_principal(destination_canister_id)
+            || memo.len() > jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES
+        {
+            return None;
+        }
+        let destination_canister = PrincipalKey::from(destination_canister_id);
+        match destination_subaccount
+            .as_ref()
+            .map(jupiter_memo_policy::numbered_subaccount_number)
+            .transpose()
+            .ok()?
+            .flatten()
+        {
+            None => Some(Self::RawIcp {
+                destination_canister,
+                memo,
+            }),
+            Some(subaccount_number) => {
+                let encoded_len = 11 + destination_canister.0.len() + memo.len();
+                (encoded_len <= 64).then_some(Self::RawIcpSubaccount {
+                    destination_canister,
+                    subaccount_number,
+                    memo,
+                })
+            }
         }
     }
 }
@@ -544,6 +592,36 @@ impl Storable for CommitmentRouteKey {
                         out.extend_from_slice(&memo);
                     }
                 }
+                out
+            }
+            Self::RawIcpSubaccount {
+                destination_canister,
+                subaccount_number,
+                memo,
+            } => {
+                assert!(
+                    destination_canister.0.len() <= 29,
+                    "historian route principal exceeds 29 bytes"
+                );
+                assert!(
+                    subaccount_number != 0,
+                    "historian numbered raw route must use a non-zero subaccount"
+                );
+                assert!(
+                    memo.len() <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES,
+                    "historian route memo exceeds policy bound"
+                );
+                assert!(
+                    11 + destination_canister.0.len() + memo.len() <= 64,
+                    "historian numbered raw route exceeds stable key bound"
+                );
+                let mut out = Vec::with_capacity(11 + destination_canister.0.len() + memo.len());
+                out.push(3);
+                out.push(destination_canister.0.len() as u8);
+                out.extend_from_slice(&destination_canister.0);
+                out.extend_from_slice(&subaccount_number.to_be_bytes());
+                out.push(memo.len() as u8);
+                out.extend_from_slice(&memo);
                 out
             }
         }
@@ -638,6 +716,50 @@ impl Storable for CommitmentRouteKey {
                     _ => panic!("invalid historian neuron route memo presence tag"),
                 };
                 Self::NeuronStake { neuron_id, memo }
+            }
+            3 => {
+                let principal_len = *bytes
+                    .get(1)
+                    .expect("missing historian numbered raw route principal length")
+                    as usize;
+                assert!(
+                    principal_len <= 29,
+                    "invalid historian numbered raw route principal length"
+                );
+                let principal_end = 2 + principal_len;
+                let number_end = principal_end + 8;
+                assert!(
+                    bytes.len() > number_end,
+                    "truncated historian numbered raw route key"
+                );
+                let destination_canister = PrincipalKey(bytes[2..principal_end].to_vec());
+                assert!(
+                    valid_route_principal(&destination_canister.to_principal()),
+                    "invalid historian numbered raw route principal"
+                );
+                let mut number = [0; 8];
+                number.copy_from_slice(&bytes[principal_end..number_end]);
+                let subaccount_number = u64::from_be_bytes(number);
+                assert!(
+                    subaccount_number != 0,
+                    "invalid historian numbered raw route subaccount"
+                );
+                let memo_len = bytes[number_end] as usize;
+                assert!(
+                    memo_len <= jupiter_memo_policy::MAX_TARGET_CANISTER_MEMO_BYTES,
+                    "invalid historian numbered raw route memo length"
+                );
+                let memo_start = number_end + 1;
+                assert_eq!(
+                    bytes.len(),
+                    memo_start + memo_len,
+                    "invalid historian numbered raw route key length"
+                );
+                Self::RawIcpSubaccount {
+                    destination_canister,
+                    subaccount_number,
+                    memo: bytes[memo_start..].to_vec(),
+                }
             }
             _ => panic!("unknown historian commitment route tag"),
         }

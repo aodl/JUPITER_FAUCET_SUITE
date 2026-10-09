@@ -26,6 +26,16 @@ test('trackerHashForMemo and trackerStateFromHash preserve dotted memos and prot
   });
 });
 
+test('memo tracker hashes preserve trailing suffix whitespace for default, subaccount, and neuron routes', () => {
+  for (const memo of [
+    '22255zqaaaaaaasqf6uqcai.A ',
+    '22255zqaaaaaaasqf6uqcai:1.A ',
+    '123456789.A ',
+  ]) {
+    assert.equal(trackerStateFromHash(trackerHashForMemo({ memo })).memo, memo);
+  }
+});
+
 test('trackerHashForPrincipal remains backwards-compatible', () => {
   assert.equal(trackerHashForPrincipal('aaaaa-aa'), '#metric-tracker-aaaaa-aa');
 });

@@ -1349,6 +1349,7 @@ test('loadRawIcpCanisterTrackerData uses the large raw ICP transfer limit by def
     host: 'https://icp0.io',
     agent: { test: true },
     canisterId: target,
+    destinationSubaccount: new Uint8Array(32),
     outgoingMemoText: 'memo',
     historianActor: {
       async get_public_status() {
@@ -1375,17 +1376,40 @@ test('loadRawIcpCanisterTrackerData uses the large raw ICP transfer limit by def
   assert.equal(indexCall.account_identifier, targetAccountId);
   assert.equal(indexCall.max_results, 100n);
   assert.equal(data.transfers.limit, RAW_ICP_TRACKER_TRANSFER_LIMIT);
+  assert.equal(data.destinationSubaccount, null);
+});
+
+test('loadRawIcpCanisterTrackerData rejects malformed destinations before actor queries', async () => {
+  let calls = 0;
+  await assert.rejects(
+    loadRawIcpCanisterTrackerData({
+      canisterId: principal('ryjl3-tyaaa-aaaaa-aaaba-cai'),
+      destinationSubaccount: new Uint8Array(31),
+      historianActor: {
+        async get_public_status() {
+          calls += 1;
+          return {};
+        },
+      },
+    }),
+    /exactly 32 bytes/,
+  );
+  assert.equal(calls, 0);
 });
 
 test('loadRawIcpCanisterTrackerData loads raw endowment history alongside transfers', async () => {
   const target = principal('ryjl3-tyaaa-aaaaa-aaaba-cai');
+  const destinationSubaccount = new Uint8Array(32);
+  destinationSubaccount[31] = 1;
   const calls = [];
+  let indexCall;
 
   const data = await loadRawIcpCanisterTrackerData({
     historianCanisterId: 'j5gs6-uiaaa-aaaar-qb5cq-cai',
     host: 'https://icp0.io',
     agent: { test: true },
     canisterId: target,
+    destinationSubaccount,
     historyLimit: 2,
     historianActor: {
       async get_public_status() {
@@ -1405,7 +1429,8 @@ test('loadRawIcpCanisterTrackerData loads raw endowment history alongside transf
       },
     },
     indexActorFactory: () => ({
-      async get_account_identifier_transactions() {
+      async get_account_identifier_transactions(args) {
+        indexCall = args;
         return { Ok: { balance: 0n, oldest_tx_id: [], transactions: [] } };
       },
     }),
@@ -1417,7 +1442,12 @@ test('loadRawIcpCanisterTrackerData loads raw endowment history alongside transf
     start_after_tx_id: [],
     limit: [2],
     descending: [true],
+    destination_subaccount: [destinationSubaccount],
   });
+  assert.equal(
+    indexCall.account_identifier,
+    accountIdentifierHex({ owner: target, subaccount: [destinationSubaccount] }),
+  );
   assert.equal(data.commitments.items.length, 1);
   assert.equal(data.commitments.items[0].tx_id, 9n);
   assert.deepEqual(data.transfers.items, []);

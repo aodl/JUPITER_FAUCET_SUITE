@@ -21,9 +21,11 @@ pub(super) fn deposit_account_for_pending(
     pending: &PendingNotification,
 ) -> Account {
     match pending.kind {
-        TransferKind::CyclesTopUpRawFallback
-        | TransferKind::RawIcp
-        | TransferKind::RemainderToRelay => Account {
+        TransferKind::RawIcp => Account {
+            owner: pending.beneficiary,
+            subaccount: pending.destination_subaccount,
+        },
+        TransferKind::CyclesTopUpRawFallback | TransferKind::RemainderToRelay => Account {
             owner: pending.beneficiary,
             subaccount: None,
         },

@@ -225,6 +225,15 @@ struct GetCommitmentHistoryArgs {
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
+struct GetRawIcpCommitmentHistoryArgs {
+    canister_id: Principal,
+    destination_subaccount: Option<Vec<u8>>,
+    start_after_tx_id: Option<u64>,
+    limit: Option<u32>,
+    descending: Option<bool>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
 struct GetNeuronCommitmentHistoryArgs {
     neuron_id: u64,
     start_after_tx_id: Option<u64>,
@@ -238,6 +247,7 @@ struct CommitmentSample {
     timestamp_nanos: Option<u64>,
     amount_e8s: u64,
     counts_toward_faucet: bool,
+    raw_icp_destination_subaccount: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
@@ -253,6 +263,7 @@ enum CommitmentRoute {
     },
     RawIcp {
         destination_canister_id: Principal,
+        destination_subaccount: Option<Vec<u8>>,
         memo: Vec<u8>,
     },
     NeuronStake {
@@ -541,6 +552,7 @@ struct RecentCommitmentListItem {
     canister_id: Option<Principal>,
     neuron_id: Option<u64>,
     raw_icp_memo_text: Option<String>,
+    raw_icp_destination_subaccount: Option<Vec<u8>>,
     neuron_memo_text: Option<String>,
     memo_text: Option<String>,
     tx_id: u64,
@@ -4297,6 +4309,7 @@ fn historian_route_indexing_with_real_icp_index_counts_descending_route_pages_wi
                 canister_id: commitment_target,
             },
             CommitmentRoute::RawIcp {
+                destination_subaccount: None,
                 destination_canister_id: commitment_target,
                 memo: Vec::new(),
             },
@@ -5126,8 +5139,9 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
         h.historian,
         Principal::anonymous(),
         "get_raw_icp_commitment_history",
-        GetCommitmentHistoryArgs {
+        GetRawIcpCommitmentHistoryArgs {
             canister_id: raw_target,
+            destination_subaccount: None,
             start_after_tx_id: None,
             limit: Some(10),
             descending: Some(false),
@@ -5195,8 +5209,9 @@ fn historian_upgrade_preserves_histories() -> Result<()> {
         h.historian,
         Principal::anonymous(),
         "get_raw_icp_commitment_history",
-        GetCommitmentHistoryArgs {
+        GetRawIcpCommitmentHistoryArgs {
             canister_id: raw_target,
+            destination_subaccount: None,
             start_after_tx_id: None,
             limit: Some(10),
             descending: Some(false),
@@ -5275,6 +5290,8 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
     let raw_a_empty = format!("{normal_a}.");
     let raw_a_target_1 = format!("{normal_a}.target-1");
     let raw_a_target_2 = format!("{normal_a}.target-2");
+    let raw_a_subaccount_1 = format!("{normal_a}:1.target-1");
+    let raw_a_subaccount_50 = format!("{normal_a}:50.target-1");
     let raw_b_empty = format!("{normal_b}.");
     for (amount, memo) in [
         (100_000_000, normal_a.as_bytes()),
@@ -5285,6 +5302,8 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
         (130_000_000, raw_a_target_1.as_bytes()),
         (140_000_000, raw_a_target_1.as_bytes()),
         (150_000_000, raw_a_target_2.as_bytes()),
+        (155_000_000, raw_a_subaccount_1.as_bytes()),
+        (165_000_000, raw_a_subaccount_50.as_bytes()),
         (160_000_000, raw_b_empty.as_bytes()),
         (170_000_000, b"100".as_slice()),
         (180_000_000, b"100.".as_slice()),
@@ -5321,6 +5340,7 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
 
     let routes = vec![
         CommitmentRoute::RawIcp {
+            destination_subaccount: None,
             destination_canister_id: canister_a,
             memo: Vec::new(),
         },
@@ -5328,17 +5348,38 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
             canister_id: canister_a,
         },
         CommitmentRoute::RawIcp {
+            destination_subaccount: None,
             destination_canister_id: canister_a,
             memo: b"target-1".to_vec(),
         },
         CommitmentRoute::RawIcp {
+            destination_subaccount: None,
             destination_canister_id: canister_a,
             memo: b"target-2".to_vec(),
+        },
+        CommitmentRoute::RawIcp {
+            destination_subaccount: Some({
+                let mut subaccount = vec![0; 32];
+                subaccount[31] = 1;
+                subaccount
+            }),
+            destination_canister_id: canister_a,
+            memo: b"target-1".to_vec(),
+        },
+        CommitmentRoute::RawIcp {
+            destination_subaccount: Some({
+                let mut subaccount = vec![0; 32];
+                subaccount[31] = 50;
+                subaccount
+            }),
+            destination_canister_id: canister_a,
+            memo: b"target-1".to_vec(),
         },
         CommitmentRoute::CyclesTopUp {
             canister_id: canister_b,
         },
         CommitmentRoute::RawIcp {
+            destination_subaccount: None,
             destination_canister_id: canister_b,
             memo: Vec::new(),
         },
@@ -5398,6 +5439,8 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
             (2, 300_000_000),
             (2, 270_000_000),
             (1, 150_000_000),
+            (1, 155_000_000),
+            (1, 165_000_000),
             (1, 300_000_000),
             (1, 160_000_000),
             (1, 170_000_000),
@@ -5433,6 +5476,64 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
             descending: Some(false),
         },
     )?;
+    let mut subaccount_1 = vec![0; 32];
+    subaccount_1[31] = 1;
+    let mut subaccount_50 = vec![0; 32];
+    subaccount_50[31] = 50;
+    let raw_default_before: CommitmentHistoryPage = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_raw_icp_commitment_history",
+        GetRawIcpCommitmentHistoryArgs {
+            canister_id: canister_a,
+            destination_subaccount: None,
+            start_after_tx_id: None,
+            limit: Some(100),
+            descending: Some(false),
+        },
+    )?;
+    let raw_subaccount_1_before: CommitmentHistoryPage = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_raw_icp_commitment_history",
+        GetRawIcpCommitmentHistoryArgs {
+            canister_id: canister_a,
+            destination_subaccount: Some(subaccount_1.clone()),
+            start_after_tx_id: None,
+            limit: Some(100),
+            descending: Some(false),
+        },
+    )?;
+    let raw_subaccount_50_before: CommitmentHistoryPage = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_raw_icp_commitment_history",
+        GetRawIcpCommitmentHistoryArgs {
+            canister_id: canister_a,
+            destination_subaccount: Some(subaccount_50.clone()),
+            start_after_tx_id: None,
+            limit: Some(100),
+            descending: Some(false),
+        },
+    )?;
+    assert_eq!(raw_default_before.items.len(), 5);
+    assert!(raw_default_before
+        .items
+        .iter()
+        .all(|sample| sample.raw_icp_destination_subaccount.is_none()));
+    assert_eq!(raw_subaccount_1_before.items.len(), 1);
+    assert_eq!(
+        raw_subaccount_1_before.items[0].raw_icp_destination_subaccount,
+        Some(subaccount_1.clone())
+    );
+    assert_eq!(raw_subaccount_50_before.items.len(), 1);
+    assert_eq!(
+        raw_subaccount_50_before.items[0].raw_icp_destination_subaccount,
+        Some(subaccount_50.clone())
+    );
     upgrade_historian_without_config_changes(&h.pic, h.historian)?;
 
     let after_upgrade: GetCommitmentRouteSummariesResponse = query_one(
@@ -5473,6 +5574,26 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
     );
     assert_eq!(counts_after_upgrade, counts_before);
     assert_eq!(history_after_upgrade, history_before);
+    for (destination_subaccount, expected) in [
+        (None, &raw_default_before),
+        (Some(subaccount_1), &raw_subaccount_1_before),
+        (Some(subaccount_50), &raw_subaccount_50_before),
+    ] {
+        let after: CommitmentHistoryPage = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "get_raw_icp_commitment_history",
+            GetRawIcpCommitmentHistoryArgs {
+                canister_id: canister_a,
+                destination_subaccount,
+                start_after_tx_id: None,
+                limit: Some(100),
+                descending: Some(false),
+            },
+        )?;
+        assert_eq!(&after, expected);
+    }
     append(&staking_id, 250_000_000, normal_a.as_bytes())?;
     append(&staking_id, 270_000_000, canister_c.to_text().as_bytes())?;
     let calls_before: Vec<DebugIndexGetCall> = query_one(
@@ -5510,6 +5631,8 @@ fn historian_commitment_route_rollups_are_exact_lifetime_and_upgrade_stable() ->
             (3, 550_000_000),
             (2, 270_000_000),
             (1, 150_000_000),
+            (1, 155_000_000),
+            (1, 165_000_000),
             (1, 300_000_000),
             (1, 160_000_000),
             (1, 170_000_000),

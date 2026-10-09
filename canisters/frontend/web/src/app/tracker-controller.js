@@ -1433,6 +1433,11 @@ export function createTrackerController({
     const title = isNeuron ? 'Raw ICP neuron memo' : 'Raw ICP canister memo';
     const target = isNeuron ? parsed.neuronId.toString() : parsed.canisterText;
     const targetHtml = isNeuron ? renderNeuronDashboardLink(target) : escapeHtml(target);
+    const destinationLabel = isNeuron
+      ? 'Neuron staking account'
+      : parsed.destinationSubaccountNumberText
+        ? `Subaccount ${parsed.destinationSubaccountNumberText}`
+        : 'Default subaccount';
     const hasOutgoingMemo = parsed.outgoingMemoText !== null && parsed.outgoingMemoText !== undefined;
     const rawMemoSegments = hasOutgoingMemo ? rawMemoSegmentPlan(visibleItems, parsed.outgoingMemoText || '') : null;
     const sourceSegments = hasOutgoingMemo
@@ -1452,7 +1457,7 @@ export function createTrackerController({
       : '';
     const commitmentScopeNote = !hasOutgoingMemo
       ? ''
-      : '<p class="pane-status-note tracker-status-note">Retained qualifying endowment history is recorded for the destination target as a whole and is not filtered by this outgoing memo. The chart shows retained qualifying endowments in the selected range. The transfer chart separately identifies matching and other payout memos.</p>';
+      : '<p class="pane-status-note tracker-status-note">Retained qualifying endowment history covers the selected destination account across outgoing memos. The chart shows retained qualifying endowments in the selected range. The transfer chart separately identifies matching and other payout memos.</p>';
     const matchingNote = !hasOutgoingMemo
       ? ''
       : `<p class="pane-status-note tracker-status-note">Visible Jupiter Faucet transfers matching the outgoing memo: ${escapeHtml(formatInteger(summary.faucetMatchingMemoTransferCount))} · ${escapeHtml(formatIcpE8s(summary.faucetMatchingMemoIcpE8s))}. If no transfers match, the top-up may not have been indexed yet, may be outside the loaded range, or may not have been paid through Jupiter Faucet yet.</p>`;
@@ -1465,14 +1470,14 @@ export function createTrackerController({
         <div class="tracker-chart-card">
           <div class="tracker-chart-header">
             <h3>ICP endowments</h3>
-            <span>Retained qualifying Jupiter Faucet endowments recorded by Historian for this destination target.</span>
+            <span>Retained qualifying Jupiter Faucet endowments recorded by Historian for this destination account.</span>
           </div>
           ${renderRawCommitmentsChart(commitmentBuckets, visibleData, classified)}
         </div>
         <div class="tracker-chart-card">
           <div class="tracker-chart-header">
             <h3>${escapeHtml(title)}</h3>
-            <span>Observed incoming ICP transfers into the ${isNeuron ? 'staking' : 'canister'} account, color-coded by source.</span>
+            <span>Observed incoming ICP transfers into the selected ${isNeuron ? 'staking' : 'canister'} account, color-coded by source.</span>
           </div>
           ${transferLoadingNote}
           ${transferLimitNote}
@@ -1490,6 +1495,7 @@ export function createTrackerController({
       <dl class="pane-detail-grid tracker-summary-grid">
         <div><dt>Memo type</dt><dd class="pane-detail-value">${escapeHtml(title)}</dd></div>
         <div><dt>Tracked target</dt><dd class="pane-detail-value mono">${targetHtml}</dd></div>
+        <div><dt>Destination account</dt><dd class="pane-detail-value">${escapeHtml(destinationLabel)}</dd></div>
         <div><dt>Endowments shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : renderTrackerSummaryValue(commitmentLoading, formatInteger(commitmentCount))}</dd></div>
         <div><dt>ICP endowed shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : renderTrackerSummaryValue(commitmentLoading, formatIcpE8s(committedE8s))}</dd></div>
         <div><dt>Incoming transfers shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.totalTransferCount))}</dd></div>
@@ -1509,7 +1515,7 @@ export function createTrackerController({
     if (!result || result.innerHTML.trim()) return;
     result.innerHTML = `
       <div class="tracker-empty-state">
-        <p>Paste a memo to inspect Jupiter Faucet tracking history. Plain canister memos open cycle top-up tracking; dotted canister memos show raw ICP endowment history and incoming transfers for the target canister account; numeric memos show public neuron endowment history and staking-account inflows.</p>
+        <p>Paste a memo to inspect Jupiter Faucet tracking history. Plain canister memos open cycle top-up tracking; dotted canister memos show raw ICP endowment history and incoming transfers for the selected destination account; numeric memos show public neuron endowment history and staking-account inflows.</p>
       </div>`;
   };
 
@@ -1620,7 +1626,7 @@ export function createTrackerController({
       const data = parsed.kind === 'cyclesTopUp'
         ? await loadData({ ...common, canisterId: parsed.canisterId, historyLimit, minTimestampNanos, onProgress })
         : parsed.kind === 'rawIcpCanister'
-          ? await loadRawCanisterData({ ...common, canisterId: parsed.canisterId, outgoingMemoText: parsed.outgoingMemoText, historyLimit, minTimestampNanos, onProgress })
+          ? await loadRawCanisterData({ ...common, canisterId: parsed.canisterId, destinationSubaccount: parsed.destinationSubaccount, outgoingMemoText: parsed.outgoingMemoText, historyLimit, minTimestampNanos, onProgress })
           : await loadNeuronData({ ...common, neuronId: parsed.neuronId, outgoingMemoText: parsed.outgoingMemoText, historyLimit, minTimestampNanos, onProgress });
       if (state.progressRequestId !== progressRequestId) return;
       state.data = data;
@@ -1668,7 +1674,7 @@ export function createTrackerController({
     return true;
   };
 
-  const openPanelForLinkedPrincipal = (principalText = '') => {
+  const openPanelForLinkedPrincipal = (principalText = '', { memoRoute = false } = {}) => {
     const trackerSection = document.querySelector('.nav-panel-section[data-panel="metric-tracker"]');
     const trackerAlreadyOpen = document.body.classList.contains('nav-panel-open')
       && trackerSection?.classList.contains('nav-panel-section--active');
@@ -1682,17 +1688,19 @@ export function createTrackerController({
       if (principalText) replaceLocationHash(principalText);
       return;
     }
-    window.location.hash = principalText ? trackerHashForPrincipal(principalText) : '#metric-tracker';
+    window.location.hash = principalText
+      ? memoRoute ? trackerHashForMemo({ memo: principalText }) : trackerHashForPrincipal(principalText)
+      : '#metric-tracker';
   };
 
   const trackLinkedMemo = ({ memo, protocolCanister = '' } = {}) => {
-    const text = String(memo || '').trim();
-    if (!text) return;
+    const text = String(memo || '');
+    if (!text.trim()) return;
     state.memoText = text;
     state.protocolCanisterText = String(protocolCanister || '').trim();
     const input = document.getElementById('tracker-principal-input');
     if (input) input.value = text;
-    openPanelForLinkedPrincipal(text);
+    openPanelForLinkedPrincipal(text, { memoRoute: true });
     window.setTimeout(() => {
       const refreshedInput = document.getElementById('tracker-principal-input');
       if (refreshedInput) refreshedInput.value = text;

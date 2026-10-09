@@ -13,6 +13,7 @@ pub enum MemoDirective {
     },
     RawIcp {
         canister_id: Principal,
+        destination_subaccount: Option<[u8; 32]>,
         memo: Vec<u8>,
     },
     NeuronStake {
@@ -59,6 +60,49 @@ fn parse_neuron_id_text(text: &str) -> Option<u64> {
     (neuron_id != 0).then_some(neuron_id)
 }
 
+pub fn numbered_subaccount(number: u64) -> Option<[u8; 32]> {
+    if number == 0 {
+        return None;
+    }
+    let mut subaccount = [0; 32];
+    subaccount[24..].copy_from_slice(&number.to_be_bytes());
+    Some(subaccount)
+}
+
+pub fn numbered_subaccount_number(subaccount: &[u8; 32]) -> Result<Option<u64>, &'static str> {
+    if subaccount[..24].iter().any(|byte| *byte != 0) {
+        return Err("subaccount is not a zero-padded u64");
+    }
+    let mut number = [0; 8];
+    number.copy_from_slice(&subaccount[24..]);
+    Ok((u64::from_be_bytes(number) != 0).then_some(u64::from_be_bytes(number)))
+}
+
+fn parse_numbered_subaccount_text(text: &str) -> Option<Option<[u8; 32]>> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(numbered_subaccount(text.parse::<u64>().ok()?))
+}
+
+fn parse_raw_destination_text(text: &str) -> Option<(Principal, Option<[u8; 32]>)> {
+    let destination = text.trim();
+    if let Some((owner_text, number_text)) = destination.split_once(':') {
+        if owner_text.is_empty()
+            || number_text.is_empty()
+            || number_text.contains(':')
+            || destination.bytes().any(|byte| byte.is_ascii_whitespace())
+        {
+            return None;
+        }
+        return Some((
+            parse_declared_principal_text(owner_text)?,
+            parse_numbered_subaccount_text(number_text)?,
+        ));
+    }
+    Some((parse_declared_principal_text(destination)?, None))
+}
+
 pub fn parse_memo_directive(memo: &[u8]) -> Option<MemoDirective> {
     if memo.is_empty() || memo.len() > MAX_TARGET_CANISTER_MEMO_BYTES || !memo.is_ascii() {
         return None;
@@ -71,6 +115,7 @@ pub fn parse_memo_directive(memo: &[u8]) -> Option<MemoDirective> {
         return Some(MemoDirective::RawIcp {
             canister_id: Principal::from_text(EVENT_HORIZON_CANISTER_ID)
                 .expect("invalid hardcoded Event Horizon principal"),
+            destination_subaccount: None,
             memo: suffix.as_bytes().to_vec(),
         });
     }
@@ -85,8 +130,10 @@ pub fn parse_memo_directive(memo: &[u8]) -> Option<MemoDirective> {
                 memo: Some(raw_memo.as_bytes().to_vec()),
             });
         }
+        let (canister_id, destination_subaccount) = parse_raw_destination_text(declared_canister)?;
         return Some(MemoDirective::RawIcp {
-            canister_id: parse_declared_principal_text(declared_canister)?,
+            canister_id,
+            destination_subaccount,
             memo: raw_memo.as_bytes().to_vec(),
         });
     }
@@ -112,8 +159,9 @@ pub fn parse_target_canister_principal_from_memo(memo: &[u8]) -> Option<Principa
 #[cfg(test)]
 mod tests {
     use crate::{
-        parse_memo_directive, parse_target_canister_principal_from_memo, MemoDirective,
-        EVENT_HORIZON_CANISTER_ID, MAX_TARGET_CANISTER_MEMO_BYTES,
+        numbered_subaccount, numbered_subaccount_number, parse_memo_directive,
+        parse_target_canister_principal_from_memo, MemoDirective, EVENT_HORIZON_CANISTER_ID,
+        MAX_TARGET_CANISTER_MEMO_BYTES,
     };
     use candid::Principal;
     use serde::Deserialize;
@@ -142,6 +190,8 @@ mod tests {
         RawIcp {
             canister_id: String,
             memo_text: String,
+            #[serde(default)]
+            destination_subaccount_hex: Option<String>,
         },
         NeuronStake {
             neuron_id: u64,
@@ -168,8 +218,15 @@ mod tests {
             Some(ExpectedDirective::RawIcp {
                 canister_id,
                 memo_text,
+                destination_subaccount_hex,
             }) => Some(MemoDirective::RawIcp {
                 canister_id: principal(canister_id),
+                destination_subaccount: destination_subaccount_hex.as_ref().map(|hex| {
+                    hex::decode(hex)
+                        .expect("valid destination subaccount hex")
+                        .try_into()
+                        .expect("32-byte destination subaccount")
+                }),
                 memo: memo_text.as_bytes().to_vec(),
             }),
             Some(ExpectedDirective::NeuronStake {
@@ -287,6 +344,7 @@ mod tests {
             parse_memo_directive(format!("{compact}.swap.7").as_bytes()),
             Some(MemoDirective::RawIcp {
                 canister_id: target,
+                destination_subaccount: None,
                 memo: b"swap.7".to_vec(),
             })
         );
@@ -307,6 +365,7 @@ mod tests {
                 parse_memo_directive(memo.as_bytes()),
                 Some(MemoDirective::RawIcp {
                     canister_id: event_horizon,
+                    destination_subaccount: None,
                     memo: suffix.as_bytes().to_vec(),
                 })
             );
@@ -330,6 +389,7 @@ mod tests {
             parse_memo_directive(format!("{compact}..memo").as_bytes()),
             Some(MemoDirective::RawIcp {
                 canister_id: target,
+                destination_subaccount: None,
                 memo: b".memo".to_vec(),
             })
         );
@@ -343,6 +403,7 @@ mod tests {
             parse_memo_directive(format!("{compact}. abc ").as_bytes()),
             Some(MemoDirective::RawIcp {
                 canister_id: target,
+                destination_subaccount: None,
                 memo: b" abc ".to_vec(),
             })
         );
@@ -356,6 +417,7 @@ mod tests {
             parse_memo_directive(format!("{compact}.").as_bytes()),
             Some(MemoDirective::RawIcp {
                 canister_id: target,
+                destination_subaccount: None,
                 memo: Vec::new(),
             })
         );
@@ -371,6 +433,7 @@ mod tests {
             parse_memo_directive(memo.as_bytes()),
             Some(MemoDirective::RawIcp {
                 canister_id: target,
+                destination_subaccount: None,
                 memo: b"12345678".to_vec(),
             })
         );
@@ -383,6 +446,76 @@ mod tests {
         let memo = format!("{compact}.123456789");
         assert_eq!(memo.len(), MAX_TARGET_CANISTER_MEMO_BYTES + 1);
         assert_eq!(parse_memo_directive(memo.as_bytes()), None);
+    }
+
+    #[test]
+    fn numbered_subaccount_helpers_use_zero_padded_big_endian_u64() {
+        assert_eq!(numbered_subaccount(0), None);
+        for number in [1, 50, 255, 256, u64::MAX] {
+            let subaccount = numbered_subaccount(number).expect("non-zero subaccount");
+            assert_eq!(&subaccount[..24], &[0; 24]);
+            assert_eq!(&subaccount[24..], &number.to_be_bytes());
+            assert_eq!(numbered_subaccount_number(&subaccount), Ok(Some(number)));
+        }
+        assert_eq!(numbered_subaccount_number(&[0; 32]), Ok(None));
+        let mut unsupported = [0; 32];
+        unsupported[0] = 1;
+        assert!(numbered_subaccount_number(&unsupported).is_err());
+        for invalid in ["", "+1", "-1", "1.0", "1e2", "0x1", "١"] {
+            assert_eq!(
+                super::parse_numbered_subaccount_text(invalid),
+                None,
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn parser_normalizes_numbered_raw_icp_destinations_and_preserves_suffix() {
+        let target = target_canister();
+        let compact = target.to_text().replace('-', "");
+        for (number_text, expected_number, suffix) in [
+            ("0", None, ""),
+            ("000", None, "a:1"),
+            ("1", Some(1), "a.b"),
+            ("50", Some(50), " d "),
+            ("255", Some(255), "x"),
+            ("256", Some(256), ""),
+        ] {
+            assert_eq!(
+                parse_memo_directive(format!("{compact}:{number_text}.{suffix}").as_bytes()),
+                Some(MemoDirective::RawIcp {
+                    canister_id: target,
+                    destination_subaccount: expected_number.and_then(numbered_subaccount),
+                    memo: suffix.as_bytes().to_vec(),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn parser_rejects_invalid_numbered_raw_icp_destinations() {
+        let compact = target_canister().to_text().replace('-', "");
+        for declaration in [
+            format!("{compact}:1"),
+            format!("{compact}:.memo"),
+            format!("{compact}:1:2.memo"),
+            format!("{compact}:+1.memo"),
+            format!("{compact}:-1.memo"),
+            format!("{compact}:0x1.memo"),
+            format!("{compact}:1e2.memo"),
+            format!("{compact}: 1.memo"),
+            format!("{compact} :1.memo"),
+            format!("{compact}:18446744073709551616.memo"),
+            "42:1.memo".to_string(),
+            "X:1.suffix".to_string(),
+        ] {
+            assert_eq!(
+                parse_memo_directive(declaration.as_bytes()),
+                None,
+                "{declaration}"
+            );
+        }
     }
 
     #[test]
@@ -456,6 +589,7 @@ mod tests {
             raw_empty,
             MemoDirective::RawIcp {
                 canister_id: canister,
+                destination_subaccount: None,
                 memo: Vec::new(),
             }
         );
@@ -463,6 +597,7 @@ mod tests {
             raw_non_empty,
             MemoDirective::RawIcp {
                 canister_id: canister,
+                destination_subaccount: None,
                 memo: b"abc".to_vec(),
             }
         );

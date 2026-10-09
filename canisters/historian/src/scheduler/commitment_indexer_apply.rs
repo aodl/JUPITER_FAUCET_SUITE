@@ -20,6 +20,7 @@ pub(super) fn apply_verified_qualifying_commitment(
     let recent_item = RecentCommitment {
         canister_id,
         raw_icp_memo_text: None,
+        raw_icp_destination_subaccount: None,
         tx_id: commitment.tx_id,
         timestamp_nanos: commitment.timestamp_nanos,
         amount_e8s: commitment.amount_e8s,
@@ -34,6 +35,7 @@ pub(super) fn apply_verified_qualifying_commitment(
             timestamp_nanos: commitment.timestamp_nanos,
             amount_e8s: commitment.amount_e8s,
             counts_toward_faucet: true,
+            raw_icp_destination_subaccount: None,
         },
         st.config.max_commitment_entries_per_canister,
     );
@@ -69,8 +71,10 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
     match commitment.target {
         crate::logic::IndexedCommitmentTarget::RawIcp {
             canister_id,
+            destination_subaccount,
             memo_text,
         } => {
+            let raw_icp_destination_subaccount = destination_subaccount.map(Vec::from);
             if commitment.counts_toward_faucet {
                 crate::state::ensure_raw_icp_commitment_history_loaded(st, canister_id);
                 let history = st
@@ -84,6 +88,7 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                         timestamp_nanos: commitment.timestamp_nanos,
                         amount_e8s: commitment.amount_e8s,
                         counts_toward_faucet: true,
+                        raw_icp_destination_subaccount: raw_icp_destination_subaccount.clone(),
                     },
                     st.config.max_commitment_entries_per_canister,
                 );
@@ -100,6 +105,7 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                         RecentCommitment {
                             canister_id,
                             raw_icp_memo_text: Some(memo_text),
+                            raw_icp_destination_subaccount,
                             tx_id: commitment.tx_id,
                             timestamp_nanos: commitment.timestamp_nanos,
                             amount_e8s: commitment.amount_e8s,
@@ -119,6 +125,7 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                     RecentCommitment {
                         canister_id,
                         raw_icp_memo_text: Some(memo_text),
+                        raw_icp_destination_subaccount,
                         tx_id: commitment.tx_id,
                         timestamp_nanos: commitment.timestamp_nanos,
                         amount_e8s: commitment.amount_e8s,
@@ -142,6 +149,7 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                         timestamp_nanos: commitment.timestamp_nanos,
                         amount_e8s: commitment.amount_e8s,
                         counts_toward_faucet: true,
+                        raw_icp_destination_subaccount: None,
                     },
                     st.config.max_commitment_entries_per_canister,
                 );
@@ -219,6 +227,7 @@ pub(super) fn apply_indexed_commitment_tx(
                             RecentCommitment {
                                 canister_id,
                                 raw_icp_memo_text: None,
+                                raw_icp_destination_subaccount: None,
                                 tx_id: commitment.tx_id,
                                 timestamp_nanos: commitment.timestamp_nanos,
                                 amount_e8s: commitment.amount_e8s,

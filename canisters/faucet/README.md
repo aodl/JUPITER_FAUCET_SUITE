@@ -79,7 +79,7 @@ Memo handling is intentionally simple and code-driven:
 - empty memo = invalid
 - malformed memo = invalid
 - memo that does not decode to a supported declaration within the ICP memo limit = invalid
-- the trimmed memo must be ASCII and at most 32 bytes
+- the original memo must be ASCII and at most 32 bytes; surrounding destination whitespace follows the existing trim policy, while a raw outgoing suffix is preserved exactly
 - whitespace around declaration text is tolerated because the parser trims before decoding
 
 Invalid memos are counted as `ignored_bad_memo` in the payout summary and do not block later transfers.
@@ -92,7 +92,7 @@ The default minimum tracked endowment is:
 
 Transfers below that threshold are ignored for attribution and counted as `ignored_under_threshold`. They also do **not** create durable historian tracking for the memo target. The production minimum is intentionally high because historian only keeps a durable beneficiary registry for memo-derived targets that actually qualify; a much lower threshold would make registry spam far cheaper.
 
-Memo encoding uses `icrc1_memo` text only. The primary form is declared canister ID text. The parser accepts short valid principal text, but Jupiter Faucet's supported principal-based target is a declared canister ID; ordinary non-canister principal IDs are too long for the 32-byte memo limit. The faucet also accepts `canister_id.memo` for raw ICP routing and ASCII decimal NNS neuron IDs for neuron staking-account top-ups. The legacy 64-bit numeric memo path is still ignored. We do not hard-code a `-cai` suffix check, because the 32-byte memo limit already excludes ordinary long user principals and we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended declared canister ID for the normal cycles top-up path; that is the primary supported UX.
+Memo encoding uses `icrc1_memo` text only. The primary form is declared canister ID text. The parser accepts short valid principal text, but Jupiter Faucet's supported principal-based target is a declared canister ID; ordinary non-canister principal IDs are too long for the 32-byte memo limit. The faucet accepts `canister_id.memo` for raw ICP routing to the default account and `canister_id:number.memo` for routing to a numbered subaccount. The decimal number is encoded as a zero-padded 32-byte big-endian `u64`; omitted or zero means the default account, and leading zeros normalize to the same account. The selector and suffix share the unchanged 32-byte ASCII declaration budget. This numbered form does not provide arbitrary 32-byte subaccount addressing. ASCII decimal NNS neuron IDs remain the neuron staking-account form. The legacy 64-bit numeric memo path is still ignored. We do not hard-code a `-cai` suffix check, because the 32-byte memo limit already excludes ordinary long user principals and we do not want to bake a textual canister-ID convention into canister logic. Users should still enter the intended declared canister ID for the normal cycles top-up path; that is the primary supported UX.
 
 Neuron staking-account top-ups require the target neuron to be public. The faucet calls NNS Governance to read the neuron and resolve its staking subaccount before it can send ICP there; a private or unreadable neuron cannot be resolved and the endowment is counted as a failed top-up attempt for that payout job.
 
@@ -120,7 +120,8 @@ A participant declares a faucet target by sending ICP to the configured staking 
 
 - staking account address (ICRC-1 text): `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`
 - primary cycles top-up form: the declared canister ID, for example `aaaaa-aa`
-- raw ICP form: `canister_id.memo`
+- raw ICP default-account form: `canister_id.memo`
+- raw ICP numbered-subaccount form: `canister_id:number.memo`
 - neuron top-up form: decimal NNS neuron ID, optionally `neuron_id.memo`
 
 When using the [NNS dapp](https://nns.ic0.app/wallet/?u=), send to the long-form ICRC-1 staking account address so the text memo path is available. If the memo field is hidden, use the command menu to enable transaction memos before submitting the transfer. The faucet ignores the legacy numeric memo field; neuron IDs are supported only as ASCII text in `icrc1_memo`.
@@ -270,7 +271,7 @@ For original gross share `G` and Ledger fee `F`, the original CMC transfer sends
 
 If that raw fallback is definitely rejected, its proven no-debit gross remains available for one Relay remainder cleanup. If its duplicate-safe Ledger attempts remain ambiguous, or its persisted identity expires, the fallback gross is conservatively added back to `gross_outflow_e8s` before the pending transfer is cleared, so it cannot be swept to Relay under a new identity.
 
-For `canister_id.memo` raw ICP directives, the faucet transfers ICP directly to the declared canister's default account and uses the right-hand memo segment as the outgoing ICRC-1 memo. It does not call `notify_top_up`.
+For `canister_id.memo` raw ICP directives, the faucet transfers ICP directly to the declared canister's default account. For `canister_id:number.memo`, it transfers to that owner's numbered subaccount, encoded by writing the number's eight-byte big-endian representation into the final eight bytes of an otherwise zeroed 32-byte subaccount. Number zero is the default account. In both forms the first dot separates the destination from the outgoing ICRC-1 memo, whose suffix bytes—including dots, colons, an empty suffix, and ASCII whitespace—are preserved exactly. Raw routes do not call `notify_top_up`, and their pinned destination account and transfer identity are reused on retries.
 
 The production suite also supports explicit raw-ICP directives to Relay independently of final remainder cleanup.
 

@@ -318,6 +318,7 @@ mod tests {
                 timestamp_nanos: Some(tx_id.saturating_mul(1_000_000_000)),
                 amount_e8s,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
     }
@@ -456,6 +457,7 @@ mod tests {
                 timestamp_nanos: Some(9_000_000_000),
                 amount_e8s: 123_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.per_canister_meta.insert(
@@ -513,6 +515,7 @@ mod tests {
                     timestamp_nanos: Some(9_000_000_000),
                     amount_e8s,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
             refresh_memo_registered_canister_summary(&mut st, canister);
@@ -530,6 +533,7 @@ mod tests {
                 timestamp_nanos: Some(10_000_000_000),
                 amount_e8s: 789_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         refresh_memo_registered_canister_summary(&mut st, first);
@@ -900,6 +904,7 @@ mod tests {
                 timestamp_nanos: Some(1),
                 amount_e8s: 10,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.main_lock_state_ts = Some(99);
@@ -1160,6 +1165,7 @@ mod tests {
                 timestamp_nanos: Some(1_000_000_000),
                 amount_e8s: 80_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.commitment_history.insert(
@@ -1169,6 +1175,7 @@ mod tests {
                 timestamp_nanos: Some(2_000_000_000),
                 amount_e8s: 50_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
 
@@ -1199,6 +1206,7 @@ mod tests {
                 timestamp_nanos: Some(1_000_000_000),
                 amount_e8s: 80_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         state::set_state(st);
@@ -1232,12 +1240,14 @@ mod tests {
                     timestamp_nanos: Some(1_000_000_000),
                     amount_e8s: 80_000_000,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
                 CommitmentSample {
                     tx_id: 2,
                     timestamp_nanos: Some(2_000_000_000),
                     amount_e8s: 5_000_000,
                     counts_toward_faucet: false,
+                    raw_icp_destination_subaccount: None,
                 },
             ],
         );
@@ -1271,6 +1281,7 @@ mod tests {
                 timestamp_nanos: Some(1_000_000_000),
                 amount_e8s: 5_000_000,
                 counts_toward_faucet: false,
+                raw_icp_destination_subaccount: None,
             }],
         );
         state::set_state(st);
@@ -1295,6 +1306,7 @@ mod tests {
                 timestamp_nanos: Some(1_000_000_000),
                 amount_e8s: 100_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.raw_icp_commitment_history.insert(
@@ -1304,6 +1316,7 @@ mod tests {
                 timestamp_nanos: Some(2_000_000_000),
                 amount_e8s: 200_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.neuron_commitment_history.insert(
@@ -1313,6 +1326,7 @@ mod tests {
                 timestamp_nanos: Some(3_000_000_000),
                 amount_e8s: 300_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.neuron_commitment_history.insert(
@@ -1322,6 +1336,7 @@ mod tests {
                 timestamp_nanos: Some(4_000_000_000),
                 amount_e8s: 400_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.qualifying_commitment_count = None;
@@ -1369,6 +1384,7 @@ mod tests {
                 timestamp_nanos: Some(1_000_000_000),
                 amount_e8s: 5_000_000,
                 counts_toward_faucet: false,
+                raw_icp_destination_subaccount: None,
             }],
         );
         rebuild_memo_registered_canister_summaries_cache(&mut st);
@@ -1398,6 +1414,7 @@ mod tests {
                 timestamp_nanos: Some(1_000_000_000),
                 amount_e8s: 5_000_000,
                 counts_toward_faucet: false,
+                raw_icp_destination_subaccount: None,
             }],
         );
         state::set_state(st);
@@ -1422,12 +1439,14 @@ mod tests {
                     timestamp_nanos: Some(1_000_000_000),
                     amount_e8s: 100_000_000,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
                 CommitmentSample {
                     tx_id: 2,
                     timestamp_nanos: Some(2_000_000_000),
                     amount_e8s: 200_000_000,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
             ],
         );
@@ -1470,6 +1489,7 @@ mod tests {
                     timestamp_nanos: Some(1_000),
                     amount_e8s: 50_000_000,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
             st.per_canister_meta.insert(
@@ -1517,6 +1537,7 @@ mod tests {
                 timestamp_nanos: Some(1_000),
                 amount_e8s: 50_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         rebuild_memo_registered_canister_summaries_cache(&mut st);
@@ -1552,6 +1573,7 @@ mod tests {
                 timestamp_nanos: Some(1_000_000_000),
                 amount_e8s: 50_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         state::set_state(st);
@@ -1607,6 +1629,7 @@ mod tests {
                     timestamp_nanos: Some(1_000_000_000),
                     amount_e8s: 50_000_000,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
         }
@@ -1638,6 +1661,7 @@ mod tests {
             timestamp_nanos: Some(11),
             amount_e8s: 20_000_000,
             counts_toward_faucet: true,
+            raw_icp_destination_subaccount: None,
         }]);
         st.recent_under_threshold_commitments = Some(vec![RecentCommitment {
             canister_id: low_amount,
@@ -1646,6 +1670,7 @@ mod tests {
             timestamp_nanos: Some(10),
             amount_e8s: 5_000_000,
             counts_toward_faucet: false,
+            raw_icp_destination_subaccount: None,
         }]);
         st.recent_invalid_commitments = Some(vec![InvalidCommitment {
             tx_id: 12,
@@ -1710,6 +1735,7 @@ mod tests {
             timestamp_nanos: Some(21),
             amount_e8s: 100_000_000,
             counts_toward_faucet: true,
+            raw_icp_destination_subaccount: None,
         }]);
         st.recent_neuron_commitments = Some(vec![RecentNeuronCommitment {
             neuron_id: 11_614_578_985_374_291_210,
@@ -1758,18 +1784,21 @@ mod tests {
                     timestamp_nanos: Some(10),
                     amount_e8s: 100,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
                 CommitmentSample {
                     tx_id: 2,
                     timestamp_nanos: Some(20),
                     amount_e8s: 50,
                     counts_toward_faucet: false,
+                    raw_icp_destination_subaccount: None,
                 },
                 CommitmentSample {
                     tx_id: 3,
                     timestamp_nanos: Some(30),
                     amount_e8s: 200,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
             ],
         );
@@ -1789,6 +1818,7 @@ mod tests {
                 timestamp_nanos: Some(10),
                 amount_e8s: 100,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.raw_icp_commitment_history.insert(
@@ -1798,6 +1828,7 @@ mod tests {
                 timestamp_nanos: Some(20),
                 amount_e8s: 200,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.neuron_commitment_history.insert(
@@ -1808,12 +1839,14 @@ mod tests {
                     timestamp_nanos: Some(30),
                     amount_e8s: 300,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
                 CommitmentSample {
                     tx_id: 4,
                     timestamp_nanos: Some(40),
                     amount_e8s: 400,
                     counts_toward_faucet: false,
+                    raw_icp_destination_subaccount: None,
                 },
             ],
         );
@@ -1841,12 +1874,14 @@ mod tests {
                     timestamp_nanos: Some(1_000_000_000),
                     amount_e8s: 5_000_000,
                     counts_toward_faucet: false,
+                    raw_icp_destination_subaccount: None,
                 },
                 CommitmentSample {
                     tx_id: 2,
                     timestamp_nanos: Some(2_000_000_000),
                     amount_e8s: 50_000_000,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
             ],
         );
@@ -1857,6 +1892,7 @@ mod tests {
             timestamp_nanos: Some(1_000_000_000),
             amount_e8s: 5_000_000,
             counts_toward_faucet: false,
+            raw_icp_destination_subaccount: None,
         }]);
         st.per_canister_meta.insert(
             canister,
@@ -1914,6 +1950,7 @@ mod tests {
                     timestamp_nanos: Some(tx_id * 1_000_000_000),
                     amount_e8s: 100,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 })
                 .collect(),
         );
@@ -1940,6 +1977,7 @@ mod tests {
                 timestamp_nanos: Some(1_000_000_000),
                 amount_e8s: 5_000_000,
                 counts_toward_faucet: false,
+                raw_icp_destination_subaccount: None,
             }],
         );
 
@@ -1977,6 +2015,7 @@ mod tests {
                     timestamp_nanos: Some((idx as u64 + 1) * 1_000_000_000),
                     amount_e8s: 100_000_000,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
         }
@@ -2037,6 +2076,7 @@ mod tests {
                     timestamp_nanos: Some(tx_id * 1_000_000_000),
                     amount_e8s: 100_000_000,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 })
                 .collect(),
         );
@@ -2099,6 +2139,7 @@ mod tests {
                     timestamp_nanos: Some(canister.as_slice()[0] as u64),
                     amount_e8s: 100_000_000,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
         }
@@ -2155,6 +2196,7 @@ mod tests {
                     timestamp_nanos: Some(canister.as_slice()[0] as u64),
                     amount_e8s: 100_000_000,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
         }
@@ -2236,6 +2278,7 @@ mod tests {
                     timestamp_nanos: Some(canister.as_slice()[0] as u64),
                     amount_e8s: 100_000_000,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
         }
@@ -2278,6 +2321,7 @@ mod tests {
                 timestamp_nanos: Some(1),
                 amount_e8s: 100_000_000,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.cycles_history.insert(
@@ -2360,18 +2404,21 @@ mod tests {
                     timestamp_nanos: Some(10),
                     amount_e8s: 1,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
                 CommitmentSample {
                     tx_id: 20,
                     timestamp_nanos: Some(20),
                     amount_e8s: 1,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
                 CommitmentSample {
                     tx_id: 30,
                     timestamp_nanos: Some(30),
                     amount_e8s: 1,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
             ],
         );
@@ -2429,11 +2476,13 @@ mod tests {
                 timestamp_nanos: Some(410),
                 amount_e8s: 4100,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         state::set_state(st);
 
-        let page = get_raw_icp_commitment_history(GetCommitmentHistoryArgs {
+        let page = get_raw_icp_commitment_history(GetRawIcpCommitmentHistoryArgs {
+            destination_subaccount: None,
             canister_id: canister,
             start_after_tx_id: None,
             limit: Some(10),
@@ -2458,6 +2507,7 @@ mod tests {
                 timestamp_nanos: Some(510),
                 amount_e8s: 5100,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         state::set_state(st);
@@ -2487,6 +2537,7 @@ mod tests {
                 timestamp_nanos: Some(610),
                 amount_e8s: 6100,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         st.raw_icp_commitment_history.insert(
@@ -2496,6 +2547,7 @@ mod tests {
                 timestamp_nanos: Some(620),
                 amount_e8s: 6200,
                 counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             }],
         );
         state::set_state(st);
@@ -2506,7 +2558,8 @@ mod tests {
             limit: Some(10),
             descending: Some(false),
         });
-        let raw = get_raw_icp_commitment_history(GetCommitmentHistoryArgs {
+        let raw = get_raw_icp_commitment_history(GetRawIcpCommitmentHistoryArgs {
+            destination_subaccount: None,
             canister_id: canister,
             start_after_tx_id: None,
             limit: Some(10),
@@ -2531,7 +2584,8 @@ mod tests {
     fn raw_and_neuron_commitment_history_unknown_targets_return_empty_pages() {
         state::set_state(base_state());
 
-        let raw = get_raw_icp_commitment_history(GetCommitmentHistoryArgs {
+        let raw = get_raw_icp_commitment_history(GetRawIcpCommitmentHistoryArgs {
+            destination_subaccount: None,
             canister_id: principal("22255-zqaaa-aaaas-qf6uq-cai"),
             start_after_tx_id: None,
             limit: Some(10),
@@ -2562,30 +2616,35 @@ mod tests {
                     timestamp_nanos: Some(10),
                     amount_e8s: 1,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
                 CommitmentSample {
                     tx_id: 20,
                     timestamp_nanos: Some(20),
                     amount_e8s: 1,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
                 CommitmentSample {
                     tx_id: 30,
                     timestamp_nanos: Some(30),
                     amount_e8s: 1,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
             ],
         );
         state::set_state(st);
 
-        let first = get_raw_icp_commitment_history(GetCommitmentHistoryArgs {
+        let first = get_raw_icp_commitment_history(GetRawIcpCommitmentHistoryArgs {
+            destination_subaccount: None,
             canister_id: canister,
             start_after_tx_id: None,
             limit: Some(2),
             descending: Some(true),
         });
-        let second = get_raw_icp_commitment_history(GetCommitmentHistoryArgs {
+        let second = get_raw_icp_commitment_history(GetRawIcpCommitmentHistoryArgs {
+            destination_subaccount: None,
             canister_id: canister,
             start_after_tx_id: first.next_start_after_tx_id,
             limit: Some(2),
@@ -2599,6 +2658,134 @@ mod tests {
             .map(|item| item.tx_id)
             .collect();
         assert_eq!(tx_ids, vec![30, 20, 10]);
+    }
+
+    #[test]
+    fn raw_icp_history_filters_selected_account_before_cursor_pagination() {
+        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let subaccount_one = jupiter_memo_policy::numbered_subaccount(1).map(Vec::from);
+        let subaccount_fifty = jupiter_memo_policy::numbered_subaccount(50).map(Vec::from);
+        let mut st = base_state();
+        st.raw_icp_commitment_history.insert(
+            canister,
+            vec![
+                CommitmentSample {
+                    tx_id: 1,
+                    timestamp_nanos: Some(1),
+                    amount_e8s: 1,
+                    counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
+                },
+                CommitmentSample {
+                    tx_id: 2,
+                    timestamp_nanos: Some(2),
+                    amount_e8s: 2,
+                    counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: subaccount_one.clone(),
+                },
+                CommitmentSample {
+                    tx_id: 3,
+                    timestamp_nanos: Some(3),
+                    amount_e8s: 3,
+                    counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: subaccount_fifty.clone(),
+                },
+                CommitmentSample {
+                    tx_id: 4,
+                    timestamp_nanos: Some(4),
+                    amount_e8s: 4,
+                    counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: subaccount_one.clone(),
+                },
+                CommitmentSample {
+                    tx_id: 5,
+                    timestamp_nanos: Some(5),
+                    amount_e8s: 5,
+                    counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: Some(vec![0; 32]),
+                },
+            ],
+        );
+        state::set_state(st);
+
+        let collect = |destination_subaccount: Option<Vec<u8>>, descending| {
+            let mut cursor = None;
+            let mut tx_ids = Vec::new();
+            loop {
+                let page = get_raw_icp_commitment_history(GetRawIcpCommitmentHistoryArgs {
+                    canister_id: canister,
+                    destination_subaccount: destination_subaccount.clone(),
+                    start_after_tx_id: cursor,
+                    limit: Some(1),
+                    descending: Some(descending),
+                });
+                tx_ids.extend(page.items.iter().map(|sample| sample.tx_id));
+                let Some(next) = page.next_start_after_tx_id else {
+                    break;
+                };
+                cursor = Some(next);
+            }
+            tx_ids
+        };
+
+        assert_eq!(collect(None, false), vec![1, 5]);
+        assert_eq!(collect(Some(vec![0; 32]), true), vec![5, 1]);
+        assert_eq!(collect(subaccount_one.clone(), false), vec![2, 4]);
+        assert_eq!(collect(subaccount_one, true), vec![4, 2]);
+        assert_eq!(collect(subaccount_fifty, false), vec![3]);
+        assert!(collect(Some(Vec::new()), false).is_empty());
+        assert!(collect(Some(vec![1; 31]), false).is_empty());
+    }
+
+    #[test]
+    fn raw_history_candid_is_compatible_with_old_requests_and_old_response_readers() {
+        #[derive(CandidType, Deserialize)]
+        struct OldRawHistoryArgs {
+            canister_id: Principal,
+            start_after_tx_id: Option<u64>,
+            limit: Option<u32>,
+            descending: Option<bool>,
+        }
+        #[derive(CandidType, Deserialize, Debug, PartialEq, Eq)]
+        struct OldCommitmentSample {
+            tx_id: u64,
+            timestamp_nanos: Option<u64>,
+            amount_e8s: u64,
+            counts_toward_faucet: bool,
+        }
+        #[derive(CandidType, Deserialize, Debug, PartialEq, Eq)]
+        struct OldCommitmentHistoryPage {
+            items: Vec<OldCommitmentSample>,
+            next_start_after_tx_id: Option<u64>,
+        }
+
+        let owner = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let old_request = candid::encode_one(OldRawHistoryArgs {
+            canister_id: owner,
+            start_after_tx_id: Some(7),
+            limit: Some(8),
+            descending: Some(true),
+        })
+        .unwrap();
+        let decoded: GetRawIcpCommitmentHistoryArgs = candid::decode_one(&old_request).unwrap();
+        assert_eq!(decoded.canister_id, owner);
+        assert_eq!(decoded.destination_subaccount, None);
+
+        let new_response = CommitmentHistoryPage {
+            items: vec![CommitmentSample {
+                tx_id: 9,
+                timestamp_nanos: Some(10),
+                amount_e8s: 11,
+                counts_toward_faucet: true,
+                raw_icp_destination_subaccount: jupiter_memo_policy::numbered_subaccount(50)
+                    .map(Vec::from),
+            }],
+            next_start_after_tx_id: Some(9),
+        };
+        let decoded_old: OldCommitmentHistoryPage =
+            candid::decode_one(&candid::encode_one(new_response).unwrap()).unwrap();
+        assert_eq!(decoded_old.items[0].tx_id, 9);
+        assert_eq!(decoded_old.next_start_after_tx_id, Some(9));
     }
 
     #[test]
@@ -2617,18 +2804,21 @@ mod tests {
                     timestamp_nanos: Some(1_000_000_000),
                     amount_e8s: 100,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
                 CommitmentSample {
                     tx_id: 2,
                     timestamp_nanos: Some(2_000_000_000),
                     amount_e8s: 50,
                     counts_toward_faucet: false,
+                    raw_icp_destination_subaccount: None,
                 },
                 CommitmentSample {
                     tx_id: 3,
                     timestamp_nanos: Some(3_000_000_000),
                     amount_e8s: 250,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 },
             ],
         );
@@ -2673,6 +2863,7 @@ mod tests {
             canister_id: canister,
         };
         let raw_empty = CommitmentRoute::RawIcp {
+            destination_subaccount: None,
             destination_canister_id: canister,
             memo: Vec::new(),
         };
@@ -2709,6 +2900,7 @@ mod tests {
         state::set_state(st);
 
         let oversized_raw = CommitmentRoute::RawIcp {
+            destination_subaccount: None,
             destination_canister_id: canister,
             memo: vec![0; 33],
         };

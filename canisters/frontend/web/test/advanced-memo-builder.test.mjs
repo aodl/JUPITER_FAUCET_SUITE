@@ -46,6 +46,7 @@ test('advanced memo builder matches canonical memo policy fixture corpus', () =>
       mode: fixture.builder.mode,
       canisterText: fixture.builder.canister_text || '',
       neuronIdText: fixture.builder.neuron_id_text || '',
+      rawIcpSubaccountText: fixture.builder.raw_icp_subaccount_text || '',
       optionalMemoText: fixture.builder.optional_memo_text || '',
     });
 
@@ -214,6 +215,38 @@ test('URL prefill state locks non-empty targets and canonicalizes canister displ
   assert.equal(overflowNeuron.locksTarget, true);
 });
 
+test('URL prefill keeps numbered subaccounts as decimal text and rejects invalid mode combinations', () => {
+  const raw = advancedMemoUrlPrefillState({
+    canister: '22255-zqaaa-aaaas-qf6uq-cai',
+    subaccount: '00050',
+    requestedMode: 'rawIcp',
+  });
+  assert.equal(raw.sanitizedSubaccount, '00050');
+  assert.equal(raw.locksSubaccount, true);
+  assert.equal(raw.subaccountError, '');
+
+  assert.match(
+    advancedMemoUrlPrefillState({ subaccount: '1', requestedMode: 'rawIcp' }).subaccountError,
+    /requires a declared canister/,
+  );
+  assert.match(
+    advancedMemoUrlPrefillState({
+      canister: '22255-zqaaa-aaaas-qf6uq-cai',
+      subaccount: '1',
+      requestedMode: 'cycles',
+    }).subaccountError,
+    /only valid in raw ICP mode/,
+  );
+  assert.match(
+    advancedMemoUrlPrefillState({
+      canister: '22255-zqaaa-aaaas-qf6uq-cai',
+      subaccount: '1e3',
+      requestedMode: 'rawIcp',
+    }).subaccountError,
+    /ASCII decimal digits/,
+  );
+});
+
 test('raw ICP canister compact memo reaches exactly 32 bytes with 8 optional characters', () => {
   const result = buildAdvancedMemo({
     mode: 'rawIcp',
@@ -226,6 +259,55 @@ test('raw ICP canister compact memo reaches exactly 32 bytes with 8 optional cha
   assert.equal(result.output.length, JUPITER_MEMO_MAX_BYTES);
   assert.equal(result.usedBytes, JUPITER_MEMO_MAX_BYTES);
   assert.equal(result.truncatedOptionalMemo, '');
+});
+
+test('raw ICP numbered subaccount canonicalizes zero and leading zeros before budgeting', () => {
+  const defaultRoute = buildAdvancedMemo({
+    mode: 'rawIcp',
+    canisterText: COMPACT_CANISTER,
+    rawIcpSubaccountText: '0000',
+    optionalMemoText: 'memo',
+  });
+  assert.equal(defaultRoute.output, `${COMPACT_CANISTER}.memo`);
+  assert.equal(defaultRoute.destinationSubaccount, null);
+
+  const numbered = buildAdvancedMemo({
+    mode: 'rawIcp',
+    canisterText: COMPACT_CANISTER,
+    rawIcpSubaccountText: '000256',
+    optionalMemoText: 'abcde',
+  });
+  assert.equal(numbered.ok, true);
+  assert.equal(numbered.output, `${COMPACT_CANISTER}:256.abcd`);
+  assert.equal(numbered.destinationSubaccountNumberText, '256');
+  assert.deepEqual(Array.from(numbered.destinationSubaccount.slice(24)), [0, 0, 0, 0, 0, 0, 1, 0]);
+  assert.equal(numbered.truncatedOptionalMemo, 'e');
+});
+
+test('raw ICP numbered subaccount rejects malformed and overflowing decimal text', () => {
+  for (const rawIcpSubaccountText of ['-1', '+1', '1.0', '0x1', '1e2', '1 0', '18446744073709551616']) {
+    const result = buildAdvancedMemo({
+      mode: 'rawIcp',
+      canisterText: COMPACT_CANISTER,
+      rawIcpSubaccountText,
+      optionalMemoText: 'memo',
+    });
+    assert.equal(result.ok, false, rawIcpSubaccountText);
+    assert.equal(result.output, '', rawIcpSubaccountText);
+  }
+});
+
+test('cycles and neuron modes ignore hidden raw ICP subaccount input', () => {
+  assert.equal(buildAdvancedMemo({
+    mode: 'cycles',
+    canisterText: COMPACT_CANISTER,
+    rawIcpSubaccountText: 'not-a-number',
+  }).output, COMPACT_CANISTER);
+  assert.equal(buildAdvancedMemo({
+    mode: 'neuron',
+    neuronIdText: '42',
+    rawIcpSubaccountText: 'not-a-number',
+  }).output, '42');
 });
 
 test('raw ICP canister compact memo truncates optional overflow beyond the parser edge case', () => {

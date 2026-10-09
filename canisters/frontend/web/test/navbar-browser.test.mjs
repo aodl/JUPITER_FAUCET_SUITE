@@ -249,6 +249,24 @@ test('rendered simulator updates from user inputs and corner controls stay hitta
   });
 });
 
+test('same-page memo-builder navigation clears an omitted destination subaccount', async () => {
+  await withBrowser(async ({ openPage }) => {
+    const { page, checkFailures } = await openPage({ width: 1024, height: 650 });
+    const owner = '22255-zqaaa-aaaas-qf6uq-cai';
+    const memoOwner = '22255zqaaaaaaasqf6uqcai';
+    await page.evaluate((hash) => { window.location.hash = hash; }, `#memo-builder?canister=${owner}&subaccount=50`);
+    await page.waitForFunction((output) => document.querySelector('#memo-builder-output')?.value === output,
+      `${memoOwner}:50.`);
+    await page.evaluate((hash) => { window.location.hash = hash; }, `#memo-builder?canister=${owner}`);
+    await page.waitForFunction((output) => document.querySelector('#memo-builder-output')?.value === output,
+      `${memoOwner}.`);
+    assert.equal(await page.locator('#memo-builder-raw-subaccount').inputValue(), '');
+    assert.equal(await page.locator('#memo-builder-raw-subaccount').isEditable(), true);
+    assert.equal(await page.locator('#memo-builder-copy').isEnabled(), true);
+    checkFailures();
+  });
+});
+
 test('missing or broken rendered application bundle fails the load gate', async () => {
   for (const mode of ['JUPITER_TEST_MISSING_APP_BUNDLE', 'JUPITER_TEST_BREAK_APP_BUNDLE']) {
     const previous = process.env[mode];

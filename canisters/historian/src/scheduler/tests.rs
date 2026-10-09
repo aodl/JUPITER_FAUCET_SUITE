@@ -147,6 +147,7 @@ mod tests {
                     timestamp_nanos: Some(1_000_000_000),
                     amount_e8s: 150,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
             st.memo_registered_canister_summaries_cache = None;
@@ -496,7 +497,15 @@ mod tests {
                 descending: Some(descending),
             };
             let page = if raw_icp {
-                crate::read_model::get_raw_icp_commitment_history(args)
+                crate::read_model::get_raw_icp_commitment_history(
+                    crate::GetRawIcpCommitmentHistoryArgs {
+                        canister_id: args.canister_id,
+                        destination_subaccount: None,
+                        start_after_tx_id: args.start_after_tx_id,
+                        limit: args.limit,
+                        descending: args.descending,
+                    },
+                )
             } else {
                 crate::read_model::get_commitment_history(args)
             };
@@ -1526,6 +1535,7 @@ mod tests {
                     timestamp_nanos: Some(10),
                     amount_e8s: 150,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
             st.commitment_history.insert(
@@ -1535,6 +1545,7 @@ mod tests {
                     timestamp_nanos: Some(11),
                     amount_e8s: 150,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
             st.initial_cycles_probe_queue.push(initial_target);
@@ -1632,6 +1643,7 @@ mod tests {
                         timestamp_nanos: Some(10),
                         amount_e8s: 150,
                         counts_toward_faucet: true,
+                        raw_icp_destination_subaccount: None,
                     }],
                 );
                 st.commitment_history.insert(
@@ -1641,6 +1653,7 @@ mod tests {
                         timestamp_nanos: Some(11),
                         amount_e8s: 150,
                         counts_toward_faucet: true,
+                        raw_icp_destination_subaccount: None,
                     }],
                 );
                 st.initial_cycles_probe_queue.push(initial_target);
@@ -1909,6 +1922,7 @@ mod tests {
                     timestamp_nanos: Some(123_000_000_000),
                     amount_e8s: 150,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
             st.initial_cycles_probe_queue.push(beneficiary);
@@ -2371,6 +2385,7 @@ mod tests {
                     timestamp_nanos: Some(910_000_000_000),
                     amount_e8s: 100_000_000,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
         });
@@ -2641,6 +2656,7 @@ mod tests {
         });
 
         let raw_key = state::CommitmentRouteKey::from_public(&crate::CommitmentRoute::RawIcp {
+            destination_subaccount: None,
             destination_canister_id: raw_canister,
             memo: b"vault42".to_vec(),
         })
@@ -2699,10 +2715,12 @@ mod tests {
                 canister_id: canister_a,
             },
             crate::CommitmentRoute::RawIcp {
+                destination_subaccount: None,
                 destination_canister_id: canister_a,
                 memo: Vec::new(),
             },
             crate::CommitmentRoute::RawIcp {
+                destination_subaccount: None,
                 destination_canister_id: canister_a,
                 memo: b"target-1".to_vec(),
             },
@@ -2765,6 +2783,68 @@ mod tests {
         );
         apply_indexed_commitment_tx(&unrelated, &staking_id, 100, 200);
         assert_eq!(state::commitment_route_rollup_entry_count(), 6);
+    }
+
+    #[test]
+    fn raw_route_rollups_distinguish_numbered_accounts_and_merge_explicit_zero() {
+        let staking_id = configure_state(10);
+        let owner = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        let compact = owner.to_text().replace('-', "");
+        for (id, declaration, amount) in [
+            (1, format!("{compact}.x"), 101),
+            (2, format!("{compact}:0.x"), 102),
+            (3, format!("{compact}:1.x"), 103),
+            (4, format!("{compact}:50.x"), 104),
+        ] {
+            apply_indexed_commitment_tx(
+                &transfer_to_staking_memo_tx(id, &staking_id, declaration.into_bytes(), amount, id),
+                &staking_id,
+                100,
+                200,
+            );
+        }
+
+        let route = |destination_subaccount| crate::CommitmentRoute::RawIcp {
+            destination_canister_id: owner,
+            destination_subaccount,
+            memo: b"x".to_vec(),
+        };
+        assert_eq!(
+            route_rollup(route(None)),
+            state::CommitmentRouteRollup {
+                qualifying_commitment_count: 2,
+                total_qualifying_committed_e8s: 203,
+            }
+        );
+        assert_eq!(
+            route_rollup(route(
+                jupiter_memo_policy::numbered_subaccount(1).map(Vec::from)
+            )),
+            state::CommitmentRouteRollup {
+                qualifying_commitment_count: 1,
+                total_qualifying_committed_e8s: 103,
+            }
+        );
+        assert_eq!(
+            route_rollup(route(
+                jupiter_memo_policy::numbered_subaccount(50).map(Vec::from)
+            )),
+            state::CommitmentRouteRollup {
+                qualifying_commitment_count: 1,
+                total_qualifying_committed_e8s: 104,
+            }
+        );
+        state::with_state(|st| {
+            assert!(!st.distinct_canisters.contains(&owner));
+            assert!(!st.per_canister_meta.contains_key(&owner));
+            assert!(st.initial_cycles_probe_queue.is_empty());
+            let history = st.raw_icp_commitment_history.get(&owner).unwrap();
+            assert_eq!(history.len(), 4);
+            assert_eq!(
+                history[2].raw_icp_destination_subaccount,
+                jupiter_memo_policy::numbered_subaccount(1).map(Vec::from)
+            );
+        });
     }
 
     #[test]
@@ -3088,6 +3168,7 @@ mod tests {
                     canister_id: cycles,
                 },
                 crate::CommitmentRoute::RawIcp {
+                    destination_subaccount: None,
                     destination_canister_id: raw,
                     memo: Vec::new(),
                 },
@@ -3162,6 +3243,7 @@ mod tests {
                         canister_id: cycles_target,
                     },
                     crate::CommitmentRoute::RawIcp {
+                        destination_subaccount: None,
                         destination_canister_id: raw_target,
                         memo: Vec::new(),
                     },
@@ -3845,6 +3927,7 @@ mod tests {
             );
         });
         let raw_key = state::CommitmentRouteKey::from_public(&crate::CommitmentRoute::RawIcp {
+            destination_subaccount: None,
             destination_canister_id: canister,
             memo: Vec::new(),
         })
@@ -4848,6 +4931,7 @@ mod tests {
                     timestamp_nanos: Some(1_000_000_000),
                     amount_e8s: 100,
                     counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
                 }],
             );
             st.qualifying_commitment_count = Some(1);

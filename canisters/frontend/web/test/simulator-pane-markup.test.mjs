@@ -646,6 +646,10 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(memoBuilder, /id="memo-builder-canister"/);
   assert.match(memoBuilder, /id="memo-builder-canister"[^>]*pattern="\[A-Za-z2-7-\]\*"/);
   assert.match(memoBuilder, /id="memo-builder-neuron-fields" hidden/);
+  assert.match(memoBuilder, /id="memo-builder-raw-subaccount-fields" hidden/);
+  assert.match(memoBuilder, /id="memo-builder-raw-subaccount"[^>]*inputmode="numeric"/);
+  assert.match(memoBuilder, /Destination subaccount number \(optional\)/);
+  assert.match(memoBuilder, /Empty or 0 means the default account/);
   assert.match(memoBuilder, /Declared public neuron ID/);
   assert.doesNotMatch(memoBuilder, />Declared neuron ID<\/label>/);
   assert.match(memoBuilder, /id="memo-builder-neuron"/);
@@ -681,6 +685,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(navbarJs, /panelHashFor\(key, clamped\)/);
   assert.match(mainJs, /params\.get\('canister'\)/);
   assert.match(mainJs, /params\.get\('neuron'\)/);
+  assert.match(mainJs, /params\.get\('subaccount'\)/);
   assert.match(mainJs, /params\.get\('mode'\)/);
   assert.match(mainJs, /params\.get\('title'\)/);
   assert.match(mainJs, /params\.get\('label'\)/);
@@ -700,8 +705,8 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(mainJs, /optionalLabel\.textContent = label \|\| \(hasPrefillTarget \? 'Identifier' : defaultOptionalLabel\)/);
   assert.doesNotMatch(mainJs, /canisterLabel\.textContent/);
   assert.doesNotMatch(mainJs, /neuronLabel\.textContent/);
-  assert.match(mainJs, /advancedMemoUrlPrefillState\(\{ canister, neuron, requestedMode \}\)/);
-  assert.match(mainJs, /targetType: urlTargetType, displayTarget: urlDisplayTarget/);
+  assert.match(mainJs, /advancedMemoUrlPrefillState\(\{ canister, neuron, subaccount, requestedMode \}\)/);
+  assert.match(mainJs, /targetType: urlTargetType,[\s\S]*displayTarget: urlDisplayTarget/);
   assert.doesNotMatch(mainJs, /target: urlTarget/);
   assert.match(mainJs, /prefillNote\.hidden = !hasPrefillTarget/);
   assert.match(mainJs, /prefillNote\.textContent = urlTargetType === 'neuron' \? PREFILL_NEURON_NOTE : PREFILL_CANISTER_NOTE/);
@@ -1069,7 +1074,7 @@ test('Patron Endowments table omits redundant category column', () => {
   assert.doesNotMatch(commitments, /<td colspan="4" class="empty-cell">Loading…<\/td>/);
   assert.doesNotMatch(mainJs, /formatCommitmentOutcome/);
   assert.doesNotMatch(mainJs, /commitmentOutcomeCategory/);
-  assert.match(mainJs, /const renderCommitmentsPane = \(data\) => \{[\s\S]*rawMemo === undefined \|\| rawMemo === null[\s\S]*commitments-raw[\s\S]*rawIcpDeclaredMemo\(item\)[\s\S]*commitments-neurons[\s\S]*neuronDeclaredMemo\(item\)/);
+  assert.match(mainJs, /const renderCommitmentsPane = \(data\) => \{[\s\S]*rawMemo === undefined \|\| rawMemo === null[\s\S]*commitments-raw[\s\S]*renderRawIcpDeclaredMemo\(item\)[\s\S]*commitments-neurons[\s\S]*neuronDeclaredMemo\(item\)/);
   assert.match(mainJs, /'commitments-raw', renderCommitmentsPane/);
   assert.match(mainJs, /'commitments-neurons', renderCommitmentsPane/);
 });

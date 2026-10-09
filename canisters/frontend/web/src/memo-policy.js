@@ -49,6 +49,79 @@ function parseNeuronIdText(text) {
   return neuronId === 0n || neuronId > MAX_U64 ? null : neuronId;
 }
 
+function numberedSubaccountFromBigInt(number) {
+  if (number === 0n) return null;
+  const subaccount = new Uint8Array(32);
+  let remaining = number;
+  for (let index = 31; index >= 24; index -= 1) {
+    subaccount[index] = Number(remaining & 0xffn);
+    remaining >>= 8n;
+  }
+  return subaccount;
+}
+
+export function parseNumberedSubaccountText(input, { allowEmpty = true } = {}) {
+  const text = String(input ?? '').trim();
+  if (!text) {
+    return allowEmpty
+      ? { ok: true, destinationSubaccount: null, destinationSubaccountNumberText: null, reason: '' }
+      : { ok: false, destinationSubaccount: null, destinationSubaccountNumberText: null, reason: 'Destination subaccount number is required.' };
+  }
+  if (!/^[0-9]+$/.test(text)) {
+    return { ok: false, destinationSubaccount: null, destinationSubaccountNumberText: null, reason: 'Destination subaccount must use ASCII decimal digits only.' };
+  }
+  const number = BigInt(text);
+  if (number > MAX_U64) {
+    return { ok: false, destinationSubaccount: null, destinationSubaccountNumberText: null, reason: 'Destination subaccount must fit in an unsigned 64-bit integer.' };
+  }
+  const canonical = number.toString();
+  return {
+    ok: true,
+    destinationSubaccount: numberedSubaccountFromBigInt(number),
+    destinationSubaccountNumberText: number === 0n ? null : canonical,
+    reason: '',
+  };
+}
+
+export function normalizeDestinationSubaccount(value) {
+  if (value === null || value === undefined) return null;
+  const bytes = value instanceof Uint8Array ? value : Uint8Array.from(value);
+  if (bytes.length !== 32) throw new TypeError('Destination subaccount must contain exactly 32 bytes.');
+  return bytes.every((byte) => byte === 0) ? null : Uint8Array.from(bytes);
+}
+
+export function numberedSubaccountNumberText(value) {
+  const bytes = normalizeDestinationSubaccount(value);
+  if (bytes === null) return null;
+  if (bytes.slice(0, 24).some((byte) => byte !== 0)) {
+    throw new TypeError('Destination subaccount is not a zero-padded unsigned 64-bit integer.');
+  }
+  let number = 0n;
+  for (const byte of bytes.slice(24)) number = (number << 8n) | BigInt(byte);
+  return number === 0n ? null : number.toString();
+}
+
+function parseRawDestinationText(text) {
+  const destination = String(text ?? '').trim();
+  const colonIndex = destination.indexOf(':');
+  if (colonIndex < 0) {
+    const parsed = parseDeclaredPrincipalText(destination);
+    return parsed.principal
+      ? { ...parsed, destinationSubaccount: null, destinationSubaccountNumberText: null }
+      : parsed;
+  }
+  if (destination.indexOf(':', colonIndex + 1) >= 0 || /\s/.test(destination)) {
+    return { principal: null, reason: 'Numbered raw ICP destinations must use owner:number with no internal whitespace.' };
+  }
+  const ownerText = destination.slice(0, colonIndex);
+  const numberText = destination.slice(colonIndex + 1);
+  const parsedOwner = parseDeclaredPrincipalText(ownerText);
+  if (!parsedOwner.principal) return parsedOwner;
+  const parsedNumber = parseNumberedSubaccountText(numberText, { allowEmpty: false });
+  if (!parsedNumber.ok) return { principal: null, reason: parsedNumber.reason };
+  return { ...parsedOwner, ...parsedNumber };
+}
+
 export function parseJupiterMemo(input) {
   const memoText = String(input ?? '');
   if (memoText.length === 0) return { kind: 'invalid', reason: 'Paste a memo first.' };
@@ -67,8 +140,11 @@ export function parseJupiterMemo(input) {
       kind: 'rawIcpCanister',
       canisterId,
       canisterText: EVENT_HORIZON_CANISTER_TEXT,
+      destinationSubaccount: null,
+      destinationSubaccountNumberText: null,
       outgoingMemoText: suffix,
       normalizedMemoText: memoText,
+      declarationText: memoText,
     };
   }
 
@@ -86,14 +162,20 @@ export function parseJupiterMemo(input) {
         normalizedMemoText: `${leftTrimmed}.${right}`,
       };
     }
-    const parsed = parseDeclaredPrincipalText(leftTrimmed);
+    const parsed = parseRawDestinationText(leftTrimmed);
     if (!parsed.principal) return { kind: 'invalid', reason: parsed.reason };
+    const normalizedDestination = parsed.destinationSubaccountNumberText === null
+      ? parsed.canisterText
+      : `${parsed.canisterText}:${parsed.destinationSubaccountNumberText}`;
     return {
       kind: 'rawIcpCanister',
       canisterId: parsed.principal,
       canisterText: parsed.canisterText,
+      destinationSubaccount: parsed.destinationSubaccount,
+      destinationSubaccountNumberText: parsed.destinationSubaccountNumberText,
       outgoingMemoText: right,
-      normalizedMemoText: `${parsed.canisterText}.${right}`,
+      normalizedMemoText: `${normalizedDestination}.${right}`,
+      declarationText: memoText,
     };
   }
 

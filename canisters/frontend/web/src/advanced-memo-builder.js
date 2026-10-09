@@ -1,4 +1,5 @@
 import { Principal } from '@icp-sdk/core/principal';
+import { parseJupiterMemo, parseNumberedSubaccountText } from './memo-policy.js';
 
 export const JUPITER_MEMO_MAX_BYTES = 32;
 const JUPITER_NEURON_ID_MAX_DIGITS = 20;
@@ -25,6 +26,8 @@ function emptyResult({ truncatedOptionalMemo = '', errors = [], warnings = [] } 
     availableOptionalMemoBytes: 0,
     keptOptionalMemo: '',
     truncatedOptionalMemo,
+    destinationSubaccount: null,
+    destinationSubaccountNumberText: null,
     warnings,
     errors,
   };
@@ -64,21 +67,34 @@ export function canonicalDeclaredPrincipalText(text) {
   return parseDeclaredPrincipalText(String(text ?? ''))?.toText() || '';
 }
 
-export function advancedMemoUrlPrefillState({ canister = null, neuron = null, requestedMode = '' } = {}) {
+export function advancedMemoUrlPrefillState({ canister = null, neuron = null, subaccount = null, requestedMode = '' } = {}) {
   const sanitizedCanister = canister === null ? '' : sanitizeCanisterPrincipalText(canister);
   const sanitizedNeuron = canister === null && neuron !== null ? sanitizeNeuronIdText(neuron) : '';
+  const sanitizedSubaccount = subaccount === null ? '' : String(subaccount).trim();
   const target = sanitizedCanister || sanitizedNeuron;
   const targetType = sanitizedCanister ? 'canister' : sanitizedNeuron ? 'neuron' : '';
   const mode = sanitizedCanister ? (requestedMode !== 'cycles' ? 'rawIcp' : 'cycles') : sanitizedNeuron ? 'neuron' : '';
+  let subaccountError = '';
+  if (subaccount !== null && !sanitizedCanister) {
+    subaccountError = 'A destination subaccount requires a declared canister.';
+  } else if (subaccount !== null && requestedMode && requestedMode !== 'rawIcp') {
+    subaccountError = 'A destination subaccount is only valid in raw ICP mode.';
+  } else if (subaccount !== null) {
+    const parsedSubaccount = parseNumberedSubaccountText(sanitizedSubaccount);
+    if (!parsedSubaccount.ok) subaccountError = parsedSubaccount.reason;
+  }
 
   return {
     sanitizedCanister,
     sanitizedNeuron,
+    sanitizedSubaccount,
+    subaccountError,
     target,
     targetType,
     displayTarget: targetType === 'canister' ? canonicalDeclaredPrincipalText(target) || target : target,
     mode,
     locksTarget: Boolean(target),
+    locksSubaccount: Boolean(sanitizedCanister && subaccount !== null),
     hasEmptySuppliedTarget: !target && (canister !== null || neuron !== null),
   };
 }
@@ -111,11 +127,13 @@ export function buildAdvancedMemo({
   mode = 'cycles',
   canisterText = '',
   neuronIdText = '',
+  rawIcpSubaccountText = '',
   optionalMemoText = '',
 } = {}) {
   const targetText = mode === 'neuron' ? String(neuronIdText ?? '') : String(canisterText ?? '');
   const optional = String(optionalMemoText ?? '');
-  const asciiInputs = [targetText, optional];
+  const subaccountInput = mode === 'rawIcp' ? String(rawIcpSubaccountText ?? '') : '';
+  const asciiInputs = [targetText, optional, subaccountInput];
   if (!asciiInputs.every(isAscii)) {
     return emptyResult({
       truncatedOptionalMemo: optional,
@@ -192,22 +210,44 @@ export function buildAdvancedMemo({
       availableOptionalMemoBytes: 0,
       keptOptionalMemo: '',
       truncatedOptionalMemo: '',
+      destinationSubaccount: null,
+      destinationSubaccountNumberText: null,
       warnings: [],
       errors: [],
     };
   }
 
-  const prefix = `${memoPrincipal}.`;
+  const parsedSubaccount = parseNumberedSubaccountText(subaccountInput);
+  if (!parsedSubaccount.ok) {
+    return emptyResult({
+      truncatedOptionalMemo: optional,
+      errors: [parsedSubaccount.reason],
+    });
+  }
+  const selector = parsedSubaccount.destinationSubaccountNumberText === null
+    ? ''
+    : `:${parsedSubaccount.destinationSubaccountNumberText}`;
+  const prefix = `${memoPrincipal}${selector}.`;
   const available = JUPITER_MEMO_MAX_BYTES - prefix.length;
   if (available < 0) {
     return emptyResult({
       truncatedOptionalMemo: optional,
-      errors: ['Declared canister ID plus dot exceeds the 32-byte ICP memo limit.'],
+      errors: ['Declared canister ID, destination selector, and dot exceed the 32-byte ICP memo limit.'],
     });
   }
 
   const { keptOptionalMemo, truncatedOptionalMemo } = splitOptionalMemo(optional, available);
   const output = `${prefix}${keptOptionalMemo}`;
+  const parsedOutput = parseJupiterMemo(output);
+  if (parsedOutput.kind !== 'rawIcpCanister'
+    || parsedOutput.canisterId.toText() !== parseDeclaredPrincipalText(principal)?.toText()
+    || parsedOutput.destinationSubaccountNumberText !== parsedSubaccount.destinationSubaccountNumberText
+    || parsedOutput.outgoingMemoText !== keptOptionalMemo) {
+    return emptyResult({
+      truncatedOptionalMemo: optional,
+      errors: ['Generated memo did not pass Jupiter Faucet memo policy.'],
+    });
+  }
   return {
     ok: true,
     output,
@@ -216,6 +256,8 @@ export function buildAdvancedMemo({
     availableOptionalMemoBytes: Math.max(0, available),
     keptOptionalMemo,
     truncatedOptionalMemo,
+    destinationSubaccount: parsedSubaccount.destinationSubaccount,
+    destinationSubaccountNumberText: parsedSubaccount.destinationSubaccountNumberText,
     warnings: [],
     errors: [],
   };

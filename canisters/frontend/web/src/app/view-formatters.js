@@ -30,8 +30,8 @@ export function renderNeuronTrackerLink(value, { label = null, className = 'pane
 }
 
 export function renderMemoTrackerLink(value, { label = null, className = 'pane-memo-tracker-link pane-external-link mono' } = {}) {
-  const memoText = String(value ?? '').trim();
-  if (!memoText) return DASH;
+  const memoText = String(value ?? '');
+  if (!memoText.trim()) return DASH;
   const display = label === null || label === undefined ? memoText : String(label);
   return `<a href="${escapeHtml(trackerHashForMemo({ memo: memoText }))}" data-tracker-memo="${escapeHtml(memoText)}" class="${escapeHtml(className)}">${escapeHtml(display)}</a>`;
 }

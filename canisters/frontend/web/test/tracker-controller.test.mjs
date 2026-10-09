@@ -697,16 +697,23 @@ test('tracker initial scoped load uses the selected-range endowment empty state'
 test('tracker range buttons replace the metric-tracker hash for shareable views', async () => {
   const nodes = trackerNodes();
   const yearButton = new FakeElement({ 'data-tracker-range': 'year' });
+  const memo = '22255zqaaaaaaasqf6uqcai.A ';
   await withFakeTrackerDom(nodes, async ({ nodeMap, historyCalls }) => {
     yearButton.owner = nodeMap.get('tracker-result');
     const controller = createTrackerController({
       frontendConfig: {},
       isLocalHost: () => false,
       simulatorHashForPrefill,
-      loadData: async () => minimalTrackerData(),
+      loadRawCanisterData: async () => ({
+        status: {},
+        commitments: { items: [] },
+        transfers: { items: [] },
+        candidates: { items: [] },
+        errors: {},
+      }),
     });
     controller.bindPane();
-    nodeMap.get('tracker-principal-input').value = 'jufzc-caaaa-aaaar-qb5da-cai';
+    nodeMap.get('tracker-principal-input').value = memo;
 
     await controller.submitPrincipal();
     nodeMap.get('tracker-result').listeners.get('click')({
@@ -715,10 +722,10 @@ test('tracker range buttons replace the metric-tracker hash for shareable views'
     });
 
     assert.equal(controller.state.range, 'year');
-    assert.equal(window.location.hash, '#metric-tracker?memo=jufzc-caaaa-aaaar-qb5da-cai&range=year');
+    assert.equal(window.location.hash, '#metric-tracker?memo=22255zqaaaaaaasqf6uqcai.A+&range=year');
     assert.deepEqual(historyCalls.map((call) => call.hash), [
-      '#metric-tracker?memo=jufzc-caaaa-aaaar-qb5da-cai&range=month',
-      '#metric-tracker?memo=jufzc-caaaa-aaaar-qb5da-cai&range=year',
+      '#metric-tracker?memo=22255zqaaaaaaasqf6uqcai.A+&range=month',
+      '#metric-tracker?memo=22255zqaaaaaaasqf6uqcai.A+&range=year',
     ]);
   }, { hash: '#metric-tracker', rangeButtons: [yearButton] });
 });
@@ -881,10 +888,10 @@ test('delegated tracker links open the tracker panel and submit linked principal
   });
 });
 
-test('delegated tracker memo links preserve compact dotted memo hashes', async () => {
+test('delegated tracker memo links preserve numbered destinations and trailing suffix whitespace', async () => {
   const nodes = trackerNodes();
   const calls = [];
-  const compactMemo = '22255zqaaaaaaasqf6uqcai.miner';
+  const compactMemo = '22255zqaaaaaaasqf6uqcai:1.A ';
   await withFakeTrackerDom(nodes, async ({ nodeMap, documentListeners, historyCalls }) => {
     const controller = createTrackerController({
       frontendConfig: {},
@@ -894,6 +901,7 @@ test('delegated tracker memo links preserve compact dotted memo hashes', async (
         calls.push({
           canisterId: request.canisterId.toText(),
           outgoingMemoText: request.outgoingMemoText,
+          destinationSubaccount: Array.from(request.destinationSubaccount || []),
           historyLimit: request.historyLimit,
           hasCutoff: typeof request.minTimestampNanos === 'bigint',
         });
@@ -919,11 +927,12 @@ test('delegated tracker memo links preserve compact dotted memo hashes', async (
     assert.equal(nodeMap.get('tracker-principal-input').value, compactMemo);
     assert.deepEqual(calls, [{
       canisterId: '22255-zqaaa-aaaas-qf6uq-cai',
-      outgoingMemoText: 'miner',
+      outgoingMemoText: 'A ',
+      destinationSubaccount: [...new Uint8Array(31), 1],
       historyLimit: 10_000,
       hasCutoff: true,
     }]);
-    assert.deepEqual(historyCalls.map((call) => call.hash), ['#metric-tracker?memo=22255zqaaaaaaasqf6uqcai.miner&range=month']);
+    assert.deepEqual(historyCalls.map((call) => call.hash), ['#metric-tracker?memo=22255zqaaaaaaasqf6uqcai%3A1.A+&range=month']);
   });
 });
 
@@ -1620,7 +1629,7 @@ test('raw ICP endowment-only data renders no empty transfer-source legend', asyn
   });
 });
 
-test('raw ICP tracker explains target-wide endowment scope when an outgoing suffix is present', async () => {
+test('raw ICP tracker explains account-wide endowment scope when an outgoing suffix is present', async () => {
   const nodes = trackerNodes();
   const canister = '22255-zqaaa-aaaas-qf6uq-cai';
   const compactCanister = canister.replaceAll('-', '');
@@ -1644,9 +1653,52 @@ test('raw ICP tracker explains target-wide endowment scope when an outgoing suff
     await controller.submitPrincipal();
 
     const html = nodeMap.get('tracker-result').innerHTML;
-    assert.match(html, /Retained qualifying endowment history is recorded for the destination target as a whole/);
-    assert.match(html, /is not filtered by this outgoing memo/);
+    assert.match(html, /Retained qualifying endowment history covers the selected destination account across outgoing memos/);
     assert.match(html, /The chart shows retained qualifying endowments in the selected range/);
+  });
+});
+
+test('late raw tracker responses cannot replace a newly selected destination account', async () => {
+  const nodes = trackerNodes();
+  const compact = '22255zqaaaaaaasqf6uqcai';
+  let resolveFirst;
+  const firstResponse = new Promise((resolve) => {
+    resolveFirst = resolve;
+  });
+  const destinations = [];
+  const emptyData = {
+    status: {},
+    commitments: { items: [] },
+    transfers: { items: [] },
+    candidates: { items: [] },
+    errors: {},
+  };
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadRawCanisterData: async ({ destinationSubaccount }) => {
+        const number = destinationSubaccount?.[31] || 0;
+        destinations.push(number);
+        return number === 1 ? firstResponse : emptyData;
+      },
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = `${compact}:1.a`;
+    const first = controller.submitPrincipal();
+    await flushMicrotasks();
+
+    nodeMap.get('tracker-principal-input').value = `${compact}:50.a`;
+    await controller.submitPrincipal();
+    assert.match(nodeMap.get('tracker-result').innerHTML, /Subaccount 50/);
+
+    resolveFirst(emptyData);
+    await first;
+    assert.match(nodeMap.get('tracker-result').innerHTML, /Subaccount 50/);
+    assert.doesNotMatch(nodeMap.get('tracker-result').innerHTML, /Subaccount 1</);
+    assert.deepEqual(destinations, [1, 50]);
   });
 });
 

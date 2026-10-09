@@ -132,16 +132,41 @@ pub(super) fn get_commitment_history(args: GetCommitmentHistoryArgs) -> Commitme
 
 #[ic_cdk::query]
 pub(super) fn get_raw_icp_commitment_history(
-    args: GetCommitmentHistoryArgs,
+    args: GetRawIcpCommitmentHistoryArgs,
 ) -> CommitmentHistoryPage {
+    let Ok(destination_subaccount) = normalize_raw_destination(args.destination_subaccount) else {
+        return CommitmentHistoryPage {
+            items: Vec::new(),
+            next_start_after_tx_id: None,
+        };
+    };
     state::with_state(|st| {
+        let history = raw_icp_commitment_history_snapshot(st, args.canister_id)
+            .into_iter()
+            .filter(|sample| {
+                normalize_raw_destination(sample.raw_icp_destination_subaccount.clone())
+                    .is_ok_and(|sample_destination| sample_destination == destination_subaccount)
+            })
+            .collect();
         commitment_history_page_from_snapshot(
-            raw_icp_commitment_history_snapshot(st, args.canister_id),
+            history,
             args.start_after_tx_id,
             args.limit,
             args.descending,
         )
     })
+}
+
+fn normalize_raw_destination(
+    destination_subaccount: Option<Vec<u8>>,
+) -> Result<Option<Vec<u8>>, ()> {
+    let Some(destination_subaccount) = destination_subaccount else {
+        return Ok(None);
+    };
+    if destination_subaccount.len() != 32 {
+        return Err(());
+    }
+    Ok((destination_subaccount.iter().any(|byte| *byte != 0)).then_some(destination_subaccount))
 }
 
 #[ic_cdk::query]
@@ -646,6 +671,7 @@ pub(super) fn list_recent_commitments(
                     canister_id: Some(item.canister_id),
                     neuron_id: None,
                     raw_icp_memo_text: item.raw_icp_memo_text.clone(),
+                    raw_icp_destination_subaccount: item.raw_icp_destination_subaccount.clone(),
                     neuron_memo_text: None,
                     memo_text: Some(item.canister_id.to_text()),
                     tx_id: item.tx_id,
@@ -660,6 +686,7 @@ pub(super) fn list_recent_commitments(
                     canister_id: Some(item.canister_id),
                     neuron_id: None,
                     raw_icp_memo_text: item.raw_icp_memo_text.clone(),
+                    raw_icp_destination_subaccount: item.raw_icp_destination_subaccount.clone(),
                     neuron_memo_text: None,
                     memo_text: Some(item.canister_id.to_text()),
                     tx_id: item.tx_id,
@@ -674,6 +701,7 @@ pub(super) fn list_recent_commitments(
                     canister_id: None,
                     neuron_id: Some(item.neuron_id),
                     raw_icp_memo_text: None,
+                    raw_icp_destination_subaccount: None,
                     neuron_memo_text: item.memo_text.clone(),
                     memo_text: Some(item.neuron_id.to_string()),
                     tx_id: item.tx_id,
@@ -688,6 +716,7 @@ pub(super) fn list_recent_commitments(
                     canister_id: None,
                     neuron_id: Some(item.neuron_id),
                     raw_icp_memo_text: None,
+                    raw_icp_destination_subaccount: None,
                     neuron_memo_text: item.memo_text.clone(),
                     memo_text: Some(item.neuron_id.to_string()),
                     tx_id: item.tx_id,
@@ -706,6 +735,7 @@ pub(super) fn list_recent_commitments(
                             canister_id: None,
                             neuron_id: None,
                             raw_icp_memo_text: None,
+                            raw_icp_destination_subaccount: None,
                             neuron_memo_text: None,
                             memo_text: Some(item.memo_text),
                             tx_id: item.tx_id,

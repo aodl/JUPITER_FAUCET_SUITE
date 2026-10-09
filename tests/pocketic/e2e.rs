@@ -929,6 +929,7 @@ struct HistorianCommitmentSample {
     timestamp_nanos: Option<u64>,
     amount_e8s: u64,
     counts_toward_faucet: bool,
+    raw_icp_destination_subaccount: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]

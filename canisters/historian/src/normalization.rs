@@ -227,6 +227,7 @@ pub(crate) fn normalize_runtime_state(st: &mut State) {
                 removed.push(RecentCommitment {
                     canister_id: *canister_id,
                     raw_icp_memo_text: None,
+                    raw_icp_destination_subaccount: None,
                     tx_id: item.tx_id,
                     timestamp_nanos: item.timestamp_nanos,
                     amount_e8s: item.amount_e8s,

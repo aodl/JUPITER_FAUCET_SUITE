@@ -287,6 +287,7 @@ mod tests {
     struct ScriptedLedger {
         steps: Arc<Mutex<VecDeque<LedgerStep>>>,
         transfer_calls: Arc<AtomicUsize>,
+        transfer_args: Arc<Mutex<Vec<TransferArg>>>,
         created_at_times: Arc<Mutex<Vec<Option<u64>>>>,
         destinations: Arc<Mutex<Vec<Account>>>,
         memos: Arc<Mutex<Vec<Option<Vec<u8>>>>>,
@@ -298,6 +299,7 @@ mod tests {
             Self {
                 steps: Arc::new(Mutex::new(steps.into())),
                 transfer_calls: Arc::new(AtomicUsize::new(0)),
+                transfer_args: Arc::new(Mutex::new(Vec::new())),
                 created_at_times: Arc::new(Mutex::new(Vec::new())),
                 destinations: Arc::new(Mutex::new(Vec::new())),
                 memos: Arc::new(Mutex::new(Vec::new())),
@@ -307,6 +309,10 @@ mod tests {
 
         fn transfer_calls(&self) -> usize {
             self.transfer_calls.load(Ordering::SeqCst)
+        }
+
+        fn transfer_args(&self) -> Vec<TransferArg> {
+            self.transfer_args.lock().unwrap().clone()
         }
 
         fn created_at_times(&self) -> Vec<Option<u64>> {
@@ -347,6 +353,7 @@ mod tests {
         ) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
             assert_no_persistence_batch();
             self.transfer_calls.fetch_add(1, Ordering::SeqCst);
+            self.transfer_args.lock().unwrap().push(arg.clone());
             self.created_at_times
                 .lock()
                 .unwrap()
@@ -2289,7 +2296,7 @@ mod tests {
             10,
             &staking_id,
             100_000_000,
-            Some(format!("{compact}.").into_bytes()),
+            Some(format!("{compact}:0.").into_bytes()),
         )]);
         let ledger = ScriptedLedger::new(vec![LedgerStep::Ok(91)]);
         let cmc = ScriptedCmc::new(vec![]);
@@ -2326,6 +2333,82 @@ mod tests {
     }
 
     #[test]
+    fn numbered_raw_icp_directives_preserve_distinct_accounts_and_exact_memos() {
+        let now_secs = 1_360_u64;
+        let cfg = set_active_job(
+            now_secs,
+            ActivePayoutJob::new(
+                221,
+                10_000,
+                300_000_000,
+                300_000_000,
+                now_secs * 1_000_000_000,
+            ),
+        );
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let compact = beneficiary.to_text().replace('-', "");
+        let index = ExclusiveIndex::new(vec![
+            commitment_tx(
+                12,
+                &staking_id,
+                100_000_000,
+                Some(format!("{compact}:1.a.b").into_bytes()),
+            ),
+            commitment_tx(
+                11,
+                &staking_id,
+                100_000_000,
+                Some(format!("{compact}:50.d").into_bytes()),
+            ),
+            commitment_tx(
+                10,
+                &staking_id,
+                100_000_000,
+                Some(format!("{compact}:256.").into_bytes()),
+            ),
+        ]);
+        let ledger = ScriptedLedger::new(vec![
+            LedgerStep::Ok(91),
+            LedgerStep::Ok(92),
+            LedgerStep::Ok(93),
+        ]);
+        let cmc = ScriptedCmc::new(vec![]);
+
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now_secs * 1_000_000_000,
+            now_secs
+        )));
+        assert_eq!(ledger.transfer_calls(), 3);
+        assert_eq!(cmc.call_count(), 0);
+        let observed = ledger
+            .destinations()
+            .into_iter()
+            .zip(ledger.memos())
+            .collect::<Vec<_>>();
+        for (number, memo) in [(1, b"a.b".as_slice()), (50, b"d"), (256, b"")] {
+            assert!(observed.contains(&(
+                Account {
+                    owner: beneficiary,
+                    subaccount: jupiter_memo_policy::numbered_subaccount(number),
+                },
+                Some(memo.to_vec()),
+            )));
+        }
+        assert_eq!(ledger.amounts(), vec![99_990_000; 3]);
+        let summary =
+            state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
+        assert_eq!(summary.topped_up_count, 3);
+        assert_eq!(summary.topped_up_sum_e8s, 299_970_000);
+        assert_eq!(summary.remainder_to_relay_e8s, 0);
+    }
+
+    #[test]
     fn raw_icp_transfer_retry_reuses_identity_destination_and_declared_memo() {
         let now_secs = 1_375_u64;
         let cfg = set_active_job(
@@ -2345,7 +2428,7 @@ mod tests {
             10,
             &staking_id,
             100_000_000,
-            Some(format!("{compact}.retry42").into_bytes()),
+            Some(format!("{compact}:256.r42").into_bytes()),
         )]);
         let ledger = ScriptedLedger::new(vec![
             LedgerStep::TemporarilyUnavailable,
@@ -2382,19 +2465,25 @@ mod tests {
             created_at_times[1], created_at_times[2],
             "remainder should allocate its own transfer identity"
         );
+        let transfer_args = ledger.transfer_args();
+        assert_eq!(
+            transfer_args[0], transfer_args[1],
+            "raw ICP retry must preserve the complete ICRC transfer identity"
+        );
         let destinations = ledger.destinations();
+        let numbered_subaccount = jupiter_memo_policy::numbered_subaccount(256);
         assert_eq!(
             destinations[0],
             Account {
                 owner: beneficiary,
-                subaccount: None
+                subaccount: numbered_subaccount
             }
         );
         assert_eq!(
             destinations[1],
             Account {
                 owner: beneficiary,
-                subaccount: None
+                subaccount: numbered_subaccount
             }
         );
         assert_eq!(
@@ -2405,8 +2494,8 @@ mod tests {
             }
         );
         let memos = ledger.memos();
-        assert_eq!(memos[0], Some(b"retry42".to_vec()));
-        assert_eq!(memos[1], Some(b"retry42".to_vec()));
+        assert_eq!(memos[0], Some(b"r42".to_vec()));
+        assert_eq!(memos[1], Some(b"r42".to_vec()));
         assert_eq!(memos[2], Some(Vec::new()));
         let summary =
             state::with_state(|st| st.last_summary.clone()).expect("summary should be finalized");
@@ -3879,7 +3968,7 @@ mod tests {
                     block_index: 0,
                     next_start: Some(10),
                     transfer_memo: Some(b"resume-raw".to_vec()),
-                    destination_subaccount: None,
+                    destination_subaccount: jupiter_memo_policy::numbered_subaccount(50),
                     neuron_id: None,
                 },
                 created_at_time_nanos: now_secs * 1_000_000_000,
@@ -3906,7 +3995,7 @@ mod tests {
             ledger.destinations(),
             vec![Account {
                 owner: beneficiary,
-                subaccount: None
+                subaccount: jupiter_memo_policy::numbered_subaccount(50)
             }]
         );
         assert_eq!(ledger.memos(), vec![Some(b"resume-raw".to_vec())]);
@@ -3937,7 +4026,7 @@ mod tests {
                     block_index: 701,
                     next_start: Some(10),
                     transfer_memo: Some(b"accepted-raw".to_vec()),
-                    destination_subaccount: None,
+                    destination_subaccount: jupiter_memo_policy::numbered_subaccount(1),
                     neuron_id: None,
                 },
                 created_at_time_nanos: now_secs * 1_000_000_000,

@@ -36,9 +36,11 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
   const modeFieldset = document.getElementById('memo-builder-mode-fieldset');
   const canisterFields = document.getElementById('memo-builder-canister-fields');
   const neuronFields = document.getElementById('memo-builder-neuron-fields');
+  const rawSubaccountFields = document.getElementById('memo-builder-raw-subaccount-fields');
   const optionalFields = document.getElementById('memo-builder-optional-fields');
   const canisterInput = document.getElementById('memo-builder-canister');
   const neuronInput = document.getElementById('memo-builder-neuron');
+  const rawSubaccountInput = document.getElementById('memo-builder-raw-subaccount');
   const optionalInput = document.getElementById('memo-builder-optional');
   const optionalLabel = document.getElementById('memo-builder-optional-label');
   const builderTitle = document.getElementById('memo-builder-title');
@@ -58,6 +60,8 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
   let urlTargetMode = '';
   let urlTargetKind = '';
   let urlLocksTarget = false;
+  let urlLocksSubaccount = false;
+  let urlSubaccountError = '';
   let lastAppliedPrefillFragment = '';
 
   const fragmentParams = () => {
@@ -74,13 +78,20 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
     const params = fragmentParams();
     const canister = params.get('canister');
     const neuron = params.get('neuron');
+    const subaccount = params.get('subaccount');
     const title = (params.get('title') || '').slice(0, 30);
     const label = (params.get('label') || '').slice(0, 30);
     const hasPrefillTarget = canister !== null || neuron !== null;
     const shouldApplyTargetValue = shouldApplyAdvancedMemoUrlTargetValue(currentFragment, lastAppliedPrefillFragment);
     const requestedMode = params.get('mode') || params.get('flow') || '';
-    const urlPrefill = advancedMemoUrlPrefillState({ canister, neuron, requestedMode });
-    const { sanitizedCanister, sanitizedNeuron, targetType: urlTargetType, displayTarget: urlDisplayTarget } = urlPrefill;
+    const urlPrefill = advancedMemoUrlPrefillState({ canister, neuron, subaccount, requestedMode });
+    const {
+      sanitizedCanister,
+      sanitizedNeuron,
+      sanitizedSubaccount,
+      targetType: urlTargetType,
+      displayTarget: urlDisplayTarget,
+    } = urlPrefill;
     if (optionalLabel) optionalLabel.textContent = label || (hasPrefillTarget ? 'Identifier' : defaultOptionalLabel);
     if (builderTitle) builderTitle.textContent = title ? `${title} Memo Builder` : defaultBuilderTitle;
     if (prefillNote) {
@@ -110,12 +121,18 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
     urlTargetMode = '';
     urlTargetKind = '';
     urlLocksTarget = false;
+    urlLocksSubaccount = false;
+    urlSubaccountError = urlPrefill.subaccountError;
     if (sanitizedCanister) {
       urlTargetMode = urlPrefill.mode;
       urlTargetKind = urlTargetType;
       urlLocksTarget = true;
       setMode(urlTargetMode);
       if (canisterInput && shouldApplyTargetValue) canisterInput.value = sanitizedCanister;
+      if (rawSubaccountInput && shouldApplyTargetValue) {
+        rawSubaccountInput.value = sanitizedSubaccount;
+      }
+      urlLocksSubaccount = urlPrefill.locksSubaccount;
     } else if (sanitizedNeuron) {
       urlTargetMode = urlPrefill.mode;
       urlTargetKind = urlTargetType;
@@ -125,6 +142,7 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
     } else if (hasPrefillTarget && shouldApplyTargetValue) {
       if (canisterInput) canisterInput.value = '';
       if (neuronInput) neuronInput.value = '';
+      if (rawSubaccountInput) rawSubaccountInput.value = '';
     }
     lastAppliedPrefillFragment = currentFragment;
   };
@@ -190,10 +208,12 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
   const sanitizeTargetInputs = () => {
     if (canisterInput) canisterInput.value = sanitizeCanisterPrincipalText(canisterInput.value);
     if (neuronInput) neuronInput.value = sanitizeNeuronIdText(neuronInput.value);
+    if (rawSubaccountInput) rawSubaccountInput.value = rawSubaccountInput.value.trim();
   };
   const clearHiddenModeInputs = (mode) => {
     if (mode === 'cycles' && optionalMemoText()) setOptionalMemoText('');
     if (mode !== 'neuron' && neuronInput?.value) neuronInput.value = '';
+    if (mode !== 'rawIcp' && rawSubaccountInput?.value && !urlLocksSubaccount) rawSubaccountInput.value = '';
   };
   const render = ({ preserveOptionalCaret = false } = {}) => {
     const caretOffset = preserveOptionalCaret ? optionalCaretOffset() : null;
@@ -205,11 +225,18 @@ export function initAdvancedMemoBuilder({ copyTextToClipboard } = {}) {
       mode,
       canisterText: canisterInput?.value || '',
       neuronIdText: neuronInput?.value || '',
+      rawIcpSubaccountText: rawSubaccountInput?.value || '',
       optionalMemoText: optionalMemoText(),
     });
+    if (urlSubaccountError) {
+      result.ok = false;
+      result.errors = [urlSubaccountError, ...result.errors];
+    }
     if (modeFieldset) modeFieldset.hidden = Boolean(urlTargetMode);
     if (canisterFields) canisterFields.hidden = urlLocksTarget || mode === 'neuron';
     if (neuronFields) neuronFields.hidden = urlLocksTarget || mode !== 'neuron';
+    if (rawSubaccountFields) rawSubaccountFields.hidden = mode !== 'rawIcp';
+    if (rawSubaccountInput) rawSubaccountInput.readOnly = urlLocksSubaccount;
     const hasOptionalMemoField = mode !== 'cycles';
     if (optionalFields) optionalFields.hidden = !hasOptionalMemoField;
     if (outputInput) {

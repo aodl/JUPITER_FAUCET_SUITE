@@ -16,6 +16,7 @@ pub(crate) enum IndexedCommitmentTarget {
     },
     RawIcp {
         canister_id: Principal,
+        destination_subaccount: Option<[u8; 32]>,
         memo_text: String,
     },
     NeuronStake {
@@ -89,10 +90,15 @@ pub(crate) fn indexed_commitment_from_tx(
         Some(jupiter_memo_policy::MemoDirective::TopUp { canister_id }) => {
             Some(IndexedCommitmentTarget::CyclesTopUp { canister_id })
         }
-        Some(jupiter_memo_policy::MemoDirective::RawIcp { canister_id, memo }) => {
+        Some(jupiter_memo_policy::MemoDirective::RawIcp {
+            canister_id,
+            destination_subaccount,
+            memo,
+        }) => {
             let memo_text = String::from_utf8_lossy(&memo).to_string();
             Some(IndexedCommitmentTarget::RawIcp {
                 canister_id,
+                destination_subaccount,
                 memo_text,
             })
         }
@@ -400,12 +406,51 @@ mod tests {
                 assert_eq!(
                     c.target,
                     IndexedCommitmentTarget::RawIcp {
+                        destination_subaccount: None,
                         canister_id: canister,
                         memo_text: "vault42".to_string(),
                     }
                 );
                 assert!(c.counts_toward_faucet);
             }
+            IndexedCommitmentEntry::Invalid(_) => panic!("expected valid commitment"),
+        }
+    }
+
+    #[test]
+    fn numbered_raw_icp_directive_is_indexed_with_destination_and_exact_suffix() {
+        let staking =
+            "22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d".to_string();
+        let canister = target_canister();
+        let compact = canister.to_text().replace('-', "");
+        let tx = IndexTransactionWithId {
+            id: 41,
+            transaction: IndexTransaction {
+                memo: 0,
+                icrc1_memo: Some(format!("{compact}:256.a:b").into_bytes()),
+                operation: IndexOperation::Transfer {
+                    to: staking.clone(),
+                    fee: Tokens::new(10_000),
+                    from: "sender".into(),
+                    amount: Tokens::new(100_000_000),
+                    spender: None,
+                },
+                created_at_time: Some(IndexTimeStamp {
+                    timestamp_nanos: 126,
+                }),
+                timestamp: None,
+            },
+        };
+        let entry = indexed_commitment_from_tx(&tx, &staking, 100).unwrap();
+        match entry {
+            IndexedCommitmentEntry::Valid(commitment) => assert_eq!(
+                commitment.target,
+                IndexedCommitmentTarget::RawIcp {
+                    canister_id: canister,
+                    destination_subaccount: jupiter_memo_policy::numbered_subaccount(256),
+                    memo_text: "a:b".to_string(),
+                }
+            ),
             IndexedCommitmentEntry::Invalid(_) => panic!("expected valid commitment"),
         }
     }
@@ -437,6 +482,7 @@ mod tests {
             IndexedCommitmentEntry::Valid(commitment) => assert_eq!(
                 commitment.target,
                 IndexedCommitmentTarget::RawIcp {
+                    destination_subaccount: None,
                     canister_id: Principal::from_text("eo6ei-gaaaa-aaaar-qchra-cai").unwrap(),
                     memo_text: "uccpicqaaaaaaarqby3qcai.n0:1".to_string(),
                 }
@@ -609,7 +655,8 @@ mod tests {
                 tx_id: 1,
                 timestamp_nanos: Some(1),
                 amount_e8s: 10,
-                counts_toward_faucet: true
+                counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             },
             2
         ));
@@ -619,7 +666,8 @@ mod tests {
                 tx_id: 1,
                 timestamp_nanos: Some(1),
                 amount_e8s: 10,
-                counts_toward_faucet: true
+                counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             },
             2
         ));
@@ -629,7 +677,8 @@ mod tests {
                 tx_id: 2,
                 timestamp_nanos: Some(2),
                 amount_e8s: 20,
-                counts_toward_faucet: true
+                counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             },
             2
         ));
@@ -639,7 +688,8 @@ mod tests {
                 tx_id: 3,
                 timestamp_nanos: Some(3),
                 amount_e8s: 30,
-                counts_toward_faucet: true
+                counts_toward_faucet: true,
+                raw_icp_destination_subaccount: None,
             },
             2
         ));
@@ -655,6 +705,7 @@ mod tests {
             timestamp_nanos: Some(tx_id),
             amount_e8s: 10,
             counts_toward_faucet: true,
+            raw_icp_destination_subaccount: None,
         };
         for cap in [1, 2, 100] {
             let mut history = Vec::new();

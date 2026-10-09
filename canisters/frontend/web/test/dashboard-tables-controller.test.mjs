@@ -56,7 +56,16 @@ test('raw and neuron endowment rows link full declared memos to tracker', () => 
         {
           canister_id: [canister],
           raw_icp_memo_text: ['vault'],
+          raw_icp_destination_subaccount: [],
           tx_id: 6n,
+          timestamp_nanos: [1_700_000_000_000_000_000n],
+          amount_e8s: 200_000_000n,
+        },
+        {
+          canister_id: [canister],
+          raw_icp_memo_text: ['d'],
+          raw_icp_destination_subaccount: [[...new Uint8Array(31), 50]],
+          tx_id: 61n,
           timestamp_nanos: [1_700_000_000_000_000_000n],
           amount_e8s: 200_000_000n,
         },
@@ -88,6 +97,22 @@ test('raw and neuron endowment rows link full declared memos to tracker', () => 
           timestamp_nanos: [1_700_000_000_000_000_000n],
           amount_e8s: 100_000_000n,
         },
+        {
+          canister_id: ['eo6ei-gaaaa-aaaar-qchra-cai'],
+          raw_icp_memo_text: ['a'],
+          raw_icp_destination_subaccount: [[...new Uint8Array(31), 1]],
+          tx_id: 11n,
+          timestamp_nanos: [1_700_000_000_000_000_000n],
+          amount_e8s: 100_000_000n,
+        },
+        {
+          canister_id: [canister],
+          raw_icp_memo_text: ['bad'],
+          raw_icp_destination_subaccount: [[1, 2]],
+          tx_id: 12n,
+          timestamp_nanos: [1_700_000_000_000_000_000n],
+          amount_e8s: 100_000_000n,
+        },
       ],
     },
     errors: {},
@@ -104,12 +129,16 @@ test('raw and neuron endowment rows link full declared memos to tracker', () => 
   const rawHtml = nodes.get('commitments-raw-pane-body').innerHTML;
   assert.match(rawHtml, new RegExp(`href="#metric-tracker\\?memo=${compactCanister}\\.vault"`));
   assert.match(rawHtml, new RegExp(`data-tracker-memo="${compactCanister}\\.vault"`));
+  assert.match(rawHtml, new RegExp(`data-tracker-memo="${compactCanister}:50\\.d"`));
   assert.doesNotMatch(rawHtml, new RegExp(`${canister}\\.vault`));
   assert.doesNotMatch(rawHtml, />vault<\/td>/);
   assert.match(rawHtml, /data-tracker-memo="X\.uccpicqaaaaaaarqby3qcai\.n0:1"/);
   assert.doesNotMatch(rawHtml, /eo6eigaaaaaaaarqchracai\.uccpic/);
   assert.match(rawHtml, /data-tracker-memo="eo6eigaaaaaaaarqchracai\."/);
   assert.doesNotMatch(rawHtml, /data-tracker-memo="X\."/);
+  assert.match(rawHtml, /data-tracker-memo="eo6eigaaaaaaaarqchracai:1\.a"/);
+  assert.doesNotMatch(rawHtml, /data-tracker-memo="X\.a"/);
+  assert.match(rawHtml, /Unsupported raw ICP destination/);
 
   const neuronHtml = nodes.get('commitments-neurons-pane-body').innerHTML;
   assert.match(neuronHtml, /href="#metric-tracker\?memo=123456789\.donor"/);
@@ -120,6 +149,48 @@ test('raw and neuron endowment rows link full declared memos to tracker', () => 
   assert.doesNotMatch(neuronHtml, /data-tracker-memo="123"/);
   assert.doesNotMatch(neuronHtml, /dashboard\.internetcomputer\.org\/neuron\/123456789/);
   assert.doesNotMatch(neuronHtml, />donor<\/td>/);
+});
+
+test('recent raw and neuron cards preserve trailing outgoing memo whitespace', () => {
+  const nodes = commitmentPaneNodes();
+  const compact = '22255zqaaaaaaasqf6uqcai';
+  const data = {
+    recent: {
+      items: [
+        {
+          canister_id: ['22255-zqaaa-aaaas-qf6uq-cai'],
+          raw_icp_memo_text: ['A '],
+          raw_icp_destination_subaccount: [[...new Uint8Array(31), 1]],
+          tx_id: 20n,
+          timestamp_nanos: [1n],
+          amount_e8s: 1n,
+        },
+        {
+          neuron_id: [123n],
+          neuron_memo_text: ['A '],
+          tx_id: 21n,
+          timestamp_nanos: [1n],
+          amount_e8s: 1n,
+        },
+      ],
+    },
+    errors: {},
+  };
+  withDashboardTableDom(nodes, () => {
+    createDashboardTablesController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      getLandingData: () => data,
+    }).renderCommitmentsPane(data);
+  });
+  assert.match(
+    nodes.get('commitments-raw-pane-body').innerHTML,
+    new RegExp(`data-tracker-memo="${compact}:1\\.A "`),
+  );
+  assert.match(
+    nodes.get('commitments-neurons-pane-body').innerHTML,
+    /data-tracker-memo="123\.A "/,
+  );
 });
 
 test('raw ICP declared memo links keep compact canister memo text within the memo limit', () => {

@@ -175,6 +175,8 @@ Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
 
 ## Historian upgrade audit checklist
 
+When releasing numbered raw-ICP destination support, upgrade Historian and Faucet before publishing the matching frontend or submitting `canister:number.memo` declarations. The grammar needs no activation argument, but the frontend's account-aware tracker must not be published against an older Historian that lacks the optional destination fields. Use the normal state-preserving in-place upgrade process; do not reinstall, rewind cursors, alter skip ranges, or backfill history for this syntax change.
+
 Stopping `jupiter_historian` is the executable self-service factory pause and authoritative call drain. Record public evidence, stop it, and wait for `Stopped` before an in-place upgrade. Keep it stopped while deploying a matching frontend when the two Candid declarations change together, then explicitly start Historian after both upgrades succeed. There is no runtime factory-disable update method.
 
 Self-service Relay state is legitimate durable production state. An upgrade must preserve memory-26 setup entries, exact active configuration mappings, and `RelayTarget`/`RelayInstance` tracking. Before upgrading, record representative known full configurations and their returned Relay mappings; production cannot enumerate every configuration hash. Verify the same configurations and tracking counts after upgrade. Never reinstall Historian to resolve an audit discrepancy.

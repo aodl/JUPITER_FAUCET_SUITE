@@ -755,9 +755,17 @@ pub(super) async fn process_payout_with_lease(
                             logic::PayoutTarget::CyclesTopUp { canister_id } => {
                                 (TransferKind::Beneficiary, canister_id, None, None, None)
                             }
-                            logic::PayoutTarget::RawIcp { canister_id, memo } => {
-                                (TransferKind::RawIcp, canister_id, Some(memo), None, None)
-                            }
+                            logic::PayoutTarget::RawIcp {
+                                canister_id,
+                                destination_subaccount,
+                                memo,
+                            } => (
+                                TransferKind::RawIcp,
+                                canister_id,
+                                Some(memo),
+                                destination_subaccount,
+                                None,
+                            ),
                             logic::PayoutTarget::NeuronStake { neuron_id, memo } => {
                                 let subaccount_result =
                                     neuron_staking_subaccount_retry_once(governance, neuron_id)
