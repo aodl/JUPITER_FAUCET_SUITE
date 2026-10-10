@@ -193,6 +193,14 @@ export function parseJupiterMemo(input) {
     return { kind: 'invalid', reason: 'Neuron memo must be a non-zero decimal neuron ID no longer than 20 bytes.' };
   }
 
+  const selectorMatch = /^([^:]+):([0-9]+)$/.exec(trimmed);
+  if (selectorMatch && parseDeclaredPrincipalText(selectorMatch[1]).principal) {
+    return {
+      kind: 'invalid',
+      reason: 'Raw ICP subaccount memos require a full stop after the number. Use owner:number. for an empty outgoing memo.',
+    };
+  }
+
   const parsed = parseDeclaredPrincipalText(memoText);
   if (!parsed.principal) return { kind: 'invalid', reason: parsed.reason };
   return {

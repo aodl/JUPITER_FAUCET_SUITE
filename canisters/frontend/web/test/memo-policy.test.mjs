@@ -11,6 +11,8 @@ import {
 
 const CANISTER = '22255-zqaaa-aaaas-qf6uq-cai';
 const COMPACT = CANISTER.replaceAll('-', '');
+const REPORTED_OWNER = 'gvey7-gyaaa-aaaar-qb4fq-cai';
+const REPORTED_COMPACT_OWNER = REPORTED_OWNER.replaceAll('-', '');
 const MEMO_POLICY_CASES = JSON.parse(readFileSync(
   new URL('../../../../crates/memo-policy/fixtures/memo-policy-cases.json', import.meta.url),
   'utf8',
@@ -127,4 +129,44 @@ test('parseJupiterMemo resolves the exact Event Horizon X alias without expandin
   assert.equal(parsed.normalizedMemoText, memo);
   assert.equal(parseJupiterMemo('X.').kind, 'invalid');
   assert.equal(parseJupiterMemo('x.foo').kind, 'invalid');
+});
+
+test('parseJupiterMemo preserves the exact reported numbered-route matrix', () => {
+  const cycles = parseJupiterMemo(REPORTED_OWNER);
+  assert.equal(cycles.kind, 'cyclesTopUp');
+
+  const missingDot = parseJupiterMemo(`${REPORTED_OWNER}:0`);
+  assert.equal(missingDot.kind, 'invalid');
+  assert.equal(
+    missingDot.reason,
+    'Raw ICP subaccount memos require a full stop after the number. Use owner:number. for an empty outgoing memo.',
+  );
+
+  for (const { memo, number, suffix } of [
+    { memo: `${REPORTED_OWNER}:0.`, number: null, suffix: '' },
+    { memo: `${REPORTED_OWNER}:0.d`, number: null, suffix: 'd' },
+    { memo: `${REPORTED_OWNER}:1.d`, number: 1, suffix: 'd' },
+    { memo: `${REPORTED_OWNER}:50.d`, number: 50, suffix: 'd' },
+    { memo: `${REPORTED_COMPACT_OWNER}:256.d`, number: 256, suffix: 'd' },
+  ]) {
+    const parsed = parseJupiterMemo(memo);
+    assert.equal(parsed.kind, 'rawIcpCanister', memo);
+    assert.equal(parsed.canisterId.toText(), REPORTED_OWNER, memo);
+    assert.equal(parsed.destinationSubaccountNumberText, number === null ? null : String(number), memo);
+    assert.equal(parsed.outgoingMemoText, suffix, memo);
+  }
+
+  assert.equal(new TextEncoder().encode(`${REPORTED_OWNER}:50.d`).length, 32);
+  assert.equal(new TextEncoder().encode(`${REPORTED_OWNER}:256.d`).length, 33);
+  assert.equal(parseJupiterMemo(`${REPORTED_OWNER}:256.d`).kind, 'invalid');
+});
+
+test('parseJupiterMemo keeps zero equivalent to the omitted default and preserves suffix whitespace', () => {
+  const omitted = parseJupiterMemo(`${REPORTED_COMPACT_OWNER}. x `);
+  const zero = parseJupiterMemo(`${REPORTED_COMPACT_OWNER}:0. x `);
+  assert.equal(omitted.kind, 'rawIcpCanister');
+  assert.equal(zero.kind, 'rawIcpCanister');
+  assert.equal(omitted.destinationSubaccount, null);
+  assert.equal(zero.destinationSubaccount, null);
+  assert.equal(zero.outgoingMemoText, ' x ');
 });

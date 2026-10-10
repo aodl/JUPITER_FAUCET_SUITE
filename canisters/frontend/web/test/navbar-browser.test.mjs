@@ -267,6 +267,183 @@ test('same-page memo-builder navigation clears an omitted destination subaccount
   });
 });
 
+test('shipped tracker bundle preserves invalid hash validation after obsolete raw load settles', async () => {
+  await withBrowser(async ({ openPage }) => {
+    const { page, checkFailures } = await openPage({ width: 1024, height: 650 });
+    const owner = 'gvey7-gyaaa-aaaar-qb4fq-cai';
+    const validMemo = `${owner}:50.d`;
+    const invalidMemo = `${owner}:0`;
+    const expected = 'Raw ICP subaccount memos require a full stop after the number. Use owner:number. for an empty outgoing memo.';
+    const origin = new URL(page.url()).origin;
+    const routePattern = '**/api/v3/canister/aaaaa-aa/**';
+    const methodMarker = Buffer.from('get_raw_icp_commitment_history', 'utf8');
+    let releaseRequest;
+    let markRequestEntered;
+    let enteredRequests = 0;
+    let completedHandlers = 0;
+    const gate = new Promise((resolveGate) => { releaseRequest = resolveGate; });
+    const requestEntered = new Promise((resolveEntered) => { markRequestEntered = resolveEntered; });
+    const handlerTasks = [];
+    const withDeadline = async (promise, label) => {
+      let timer;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 30_000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const handler = (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      // This fixed test's suffix is "d", so the method marker cannot come from its memo.
+      const isRawHistory = url.origin === origin
+        && url.pathname === '/api/v3/canister/aaaaa-aa/query'
+        && request.method() === 'POST'
+        && request.postDataBuffer()?.includes(methodMarker);
+      if (!isRawHistory) return route.fallback();
+      const task = (async () => {
+        enteredRequests += 1;
+        markRequestEntered();
+        await gate;
+        await route.abort('failed');
+        completedHandlers += 1;
+      })();
+      handlerTasks.push(task);
+      return task;
+    };
+
+    await page.route(routePattern, handler);
+    try {
+      await page.evaluate(() => { window.location.hash = '#metric-tracker'; });
+      await page.waitForFunction(() => (
+        document.querySelector('#nav-panel-metric-tracker')?.classList.contains('nav-panel-section--active')
+        && document.querySelector('#tracker-form')?.dataset.bound === 'true'
+      ), null, { timeout: 30_000 });
+
+      // Observe the real loader's aggregate promise. Do not replace its result,
+      // its input promises, the loader, the controller or any application asset.
+      await page.evaluate((memo) => {
+        if (window.__jupiterRawLoadObserver) throw new Error('Raw-load observer already installed');
+        const originalAllSettled = Promise.allSettled;
+        const channels = new Set();
+        let disposed = false;
+        const probe = {
+          joins: 0,
+          settled: false,
+          continuationsDrained: false,
+          outcomeStatuses: [],
+          error: null,
+        };
+        function observeAllSettled(values) {
+          const aggregate = Reflect.apply(originalAllSettled, this, [values]);
+          // tracker-history.js has one five-input aggregate: the raw-canister loader.
+          // Other application loaders use three, four or six inputs. Ambiguity fails.
+          if (!disposed && Array.isArray(values) && values.length === 5
+            && document.querySelector('#tracker-principal-input')?.value === memo) {
+            probe.joins += 1;
+            if (probe.joins !== 1) probe.error = 'More than one matching raw-load aggregate was observed';
+            void aggregate.then((outcomes) => {
+              if (disposed) return;
+              probe.settled = true;
+              probe.outcomeStatuses = outcomes.map((outcome) => outcome.status);
+              // The loader returns synchronously after this join. The awaiting
+              // controller also finishes without another await. A task boundary
+              // therefore follows both promise continuations, without a sleep.
+              const channel = new MessageChannel();
+              channels.add(channel);
+              channel.port1.onmessage = () => {
+                if (!disposed) probe.continuationsDrained = true;
+                channel.port1.close();
+                channel.port2.close();
+                channels.delete(channel);
+              };
+              channel.port2.postMessage(null);
+            }).catch((error) => {
+              if (!disposed) probe.error = String(error?.message || error);
+            });
+          }
+          return aggregate;
+        }
+        Promise.allSettled = observeAllSettled;
+        window.__jupiterRawLoadObserver = {
+          probe,
+          restore() {
+            disposed = true;
+            Promise.allSettled = originalAllSettled;
+            for (const channel of channels) {
+              channel.port1.close();
+              channel.port2.close();
+            }
+            channels.clear();
+            delete window.__jupiterRawLoadObserver;
+          },
+        };
+      }, validMemo);
+
+      await page.locator('#tracker-principal-input').fill(validMemo);
+      await page.locator('#tracker-submit').click();
+      await withDeadline(requestEntered, 'the raw-history request to enter its gate');
+      await page.waitForFunction(() => {
+        const probe = window.__jupiterRawLoadObserver?.probe;
+        return probe?.error || probe?.joins > 0;
+      }, null, { timeout: 30_000 });
+      const before = await page.evaluate(() => window.__jupiterRawLoadObserver.probe);
+      assert.equal(before.error, null);
+      assert.equal(before.joins, 1);
+      assert.equal(before.settled, false);
+      assert.ok(enteredRequests >= 1);
+      assert.equal(completedHandlers, 0);
+      assert.match(await page.locator('#tracker-result').textContent(), /Subaccount 50/);
+
+      await page.evaluate((hash) => { window.location.hash = hash; },
+        `#metric-tracker?memo=${encodeURIComponent(invalidMemo)}&range=month`);
+      await page.waitForFunction((message) => document.querySelector('#tracker-status')?.textContent === message,
+        expected, { timeout: 30_000 });
+      assert.equal(await page.locator('#tracker-principal-input').inputValue(), invalidMemo);
+      assert.equal(await page.locator('#tracker-principal-input').isEnabled(), true);
+      assert.equal(await page.locator('#tracker-submit').isEnabled(), true);
+      assert.doesNotMatch(await page.locator('#tracker-result').textContent(), /Subaccount 50/);
+
+      releaseRequest();
+      await page.waitForFunction(() => {
+        const probe = window.__jupiterRawLoadObserver?.probe;
+        return probe?.error || probe?.continuationsDrained;
+      }, null, { timeout: 30_000 });
+      const after = await page.evaluate(() => window.__jupiterRawLoadObserver.probe);
+      assert.equal(after.error, null);
+      assert.equal(after.joins, 1);
+      assert.equal(after.settled, true);
+      assert.equal(after.continuationsDrained, true);
+      assert.equal(after.outcomeStatuses.length, 5);
+      assert.equal(after.outcomeStatuses[2], 'rejected'); // Gated raw-history query failed.
+      assert.equal(after.outcomeStatuses[4], 'fulfilled'); // Short "d" suffix has no candidate lookup.
+      assert.ok(completedHandlers >= 1);
+      assert.equal(await page.locator('#tracker-status').textContent(), expected);
+      assert.equal(await page.locator('#tracker-principal-input').inputValue(), invalidMemo);
+      assert.equal(await page.locator('#tracker-principal-input').isEnabled(), true);
+      assert.equal(await page.locator('#tracker-submit').isEnabled(), true);
+      assert.doesNotMatch(await page.locator('#tracker-result').textContent(), /Subaccount 50/);
+      checkFailures();
+    } finally {
+      releaseRequest();
+      // Remove only this test's observer and route, not the harness's safety checks.
+      try {
+        await page.evaluate(() => { window.__jupiterRawLoadObserver?.restore(); });
+      } finally {
+        await page.unroute(routePattern, handler);
+        const outcomes = await withDeadline(Promise.allSettled(handlerTasks), 'controlled route cleanup');
+        const errors = outcomes.filter((outcome) => outcome.status === 'rejected').map((outcome) => outcome.reason);
+        if (errors.length) throw new AggregateError(errors, 'Controlled raw-history route cleanup failed');
+      }
+    }
+  });
+});
+
 test('missing or broken rendered application bundle fails the load gate', async () => {
   for (const mode of ['JUPITER_TEST_MISSING_APP_BUNDLE', 'JUPITER_TEST_BREAK_APP_BUNDLE']) {
     const previous = process.env[mode];

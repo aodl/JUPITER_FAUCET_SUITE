@@ -1593,6 +1593,16 @@ export function createTrackerController({
     const parsed = parseJupiterMemo(raw);
     state.parsedMemo = parsed;
     if (parsed.kind === 'invalid') {
+      state.progressRequestId = null;
+      state.data = null;
+      state.loadedRange = null;
+      state.viewMode = '';
+      state.principalText = '';
+      state.protocolCanisterId = null;
+      lastHashSubmitMemo = '';
+      setLoading(false);
+      result?.replaceChildren();
+      renderPrompt();
       setStatus(parsed.reason, 'error');
       input?.focus?.();
       return;

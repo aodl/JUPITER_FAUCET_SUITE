@@ -59,6 +59,11 @@ class FakeElement {
   focus() {
     this.focused = true;
   }
+
+  replaceChildren() {
+    this.innerHTML = '';
+    this.textContent = '';
+  }
 }
 
 test('canonical Relay fallback classifies the source and attaches its Relay canister ID', () => {
@@ -1699,6 +1704,143 @@ test('late raw tracker responses cannot replace a newly selected destination acc
     assert.match(nodeMap.get('tracker-result').innerHTML, /Subaccount 50/);
     assert.doesNotMatch(nodeMap.get('tracker-result').innerHTML, /Subaccount 1</);
     assert.deepEqual(destinations, [1, 50]);
+  });
+});
+
+test('exact reported owner directives select the cycles or numbered raw loader without rewriting suffixes', async () => {
+  const nodes = trackerNodes();
+  const owner = 'gvey7-gyaaa-aaaar-qb4fq-cai';
+  const compactOwner = owner.replaceAll('-', '');
+  const cyclesCalls = [];
+  const rawCalls = [];
+  const emptyData = {
+    status: {}, commitments: { items: [] }, transfers: { items: [] }, candidates: { items: [] }, errors: {},
+  };
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadData: async ({ canisterId }) => {
+        cyclesCalls.push(canisterId.toText());
+        return { isCommitmentBeneficiary: false, isRecognized: false };
+      },
+      loadRawCanisterData: async (request) => {
+        rawCalls.push({
+          owner: request.canisterId.toText(),
+          destination: Array.from(request.destinationSubaccount || []),
+          suffix: request.outgoingMemoText,
+        });
+        return emptyData;
+      },
+    });
+    controller.bindPane();
+
+    for (const memo of [
+      owner,
+      `${owner}:0.`,
+      `${owner}:0.d`,
+      `${owner}:1.d`,
+      `${owner}:50.d`,
+      `${compactOwner}:256.d`,
+    ]) {
+      nodeMap.get('tracker-principal-input').value = memo;
+      await controller.submitPrincipal();
+    }
+
+    assert.deepEqual(cyclesCalls, [owner]);
+    assert.deepEqual(rawCalls.map(({ owner: actual, suffix }) => [actual, suffix]), [
+      [owner, ''], [owner, 'd'], [owner, 'd'], [owner, 'd'], [owner, 'd'],
+    ]);
+    assert.deepEqual(rawCalls.map(({ destination }) => destination.at(-1) || 0), [0, 0, 1, 50, 0]);
+    assert.equal(rawCalls.at(-1).destination.at(-2), 1);
+    assert.equal(rawCalls.at(-1).destination.at(-1), 0);
+    assert.match(nodeMap.get('tracker-result').innerHTML, /Subaccount 256/);
+  });
+});
+
+for (const staleOutcome of ['resolve', 'progress', 'reject']) {
+  test(`invalid hash navigation keeps its validation state after stale request ${staleOutcome}`, async () => {
+    const nodes = trackerNodes();
+    const owner = 'gvey7-gyaaa-aaaar-qb4fq-cai';
+    let settleLoad;
+    let oldProgress;
+    const pending = new Promise((resolve, reject) => {
+      settleLoad = staleOutcome === 'reject' ? () => reject(new Error('obsolete failure')) : resolve;
+    });
+    const oldData = {
+      status: {}, commitments: { items: [] }, transfers: { items: [] }, candidates: { items: [] }, errors: {},
+    };
+
+    await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+      const controller = createTrackerController({
+        frontendConfig: {},
+        isLocalHost: () => false,
+        simulatorHashForPrefill,
+        loadRawCanisterData: async ({ onProgress }) => {
+          oldProgress = onProgress;
+          return pending;
+        },
+      });
+      controller.bindPane();
+      nodeMap.get('tracker-principal-input').value = `${owner}:50.d`;
+      const oldSubmission = controller.submitPrincipal();
+      await flushMicrotasks();
+
+      window.location.hash = `#metric-tracker?memo=${encodeURIComponent(`${owner}:0`)}&range=month`;
+      assert.equal(controller.hydrateFromLocationHash({ submit: true }), true);
+      await flushMicrotasks();
+      const expected = 'Raw ICP subaccount memos require a full stop after the number. Use owner:number. for an empty outgoing memo.';
+      assert.equal(nodeMap.get('tracker-status').textContent, expected);
+      assert.equal(controller.state.loading, false);
+      assert.doesNotMatch(nodeMap.get('tracker-result').innerHTML, /Subaccount 50/);
+
+      if (staleOutcome === 'progress') oldProgress(oldData);
+      settleLoad(oldData);
+      await oldSubmission;
+
+      assert.equal(nodeMap.get('tracker-status').textContent, expected);
+      assert.equal(controller.state.data, null);
+      assert.doesNotMatch(nodeMap.get('tracker-result').innerHTML, /Subaccount 50/);
+      assert.doesNotMatch(nodeMap.get('tracker-status').textContent, /obsolete failure|Tracker unavailable/);
+    });
+  });
+}
+
+test('invalid manual submission clears a completed view and permits reopening the same valid hash', async () => {
+  const nodes = trackerNodes();
+  const owner = 'gvey7-gyaaa-aaaar-qb4fq-cai';
+  let loads = 0;
+  const emptyData = {
+    status: {}, commitments: { items: [] }, transfers: { items: [] }, candidates: { items: [] }, errors: {},
+  };
+
+  await withFakeTrackerDom(nodes, async ({ nodeMap }) => {
+    const controller = createTrackerController({
+      frontendConfig: {},
+      isLocalHost: () => false,
+      simulatorHashForPrefill,
+      loadRawCanisterData: async () => {
+        loads += 1;
+        return emptyData;
+      },
+    });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = `${owner}:50.d`;
+    await controller.submitPrincipal();
+    assert.match(nodeMap.get('tracker-result').innerHTML, /Subaccount 50/);
+
+    nodeMap.get('tracker-principal-input').value = `${owner}:0`;
+    await controller.submitPrincipal();
+    assert.equal(controller.state.data, null);
+    assert.doesNotMatch(nodeMap.get('tracker-result').innerHTML, /Subaccount 50/);
+
+    window.location.hash = `#metric-tracker?memo=${encodeURIComponent(`${owner}:50.d`)}&range=month`;
+    assert.equal(controller.hydrateFromLocationHash({ submit: true }), true);
+    await flushMicrotasks();
+    assert.equal(loads, 2);
+    assert.match(nodeMap.get('tracker-result').innerHTML, /Subaccount 50/);
   });
 });
 
