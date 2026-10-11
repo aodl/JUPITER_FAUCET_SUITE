@@ -257,7 +257,6 @@ pub(super) fn debug_seed_legacy_poke_lease() {
         st.commitment_index_lock_generation = st.commitment_index_lock_generation.saturating_add(1);
         st.commitment_index_lock_owner = Some(state::CommitmentIndexLeaseOwner::EndowmentRefresh);
         st.endowment_refresh_next_allowed_ts = now_secs.saturating_add(60);
-        st.endowment_refresh_ineffective_streak = 3;
     });
 }
 

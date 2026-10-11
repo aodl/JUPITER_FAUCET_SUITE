@@ -175,6 +175,12 @@ Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
 
 ## Historian upgrade audit checklist
 
+### Initial pre-deployment cleanup
+
+Deploy this Historian cleanup only as an in-place upgrade, never a reinstall. It removes one dead root field while preserving the existing root cell, histories, stable-map identities, lifetime route rollups, Relay setup entries, indexing cursors, and active lease/cooldown state. It requires no separate migration command, activation argument, cursor rewind, skip-range change, historical replay, or rollup rebuild.
+
+Because the persisted root encoding changes, retain the pre-upgrade evidence and follow the snapshot guidance below for rollback-sensitive changes; this source cleanup does not itself create or restore a snapshot. Keep the Faucet wider-V1 reader and Historian missing-counter/feed reconstruction, genuine missing-field defaults, and the remaining numeric fallback blocks until deployment and state evidence separately establishes their retirement conditions.
+
 When releasing numbered raw-ICP destination support, upgrade Historian and Faucet before publishing the matching frontend or submitting `canister:number.memo` declarations. The grammar needs no activation argument, but the frontend's account-aware tracker must not be published against an older Historian that lacks the optional destination fields. Use the normal state-preserving in-place upgrade process; do not reinstall, rewind cursors, alter skip ranges, or backfill history for this syntax change.
 
 Stopping `jupiter_historian` is the executable self-service factory pause and authoritative call drain. Record public evidence, stop it, and wait for `Stopped` before an in-place upgrade. Keep it stopped while deploying a matching frontend when the two Candid declarations change together, then explicitly start Historian after both upgrades succeed. There is no runtime factory-disable update method.

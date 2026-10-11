@@ -47,7 +47,6 @@ pub(super) fn build_root_snapshot(st: &State) -> StableRootState {
         commitment_index_lock_generation: Some(st.commitment_index_lock_generation),
         commitment_index_lock_owner: st.commitment_index_lock_owner,
         endowment_refresh_next_allowed_ts: Some(st.endowment_refresh_next_allowed_ts),
-        endowment_refresh_ineffective_streak: Some(st.endowment_refresh_ineffective_streak),
         commitment_index_revision: Some(st.commitment_index_revision),
     }
 }

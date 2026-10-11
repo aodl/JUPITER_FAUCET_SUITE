@@ -1570,6 +1570,7 @@ test('loadRawIcpCanisterTrackerData emits cumulative progress without discarding
 
 test('loadNeuronStakeTrackerData loads neuron endowment history with isolated transfer failure', async () => {
   const calls = [];
+  const progress = [];
   const stakingSubaccount = Array.from({ length: 32 }, () => 7);
 
   const data = await loadNeuronStakeTrackerData({
@@ -1578,6 +1579,7 @@ test('loadNeuronStakeTrackerData loads neuron endowment history with isolated tr
     agent: { test: true },
     neuronId: 42n,
     historyLimit: 3,
+    onProgress: (partial) => progress.push(partial),
     historianActor: {
       async get_public_status() {
         return historianStatus({
@@ -1614,6 +1616,13 @@ test('loadNeuronStakeTrackerData loads neuron endowment history with isolated tr
   assert.deepEqual(data.transfers.items, []);
   assert.equal(data.errors.commitments, null);
   assert.match(data.errors.transfers, /index outage/);
+  assert.equal(progress[0].commitments.loading, true);
+  assert.equal(progress[0].transfers.loading, true);
+  assert.ok(progress.some((partial) => partial.commitments.loading === false));
+  const finalProgress = progress.at(-1);
+  assert.equal(finalProgress.commitments.loading, false);
+  assert.equal(finalProgress.transfers.loading, false);
+  assert.match(finalProgress.errors.transfers, /index outage/);
 });
 
 test('loadNeuronStakeTrackerData isolates endowment query failures from transfers', async () => {

@@ -366,11 +366,9 @@ pub(crate) struct StableRootState {
     pub commitment_index_lock_generation: Option<u64>,
     #[serde(default)]
     pub commitment_index_lock_owner: Option<CommitmentIndexLeaseOwner>,
-    // Retain old Candid field names so deployed roots decode before lease reset.
+    // Persisted cooldown used by poke; keep its existing wire field name.
     #[serde(default)]
     pub endowment_refresh_next_allowed_ts: Option<u64>,
-    #[serde(default)]
-    pub endowment_refresh_ineffective_streak: Option<u8>,
     #[serde(default)]
     pub commitment_index_revision: Option<u64>,
 }
@@ -1140,7 +1138,6 @@ pub(crate) struct State {
     pub commitment_index_lock_generation: u64,
     pub commitment_index_lock_owner: Option<CommitmentIndexLeaseOwner>,
     pub endowment_refresh_next_allowed_ts: u64,
-    pub endowment_refresh_ineffective_streak: u8,
     pub commitment_index_revision: u64,
     #[serde(default)]
     pub canister_module_hash_cache: Vec<crate::CanisterModuleHash>,
@@ -1206,7 +1203,6 @@ impl State {
             commitment_index_lock_generation: 0,
             commitment_index_lock_owner: None,
             endowment_refresh_next_allowed_ts: 0,
-            endowment_refresh_ineffective_streak: 0,
             commitment_index_revision: 0,
             canister_module_hash_cache: Vec::new(),
             canister_module_hash_cache_updated_ts: None,

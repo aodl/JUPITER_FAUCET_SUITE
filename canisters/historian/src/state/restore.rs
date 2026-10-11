@@ -78,9 +78,6 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
         commitment_index_lock_generation: root.commitment_index_lock_generation.unwrap_or(0),
         commitment_index_lock_owner: root.commitment_index_lock_owner,
         endowment_refresh_next_allowed_ts: root.endowment_refresh_next_allowed_ts.unwrap_or(0),
-        endowment_refresh_ineffective_streak: root
-            .endowment_refresh_ineffective_streak
-            .unwrap_or(0),
         commitment_index_revision: root.commitment_index_revision.unwrap_or(0),
         canister_module_hash_cache: Vec::new(),
         canister_module_hash_cache_updated_ts: None,

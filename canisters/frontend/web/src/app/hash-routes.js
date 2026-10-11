@@ -39,22 +39,20 @@ export function trackerStateFromHash(hash = window.location.hash) {
   if (fragment.startsWith(TRACKER_HASH_PREFIX)) {
     const queryStart = fragment.indexOf('?');
     const params = queryStart >= 0 ? new URLSearchParams(fragment.slice(queryStart + 1)) : new URLSearchParams();
-    const legacyPrincipal = trackerPrincipalFromHash(queryStart >= 0 ? fragment.slice(0, queryStart) : fragment);
+    const memo = trackerPrincipalFromHash(queryStart >= 0 ? fragment.slice(0, queryStart) : fragment);
     return {
-      memo: legacyPrincipal,
+      memo,
       protocolCanister: '',
-      legacyPrincipal,
       range: normalizeTrackerRange(params.get('range')),
     };
   }
   if (!fragment.startsWith(`${TRACKER_QUERY_HASH_PREFIX}?`)) {
-    return { memo: '', protocolCanister: '', legacyPrincipal: '', range: 'month' };
+    return { memo: '', protocolCanister: '', range: 'month' };
   }
   const params = new URLSearchParams(fragment.slice(`${TRACKER_QUERY_HASH_PREFIX}?`.length));
   return {
     memo: params.get('memo') || '',
     protocolCanister: params.get('protocol-canister') || '',
-    legacyPrincipal: '',
     range: normalizeTrackerRange(params.get('range')),
   };
 }

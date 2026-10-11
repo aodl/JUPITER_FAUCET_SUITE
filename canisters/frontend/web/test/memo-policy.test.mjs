@@ -74,6 +74,7 @@ test('parseJupiterMemo classifies dotted canister and neuron memos', () => {
   assert.equal(canister.kind, 'rawIcpCanister');
   assert.equal(canister.outgoingMemoText, 'miner');
   assert.equal(canister.normalizedMemoText, `${CANISTER}.miner`);
+  assert.equal(Object.hasOwn(canister, 'declarationText'), false);
 
   const neuron = parseJupiterMemo('123456789.memo');
   assert.equal(neuron.kind, 'neuronStake');
@@ -127,6 +128,7 @@ test('parseJupiterMemo resolves the exact Event Horizon X alias without expandin
   assert.equal(parsed.canisterId.toText(), 'eo6ei-gaaaa-aaaar-qchra-cai');
   assert.equal(parsed.outgoingMemoText, 'uccpicqaaaaaaarqby3qcai.n0:1');
   assert.equal(parsed.normalizedMemoText, memo);
+  assert.equal(Object.hasOwn(parsed, 'declarationText'), false);
   assert.equal(parseJupiterMemo('X.').kind, 'invalid');
   assert.equal(parseJupiterMemo('x.foo').kind, 'invalid');
 });

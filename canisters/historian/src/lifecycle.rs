@@ -465,12 +465,6 @@ pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
     if st.config.relay_initial_cycles == 0 {
         st.config.relay_initial_cycles = 2_000_000_000_000;
     }
-    if st.config.relay_cycle_safety_margin_e8s == 0 {
-        st.config.relay_cycle_safety_margin_e8s = 5_000_000;
-    }
-    if st.config.relay_min_subaccount_one_seed_e8s == 0 {
-        st.config.relay_min_subaccount_one_seed_e8s = 100_020_000;
-    }
     if st.config.self_service_relay_interval_seconds == 0 {
         st.config.self_service_relay_interval_seconds = 86400;
     }

@@ -251,6 +251,8 @@ Healthy production requires the commitment-route health query to report `complet
 
 Older stable root and metadata records may contain retired ICP-burn accounting fields, superseded by Total Output / Total Rewards. Current code ignores those extra fields through ordinary Candid record compatibility; no burn-state migration or recovery mechanism is needed.
 
+The Relay cycle-safety margin and minimum subaccount-one seed keep their existing defaults when omitted. Explicit zero values for these two supported settings are preserved through initialization and later upgrades. Poke persistence retains its active lease and cooldown fields; it does not maintain an ineffective-attempt streak.
+
 ### Init args
 
 Required:

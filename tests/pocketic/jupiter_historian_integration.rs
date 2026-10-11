@@ -6,7 +6,7 @@ use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Bound,
-    StableBTreeMap, Storable, VectorMemory,
+    StableBTreeMap, StableCell, Storable, VectorMemory,
 };
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg};
@@ -187,6 +187,29 @@ struct HistorianUpgradeArg {
     xrc_canister_id: Option<Principal>,
     cmc_canister_id: Option<Principal>,
     faucet_canister_id: Option<Principal>,
+}
+
+#[derive(CandidType)]
+struct CleanupConfigUpgradeArg {
+    relay_cycle_safety_margin_e8s: Option<u64>,
+    relay_min_subaccount_one_seed_e8s: Option<u64>,
+}
+
+#[derive(CandidType, Deserialize, Debug, PartialEq, Eq)]
+struct CleanupStoredConfig {
+    relay_cycle_safety_margin_e8s: Option<u64>,
+    relay_min_subaccount_one_seed_e8s: Option<u64>,
+}
+
+#[derive(CandidType, Deserialize)]
+struct CleanupStoredRoot {
+    config: CleanupStoredConfig,
+}
+
+#[derive(CandidType, Deserialize)]
+enum CleanupStoredState {
+    Uninitialized,
+    Current(CleanupStoredRoot),
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -787,6 +810,22 @@ fn relay_setup_entry_count(pic: &PocketIc, historian: Principal) -> u64 {
         manager.get(MemoryId::new(26)),
     );
     entries.len()
+}
+
+fn read_cleanup_stored_config(pic: &PocketIc, historian: Principal) -> Result<CleanupStoredConfig> {
+    let memory = Rc::new(RefCell::new(pic.get_stable_memory(historian)));
+    let manager = MemoryManager::init(memory);
+    let cell =
+        StableCell::<Vec<u8>, FixtureMemory>::init(manager.get(MemoryId::new(0)), Vec::new());
+    if cell.get().is_empty() {
+        bail!("Historian root bytes are missing");
+    }
+    let decoded: CleanupStoredState = candid::decode_one(cell.get())
+        .context("decode copied Historian root for config preservation test")?;
+    match decoded {
+        CleanupStoredState::Current(root) => Ok(root.config),
+        CleanupStoredState::Uninitialized => bail!("Historian root is uninitialized"),
+    }
 }
 
 fn icrc1_fee(pic: &PocketIc, ledger: Principal) -> Result<u64> {
@@ -3189,6 +3228,108 @@ fn legacy_poke_lease_root_restores_before_post_upgrade_reset() -> Result<()> {
     )?;
     assert_eq!(restored.commitment_index_lock_expires_at_ts, Some(0));
     assert_eq!(restored.poke_next_allowed_ts, seeded.poke_next_allowed_ts);
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn historian_explicit_zero_margin_and_seed_survive_following_no_argument_upgrade() -> Result<()> {
+    for (margin, seed) in [
+        (0, 0),
+        (0, 100_020_001),
+        (5_000_001, 0),
+        (5_000_001, 100_020_001),
+    ] {
+        let h = Harness::new_with_scan_interval(false, 3_600)?;
+        let before: DebugState = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "debug_state",
+            (),
+        )?;
+        let setup_entries_before = relay_setup_entry_count(&h.pic, h.historian);
+        let controller = h
+            .pic
+            .get_controllers(h.historian)
+            .first()
+            .copied()
+            .unwrap_or(Principal::anonymous());
+        let wasm = historian_wasm()?;
+
+        support::governance::stop_canister_as(&h.pic, h.historian, controller)?;
+        h.pic.advance_time(Duration::from_secs(2));
+        tick_n(&h.pic, 2);
+        h.pic
+            .upgrade_canister(
+                h.historian,
+                wasm.clone(),
+                encode_one(Some(CleanupConfigUpgradeArg {
+                    relay_cycle_safety_margin_e8s: Some(margin),
+                    relay_min_subaccount_one_seed_e8s: Some(seed),
+                }))?,
+                Some(controller),
+            )
+            .map_err(|error| anyhow!("first cleanup config upgrade failed: {error:?}"))?;
+        support::governance::start_canister_as(&h.pic, h.historian, controller)?;
+        assert_eq!(
+            read_cleanup_stored_config(&h.pic, h.historian)?,
+            CleanupStoredConfig {
+                relay_cycle_safety_margin_e8s: Some(margin),
+                relay_min_subaccount_one_seed_e8s: Some(seed),
+            },
+            "first upgrade must persist ({margin}, {seed})"
+        );
+
+        support::governance::stop_canister_as(&h.pic, h.historian, controller)?;
+        h.pic.advance_time(Duration::from_secs(2));
+        tick_n(&h.pic, 2);
+        h.pic
+            .upgrade_canister(
+                h.historian,
+                wasm.clone(),
+                encode_args(())?,
+                Some(controller),
+            )
+            .map_err(|error| anyhow!("no-argument cleanup config upgrade failed: {error:?}"))?;
+        support::governance::start_canister_as(&h.pic, h.historian, controller)?;
+        assert_eq!(
+            read_cleanup_stored_config(&h.pic, h.historian)?,
+            CleanupStoredConfig {
+                relay_cycle_safety_margin_e8s: Some(margin),
+                relay_min_subaccount_one_seed_e8s: Some(seed),
+            },
+            "following no-argument upgrade must preserve ({margin}, {seed})"
+        );
+        let after: DebugState = query_one(
+            &h.pic,
+            h.historian,
+            Principal::anonymous(),
+            "debug_state",
+            (),
+        )?;
+        assert_eq!(
+            after.last_indexed_staking_tx_id,
+            before.last_indexed_staking_tx_id
+        );
+        assert_eq!(
+            after.last_indexed_output_tx_id,
+            before.last_indexed_output_tx_id
+        );
+        assert_eq!(
+            after.last_indexed_rewards_tx_id,
+            before.last_indexed_rewards_tx_id
+        );
+        assert_eq!(after.poke_next_allowed_ts, before.poke_next_allowed_ts);
+        assert_eq!(
+            relay_setup_entry_count(&h.pic, h.historian),
+            setup_entries_before
+        );
+        assert!(
+            after.commitment_index_lock_generation >= before.commitment_index_lock_generation + 2
+        );
+        assert_eq!(after.commitment_index_lock_expires_at_ts, Some(0));
+    }
     Ok(())
 }
 

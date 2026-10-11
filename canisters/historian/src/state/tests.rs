@@ -9,20 +9,20 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     #[allow(dead_code, clippy::large_enum_variant)]
-    #[derive(CandidType, Serialize)]
+    #[derive(CandidType, Deserialize, Serialize)]
     enum DeployedVersionedStableState {
         Uninitialized,
         Current(DeployedStableRootState),
     }
 
-    #[derive(CandidType, Serialize)]
+    #[derive(CandidType, Deserialize, Serialize)]
     struct DeployedActiveCommitmentRouteRollupBackfill {
         boundary_tx_id: u64,
         cursor_tx_id: Option<u64>,
         descending: bool,
     }
 
-    #[derive(CandidType, Serialize)]
+    #[derive(CandidType, Deserialize, Serialize)]
     struct FrozenRecentBurn {
         canister_id: Principal,
         tx_id: u64,
@@ -48,7 +48,7 @@ mod tests {
         counts_toward_faucet: bool,
     }
 
-    #[derive(CandidType, Serialize)]
+    #[derive(CandidType, Deserialize, Serialize)]
     struct DeployedStableRootState {
         config: StableConfig,
         last_indexed_staking_tx_id: Option<u64>,
@@ -201,7 +201,7 @@ mod tests {
                 commitment_index_lock_generation: value.commitment_index_lock_generation,
                 commitment_index_lock_owner: value.commitment_index_lock_owner,
                 endowment_refresh_next_allowed_ts: value.endowment_refresh_next_allowed_ts,
-                endowment_refresh_ineffective_streak: value.endowment_refresh_ineffective_streak,
+                endowment_refresh_ineffective_streak: None,
                 commitment_index_revision: value.commitment_index_revision,
             }
         }
@@ -809,7 +809,6 @@ mod tests {
         expected.commitment_index_lock_generation = None;
         expected.commitment_index_lock_owner = None;
         expected.endowment_refresh_next_allowed_ts = None;
-        expected.endowment_refresh_ineffective_streak = None;
         expected.commitment_index_revision = None;
         let expected_config = expected.config.clone();
         let deployed_root = DeployedStableRootState::from(expected.clone());
@@ -857,7 +856,6 @@ mod tests {
         assert!(root.commitment_index_lock_generation.is_none());
         assert!(root.commitment_index_lock_owner.is_none());
         assert!(root.endowment_refresh_next_allowed_ts.is_none());
-        assert!(root.endowment_refresh_ineffective_streak.is_none());
         assert!(root.commitment_index_revision.is_none());
         assert_eq!(root.config.relay_factory_enabled, Some(true));
 
@@ -899,14 +897,12 @@ mod tests {
     #[test]
     fn deployed_endowment_refresh_lease_tag_still_decodes() {
         let state = State::new(sample_config(), 1_000);
-        let mut root = build_root_snapshot(&state);
-        root.commitment_index_lock_owner = Some(CommitmentIndexLeaseOwner::EndowmentRefresh);
-        root.endowment_refresh_next_allowed_ts = Some(1_060);
-        root.endowment_refresh_ineffective_streak = Some(3);
-        let bytes = candid::encode_one(DeployedVersionedStableState::Current(
-            DeployedStableRootState::from(root),
-        ))
-        .unwrap();
+        let mut expected = build_root_snapshot(&state);
+        expected.commitment_index_lock_owner = Some(CommitmentIndexLeaseOwner::EndowmentRefresh);
+        expected.endowment_refresh_next_allowed_ts = Some(1_060);
+        let mut deployed = DeployedStableRootState::from(expected.clone());
+        deployed.endowment_refresh_ineffective_streak = Some(3);
+        let bytes = candid::encode_one(DeployedVersionedStableState::Current(deployed)).unwrap();
         let VersionedStableState::Current(decoded) =
             VersionedStableState::from_bytes(Cow::Owned(bytes))
         else {
@@ -917,11 +913,14 @@ mod tests {
             Some(CommitmentIndexLeaseOwner::EndowmentRefresh)
         );
         assert_eq!(decoded.endowment_refresh_next_allowed_ts, Some(1_060));
-        assert_eq!(decoded.endowment_refresh_ineffective_streak, Some(3));
+        assert_eq!(
+            candid::encode_one(decoded).unwrap(),
+            candid::encode_one(expected).unwrap()
+        );
     }
 
     #[test]
-    fn old_wider_root_restores_and_persists_without_burn_state() {
+    fn old_root_with_unused_refresh_streak_restores_without_losing_current_state() {
         reset_test_storage();
         let mut state = State::new(sample_config(), 1_000);
         state.last_indexed_staking_tx_id = Some(100);
@@ -940,6 +939,19 @@ mod tests {
         state.total_output_e8s = Some(123_456);
         state.total_rewards_e8s = Some(654_321);
         state.qualifying_commitment_count = Some(56);
+        state.recent_commitments = Some(vec![RecentCommitment {
+            canister_id: principal(&[41]),
+            raw_icp_memo_text: Some("exact suffix".into()),
+            raw_icp_destination_subaccount: Some({
+                let mut subaccount = vec![0; 32];
+                subaccount[31] = 50;
+                subaccount
+            }),
+            tx_id: 401,
+            timestamp_nanos: Some(402),
+            amount_e8s: 403,
+            counts_toward_faucet: true,
+        }]);
         state.commitment_index_fault = Some(CommitmentIndexFault {
             observed_at_ts: 900,
             last_cursor_tx_id: Some(99),
@@ -978,9 +990,62 @@ mod tests {
         state.active_staking_catch_up = Some(continuation.clone());
         state.active_output_catch_up = Some(continuation.clone());
         state.active_rewards_catch_up = Some(continuation);
+        state.commitment_index_lock_expires_at_ts = Some(2_000);
+        state.commitment_index_lock_generation = 9;
+        state.commitment_index_lock_owner = Some(CommitmentIndexLeaseOwner::EndowmentRefresh);
+        state.endowment_refresh_next_allowed_ts = 1_060;
+        state.commitment_index_revision = 17;
+        let history_principal = principal(&[42]);
+        let sample = CommitmentSample {
+            tx_id: 501,
+            timestamp_nanos: Some(502),
+            amount_e8s: 503,
+            counts_toward_faucet: true,
+            raw_icp_destination_subaccount: None,
+        };
+        state
+            .commitment_history
+            .insert(history_principal, vec![sample.clone()]);
+        state
+            .raw_icp_commitment_history
+            .insert(history_principal, vec![sample.clone()]);
+        state.neuron_commitment_history.insert(77, vec![sample]);
+        state.cycles_history.insert(
+            history_principal,
+            vec![CyclesSample {
+                timestamp_nanos: 504,
+                cycles: 505,
+                source: CyclesSampleSource::SnsRootSummary,
+            }],
+        );
         let expected = build_root_snapshot(&state);
         let expected_bytes = candid::encode_one(&expected).unwrap();
-        let wider = DeployedStableRootState::from(expected);
+        set_state(state);
+        let route = route_key(crate::CommitmentRoute::RawIcp {
+            destination_canister_id: history_principal,
+            destination_subaccount: Some({
+                let mut subaccount = vec![0; 32];
+                subaccount[31] = 50;
+                subaccount
+            }),
+            memo: b"exact suffix".to_vec(),
+        });
+        increment_commitment_route_rollup(route.clone(), 506);
+        let relay_key = crate::relay_setup::RelaySetupKey::from_bytes(Cow::Owned(vec![7; 32]));
+        let relay_entry = crate::relay_setup::RelaySetupEntry::Active {
+            relay_canister_id: principal(&[43]),
+        };
+        with_relay_setup_entries_map(|map| {
+            map.insert(relay_key, relay_entry.clone());
+        });
+        let expected_maps = (
+            snapshot_commitment_history_map(),
+            snapshot_cycles_history_map(),
+            snapshot_raw_icp_commitment_history_map(),
+            snapshot_neuron_commitment_history_map(),
+        );
+        let mut wider = DeployedStableRootState::from(expected.clone());
+        wider.endowment_refresh_ineffective_streak = Some(3);
         assert_eq!(wider.icp_burned_e8s, Some(123_456_789));
         assert_eq!(wider.recent_burns.as_ref().unwrap()[0].amount_e8s, 123_456);
         let old_bytes = candid::encode_one(DeployedVersionedStableState::Current(wider)).unwrap();
@@ -999,13 +1064,42 @@ mod tests {
                 candid::encode_one(build_root_snapshot(&restored)).unwrap(),
                 expected_bytes
             );
-            set_state(restored);
+            assert_eq!(
+                restored.commitment_index_lock_owner,
+                Some(CommitmentIndexLeaseOwner::EndowmentRefresh)
+            );
+            assert_eq!(restored.commitment_index_lock_generation, 9);
+            assert_eq!(restored.commitment_index_lock_expires_at_ts, Some(2_000));
+            assert_eq!(restored.endowment_refresh_next_allowed_ts, 1_060);
+            assert_eq!(snapshot_commitment_history_map(), expected_maps.0);
+            assert_eq!(snapshot_cycles_history_map(), expected_maps.1);
+            assert_eq!(snapshot_raw_icp_commitment_history_map(), expected_maps.2);
+            assert_eq!(snapshot_neuron_commitment_history_map(), expected_maps.3);
+            assert_eq!(
+                get_commitment_route_rollup(&route).total_qualifying_committed_e8s,
+                506
+            );
+            assert_eq!(
+                with_relay_setup_entries_map(|map| map.get(&relay_key)),
+                Some(relay_entry.clone())
+            );
+            let registry_principals = restored.canister_tracking_reasons.keys().copied().collect();
+            set_state_after_upgrade(restored, &registry_principals);
             with_root_stable_cell(|cell| {
                 let VersionedStableState::Current(root) = cell.get() else {
                     panic!("expected current root");
                 };
                 assert_eq!(candid::encode_one(root).unwrap(), expected_bytes);
                 assert_ne!(cell.get().to_bytes().as_ref(), old_bytes.as_slice());
+                let DeployedVersionedStableState::Current(wider) =
+                    candid::decode_one::<DeployedVersionedStableState>(
+                        cell.get().to_bytes().as_ref(),
+                    )
+                    .unwrap()
+                else {
+                    panic!("expected current root through wider decoder");
+                };
+                assert_eq!(wider.endowment_refresh_ineffective_streak, None);
             });
             STABLE_ROOT_STATE.with(|cell| *cell.borrow_mut() = None);
         }

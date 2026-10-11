@@ -257,7 +257,6 @@ mod tests {
             commitment_index_lock_generation: 0,
             commitment_index_lock_owner: None,
             endowment_refresh_next_allowed_ts: 0,
-            endowment_refresh_ineffective_streak: 0,
             commitment_index_revision: 0,
             canister_module_hash_cache: Vec::new(),
             canister_module_hash_cache_updated_ts: None,
@@ -972,6 +971,88 @@ mod tests {
         assert_eq!(st.config.relay_setup_min_e8s, 777_000_000);
         assert_eq!(st.config.self_service_relay_interval_seconds, 888);
         assert_eq!(st.main_lock_state_ts, Some(0));
+    }
+
+    #[test]
+    fn permitted_zero_margin_and_seed_survive_install_initialization() {
+        for (margin, seed) in [
+            (0, 0),
+            (0, 100_020_001),
+            (5_000_001, 0),
+            (5_000_001, 100_020_001),
+        ] {
+            let mut args = sample_init_args();
+            args.relay_cycle_safety_margin_e8s = Some(margin);
+            args.relay_min_subaccount_one_seed_e8s = Some(seed);
+            args.canonical_relay_targets = Some(Vec::new());
+            let mut st = State::new(config_from_init_args(args), 123);
+
+            initialize_config_defaults_if_missing(&mut st);
+
+            assert_eq!(
+                st.config.relay_cycle_safety_margin_e8s, margin,
+                "explicit margin must survive initialization for ({margin}, {seed})"
+            );
+            assert_eq!(
+                st.config.relay_min_subaccount_one_seed_e8s, seed,
+                "explicit seed must survive initialization for ({margin}, {seed})"
+            );
+            assert_eq!(st.config.canonical_relay_canister_id, None);
+            assert!(st.config.canonical_relay_targets.is_empty());
+        }
+    }
+
+    #[test]
+    fn stored_margin_and_seed_presence_survives_full_upgrade_restoration_order() {
+        let omitted = config_from_init_args(sample_init_args());
+        assert_eq!(omitted.relay_cycle_safety_margin_e8s, 5_000_000);
+        assert_eq!(omitted.relay_min_subaccount_one_seed_e8s, 100_020_000);
+
+        for (margin, seed) in [
+            (0, 0),
+            (0, 100_020_001),
+            (5_000_001, 0),
+            (5_000_001, 100_020_001),
+        ] {
+            let mut st = base_state();
+            st.config.relay_cycle_safety_margin_e8s = margin;
+            st.config.relay_min_subaccount_one_seed_e8s = seed;
+            st.config.canonical_relay_canister_id = None;
+            st.config.canonical_relay_targets.clear();
+            st.qualifying_commitment_count = Some(99);
+            st.total_output_e8s = Some(88);
+            st.total_rewards_e8s = Some(77);
+            st.endowment_refresh_next_allowed_ts = 66;
+            let stable: state::StableConfig = st.config.clone().into();
+            assert_eq!(stable.relay_cycle_safety_margin_e8s, Some(margin));
+            assert_eq!(stable.relay_min_subaccount_one_seed_e8s, Some(seed));
+            assert_eq!(stable.canonical_relay_canister_id, Some(None));
+            assert_eq!(stable.canonical_relay_targets, Some(Vec::new()));
+            state::set_state(st);
+
+            restore_post_upgrade_state_with_timestamp(None, 1_000);
+
+            let restored = state::get_state();
+            assert_eq!(restored.config.relay_cycle_safety_margin_e8s, margin);
+            assert_eq!(restored.config.relay_min_subaccount_one_seed_e8s, seed);
+            assert_eq!(restored.config.canonical_relay_canister_id, None);
+            assert!(restored.config.canonical_relay_targets.is_empty());
+            assert_eq!(restored.qualifying_commitment_count, Some(99));
+            assert_eq!(restored.total_output_e8s, Some(88));
+            assert_eq!(restored.total_rewards_e8s, Some(77));
+            assert_eq!(restored.endowment_refresh_next_allowed_ts, 66);
+        }
+
+        let mut missing: state::StableConfig = base_state().config.into();
+        missing.relay_cycle_safety_margin_e8s = None;
+        missing.relay_min_subaccount_one_seed_e8s = None;
+        let mut restored = State::new(missing.into(), 1_000);
+        initialize_config_defaults_if_missing(&mut restored);
+        assert_eq!(restored.config.relay_cycle_safety_margin_e8s, 5_000_000);
+        assert_eq!(
+            restored.config.relay_min_subaccount_one_seed_e8s,
+            100_020_000
+        );
     }
 
     #[test]

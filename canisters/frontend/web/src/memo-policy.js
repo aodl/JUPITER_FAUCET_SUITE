@@ -144,7 +144,6 @@ export function parseJupiterMemo(input) {
       destinationSubaccountNumberText: null,
       outgoingMemoText: suffix,
       normalizedMemoText: memoText,
-      declarationText: memoText,
     };
   }
 
@@ -175,7 +174,6 @@ export function parseJupiterMemo(input) {
       destinationSubaccountNumberText: parsed.destinationSubaccountNumberText,
       outgoingMemoText: right,
       normalizedMemoText: `${normalizedDestination}.${right}`,
-      declarationText: memoText,
     };
   }
 

@@ -479,7 +479,6 @@ export async function loadRawIcpCanisterTrackerData({
   historyLimit = RAW_ICP_TRACKER_TRANSFER_LIMIT,
   minTimestampNanos = null,
   onProgress = null,
-  onTransfersProgress = null,
 } = {}) {
   if (!canisterId) throw new Error('A canister ID is required');
   const normalizedDestinationSubaccount = normalizeDestinationSubaccount(destinationSubaccount);
@@ -491,7 +490,7 @@ export async function loadRawIcpCanisterTrackerData({
     historianActor,
     historianActorFactory,
   });
-  const progressCallback = typeof onProgress === 'function' ? onProgress : onTransfersProgress;
+  const progressCallback = typeof onProgress === 'function' ? onProgress : null;
   const progress = {
     canisterId,
     destinationSubaccount: normalizedDestinationSubaccount,
@@ -600,7 +599,6 @@ export async function loadNeuronStakeTrackerData({
   historyLimit = RAW_ICP_TRACKER_TRANSFER_LIMIT,
   minTimestampNanos = null,
   onProgress = null,
-  onTransfersProgress = null,
 } = {}) {
   if (neuronId === null || neuronId === undefined) throw new Error('A neuron ID is required');
   const { agent: resolvedAgent, historian } = await createHistorianClient({
@@ -617,7 +615,7 @@ export async function loadNeuronStakeTrackerData({
     neuronId,
     governanceCanisterId,
   });
-  const progressCallback = typeof onProgress === 'function' ? onProgress : onTransfersProgress;
+  const progressCallback = typeof onProgress === 'function' ? onProgress : null;
   const progress = {
     neuronId,
     stakingAccount,

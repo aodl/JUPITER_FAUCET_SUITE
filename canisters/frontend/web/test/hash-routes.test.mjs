@@ -7,7 +7,6 @@ test('trackerStateFromHash parses legacy principal hashes', () => {
   assert.deepEqual(trackerStateFromHash('#metric-tracker-aaaaa-aa'), {
     memo: 'aaaaa-aa',
     protocolCanister: '',
-    legacyPrincipal: 'aaaaa-aa',
     range: 'month',
   });
 });
@@ -21,7 +20,6 @@ test('trackerHashForMemo and trackerStateFromHash preserve dotted memos and prot
   assert.deepEqual(trackerStateFromHash(hash), {
     memo: '22255-zqaaa-aaaas-qf6uq-cai.a memo',
     protocolCanister: 'aaaaa-aa',
-    legacyPrincipal: '',
     range: 'month',
   });
 });
@@ -50,14 +48,18 @@ test('tracker range route state is shareable for query and legacy hashes', () =>
   assert.deepEqual(trackerStateFromHash('#metric-tracker?range=all'), {
     memo: '',
     protocolCanister: '',
-    legacyPrincipal: '',
     range: 'all',
   });
   assert.deepEqual(trackerStateFromHash('#metric-tracker-aaaaa-aa?range=year'), {
     memo: 'aaaaa-aa',
     protocolCanister: '',
-    legacyPrincipal: 'aaaaa-aa',
     range: 'year',
   });
   assert.equal(trackerStateFromHash('#metric-tracker?range=invalid').range, 'month');
+});
+
+test('trackerStateFromHash returns the current empty shape for empty and unrelated fragments', () => {
+  const expected = { memo: '', protocolCanister: '', range: 'month' };
+  assert.deepEqual(trackerStateFromHash(''), expected);
+  assert.deepEqual(trackerStateFromHash('#elsewhere'), expected);
 });

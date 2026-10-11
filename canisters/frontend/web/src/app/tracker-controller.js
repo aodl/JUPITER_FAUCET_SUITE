@@ -1535,7 +1535,7 @@ export function createTrackerController({
 
   const replaceRangeLocationHash = () => {
     const route = trackerStateFromHash();
-    const memoText = state.memoText || route.memo || route.legacyPrincipal || '';
+    const memoText = state.memoText || route.memo || '';
     const protocolCanister = state.protocolCanisterText || route.protocolCanister || '';
     replaceLocationHash(memoText, protocolCanister, state.range);
   };
@@ -1666,7 +1666,7 @@ export function createTrackerController({
   const hydrateFromLocationHash = ({ submit = false } = {}) => {
     const route = trackerStateFromHash();
     setRange(route.range);
-    const memoText = route.memo || route.legacyPrincipal;
+    const memoText = route.memo;
     if (!memoText) return false;
     state.memoText = memoText;
     state.protocolCanisterText = route.protocolCanister || '';
