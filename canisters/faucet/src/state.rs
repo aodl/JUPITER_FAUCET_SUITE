@@ -1,8 +1,4 @@
-use binread::{io::Cursor, BinRead};
-use candid::{
-    types::{subtype, Field, Type, TypeEnv, TypeInner},
-    CandidType, Deserialize, Principal,
-};
+use candid::{CandidType, Deserialize, Principal};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Bound,
@@ -514,125 +510,14 @@ pub(crate) enum VersionedStableState {
     V1(State),
 }
 
-const RETIRED_STATE_FIELD: &str = "current_round_start_staking_balance_e8s";
-const RETIRED_JOB_FIELDS: [&str; 2] = [
-    "round_start_staking_balance_e8s",
-    "round_end_staking_balance_e8s",
-];
-
-fn field_type(fields: &[Field], name: &str) -> Result<Type, String> {
-    let id = candid::idl_hash(name);
-    fields
-        .iter()
-        .find(|field| field.id.get_id() == id)
-        .map(|field| field.ty.clone())
-        .ok_or_else(|| format!("required stable field {name} is missing"))
-}
-
-fn referenced_record_name(env: &TypeEnv, ty: &Type, context: &str) -> Result<String, String> {
-    let traced = env
-        .trace_type(ty)
-        .map_err(|error| format!("invalid {context} type: {error}"))?;
-    let inner = match traced.as_ref() {
-        TypeInner::Opt(inner) => inner,
-        _ => return Err(format!("{context} is not optional")),
-    };
-    match inner.as_ref() {
-        TypeInner::Var(name) => Ok(name.clone()),
-        _ => Err(format!("{context} does not reference a record type")),
-    }
-}
-
-fn remove_retired_field(
-    env: &mut TypeEnv,
-    record_name: &str,
-    field_name: &str,
-) -> Result<(), String> {
-    let record = env
-        .find_type(record_name)
-        .map_err(|error| format!("invalid stable record {record_name}: {error}"))?
-        .clone();
-    let TypeInner::Record(mut fields) = record.as_ref().clone() else {
-        return Err(format!("stable type {record_name} is not a record"));
-    };
-    let id = candid::idl_hash(field_name);
-    let index = fields
-        .iter()
-        .position(|field| field.id.get_id() == id)
-        .ok_or_else(|| format!("retired stable field {field_name} is missing"))?;
-    let removed = fields.remove(index);
-    subtype::equal(
-        &mut subtype::Gamma::default(),
-        env,
-        &removed.ty,
-        &Option::<u64>::ty(),
-    )
-    .map_err(|error| format!("retired stable field {field_name} has wrong type: {error}"))?;
-    env.0
-        .insert(record_name.to_string(), TypeInner::Record(fields).into());
-    Ok(())
-}
-
-// The only accepted non-current wire shape is the immediately deployed V1 schema,
-// which differs by exactly three opt nat64 record fields. Strict structural equality
-// after removing those fields prevents Candid's optional fallback from dropping any
-// still-supported state.
-fn validate_deployed_wider_v1_schema(bytes: &[u8]) -> Result<(), String> {
-    let mut reader = Cursor::new(bytes);
-    let header = candid::binary_parser::Header::read_args(&mut reader, (None,))
-        .map_err(|error| format!("failed to parse faucet stable-state type table: {error}"))?;
-    let (mut env, args) = header
-        .to_types()
-        .map_err(|error| format!("invalid faucet stable-state type table: {error}"))?;
-    if args.len() != 1 {
-        return Err(format!(
-            "faucet stable state must contain exactly one value, found {}",
-            args.len()
-        ));
-    }
-    let root = env
-        .trace_type(&args[0])
-        .map_err(|error| format!("invalid faucet stable-state root type: {error}"))?;
-    let TypeInner::Variant(versions) = root.as_ref() else {
-        return Err("faucet stable-state root is not a variant".to_string());
-    };
-    let v1_type = field_type(versions, "V1")?;
-    let state_name = match v1_type.as_ref() {
-        TypeInner::Var(name) => name.clone(),
-        _ => return Err("faucet V1 state does not reference a record type".to_string()),
-    };
-    let state_record = env
-        .find_type(&state_name)
-        .map_err(|error| format!("invalid faucet V1 state type: {error}"))?;
-    let TypeInner::Record(state_fields) = state_record.as_ref() else {
-        return Err("faucet V1 state is not a record".to_string());
-    };
-    let active_job_type = field_type(state_fields, "active_payout_job")?;
-    let job_name = referenced_record_name(&env, &active_job_type, "active_payout_job")?;
-
-    remove_retired_field(&mut env, &state_name, RETIRED_STATE_FIELD)?;
-    for field in RETIRED_JOB_FIELDS {
-        remove_retired_field(&mut env, &job_name, field)?;
-    }
-
-    subtype::equal(
-        &mut subtype::Gamma::default(),
-        &env,
-        &args[0],
-        &VersionedStableState::ty(),
-    )
-    .map_err(|error| format!("unsupported faucet stable-state schema: {error}"))
-}
-
 pub(crate) fn decode_versioned_stable_state(bytes: &[u8]) -> Result<VersionedStableState, String> {
     let current = candid::decode_one::<VersionedStableState>(bytes)
         .map_err(|error| format!("failed to decode faucet stable state: {error}"))?;
     let canonical_current = candid::encode_one(&current)
         .map_err(|error| format!("failed to re-encode faucet stable state: {error}"))?;
-    if canonical_current == bytes {
-        return Ok(current);
+    if canonical_current != bytes {
+        return Err("unsupported faucet stable-state schema".to_string());
     }
-    validate_deployed_wider_v1_schema(bytes)?;
     Ok(current)
 }
 
@@ -945,8 +830,38 @@ pub(crate) fn with_state_mut<R>(f: impl FnOnce(&mut State) -> R) -> R {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use candid::types::{value::IDLField, value::IDLValue, Label};
+    use binread::{io::Cursor, BinRead};
+    use candid::types::{value::IDLField, value::IDLValue, Field, Label, Type, TypeEnv, TypeInner};
     use candid::IDLArgs;
+
+    const RETIRED_STATE_FIELD: &str = "current_round_start_staking_balance_e8s";
+    const RETIRED_JOB_FIELDS: [&str; 2] = [
+        "round_start_staking_balance_e8s",
+        "round_end_staking_balance_e8s",
+    ];
+
+    fn field_type(fields: &[Field], name: &str) -> Result<Type, String> {
+        let id = candid::idl_hash(name);
+        fields
+            .iter()
+            .find(|field| field.id.get_id() == id)
+            .map(|field| field.ty.clone())
+            .ok_or_else(|| format!("required stable field {name} is missing"))
+    }
+
+    fn referenced_record_name(env: &TypeEnv, ty: &Type, context: &str) -> Result<String, String> {
+        let traced = env
+            .trace_type(ty)
+            .map_err(|error| format!("invalid {context} type: {error}"))?;
+        let inner = match traced.as_ref() {
+            TypeInner::Opt(inner) => inner,
+            _ => return Err(format!("{context} is not optional")),
+        };
+        match inner.as_ref() {
+            TypeInner::Var(name) => Ok(name.clone()),
+            _ => Err(format!("{context} does not reference a record type")),
+        }
+    }
 
     fn reset_test_storage() {
         with_stable_cell(|cell| {
@@ -1164,10 +1079,6 @@ mod tests {
         encode_wire(&env, &types, &args)
     }
 
-    fn wider_wire_state(state: State) -> (TypeEnv, Vec<Type>, IDLArgs, String, String) {
-        parse_wire(&deployed_wider_v1_bytes(state, 987_654_321, 123, 456))
-    }
-
     fn sample_pending_transfer(kind: TransferKind, phase: PendingTransferPhase) -> PendingTransfer {
         PendingTransfer {
             notification: PendingNotification {
@@ -1350,159 +1261,16 @@ mod tests {
     }
 
     #[test]
-    fn deployed_wider_v1_decodes_supported_state_and_reencodes_reduced_schema() {
-        let mut state = State::new(sample_config(), 7_000);
-        state.last_successful_transfer_ts = Some(6_999);
-        state.last_rescue_check_ts = 6_998;
-        state.rescue_triggered = true;
-        state.forced_rescue_reason = Some(ForcedRescueReason::IndexLatestInvariantBroken);
-        state.consecutive_index_anchor_failures = Some(2);
-        state.consecutive_cmc_zero_success_runs = Some(3);
-        state.last_observed_staking_balance_e8s = Some(876_543_210);
-        state.last_observed_latest_tx_id = Some(808);
-        state.payout_nonce = 27;
-        state.current_round_start_time_nanos = Some(11_000_000_000);
-        state.current_round_start_latest_tx_id = Some(707);
-        state.last_processed_funding_tx_id = Some(707);
-        state.last_summary = Some(Summary {
-            pot_start_e8s: 500_000_000,
-            pot_remaining_e8s: 12_345,
-            denom_staking_balance_e8s: 765_432_100,
-            effective_denom_staking_balance_e8s: Some(654_321_000),
-            funding_tx_id: Some(707),
-            funding_amount_e8s: Some(500_000_000),
-            round_end_latest_tx_id: Some(707),
-            round_end_time_nanos: Some(11_000_000_000),
-            last_processed_funding_tx_id: Some(707),
-            topped_up_count: 2,
-            topped_up_sum_e8s: 487_654_321,
-            topped_up_min_e8s: Some(200_000_000),
-            topped_up_max_e8s: Some(287_654_321),
-            failed_topups: 1,
-            ambiguous_topups: 1,
-            ignored_under_threshold: 4,
-            ignored_bad_memo: 5,
-            remainder_to_relay_e8s: 12_345,
-        });
-        state.active_funding_scan = Some(FundingScanState {
-            anchor_last_processed_funding_tx_id: Some(707),
-            cursor: Some(900),
-            candidate: Some(FundingTrancheState {
-                tx_id: 808,
-                timestamp_nanos: 12_000_000_000,
-                amount_e8s: 600_000_000,
-            }),
-        });
-
-        let bytes = deployed_wider_v1_bytes(state.clone(), 999_999_999, 111, 222);
-        let VersionedStableState::V1(restored) =
-            decode_versioned_stable_state(&bytes).expect("decode deployed wider V1")
-        else {
-            panic!("expected V1 state");
-        };
-
-        assert_eq!(
-            restored.config.staking_account,
-            state.config.staking_account
-        );
-        assert_eq!(
-            restored.config.payout_subaccount,
-            state.config.payout_subaccount
-        );
-        assert_eq!(
-            restored.config.ledger_canister_id,
-            state.config.ledger_canister_id
-        );
-        assert_eq!(
-            restored.config.index_canister_id,
-            state.config.index_canister_id
-        );
-        assert_eq!(
-            restored.config.cmc_canister_id,
-            state.config.cmc_canister_id
-        );
-        assert_eq!(
-            restored.config.governance_canister_id,
-            state.config.governance_canister_id
-        );
-        assert_eq!(
-            restored.config.funding_source_account,
-            state.config.funding_source_account
-        );
-        assert_eq!(
-            restored.config.rescue_controller,
-            state.config.rescue_controller
-        );
-        assert_eq!(
-            restored.config.autonomous_rescue_armed,
-            state.config.autonomous_rescue_armed
-        );
-        assert_eq!(
-            restored.config.expected_first_staking_tx_id,
-            state.config.expected_first_staking_tx_id
-        );
-        assert_eq!(
-            restored.config.main_interval_seconds,
-            state.config.main_interval_seconds
-        );
-        assert_eq!(
-            restored.config.rescue_interval_seconds,
-            state.config.rescue_interval_seconds
-        );
-        assert_eq!(restored.config.min_tx_e8s, state.config.min_tx_e8s);
-        assert_eq!(
-            restored.config.stake_recognition_delay_seconds,
-            state.config.stake_recognition_delay_seconds
-        );
-        assert_eq!(restored.last_summary, state.last_summary);
-        assert_eq!(restored.last_successful_transfer_ts, Some(6_999));
-        assert_eq!(restored.last_rescue_check_ts, 6_998);
-        assert!(restored.rescue_triggered);
-        assert_eq!(restored.forced_rescue_reason, state.forced_rescue_reason);
-        assert_eq!(restored.consecutive_index_anchor_failures, Some(2));
-        assert_eq!(restored.consecutive_cmc_zero_success_runs, Some(3));
-        assert_eq!(
-            restored.last_observed_staking_balance_e8s,
-            Some(876_543_210)
-        );
-        assert_eq!(restored.last_observed_latest_tx_id, Some(808));
-        assert_eq!(restored.payout_nonce, 27);
-        assert_eq!(
-            restored.current_round_start_time_nanos,
-            Some(11_000_000_000)
-        );
-        assert_eq!(restored.current_round_start_latest_tx_id, Some(707));
-        assert_eq!(restored.last_processed_funding_tx_id, Some(707));
-        assert_eq!(restored.active_funding_scan, state.active_funding_scan);
-        assert!(restored.active_payout_job.is_none());
-
-        let reduced = candid::encode_one(VersionedStableState::V1(restored))
-            .expect("encode reduced current V1");
-        let (env, _, _, state_name, job_name) = parse_wire(&reduced);
-        let TypeInner::Record(state_fields) = env
-            .find_type(&state_name)
-            .expect("reduced State record")
-            .as_ref()
-        else {
-            panic!("reduced State must remain a record");
-        };
-        assert!(field_type(state_fields, RETIRED_STATE_FIELD).is_err());
-        let TypeInner::Record(job_fields) = env
-            .find_type(&job_name)
-            .expect("reduced ActivePayoutJob record")
-            .as_ref()
-        else {
-            panic!("reduced ActivePayoutJob must remain a record");
-        };
-        for field in RETIRED_JOB_FIELDS {
-            assert!(field_type(job_fields, field).is_err());
-        }
+    fn old_wider_v1_schema_is_rejected() {
+        let bytes = deployed_wider_v1_bytes(State::new(sample_config(), 1_000), 9, 8, 7);
+        assert!(matches!(
+            decode_versioned_stable_state(&bytes),
+            Err(error) if error == "unsupported faucet stable-state schema"
+        ));
     }
 
     #[test]
-    fn fe7ed08_predecessor_bytes_decode_without_losing_supported_state() {
-        // Synthetic Candid V1 bytes from the schema at fe7ed08ee07acb7195e1a628170a4e4b5f4af4c9.
-        // This fixture is independent of the current encoder and is not production state.
+    fn frozen_predecessor_wider_v1_fixture_is_rejected() {
         let hex: String = include_str!("../tests/fixtures/fe7ed08-stable-v1.hex")
             .split_whitespace()
             .collect();
@@ -1515,116 +1283,20 @@ mod tests {
                 u8::from_str_radix(pair, 16).expect("valid predecessor hex")
             })
             .collect::<Vec<_>>();
-        let VersionedStableState::V1(restored) = decode_versioned_stable_state(&bytes)
-            .expect("independently predecessor-encoded V1 must decode")
-        else {
-            panic!("expected V1 predecessor fixture");
-        };
-        assert_eq!(restored.config.staking_account.owner, principal(&[1]));
-        assert_eq!(restored.config.payout_subaccount, Some([7; 32]));
-        assert_eq!(restored.config.autonomous_rescue_armed, Some(false));
-        assert_eq!(restored.config.expected_first_staking_tx_id, Some(11));
-        assert_eq!(restored.last_successful_transfer_ts, Some(987));
-        assert_eq!(restored.last_rescue_check_ts, 876);
-        assert_eq!(restored.payout_nonce, 42);
-        assert_eq!(
-            restored.current_round_start_time_nanos,
-            Some(654_000_000_000)
-        );
-        assert_eq!(restored.current_round_start_latest_tx_id, Some(543));
-        assert_eq!(restored.last_processed_funding_tx_id, Some(432));
-        assert_eq!(
-            restored.active_funding_scan,
-            Some(FundingScanState {
-                anchor_last_processed_funding_tx_id: Some(432),
-                cursor: Some(500),
-                candidate: Some(FundingTrancheState {
-                    tx_id: 444,
-                    timestamp_nanos: 333_000_000_000,
-                    amount_e8s: 222_000_000,
-                }),
-            })
-        );
-        assert!(restored.active_payout_job.is_none());
 
-        let reduced = candid::encode_one(VersionedStableState::V1(restored.clone()))
-            .expect("encode reduced current state");
-        decode_versioned_stable_state(&reduced).expect("reduced state remains strict-decodable");
-        let (_, _, mut args, _, _) = parse_wire(&reduced);
-        assert!(state_fields_mut(&mut args)
-            .iter()
-            .all(|field| field.id.get_id() != candid::idl_hash(RETIRED_STATE_FIELD)));
+        assert!(matches!(
+            decode_versioned_stable_state(&bytes),
+            Err(error) if error == "unsupported faucet stable-state schema"
+        ));
     }
 
     #[test]
-    fn deployed_wider_v1_active_jobs_remain_present_for_quiescence_in_all_phases() {
-        let mut phases = Vec::new();
-
-        let mut denominator_scan = sample_active_job();
-        denominator_scan.effective_denom_scan_complete = Some(false);
-        phases.push(("denominator scan", denominator_scan));
-
-        let mut beneficiary_scan = sample_active_job();
-        beneficiary_scan.effective_denom_scan_complete = Some(true);
-        beneficiary_scan.scan_complete = false;
-        phases.push(("beneficiary scan", beneficiary_scan));
-
-        let mut pending_ledger = sample_active_job();
-        pending_ledger.effective_denom_scan_complete = Some(true);
-        pending_ledger.pending_transfer = Some(sample_pending_transfer(
-            TransferKind::Beneficiary,
-            PendingTransferPhase::AwaitingTransfer,
-        ));
-        phases.push(("pending Ledger transfer", pending_ledger));
-
-        let mut awaiting_cmc = sample_active_job();
-        awaiting_cmc.effective_denom_scan_complete = Some(true);
-        awaiting_cmc.pending_transfer = Some(sample_pending_transfer(
-            TransferKind::Beneficiary,
-            PendingTransferPhase::TransferAccepted,
-        ));
-        phases.push(("accepted Ledger transfer awaiting CMC", awaiting_cmc));
-
-        let mut remainder = sample_active_job();
-        remainder.effective_denom_scan_complete = Some(true);
-        remainder.scan_complete = true;
-        remainder.pending_transfer = Some(sample_pending_transfer(
-            TransferKind::RemainderToRelay,
-            PendingTransferPhase::AwaitingTransfer,
-        ));
-        phases.push(("remainder processing", remainder));
-
-        for (phase, job) in phases {
-            let expected_pending = job.pending_transfer.clone();
-            let mut state = State::new(sample_config(), 1_000);
-            state.active_payout_job = Some(job);
-            let bytes = deployed_wider_v1_bytes(state, 999, 111, 222);
-            let VersionedStableState::V1(restored) = decode_versioned_stable_state(&bytes)
-                .unwrap_or_else(|error| panic!("decode {phase}: {error}"))
-            else {
-                panic!("expected V1 state for {phase}");
-            };
-            let restored_job = restored
-                .active_payout_job
-                .as_ref()
-                .unwrap_or_else(|| panic!("{phase} active job must not disappear"));
-            assert_eq!(restored_job.id, 23, "{phase}");
-            assert_eq!(restored_job.pending_transfer, expected_pending, "{phase}");
-            assert_eq!(
-                crate::validate_upgrade_quiescence(&restored),
-                Err(UPGRADE_QUIESCENCE_ERROR.to_string()),
-                "{phase}"
-            );
-        }
-    }
-
-    #[test]
-    fn deployed_wider_v1_rejects_incompatible_optional_payloads_and_missing_fields() {
+    fn current_v1_rejects_incompatible_optional_payloads_and_missing_fields() {
         let opt_text: Type = TypeInner::Opt(TypeInner::Text.into()).into();
 
         let mut active_state = State::new(sample_config(), 1_000);
         active_state.active_payout_job = Some(sample_active_job());
-        let (mut env, types, mut args, state_name, _) = wider_wire_state(active_state);
+        let (mut env, types, mut args, state_name, _) = current_wire_state(active_state);
         replace_record_field_type(&mut env, &state_name, "active_payout_job", opt_text.clone());
         *value_field_mut(state_fields_mut(&mut args), "active_payout_job") =
             IDLValue::Opt(Box::new(IDLValue::Text("incompatible job".to_string())));
@@ -1637,7 +1309,7 @@ mod tests {
             PendingTransferPhase::TransferAccepted,
         ));
         pending_state.active_payout_job = Some(pending_job);
-        let (mut env, types, mut args, _, job_name) = wider_wire_state(pending_state);
+        let (mut env, types, mut args, _, job_name) = current_wire_state(pending_state);
         replace_record_field_type(&mut env, &job_name, "pending_transfer", opt_text.clone());
         *value_field_mut(active_job_fields_mut(&mut args), "pending_transfer") = IDLValue::Opt(
             Box::new(IDLValue::Text("incompatible transfer".to_string())),
@@ -1646,7 +1318,7 @@ mod tests {
 
         let mut summary_state = State::new(sample_config(), 1_000);
         summary_state.last_summary = Some(Summary::default());
-        let (mut env, types, mut args, state_name, _) = wider_wire_state(summary_state);
+        let (mut env, types, mut args, state_name, _) = current_wire_state(summary_state);
         replace_record_field_type(&mut env, &state_name, "last_summary", opt_text.clone());
         *value_field_mut(state_fields_mut(&mut args), "last_summary") =
             IDLValue::Opt(Box::new(IDLValue::Text("incompatible summary".to_string())));
@@ -1654,7 +1326,7 @@ mod tests {
 
         let mut scan_state = State::new(sample_config(), 1_000);
         scan_state.active_funding_scan = Some(FundingScanState::default());
-        let (mut env, types, mut args, state_name, _) = wider_wire_state(scan_state);
+        let (mut env, types, mut args, state_name, _) = current_wire_state(scan_state);
         replace_record_field_type(
             &mut env,
             &state_name,
@@ -1667,7 +1339,7 @@ mod tests {
 
         let mut rescue_state = State::new(sample_config(), 1_000);
         rescue_state.forced_rescue_reason = Some(ForcedRescueReason::IndexLatestInvariantBroken);
-        let (mut env, types, mut args, state_name, _) = wider_wire_state(rescue_state);
+        let (mut env, types, mut args, state_name, _) = current_wire_state(rescue_state);
         replace_record_field_type(
             &mut env,
             &state_name,
@@ -1679,7 +1351,7 @@ mod tests {
         assert!(decode_versioned_stable_state(&encode_wire(&env, &types, &args)).is_err());
 
         let config_state = State::new(sample_config(), 1_000);
-        let (mut env, types, mut args, state_name, _) = wider_wire_state(config_state);
+        let (mut env, types, mut args, state_name, _) = current_wire_state(config_state);
         let state_record = env.find_type(&state_name).expect("State record");
         let TypeInner::Record(state_type_fields) = state_record.as_ref() else {
             panic!("State must be a record");
@@ -1696,7 +1368,7 @@ mod tests {
         assert!(decode_versioned_stable_state(&encode_wire(&env, &types, &args)).is_err());
 
         let missing_state = State::new(sample_config(), 1_000);
-        let (mut env, types, mut args, state_name, _) = wider_wire_state(missing_state);
+        let (mut env, types, mut args, state_name, _) = current_wire_state(missing_state);
         remove_record_field_type(&mut env, &state_name, "current_round_start_time_nanos");
         remove_value_field(
             state_fields_mut(&mut args),
@@ -1725,7 +1397,9 @@ mod tests {
             .expect("encode invalid two-value message");
         assert!(decode_versioned_stable_state(&two_values).is_err());
 
-        let mut truncated = deployed_wider_v1_bytes(State::new(sample_config(), 1_000), 9, 8, 7);
+        let mut truncated =
+            candid::encode_one(VersionedStableState::V1(State::new(sample_config(), 1_000)))
+                .expect("encode current stable state");
         truncated.truncate(truncated.len() / 2);
         assert!(decode_versioned_stable_state(&truncated).is_err());
 

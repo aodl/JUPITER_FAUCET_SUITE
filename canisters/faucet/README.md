@@ -450,13 +450,16 @@ The production faucet has completed a payout. Use upgrade for the production pat
 
 Before stopping, snapshotting, or upgrading the Faucet, inspect the public `STATE` log and require `active_payout_job_present=false`. The post-upgrade guard traps if this precondition is missed. This is the current lifecycle quiescence rule; upgrades with an active payout job are deliberately rejected.
 
-The stable decoder accepts either an exactly round-tripping current V1 message or
-the immediately preceding wider V1 record. The wider form is accepted only when
-its complete wire type becomes structurally identical to current V1 after removing
-the retired state balance and two retired job-balance fields, each with its expected
-`opt nat64` type. This preserves supported optional values and rejects absent or
-incompatible supported fields instead of allowing Candid optional fallback to turn
-them into `null`. New persistence writes only the reduced V1 representation.
+The stable decoder accepts only an exactly round-tripping current V1 message. The
+temporary wider-V1 compatibility reader was retired after production successfully
+persisted the reduced current representation. Re-encoding must reproduce the input
+bytes exactly, so additional, missing, or incompatible structural fields cannot be
+silently discarded through Candid record compatibility.
+
+The `active_payout_job = None` requirement is permanent operational safety under
+the current payout design, not migration machinery. It preserves payout and
+transfer identity across the upgrade boundary and remains enforced independently
+of the strict current-V1 decoder.
 
 The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
 
