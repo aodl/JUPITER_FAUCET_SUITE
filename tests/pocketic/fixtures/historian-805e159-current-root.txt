@@ -1,0 +1,28 @@
+This is a local predecessor-written fixture, not a production snapshot.
+
+The adjacent hex file contains the raw MemoryManager memory-0 StableCell payload
+after installing and then upgrading the saved canonical Historian Wasm with no
+upgrade arguments in PocketIC 15.0.0. It was generated before candidate validation
+from the unchanged saved artifact, not by serializing the candidate state type.
+Initialization used the existing self_service_historian_init helper with explicit
+empty canonical targets; account/ID overrides point to local-test principals.
+No ledger history, live state, or historical accounting accuracy is attested.
+
+Reviewed source: 805e15924a0ce211c3cf1ecc6190f953cbc5d3fb.
+Saved artifact evidence: /home/codexdev/jupiter-post-upgrade-cleanup-evidence-2kKn7g/REPORT.md.
+The subsequent b9185fb commit changed Faucet and docs, not Historian.
+Raw predecessor Wasm SHA-256:
+b0c6160e395917c0dcfa985e0311cf9a2a606dfecb1bd18b56ee02fd792831a6
+Compressed predecessor install-package SHA-256:
+fa4911b98b5e0fedccea0a57d62be0a0b1696334f3cb0fe440d41917fdfd584a
+Decoded hex fixture byte length: 1352
+Decoded hex fixture SHA-256:
+b293d636b048f22a2a3fa4824962bca1df422497391444a7440a9bbe1f82062f
+
+Generation log and original copied artifact:
+/home/codexdev/historian-cleanup-kaXSiVkz/fixture-generation.log
+/home/codexdev/historian-cleanup-kaXSiVkz/starting-release-artifacts/
+
+The integration regression changes accounting values on this frozen wire shape
+to test preservation and removes one required field at a time to test rejection.
+Those modifications are synthetic test cases, never production data repair.

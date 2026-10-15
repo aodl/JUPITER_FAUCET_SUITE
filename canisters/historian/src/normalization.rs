@@ -73,6 +73,10 @@ pub(crate) fn validate_config(cfg: &Config) {
         "cycles_interval_seconds must be greater than 0"
     );
     assert!(
+        cfg.self_service_relay_interval_seconds >= 60,
+        "self_service_relay_interval_seconds must be at least 60"
+    );
+    assert!(
         cfg.min_tx_e8s >= MIN_MIN_TX_E8S,
         "min_tx_e8s must be at least {MIN_MIN_TX_E8S} e8s (0.1 ICP)"
     );
@@ -200,44 +204,25 @@ pub(crate) fn clamp_config(st: &mut State) {
 pub(crate) fn normalize_runtime_state(st: &mut State) {
     clamp_config(st);
 
-    let mut recent_commitments = st.recent_commitments.take().unwrap_or_default();
-    recent_commitments.extend(fallback_recent_qualifying_commitments_state(st));
+    st.qualifying_commitment_count
+        .expect("historian invariant: missing qualifying_commitment_count");
+    st.total_output_e8s
+        .expect("historian invariant: missing total_output_e8s");
+    st.total_rewards_e8s
+        .expect("historian invariant: missing total_rewards_e8s");
+    let mut recent_commitments = st
+        .recent_commitments
+        .take()
+        .expect("historian invariant: missing recent_commitments");
     let mut recent_under_threshold = st
         .recent_under_threshold_commitments
         .take()
-        .unwrap_or_default();
-    recent_under_threshold.extend(fallback_recent_under_threshold_commitments_state(st));
-
-    for item in recent_commitments
-        .iter()
-        .filter(|item| !item.counts_toward_faucet)
-        .cloned()
-    {
-        recent_under_threshold.push(item);
-    }
-    recent_commitments.retain(|item| item.counts_toward_faucet);
+        .expect("historian invariant: missing recent_under_threshold_commitments");
 
     let mut empty_histories = Vec::new();
     for (canister_id, history) in st.commitment_history.iter_mut() {
-        let mut removed = Vec::new();
-        history.retain(|item| {
-            if item.counts_toward_faucet {
-                true
-            } else {
-                removed.push(RecentCommitment {
-                    canister_id: *canister_id,
-                    raw_icp_memo_text: None,
-                    raw_icp_destination_subaccount: None,
-                    tx_id: item.tx_id,
-                    timestamp_nanos: item.timestamp_nanos,
-                    amount_e8s: item.amount_e8s,
-                    counts_toward_faucet: false,
-                });
-                false
-            }
-        });
+        history.retain(|item| item.counts_toward_faucet);
         history.sort_unstable_by_key(|item| item.tx_id);
-        recent_under_threshold.extend(removed);
         if history.len() > st.config.max_commitment_entries_per_canister as usize {
             let excess = history.len() - st.config.max_commitment_entries_per_canister as usize;
             history.drain(0..excess);
@@ -311,16 +296,12 @@ pub(crate) fn normalize_runtime_state(st: &mut State) {
     st.recent_commitments = Some(recent_commitments);
     st.recent_under_threshold_commitments = Some(recent_under_threshold);
 
-    let mut recent_invalid = st.recent_invalid_commitments.take().unwrap_or_default();
+    let mut recent_invalid = st
+        .recent_invalid_commitments
+        .take()
+        .expect("historian invariant: missing recent_invalid_commitments");
     normalize_recent_invalid_commitments(&mut recent_invalid);
     st.recent_invalid_commitments = Some(recent_invalid);
-
-    let retained_history_count = fallback_qualifying_commitment_count(st);
-    st.qualifying_commitment_count = Some(
-        st.qualifying_commitment_count
-            .unwrap_or(retained_history_count)
-            .max(retained_history_count),
-    );
 
     let commitment_last_ts: BTreeMap<_, _> = commitment_history_canister_ids(st)
         .into_iter()

@@ -443,6 +443,32 @@ icp canister logs j5gs6-uiaaa-aaaar-qb5cq-cai -n ic
 
 For the production maintenance and risk-based snapshot procedure, follow [`../../docs/operations/deployment.md`](../../docs/operations/deployment.md). Preserve memory-26 setup entries, exact active configuration mappings, `RelayTarget`/`RelayInstance` tracking, and memory-29 route roll-ups across every in-place upgrade. Record representative known configurations before upgrading and verify them afterwards.
 
+Restoration requires the supported current root's three stored accounting fields
+(`qualifying_commitment_count`, `total_output_e8s`, `total_rewards_e8s`), all five
+recent-feed fields, `last_index_run_ts`, and `last_completed_route_sweep_ts`.
+Missing required state is rejected before normalization or persistence. Present
+empty feeds stay empty; bounded target histories neither rebuild feeds nor replace
+or adjust lifetime accounting. Normal indexing still increments stored totals and
+appends exact memo/destination metadata. Preserving a stored value does not certify
+its historical accuracy.
+
+Persisted configuration must contain the three route accounts, CMC/Faucet/XRC IDs,
+all six factory settings, canonical Relay selection (including `Some(None)`), and
+canonical targets (including an explicit empty list). Restore uses those values.
+Zero safety margin and seed are supported; zero setup minimum or create cycles
+remain factory-blocked. A restored self-service interval below 60 is rejected;
+install and explicit upgrades retain their minimum of 60. Defaults for omitted
+install arguments remain in `config_from_init_args`. Pending work, unavailable
+observations and faults remain optional. Lazy bulk histories, scoped upgrade
+persistence, cap/registry/cache maintenance, canonical tracking, lease recovery
+and interrupted Relay-creation recovery remain. No migration or replay is needed.
+
+Deployment evidence must establish the installed current writer and completion
+of its root persistence, or directly show these fields in a post-upgrade state
+copy. A complete historical provenance audit is not a prerequisite for removing
+missing-value synthesis. See the deployment checklist for the locally available
+evidence and the remaining installed-artifact identity prerequisite.
+
 ## Debug interface
 
 The production canister exposes the query interface described above.

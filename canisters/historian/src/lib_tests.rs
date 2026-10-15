@@ -235,17 +235,17 @@ mod tests {
             active_sns_discovery: None,
             main_lock_state_ts: Some(0),
             last_main_run_ts: 1,
-            qualifying_commitment_count: None,
+            qualifying_commitment_count: Some(0),
             raw_icp_commitment_history: BTreeMap::new(),
             neuron_commitment_history: BTreeMap::new(),
-            total_output_e8s: None,
-            total_rewards_e8s: None,
-            recent_commitments: None,
-            recent_under_threshold_commitments: None,
-            recent_neuron_commitments: None,
-            recent_under_threshold_neuron_commitments: None,
-            recent_invalid_commitments: None,
-            last_index_run_ts: None,
+            total_output_e8s: Some(0),
+            total_rewards_e8s: Some(0),
+            recent_commitments: Some(Vec::new()),
+            recent_under_threshold_commitments: Some(Vec::new()),
+            recent_neuron_commitments: Some(Vec::new()),
+            recent_under_threshold_neuron_commitments: Some(Vec::new()),
+            recent_invalid_commitments: Some(Vec::new()),
+            last_index_run_ts: Some(0),
             commitment_index_fault: None,
             icp_xdr_rate: None,
             last_icp_xdr_rate_attempt_ts: None,
@@ -984,11 +984,17 @@ mod tests {
             let mut args = sample_init_args();
             args.relay_cycle_safety_margin_e8s = Some(margin);
             args.relay_min_subaccount_one_seed_e8s = Some(seed);
+            args.relay_setup_min_e8s = Some(0);
+            args.relay_initial_cycles = Some(0);
+            args.self_service_relay_interval_seconds = Some(0);
             args.canonical_relay_targets = Some(Vec::new());
             let mut st = State::new(config_from_init_args(args), 123);
 
-            initialize_config_defaults_if_missing(&mut st);
+            ensure_canonical_relay_tracking(&mut st);
 
+            assert_eq!(st.config.relay_setup_min_e8s, 0);
+            assert_eq!(st.config.relay_initial_cycles, 0);
+            assert_eq!(st.config.self_service_relay_interval_seconds, 60);
             assert_eq!(
                 st.config.relay_cycle_safety_margin_e8s, margin,
                 "explicit margin must survive initialization for ({margin}, {seed})"
@@ -1005,6 +1011,9 @@ mod tests {
     #[test]
     fn stored_margin_and_seed_presence_survives_full_upgrade_restoration_order() {
         let omitted = config_from_init_args(sample_init_args());
+        assert_eq!(omitted.relay_setup_min_e8s, 300_000_000);
+        assert_eq!(omitted.relay_initial_cycles, 2_000_000_000_000);
+        assert_eq!(omitted.self_service_relay_interval_seconds, 86400);
         assert_eq!(omitted.relay_cycle_safety_margin_e8s, 5_000_000);
         assert_eq!(omitted.relay_min_subaccount_one_seed_e8s, 100_020_000);
 
@@ -1046,13 +1055,10 @@ mod tests {
         let mut missing: state::StableConfig = base_state().config.into();
         missing.relay_cycle_safety_margin_e8s = None;
         missing.relay_min_subaccount_one_seed_e8s = None;
-        let mut restored = State::new(missing.into(), 1_000);
-        initialize_config_defaults_if_missing(&mut restored);
-        assert_eq!(restored.config.relay_cycle_safety_margin_e8s, 5_000_000);
-        assert_eq!(
-            restored.config.relay_min_subaccount_one_seed_e8s,
-            100_020_000
-        );
+        let error = Config::try_from(missing)
+            .err()
+            .expect("missing field must fail");
+        assert!(error.contains("missing config.relay_cycle_safety_margin_e8s"));
     }
 
     #[test]
@@ -1305,6 +1311,7 @@ mod tests {
         let memo_canister = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let sns_only = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
         let mut st = base_state();
+        st.qualifying_commitment_count = Some(1);
         st.canister_tracking_reasons.insert(
             memo_canister,
             BTreeSet::from([CanisterTrackingReason::MemoCommitment]),
@@ -1420,7 +1427,7 @@ mod tests {
                 raw_icp_destination_subaccount: None,
             }],
         );
-        st.qualifying_commitment_count = None;
+        st.qualifying_commitment_count = Some(4);
         state::set_state(st);
 
         let counts = get_public_counts();
@@ -1854,91 +1861,23 @@ mod tests {
     }
 
     #[test]
-    fn derived_aggregates_fallback_from_histories() {
-        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
+    fn normalization_preserves_present_empty_feeds_and_stored_counter_below_samples() {
         let mut st = base_state();
-        st.commitment_history.insert(
-            canister,
-            vec![
-                CommitmentSample {
-                    tx_id: 1,
-                    timestamp_nanos: Some(10),
-                    amount_e8s: 100,
-                    counts_toward_faucet: true,
-                    raw_icp_destination_subaccount: None,
-                },
-                CommitmentSample {
-                    tx_id: 2,
-                    timestamp_nanos: Some(20),
-                    amount_e8s: 50,
-                    counts_toward_faucet: false,
-                    raw_icp_destination_subaccount: None,
-                },
-                CommitmentSample {
-                    tx_id: 3,
-                    timestamp_nanos: Some(30),
-                    amount_e8s: 200,
-                    counts_toward_faucet: true,
-                    raw_icp_destination_subaccount: None,
-                },
-            ],
-        );
-        initialize_derived_state_if_missing(&mut st);
-        assert_eq!(st.qualifying_commitment_count, Some(2));
-        assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 3);
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        add_memo_registered_canister(&mut st, target, 1, 100_000_000);
+        normalize_runtime_state(&mut st);
+        assert_eq!(st.qualifying_commitment_count, Some(0));
+        assert!(st.recent_commitments.as_ref().unwrap().is_empty());
+        assert!(st
+            .recent_under_threshold_commitments
+            .as_ref()
+            .unwrap()
+            .is_empty());
+        assert!(memo_registered_canister_summary_index_is_valid(&st));
     }
 
     #[test]
-    fn derived_aggregates_fallback_includes_raw_icp_and_neuron_histories() {
-        let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
-        let mut st = base_state();
-        st.commitment_history.insert(
-            canister,
-            vec![CommitmentSample {
-                tx_id: 1,
-                timestamp_nanos: Some(10),
-                amount_e8s: 100,
-                counts_toward_faucet: true,
-                raw_icp_destination_subaccount: None,
-            }],
-        );
-        st.raw_icp_commitment_history.insert(
-            canister,
-            vec![CommitmentSample {
-                tx_id: 2,
-                timestamp_nanos: Some(20),
-                amount_e8s: 200,
-                counts_toward_faucet: true,
-                raw_icp_destination_subaccount: None,
-            }],
-        );
-        st.neuron_commitment_history.insert(
-            42,
-            vec![
-                CommitmentSample {
-                    tx_id: 3,
-                    timestamp_nanos: Some(30),
-                    amount_e8s: 300,
-                    counts_toward_faucet: true,
-                    raw_icp_destination_subaccount: None,
-                },
-                CommitmentSample {
-                    tx_id: 4,
-                    timestamp_nanos: Some(40),
-                    amount_e8s: 400,
-                    counts_toward_faucet: false,
-                    raw_icp_destination_subaccount: None,
-                },
-            ],
-        );
-
-        initialize_derived_state_if_missing(&mut st);
-
-        assert_eq!(st.qualifying_commitment_count, Some(3));
-    }
-
-    #[test]
-    fn normalize_runtime_state_moves_non_qualifying_commitments_out_of_registered_history() {
+    fn normalize_runtime_state_enforces_caps_without_historical_feed_repair() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
         st.config.max_commitment_entries_per_canister = 1;
@@ -1985,7 +1924,7 @@ mod tests {
 
         normalize_runtime_state(&mut st);
 
-        assert_eq!(st.qualifying_commitment_count, Some(1));
+        assert_eq!(st.qualifying_commitment_count, Some(0));
         assert_eq!(
             st.commitment_history
                 .get(&canister)
@@ -1995,14 +1934,13 @@ mod tests {
         assert_eq!(st.commitment_history.get(&canister).unwrap()[0].tx_id, 2);
         assert_eq!(
             st.recent_commitments.as_ref().map(|items| items.len()),
-            Some(1)
+            Some(0)
         );
-        assert_eq!(st.recent_commitments.as_ref().unwrap()[0].tx_id, 2);
         assert_eq!(
             st.recent_under_threshold_commitments
                 .as_ref()
                 .map(|items| items.iter().map(|item| item.tx_id).collect::<Vec<_>>()),
-            Some(vec![1]),
+            Some(vec![]),
         );
         assert_eq!(
             st.per_canister_meta
@@ -2074,7 +2012,7 @@ mod tests {
             st.recent_under_threshold_commitments
                 .as_ref()
                 .map(|items| items.iter().map(|item| item.tx_id).collect::<Vec<_>>()),
-            Some(vec![1]),
+            Some(vec![]),
         );
     }
 

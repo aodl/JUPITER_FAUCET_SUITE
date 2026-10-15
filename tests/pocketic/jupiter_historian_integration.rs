@@ -2,6 +2,7 @@
 #![allow(clippy::unnecessary_cast)]
 
 use anyhow::{anyhow, bail, Context, Result};
+use candid::types::value::{IDLArgs, IDLField, IDLValue};
 use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
@@ -193,6 +194,26 @@ struct HistorianUpgradeArg {
 struct CleanupConfigUpgradeArg {
     relay_cycle_safety_margin_e8s: Option<u64>,
     relay_min_subaccount_one_seed_e8s: Option<u64>,
+}
+
+#[derive(Clone, CandidType, Deserialize, Debug, PartialEq, Eq)]
+struct FactoryCleanupSettings {
+    relay_setup_min_e8s: Option<u64>,
+    relay_initial_cycles: Option<u128>,
+    self_service_relay_interval_seconds: Option<u64>,
+    canonical_relay_canister_id: Option<Option<Principal>>,
+    canonical_relay_targets: Option<Vec<Principal>>,
+}
+
+#[derive(CandidType, Deserialize)]
+struct FactoryCleanupRoot {
+    config: FactoryCleanupSettings,
+}
+
+#[derive(CandidType, Deserialize)]
+enum FactoryCleanupState {
+    Uninitialized,
+    Current(FactoryCleanupRoot),
 }
 
 #[derive(CandidType, Deserialize, Debug, PartialEq, Eq)]
@@ -794,6 +815,203 @@ impl Storable for FixtureSetupKey {
 }
 
 type FixtureMemory = VirtualMemory<VectorMemory>;
+
+fn copied_root_bytes(pic: &PocketIc, historian: Principal) -> Vec<u8> {
+    let memory = Rc::new(RefCell::new(pic.get_stable_memory(historian)));
+    let manager = MemoryManager::init(memory);
+    let cell =
+        StableCell::<Vec<u8>, FixtureMemory>::init(manager.get(MemoryId::new(0)), Vec::new());
+    cell.get().clone()
+}
+
+fn replace_copied_root(pic: &PocketIc, historian: Principal, bytes: Vec<u8>) {
+    // Caller stops the canister first; timers must not overwrite offline fixture bytes.
+    let memory = Rc::new(RefCell::new(pic.get_stable_memory(historian)));
+    {
+        let manager = MemoryManager::init(memory.clone());
+        let mut cell =
+            StableCell::<Vec<u8>, FixtureMemory>::init(manager.get(MemoryId::new(0)), Vec::new());
+        cell.set(bytes);
+    }
+    pic.set_stable_memory(
+        historian,
+        memory.borrow().clone(),
+        pocket_ic::common::rest::BlobCompression::NoCompression,
+    );
+}
+
+fn root_only_fixture_memory(bytes: Vec<u8>) -> Vec<u8> {
+    // Rejection must precede even lazy map initialization. The fixture has no
+    // history/setup entries; allocating empty bulk maps adds no negative coverage.
+    let memory = Rc::new(RefCell::new(Vec::new()));
+    {
+        let manager = MemoryManager::init(memory.clone());
+        let mut cell =
+            StableCell::<Vec<u8>, FixtureMemory>::init(manager.get(MemoryId::new(0)), Vec::new());
+        cell.set(bytes);
+    }
+    let bytes = memory.borrow().clone();
+    bytes
+}
+
+fn fixture_root_record(root: &mut IDLArgs) -> &mut Vec<IDLField> {
+    let IDLValue::Variant(current) = &mut root.args[0] else {
+        panic!("expected Current root")
+    };
+    assert_eq!(current.0.id.get_id(), candid::idl_hash("Current"));
+    let IDLValue::Record(fields) = &mut current.0.val else {
+        panic!("expected root record")
+    };
+    fields
+}
+
+fn fixture_field<'a>(fields: &'a mut [IDLField], name: &str) -> &'a mut IDLValue {
+    &mut fields
+        .iter_mut()
+        .find(|field| field.id.get_id() == candid::idl_hash(name))
+        .unwrap_or_else(|| panic!("fixture field {name} absent"))
+        .val
+}
+
+#[test]
+#[ignore]
+fn reviewed_writer_root_restores_exact_values_and_rejects_missing_required_state() -> Result<()> {
+    // Actual predecessor-written root bytes; not a new-type serialization or live snapshot.
+    let bytes = hex::decode(include_str!("fixtures/historian-805e159-current-root.hex").trim())?;
+    assert_eq!(
+        hex::encode(Sha256::digest(&bytes)),
+        "b293d636b048f22a2a3fa4824962bca1df422497391444a7440a9bbe1f82062f"
+    );
+    let mut root = IDLArgs::from_bytes(&bytes)?;
+    // Synthetic accounting values exercise exact preservation on the deployed wire shape.
+    for (name, value) in [
+        ("qualifying_commitment_count", 500),
+        ("total_output_e8s", 123456),
+        ("total_rewards_e8s", 654321),
+    ] {
+        *fixture_field(fixture_root_record(&mut root), name) =
+            IDLValue::Opt(Box::new(IDLValue::Nat64(value)));
+    }
+    let wasm = relay_enabled_historian_wasm()?;
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
+    let historian = pic.create_canister();
+    pic.add_cycles(historian, 40_000_000_000_000);
+    let mut init = self_service_historian_init(
+        real_icp_ledger_principal(),
+        real_icp_index_principal(),
+        support::principals::cycles_minting_canister(),
+        jupiter_ic_clients::constants::fiduciary_blackhole_canister_id(),
+    );
+    init.canonical_relay_targets = Some(Vec::new());
+    pic.install_canister(historian, wasm.clone(), encode_one(init)?, None);
+    support::governance::stop_canister_as(&pic, historian, Principal::anonymous())?;
+    pic.advance_time(Duration::from_secs(2));
+    tick_n(&pic, 2);
+    replace_copied_root(&pic, historian, root.to_bytes()?);
+    pic.upgrade_canister(historian, wasm.clone(), encode_args(())?, None)
+        .map_err(|error| anyhow!("reviewed-writer root upgrade: {error:?}"))?;
+    let mut after = IDLArgs::from_bytes(&copied_root_bytes(&pic, historian))?;
+    // Only existing lifecycle lease recovery is allowed to change the root.
+    for name in [
+        "main_lock_state_ts",
+        "commitment_index_lock_expires_at_ts",
+        "commitment_index_lock_generation",
+        "commitment_index_lock_owner",
+    ] {
+        *fixture_field(fixture_root_record(&mut after), name) =
+            fixture_field(fixture_root_record(&mut root), name).clone();
+    }
+    assert_eq!(
+        after, root,
+        "upgrade changed accounting, feeds, config or cursors"
+    );
+
+    for name in [
+        "qualifying_commitment_count",
+        "total_output_e8s",
+        "total_rewards_e8s",
+        "recent_commitments",
+        "recent_under_threshold_commitments",
+        "recent_neuron_commitments",
+        "recent_under_threshold_neuron_commitments",
+        "recent_invalid_commitments",
+        "last_index_run_ts",
+        "last_completed_route_sweep_ts",
+        "config.output_source_account",
+        "config.output_account",
+        "config.rewards_account",
+        "config.cmc_canister_id",
+        "config.faucet_canister_id",
+        "config.xrc_canister_id",
+        "config.relay_factory_enabled",
+        "config.relay_setup_min_e8s",
+        "config.relay_initial_cycles",
+        "config.relay_cycle_safety_margin_e8s",
+        "config.relay_min_subaccount_one_seed_e8s",
+        "config.self_service_relay_interval_seconds",
+        "config.canonical_relay_canister_id",
+        "config.canonical_relay_targets",
+    ] {
+        let mut missing = root.clone();
+        let fields = fixture_root_record(&mut missing);
+        if let Some(config_name) = name.strip_prefix("config.") {
+            let IDLValue::Record(config) = fixture_field(fields, "config") else {
+                panic!("expected config")
+            };
+            *fixture_field(config, config_name) = IDLValue::None;
+        } else {
+            *fixture_field(fields, name) = IDLValue::None;
+        }
+        pic.advance_time(Duration::from_secs(2));
+        tick_n(&pic, 2);
+        pic.set_stable_memory(
+            historian,
+            root_only_fixture_memory(missing.to_bytes()?),
+            pocket_ic::common::rest::BlobCompression::NoCompression,
+        );
+        let before = pic.get_stable_memory(historian);
+        let error = pic
+            .upgrade_canister(historian, wasm.clone(), encode_args(())?, None)
+            .expect_err("missing required field must reject");
+        assert!(
+            format!("{error:?}").contains(&format!("missing {name}")),
+            "{error:?}"
+        );
+        assert_eq!(
+            pic.get_stable_memory(historian),
+            before,
+            "failed upgrade persisted partial state"
+        );
+    }
+    for interval in [0, 1, 59] {
+        let mut invalid = root.clone();
+        let IDLValue::Record(config) = fixture_field(fixture_root_record(&mut invalid), "config")
+        else {
+            panic!("expected config")
+        };
+        *fixture_field(config, "self_service_relay_interval_seconds") =
+            IDLValue::Opt(Box::new(IDLValue::Nat64(interval)));
+        pic.advance_time(Duration::from_secs(2));
+        tick_n(&pic, 2);
+        pic.set_stable_memory(
+            historian,
+            root_only_fixture_memory(invalid.to_bytes()?),
+            pocket_ic::common::rest::BlobCompression::NoCompression,
+        );
+        let before = pic.get_stable_memory(historian);
+        let error = pic
+            .upgrade_canister(historian, wasm.clone(), encode_args(())?, None)
+            .expect_err("invalid restored interval must reject");
+        assert!(
+            format!("{error:?}").contains("must be at least 60"),
+            "{error:?}"
+        );
+        assert_eq!(pic.get_stable_memory(historian), before);
+    }
+    Ok(())
+}
 
 fn real_icp_ledger_principal() -> Principal {
     support::principals::icp_ledger()
@@ -3335,6 +3553,94 @@ fn historian_explicit_zero_margin_and_seed_survive_following_no_argument_upgrade
 
 #[test]
 #[ignore]
+fn historian_factory_zero_settings_and_interval_survive_no_argument_upgrade() -> Result<()> {
+    let wasm = relay_enabled_historian_wasm()?;
+    let env = SelfServiceTestEnv::new(wasm.clone())?;
+    let controller = env
+        .pic
+        .get_controllers(env.historian)
+        .first()
+        .copied()
+        .unwrap_or(Principal::anonymous());
+    for (minimum, cycles, interval) in [
+        (0, 1_000_000_000_000, 0),
+        (200_000_000, 0, 59),
+        (222_000_000, 333_000_000_000, 61),
+    ] {
+        let settings = FactoryCleanupSettings {
+            relay_setup_min_e8s: Some(minimum),
+            relay_initial_cycles: Some(cycles),
+            self_service_relay_interval_seconds: Some(interval),
+            canonical_relay_canister_id: Some(None),
+            canonical_relay_targets: Some(Vec::new()),
+        };
+        support::governance::stop_canister_as(&env.pic, env.historian, controller)?;
+        env.pic.advance_time(Duration::from_secs(2));
+        tick_n(&env.pic, 2);
+        env.pic
+            .upgrade_canister(
+                env.historian,
+                wasm.clone(),
+                encode_one(Some(settings.clone()))?,
+                Some(controller),
+            )
+            .map_err(|error| anyhow!("factory settings upgrade: {error:?}"))?;
+        let before = copied_root_bytes(&env.pic, env.historian);
+        env.pic.advance_time(Duration::from_secs(2));
+        tick_n(&env.pic, 2);
+        env.pic
+            .upgrade_canister(
+                env.historian,
+                wasm.clone(),
+                encode_args(())?,
+                Some(controller),
+            )
+            .map_err(|error| anyhow!("no-argument factory settings upgrade: {error:?}"))?;
+        let after_bytes = copied_root_bytes(&env.pic, env.historian);
+        let FactoryCleanupState::Current(after) = candid::decode_one(&after_bytes)? else {
+            bail!("missing factory settings root");
+        };
+        let mut expected = settings;
+        expected.self_service_relay_interval_seconds = Some(interval.max(60));
+        assert_eq!(after.config, expected);
+        let mut before = IDLArgs::from_bytes(&before)?;
+        let mut after = IDLArgs::from_bytes(&after_bytes)?;
+        for name in [
+            "main_lock_state_ts",
+            "commitment_index_lock_expires_at_ts",
+            "commitment_index_lock_generation",
+            "commitment_index_lock_owner",
+        ] {
+            *fixture_field(fixture_root_record(&mut after), name) =
+                fixture_field(fixture_root_record(&mut before), name).clone();
+        }
+        assert_eq!(
+            after, before,
+            "no-argument upgrade changed unrelated durable root state"
+        );
+        support::governance::start_canister_as(&env.pic, env.historian, controller)?;
+        let view: RelaySetupViewResult = query_one(
+            &env.pic,
+            env.historian,
+            Principal::anonymous(),
+            "get_relay_configuration_view",
+            RelaySetupArgs {
+                target_canister_ids: vec![env.target],
+                surplus_recipients: Vec::new(),
+            },
+        )?;
+        let RelaySetupViewResult::Ok(view) = view else {
+            bail!("factory view rejected valid target configuration")
+        };
+        let available = minimum > 0 && cycles > 0;
+        assert_eq!(view.factory_available, available);
+        assert_eq!(view.setup_account.is_some(), available);
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn pending_genesis_backfill_survives_an_actual_historian_upgrade() -> Result<()> {
     let h = Harness::new_with_scan_interval(false, 3_600)?;
     let staking_id = h.staking_identifier()?;
@@ -3389,6 +3695,20 @@ fn pending_genesis_backfill_survives_an_actual_historian_upgrade() -> Result<()>
     assert_eq!(first.qualifying_commitment_count, 500);
 
     support::governance::stop_canister_as(&h.pic, h.historian, historian_controller)?;
+    let mut root_before = IDLArgs::from_bytes(&copied_root_bytes(&h.pic, h.historian))?;
+    // Present empty feeds must remain empty even with 500 indexed contributions
+    // and populated, capped stable history maps. Change only this synthetic root.
+    for name in [
+        "recent_commitments",
+        "recent_under_threshold_commitments",
+        "recent_neuron_commitments",
+        "recent_under_threshold_neuron_commitments",
+        "recent_invalid_commitments",
+    ] {
+        *fixture_field(fixture_root_record(&mut root_before), name) =
+            IDLValue::Opt(Box::new(IDLValue::Vec(Vec::new())));
+    }
+    replace_copied_root(&h.pic, h.historian, root_before.to_bytes()?);
     h.pic
         .upgrade_canister(
             h.historian,
@@ -3397,6 +3717,20 @@ fn pending_genesis_backfill_survives_an_actual_historian_upgrade() -> Result<()>
             Some(historian_controller),
         )
         .map_err(|error| anyhow!("upgrade pending-backfill Historian: {error:?}"))?;
+    let mut root_after = IDLArgs::from_bytes(&copied_root_bytes(&h.pic, h.historian))?;
+    for name in [
+        "main_lock_state_ts",
+        "commitment_index_lock_expires_at_ts",
+        "commitment_index_lock_generation",
+        "commitment_index_lock_owner",
+    ] {
+        *fixture_field(fixture_root_record(&mut root_after), name) =
+            fixture_field(fixture_root_record(&mut root_before), name).clone();
+    }
+    assert_eq!(
+        root_after, root_before,
+        "pending-backfill upgrade changed accounting, feeds or cursors"
+    );
     support::governance::start_canister_as(&h.pic, h.historian, historian_controller)?;
     let mut previous_count = 500;
     let mut counts: PublicCounts = query_one(

@@ -18,7 +18,6 @@ candid = { workspace = true, features = ["value"] }
 serde = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
-binread = "2.2"
 sha2 = { workspace = true }
 hex = { workspace = true }
 
@@ -36,6 +35,7 @@ jupiter-nns-types = { version = "0.1.0", path = "../../crates/nns-types" }
 debug_api = []
 
 [dev-dependencies]
+binread = "2.2"
 anyhow = { workspace = true }
 candid = { workspace = true }
 candid_parser = "0.1.4"

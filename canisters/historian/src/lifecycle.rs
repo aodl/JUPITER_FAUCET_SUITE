@@ -299,178 +299,6 @@ pub(super) fn neuron_commitment_history_snapshot(
     history
 }
 
-pub(super) fn fallback_qualifying_commitment_count(st: &State) -> u64 {
-    let cycles_top_up_count = commitment_history_canister_ids(st)
-        .into_iter()
-        .flat_map(|canister_id| commitment_history_snapshot(st, canister_id).into_iter())
-        .filter(|item| item.counts_toward_faucet)
-        .count() as u64;
-    let raw_icp_count = st
-        .raw_icp_commitment_history
-        .keys()
-        .copied()
-        .chain(state::stable_raw_icp_commitment_history_keys())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .flat_map(|canister_id| raw_icp_commitment_history_snapshot(st, canister_id).into_iter())
-        .filter(|item| item.counts_toward_faucet)
-        .count() as u64;
-    let neuron_count = st
-        .neuron_commitment_history
-        .keys()
-        .copied()
-        .chain(state::stable_neuron_commitment_history_keys())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .flat_map(|neuron_id| neuron_commitment_history_snapshot(st, neuron_id).into_iter())
-        .filter(|item| item.counts_toward_faucet)
-        .count() as u64;
-    cycles_top_up_count
-        .saturating_add(raw_icp_count)
-        .saturating_add(neuron_count)
-}
-
-pub(super) fn fallback_recent_qualifying_commitments_state(st: &State) -> Vec<RecentCommitment> {
-    let mut items: Vec<_> = commitment_history_canister_ids(st)
-        .into_iter()
-        .flat_map(|canister_id| {
-            commitment_history_snapshot(st, canister_id)
-                .into_iter()
-                .filter(|item| item.counts_toward_faucet)
-                .map(move |item| RecentCommitment {
-                    canister_id,
-                    raw_icp_memo_text: None,
-                    raw_icp_destination_subaccount: None,
-                    tx_id: item.tx_id,
-                    timestamp_nanos: item.timestamp_nanos,
-                    amount_e8s: item.amount_e8s,
-                    counts_toward_faucet: true,
-                })
-        })
-        .collect();
-    normalize_recent_commitment_bucket(&mut items, true, MAX_RECENT_QUALIFYING_COMMITMENTS);
-    items
-}
-
-pub(super) fn fallback_recent_under_threshold_commitments_state(
-    st: &State,
-) -> Vec<RecentCommitment> {
-    let mut items: Vec<_> = commitment_history_canister_ids(st)
-        .into_iter()
-        .flat_map(|canister_id| {
-            commitment_history_snapshot(st, canister_id)
-                .into_iter()
-                .filter(|item| !item.counts_toward_faucet)
-                .map(move |item| RecentCommitment {
-                    canister_id,
-                    raw_icp_memo_text: None,
-                    raw_icp_destination_subaccount: None,
-                    tx_id: item.tx_id,
-                    timestamp_nanos: item.timestamp_nanos,
-                    amount_e8s: item.amount_e8s,
-                    counts_toward_faucet: false,
-                })
-        })
-        .collect();
-    normalize_recent_commitment_bucket(&mut items, false, MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS);
-    items
-}
-
-pub(super) fn fallback_recent_commitments(st: &State) -> Vec<RecentCommitmentListItem> {
-    let mut items: Vec<_> = fallback_recent_qualifying_commitments_state(st)
-        .into_iter()
-        .map(|item| RecentCommitmentListItem {
-            canister_id: Some(item.canister_id),
-            neuron_id: None,
-            raw_icp_memo_text: item.raw_icp_memo_text.clone(),
-            raw_icp_destination_subaccount: item.raw_icp_destination_subaccount.clone(),
-            neuron_memo_text: None,
-            memo_text: Some(item.canister_id.to_text()),
-            tx_id: item.tx_id,
-            timestamp_nanos: item.timestamp_nanos,
-            amount_e8s: item.amount_e8s,
-            counts_toward_faucet: true,
-            outcome_category: RecentCommitmentOutcomeCategory::QualifyingCommitment,
-        })
-        .collect();
-    items.extend(
-        fallback_recent_under_threshold_commitments_state(st)
-            .into_iter()
-            .map(|item| RecentCommitmentListItem {
-                canister_id: Some(item.canister_id),
-                neuron_id: None,
-                raw_icp_memo_text: item.raw_icp_memo_text.clone(),
-                raw_icp_destination_subaccount: item.raw_icp_destination_subaccount.clone(),
-                neuron_memo_text: None,
-                memo_text: Some(item.canister_id.to_text()),
-                tx_id: item.tx_id,
-                timestamp_nanos: item.timestamp_nanos,
-                amount_e8s: item.amount_e8s,
-                counts_toward_faucet: false,
-                outcome_category: RecentCommitmentOutcomeCategory::UnderThresholdCommitment,
-            }),
-    );
-    if let Some(invalid) = &st.recent_invalid_commitments {
-        items.extend(
-            invalid
-                .iter()
-                .cloned()
-                .map(|item| RecentCommitmentListItem {
-                    canister_id: None,
-                    neuron_id: None,
-                    raw_icp_memo_text: None,
-                    raw_icp_destination_subaccount: None,
-                    neuron_memo_text: None,
-                    memo_text: Some(item.memo_text),
-                    tx_id: item.tx_id,
-                    timestamp_nanos: item.timestamp_nanos,
-                    amount_e8s: item.amount_e8s,
-                    counts_toward_faucet: false,
-                    outcome_category: RecentCommitmentOutcomeCategory::InvalidTargetMemo,
-                }),
-        );
-    }
-    items.sort_by(|a, b| {
-        let a_key = (a.timestamp_nanos.unwrap_or(0), a.tx_id);
-        let b_key = (b.timestamp_nanos.unwrap_or(0), b.tx_id);
-        b_key.cmp(&a_key)
-    });
-    items.truncate(
-        MAX_RECENT_QUALIFYING_COMMITMENTS
-            + MAX_RECENT_UNDER_THRESHOLD_COMMITMENTS
-            + MAX_RECENT_INVALID_COMMITMENTS,
-    );
-    items
-}
-
-pub(super) fn initialize_config_defaults_if_missing(st: &mut State) {
-    if st.config.cmc_canister_id.is_none() {
-        st.config.cmc_canister_id = Some(mainnet_cmc_id());
-    }
-    if st.config.faucet_canister_id.is_none() {
-        st.config.faucet_canister_id = Some(mainnet_faucet_id());
-    }
-    if st.total_output_e8s.is_none() {
-        st.total_output_e8s = Some(0);
-    }
-    if st.total_rewards_e8s.is_none() {
-        st.total_rewards_e8s = Some(0);
-    }
-    if st.last_completed_route_sweep_ts.is_none() {
-        st.last_completed_route_sweep_ts = Some(0);
-    }
-    if st.config.relay_setup_min_e8s == 0 {
-        st.config.relay_setup_min_e8s = 300_000_000;
-    }
-    if st.config.relay_initial_cycles == 0 {
-        st.config.relay_initial_cycles = 2_000_000_000_000;
-    }
-    if st.config.self_service_relay_interval_seconds == 0 {
-        st.config.self_service_relay_interval_seconds = 86400;
-    }
-    ensure_canonical_relay_tracking(st);
-}
-
 pub(crate) fn ensure_canonical_relay_tracking(st: &mut State) {
     let Some(relay_canister_id) = st.config.canonical_relay_canister_id else {
         return;
@@ -516,32 +344,6 @@ pub(crate) fn mark_active_relay_tracked(
     for (canister_id, _) in &tracked {
         refresh_memo_registered_canister_summary(st, *canister_id);
     }
-}
-
-pub(super) fn initialize_derived_state_if_missing(st: &mut State) {
-    if st.qualifying_commitment_count.is_none() {
-        st.qualifying_commitment_count = Some(fallback_qualifying_commitment_count(st));
-    }
-    if st.recent_commitments.is_none() {
-        st.recent_commitments = Some(fallback_recent_qualifying_commitments_state(st));
-    }
-    if st.recent_under_threshold_commitments.is_none() {
-        st.recent_under_threshold_commitments =
-            Some(fallback_recent_under_threshold_commitments_state(st));
-    }
-    if st.recent_neuron_commitments.is_none() {
-        st.recent_neuron_commitments = Some(Vec::new());
-    }
-    if st.recent_under_threshold_neuron_commitments.is_none() {
-        st.recent_under_threshold_neuron_commitments = Some(Vec::new());
-    }
-    if st.recent_invalid_commitments.is_none() {
-        st.recent_invalid_commitments = Some(Vec::new());
-    }
-    if st.last_index_run_ts.is_none() {
-        st.last_index_run_ts = Some(st.last_main_run_ts);
-    }
-    repair_memo_registered_canister_summaries_if_invalid(st);
 }
 
 pub(super) fn memo_registered_canister_summary_for(
@@ -745,7 +547,7 @@ pub(super) fn init(args: InitArgs) {
     let cfg = config_from_init_args(args);
     state::init_stable_storage();
     let mut st = State::new(cfg, now_secs);
-    initialize_config_defaults_if_missing(&mut st);
+    ensure_canonical_relay_tracking(&mut st);
     normalize_runtime_state(&mut st);
     state::set_state(st);
     scheduler::install_timers();
@@ -837,7 +639,7 @@ pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
             st.commitment_index_fault = None;
         }
     }
-    initialize_derived_state_if_missing(st);
+    repair_memo_registered_canister_summaries_if_invalid(st);
     normalize_runtime_state(st);
     ensure_canonical_relay_tracking(st);
     validate_config(&st.config);
@@ -875,7 +677,6 @@ pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs
     state::init_stable_storage();
     let mut st: State = state::restore_state_from_stable()
         .expect("stable state missing during historian post_upgrade");
-    initialize_config_defaults_if_missing(&mut st);
     apply_upgrade_args(&mut st, args);
     let registry_principals = st.canister_tracking_reasons.keys().copied().collect();
     // Persist only small upgrade-normalized sections. Commitment/cycles histories

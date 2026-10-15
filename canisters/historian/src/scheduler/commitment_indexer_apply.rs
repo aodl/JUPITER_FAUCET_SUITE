@@ -46,9 +46,15 @@ pub(super) fn apply_verified_qualifying_commitment(
         let meta = st.per_canister_meta.entry(canister_id).or_default();
         let needs_initial_cycles_probe = meta.last_cycles_probe_ts.is_none();
         logic::apply_commitment_seen(meta, commitment.timestamp_nanos, now_secs);
-        let recent = st.recent_commitments.get_or_insert_with(Vec::new);
+        let recent = st
+            .recent_commitments
+            .as_mut()
+            .expect("historian invariant: missing recent_commitments");
         push_recent_commitment(recent, recent_item, MAX_RECENT_QUALIFYING_COMMITMENTS);
-        let count = st.qualifying_commitment_count.get_or_insert(0);
+        let count = st
+            .qualifying_commitment_count
+            .as_mut()
+            .expect("historian invariant: missing qualifying_commitment_count");
         *count = count.saturating_add(1);
 
         // Newly registered memo beneficiaries should get an early targeted
@@ -99,7 +105,10 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                             commitment.amount_e8s,
                         );
                     }
-                    let recent = st.recent_commitments.get_or_insert_with(Vec::new);
+                    let recent = st
+                        .recent_commitments
+                        .as_mut()
+                        .expect("historian invariant: missing recent_commitments");
                     push_recent_commitment(
                         recent,
                         RecentCommitment {
@@ -113,13 +122,17 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                         },
                         max_entries,
                     );
-                    let count = st.qualifying_commitment_count.get_or_insert(0);
+                    let count = st
+                        .qualifying_commitment_count
+                        .as_mut()
+                        .expect("historian invariant: missing qualifying_commitment_count");
                     *count = count.saturating_add(1);
                 }
             } else {
                 let recent = st
                     .recent_under_threshold_commitments
-                    .get_or_insert_with(Vec::new);
+                    .as_mut()
+                    .expect("historian invariant: missing recent_under_threshold_commitments");
                 push_recent_commitment(
                     recent,
                     RecentCommitment {
@@ -160,7 +173,10 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                             commitment.amount_e8s,
                         );
                     }
-                    let recent = st.recent_neuron_commitments.get_or_insert_with(Vec::new);
+                    let recent = st
+                        .recent_neuron_commitments
+                        .as_mut()
+                        .expect("historian invariant: missing recent_neuron_commitments");
                     push_recent_neuron_commitment(
                         recent,
                         RecentNeuronCommitment {
@@ -173,13 +189,19 @@ pub(super) fn apply_recent_raw_or_neuron_commitment(
                         },
                         max_entries,
                     );
-                    let count = st.qualifying_commitment_count.get_or_insert(0);
+                    let count = st
+                        .qualifying_commitment_count
+                        .as_mut()
+                        .expect("historian invariant: missing qualifying_commitment_count");
                     *count = count.saturating_add(1);
                 }
             } else {
                 let recent = st
                     .recent_under_threshold_neuron_commitments
-                    .get_or_insert_with(Vec::new);
+                    .as_mut()
+                    .expect(
+                        "historian invariant: missing recent_under_threshold_neuron_commitments",
+                    );
                 push_recent_neuron_commitment(
                     recent,
                     RecentNeuronCommitment {
@@ -219,9 +241,9 @@ pub(super) fn apply_indexed_commitment_tx(
                 }
                 crate::logic::IndexedCommitmentTarget::CyclesTopUp { canister_id } => {
                     state::with_root_state_mut(|st| {
-                        let recent = st
-                            .recent_under_threshold_commitments
-                            .get_or_insert_with(Vec::new);
+                        let recent = st.recent_under_threshold_commitments.as_mut().expect(
+                            "historian invariant: missing recent_under_threshold_commitments",
+                        );
                         push_recent_commitment(
                             recent,
                             RecentCommitment {
@@ -272,7 +294,10 @@ pub(super) fn apply_indexed_commitment_tx(
             },
             logic::IndexedCommitmentEntry::Invalid(commitment) => {
                 state::with_root_state_mut(|st| {
-                    let recent = st.recent_invalid_commitments.get_or_insert_with(Vec::new);
+                    let recent = st
+                        .recent_invalid_commitments
+                        .as_mut()
+                        .expect("historian invariant: missing recent_invalid_commitments");
                     push_recent_invalid_commitment(
                         recent,
                         InvalidCommitment {

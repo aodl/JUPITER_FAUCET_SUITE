@@ -5,6 +5,40 @@ pub(crate) fn init_stable_storage() {
 }
 
 pub(super) fn restore_state_current(root: StableRootState) -> State {
+    // Validate before loading/normalizing or persisting any part of the restored state.
+    for (field, present) in [
+        (
+            "qualifying_commitment_count",
+            root.qualifying_commitment_count.is_some(),
+        ),
+        ("total_output_e8s", root.total_output_e8s.is_some()),
+        ("total_rewards_e8s", root.total_rewards_e8s.is_some()),
+        ("recent_commitments", root.recent_commitments.is_some()),
+        (
+            "recent_under_threshold_commitments",
+            root.recent_under_threshold_commitments.is_some(),
+        ),
+        (
+            "recent_neuron_commitments",
+            root.recent_neuron_commitments.is_some(),
+        ),
+        (
+            "recent_under_threshold_neuron_commitments",
+            root.recent_under_threshold_neuron_commitments.is_some(),
+        ),
+        (
+            "recent_invalid_commitments",
+            root.recent_invalid_commitments.is_some(),
+        ),
+        ("last_index_run_ts", root.last_index_run_ts.is_some()),
+        (
+            "last_completed_route_sweep_ts",
+            root.last_completed_route_sweep_ts.is_some(),
+        ),
+    ] {
+        assert!(present, "historian restoration invariant: missing {field}");
+    }
+    let config = Config::try_from(root.config).unwrap_or_else(|message| panic!("{message}"));
     let canister_tracking_reasons = with_canister_tracking_reasons_map(|map| {
         let mut out = BTreeMap::new();
         for entry in map.iter() {
@@ -24,7 +58,7 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
         out
     });
     let mut st = State {
-        config: root.config.into(),
+        config,
         distinct_canisters: BTreeSet::new(),
         canister_tracking_reasons,
         commitment_history,
@@ -49,7 +83,7 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
         rewards_route_backfill_complete: root.rewards_route_backfill_complete.or(Some(false)),
         last_sns_discovery_ts: root.last_sns_discovery_ts,
         last_completed_cycles_sweep_ts: root.last_completed_cycles_sweep_ts,
-        last_completed_route_sweep_ts: root.last_completed_route_sweep_ts.or(Some(0)),
+        last_completed_route_sweep_ts: root.last_completed_route_sweep_ts,
         active_cycles_sweep: root.active_cycles_sweep,
         initial_cycles_probe_queue: root.initial_cycles_probe_queue,
         active_route_sweep: root.active_route_sweep,
@@ -59,8 +93,8 @@ pub(super) fn restore_state_current(root: StableRootState) -> State {
         qualifying_commitment_count: root.qualifying_commitment_count,
         raw_icp_commitment_history: BTreeMap::new(),
         neuron_commitment_history: BTreeMap::new(),
-        total_output_e8s: root.total_output_e8s.or(Some(0)),
-        total_rewards_e8s: root.total_rewards_e8s.or(Some(0)),
+        total_output_e8s: root.total_output_e8s,
+        total_rewards_e8s: root.total_rewards_e8s,
         recent_commitments: root.recent_commitments,
         recent_under_threshold_commitments: root.recent_under_threshold_commitments,
         recent_neuron_commitments: root.recent_neuron_commitments,

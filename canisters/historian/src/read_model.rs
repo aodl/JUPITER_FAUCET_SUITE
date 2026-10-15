@@ -256,12 +256,16 @@ pub(super) fn get_public_counts() -> PublicCounts {
         declared_neuron_count: Some(count_declared_neurons(st)),
         qualifying_commitment_count: st
             .qualifying_commitment_count
-            .unwrap_or_else(|| fallback_qualifying_commitment_count(st)),
+            .expect("historian invariant: missing qualifying_commitment_count"),
         sns_discovered_canister_count: count_sns_discovered_canisters(st),
         relay_target_canister_count: count_relay_target_canisters(st),
         relay_instance_canister_count: count_relay_instance_canisters(st),
-        total_output_e8s: st.total_output_e8s.unwrap_or(0),
-        total_rewards_e8s: st.total_rewards_e8s.unwrap_or(0),
+        total_output_e8s: st
+            .total_output_e8s
+            .expect("historian invariant: missing total_output_e8s"),
+        total_rewards_e8s: st
+            .total_rewards_e8s
+            .expect("historian invariant: missing total_rewards_e8s"),
     })
 }
 
@@ -308,7 +312,7 @@ pub(super) fn get_public_status() -> PublicStatus {
         output_account: Some(st.config.output_account),
         rewards_account: Some(st.config.rewards_account),
         index_canister_id: Some(st.config.index_canister_id),
-        last_index_run_ts: st.last_index_run_ts.or(Some(st.last_main_run_ts)),
+        last_index_run_ts: st.last_index_run_ts,
         index_interval_seconds: st.config.scan_interval_seconds,
         last_completed_cycles_sweep_ts: if st.last_completed_cycles_sweep_ts == 0 {
             None
@@ -663,8 +667,11 @@ pub(super) fn list_recent_commitments(
     state::with_state(|st| {
         let limit = clamp_public_limit(args.limit, 20);
         let qualifying_only = args.qualifying_only.unwrap_or(false);
-        let mut items: Vec<RecentCommitmentListItem> = if let Some(recent) = &st.recent_commitments
-        {
+        let mut items: Vec<RecentCommitmentListItem> = {
+            let recent = st
+                .recent_commitments
+                .as_ref()
+                .expect("historian invariant: missing recent_commitments");
             let mut merged: Vec<RecentCommitmentListItem> = recent
                 .iter()
                 .map(|item| RecentCommitmentListItem {
@@ -681,7 +688,11 @@ pub(super) fn list_recent_commitments(
                     outcome_category: RecentCommitmentOutcomeCategory::QualifyingCommitment,
                 })
                 .collect();
-            if let Some(low_value) = &st.recent_under_threshold_commitments {
+            {
+                let low_value = st
+                    .recent_under_threshold_commitments
+                    .as_ref()
+                    .expect("historian invariant: missing recent_under_threshold_commitments");
                 merged.extend(low_value.iter().map(|item| RecentCommitmentListItem {
                     canister_id: Some(item.canister_id),
                     neuron_id: None,
@@ -696,7 +707,11 @@ pub(super) fn list_recent_commitments(
                     outcome_category: RecentCommitmentOutcomeCategory::UnderThresholdCommitment,
                 }));
             }
-            if let Some(neurons) = &st.recent_neuron_commitments {
+            {
+                let neurons = st
+                    .recent_neuron_commitments
+                    .as_ref()
+                    .expect("historian invariant: missing recent_neuron_commitments");
                 merged.extend(neurons.iter().map(|item| RecentCommitmentListItem {
                     canister_id: None,
                     neuron_id: Some(item.neuron_id),
@@ -711,7 +726,13 @@ pub(super) fn list_recent_commitments(
                     outcome_category: RecentCommitmentOutcomeCategory::QualifyingCommitment,
                 }));
             }
-            if let Some(neurons) = &st.recent_under_threshold_neuron_commitments {
+            {
+                let neurons = st
+                    .recent_under_threshold_neuron_commitments
+                    .as_ref()
+                    .expect(
+                        "historian invariant: missing recent_under_threshold_neuron_commitments",
+                    );
                 merged.extend(neurons.iter().map(|item| RecentCommitmentListItem {
                     canister_id: None,
                     neuron_id: Some(item.neuron_id),
@@ -726,7 +747,11 @@ pub(super) fn list_recent_commitments(
                     outcome_category: RecentCommitmentOutcomeCategory::UnderThresholdCommitment,
                 }));
             }
-            if let Some(invalid) = &st.recent_invalid_commitments {
+            {
+                let invalid = st
+                    .recent_invalid_commitments
+                    .as_ref()
+                    .expect("historian invariant: missing recent_invalid_commitments");
                 merged.extend(
                     invalid
                         .iter()
@@ -752,8 +777,6 @@ pub(super) fn list_recent_commitments(
                 b_key.cmp(&a_key)
             });
             merged
-        } else {
-            fallback_recent_commitments(st)
         };
         if qualifying_only {
             items.retain(|item| item.counts_toward_faucet);

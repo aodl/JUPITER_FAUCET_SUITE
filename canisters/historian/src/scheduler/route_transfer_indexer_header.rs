@@ -105,11 +105,17 @@ pub(super) fn add_indexed_route_amount(
 ) {
     match kind {
         IndexedRouteKind::Output => {
-            let total = st.total_output_e8s.get_or_insert(0);
+            let total = st
+                .total_output_e8s
+                .as_mut()
+                .expect("historian invariant: missing total_output_e8s");
             *total = total.saturating_add(amount_e8s);
         }
         IndexedRouteKind::Rewards => {
-            let total = st.total_rewards_e8s.get_or_insert(0);
+            let total = st
+                .total_rewards_e8s
+                .as_mut()
+                .expect("historian invariant: missing total_rewards_e8s");
             *total = total.saturating_add(amount_e8s);
         }
     }

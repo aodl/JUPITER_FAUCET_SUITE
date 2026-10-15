@@ -1234,6 +1234,137 @@ mod tests {
     }
 
     #[test]
+    fn current_install_root_initializes_required_fields_and_preserves_empty_feeds() {
+        let state = State::new(sample_config(), 123);
+        let root = build_root_snapshot(&state);
+        let restored = restore_state_current(root);
+        assert_eq!(restored.qualifying_commitment_count, Some(0));
+        assert_eq!(restored.total_output_e8s, Some(0));
+        assert_eq!(restored.total_rewards_e8s, Some(0));
+        assert_eq!(restored.recent_commitments, Some(Vec::new()));
+        assert_eq!(
+            restored.recent_under_threshold_commitments,
+            Some(Vec::new())
+        );
+        assert_eq!(restored.recent_neuron_commitments, Some(Vec::new()));
+        assert_eq!(
+            restored.recent_under_threshold_neuron_commitments,
+            Some(Vec::new())
+        );
+        assert_eq!(restored.recent_invalid_commitments, Some(Vec::new()));
+    }
+
+    #[test]
+    fn missing_current_root_fields_reject_before_upgrade_persistence() {
+        let removals: &[(&str, fn(&mut StableRootState))] = &[
+            ("qualifying_commitment_count", |root| {
+                root.qualifying_commitment_count = None
+            }),
+            ("total_output_e8s", |root| root.total_output_e8s = None),
+            ("total_rewards_e8s", |root| root.total_rewards_e8s = None),
+            ("recent_commitments", |root| root.recent_commitments = None),
+            ("recent_under_threshold_commitments", |root| {
+                root.recent_under_threshold_commitments = None
+            }),
+            ("recent_neuron_commitments", |root| {
+                root.recent_neuron_commitments = None
+            }),
+            ("recent_under_threshold_neuron_commitments", |root| {
+                root.recent_under_threshold_neuron_commitments = None
+            }),
+            ("recent_invalid_commitments", |root| {
+                root.recent_invalid_commitments = None
+            }),
+            ("last_index_run_ts", |root| root.last_index_run_ts = None),
+            ("last_completed_route_sweep_ts", |root| {
+                root.last_completed_route_sweep_ts = None
+            }),
+        ];
+        for (field, remove) in removals {
+            let mut root = build_root_snapshot(&State::new(sample_config(), 123));
+            remove(&mut root);
+            with_root_stable_cell(|cell| cell.set(VersionedStableState::Current(root)));
+            let before = with_root_stable_cell(|cell| cell.get().to_bytes().into_owned());
+            let failure = std::panic::catch_unwind(|| {
+                crate::restore_post_upgrade_state_with_timestamp(None, 456);
+            })
+            .expect_err("missing required field must reject");
+            let message = failure.downcast_ref::<String>().unwrap();
+            assert!(message.contains(&format!("missing {field}")), "{message}");
+            assert_eq!(
+                with_root_stable_cell(|cell| cell.get().to_bytes().into_owned()),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn stable_config_requires_presence_without_treating_zero_or_empty_as_missing() {
+        let removals: &[(&str, fn(&mut StableConfig))] = &[
+            ("output_source_account", |cfg| {
+                cfg.output_source_account = None
+            }),
+            ("output_account", |cfg| cfg.output_account = None),
+            ("rewards_account", |cfg| cfg.rewards_account = None),
+            ("cmc_canister_id", |cfg| cfg.cmc_canister_id = None),
+            ("faucet_canister_id", |cfg| cfg.faucet_canister_id = None),
+            ("xrc_canister_id", |cfg| cfg.xrc_canister_id = None),
+            ("relay_factory_enabled", |cfg| {
+                cfg.relay_factory_enabled = None
+            }),
+            ("relay_setup_min_e8s", |cfg| cfg.relay_setup_min_e8s = None),
+            ("relay_initial_cycles", |cfg| {
+                cfg.relay_initial_cycles = None
+            }),
+            ("relay_cycle_safety_margin_e8s", |cfg| {
+                cfg.relay_cycle_safety_margin_e8s = None
+            }),
+            ("relay_min_subaccount_one_seed_e8s", |cfg| {
+                cfg.relay_min_subaccount_one_seed_e8s = None
+            }),
+            ("self_service_relay_interval_seconds", |cfg| {
+                cfg.self_service_relay_interval_seconds = None
+            }),
+            ("canonical_relay_canister_id", |cfg| {
+                cfg.canonical_relay_canister_id = None
+            }),
+            ("canonical_relay_targets", |cfg| {
+                cfg.canonical_relay_targets = None
+            }),
+        ];
+        for (field, remove) in removals {
+            let mut cfg: StableConfig = sample_config().into();
+            remove(&mut cfg);
+            let message = Config::try_from(cfg)
+                .err()
+                .expect("missing field must fail");
+            assert!(
+                message.contains(&format!("missing config.{field}")),
+                "{message}"
+            );
+        }
+        for interval in [0, 1, 59, 60, 61, 86400] {
+            let mut cfg: StableConfig = sample_config().into();
+            cfg.relay_setup_min_e8s = Some(0);
+            cfg.relay_initial_cycles = Some(0);
+            cfg.relay_cycle_safety_margin_e8s = Some(0);
+            cfg.relay_min_subaccount_one_seed_e8s = Some(0);
+            cfg.canonical_relay_canister_id = Some(None);
+            cfg.canonical_relay_targets = Some(Vec::new());
+            cfg.self_service_relay_interval_seconds = Some(interval);
+            let restored = Config::try_from(cfg.clone());
+            if interval < 60 {
+                assert!(restored
+                    .err()
+                    .expect("invalid interval must fail")
+                    .contains("must be at least 60"));
+            } else {
+                assert_eq!(StableConfig::from(restored.unwrap()), cfg);
+            }
+        }
+    }
+
+    #[test]
     fn stable_config_ignores_unknown_record_fields() {
         let expected: StableConfig = sample_config().into();
         let wider = StableConfigWithUnknownField::from(expected.clone());
