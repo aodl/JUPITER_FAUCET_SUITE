@@ -2405,7 +2405,10 @@ fn faucet_no_debug_wasm_upgrade_and_timer_payout_preserve_the_tranche() -> Resul
         support::wasm::build_wasm_cached_for_test(&PRODUCTION, "jupiter-faucet", None)?
     };
     let expected_hash = sha2::Sha256::digest(&wasm).to_vec();
-    env.advance_time_and_tick(2, 2);
+    // Install-code instruction debt replenishes per ordinary round, not just
+    // elapsed time. Let the previous install settle before testing upgrade;
+    // keep platform rate limiting enabled and perform no application retry.
+    env.advance_time_and_tick(5 * 60, 200);
     env.pic
         .upgrade_canister(env.faucet, wasm, encode_args(())?, None)
         .map_err(|error| anyhow!("no-debug upgrade: {error:?}"))?;
