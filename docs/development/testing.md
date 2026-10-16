@@ -61,6 +61,11 @@ the full locked dependency set.
 
 PocketIC integration sources live under [`tests/pocketic/`](../../tests/pocketic). Mock canisters used by local scenarios live under [`tests/mocks/`](../../tests/mocks). The long-running PocketIC suites are marked ignored under direct `cargo test`; `xtask` invokes them explicitly when a PocketIC or full-suite command is selected.
 
+E2E prepares its canister Wasm caches before starting its first shared PocketIC
+instance. A cold optimized link can exceed the server's idle timeout; compilation
+must not leave a running test instance waiting on that build. This changes
+fixture ordering, not canister deadlines, server timeouts, or value-flow assertions.
+
 Dependency boundaries are intentional and must remain explicit:
 
 - local `icp-cli` scenarios use the mock Ledger, Index, CMC, Governance, XRC,

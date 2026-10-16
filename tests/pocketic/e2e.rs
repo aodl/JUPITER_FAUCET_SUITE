@@ -26,6 +26,61 @@ static CMC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static FAUCET_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static DISBURSER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static PREPARED_WASMS: OnceLock<Result<(), String>> = OnceLock::new();
+
+fn prepare_e2e_wasms() -> Result<()> {
+    PREPARED_WASMS
+        .get_or_init(|| {
+            // A cold optimized link can exceed the shared server's idle TTL.
+            // Populate every scenario cache before starting the first instance.
+            for (package, features) in [
+                ("mock-icrc-ledger", None),
+                ("mock-nns-governance", None),
+                ("mock-icp-index", None),
+                ("mock-cmc", None),
+                ("jupiter-faucet", Some("debug_api")),
+                ("jupiter-disburser", Some("debug_api")),
+                ("jupiter-historian", Some("debug_api")),
+            ] {
+                build_wasm(package, features).map_err(|error| format!("{error:#}"))?;
+            }
+            real_blackhole::real_blackhole_wasm().map_err(|error| format!("{error:#}"))?;
+            Ok(())
+        })
+        .as_ref()
+        .map(|_| ())
+        .map_err(|error| anyhow!("E2E artifact preparation failed: {error}"))
+}
+
+fn application_pic() -> Result<PocketIc> {
+    prepare_e2e_wasms()?;
+    Ok(support::pocketic::builder()
+        .with_application_subnet()
+        .build())
+}
+
+#[test]
+#[ignore]
+fn e2e_artifacts_are_ready_before_starting_a_scenario() -> Result<()> {
+    prepare_e2e_wasms()?;
+    for cache in [
+        &LEDGER_WASM,
+        &GOVERNANCE_WASM,
+        &INDEX_WASM,
+        &CMC_WASM,
+        &FAUCET_WASM,
+        &DISBURSER_WASM,
+        &HISTORIAN_WASM,
+    ] {
+        assert!(cache.get().is_some_and(|wasm| wasm.starts_with(b"\0asm")));
+    }
+    let pic = application_pic()?;
+    let canister = pic.create_canister();
+    let before = pic.cycle_balance(canister);
+    pic.add_cycles(canister, 1_000_000_000_000);
+    assert_eq!(pic.cycle_balance(canister), before + 1_000_000_000_000);
+    Ok(())
+}
 
 fn build_wasm(package: &str, features: Option<&str>) -> Result<Vec<u8>> {
     let cache = match package {
@@ -216,9 +271,7 @@ fn append_faucet_funding_tranche(
 #[test]
 #[ignore]
 fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
-    let pic = support::pocketic::builder()
-        .with_application_subnet()
-        .build();
+    let pic = application_pic()?;
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -374,9 +427,7 @@ fn suite_disburser_pays_faucet_and_faucet_tops_up_target() -> Result<()> {
 #[test]
 #[ignore]
 fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<()> {
-    let pic = support::pocketic::builder()
-        .with_application_subnet()
-        .build();
+    let pic = application_pic()?;
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -547,9 +598,7 @@ fn suite_repeated_disburser_payouts_make_faucet_replay_full_history() -> Result<
 #[ignore]
 fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_transfer(
 ) -> Result<()> {
-    let pic = support::pocketic::builder()
-        .with_application_subnet()
-        .build();
+    let pic = application_pic()?;
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -700,9 +749,7 @@ fn suite_retry_path_across_disburser_faucet_and_cmc_boundary_avoids_duplicate_tr
 #[test]
 #[ignore]
 fn suite_upgrade_faucet_after_inline_retry_recovery_preserves_state() -> Result<()> {
-    let pic = support::pocketic::builder()
-        .with_application_subnet()
-        .build();
+    let pic = application_pic()?;
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
@@ -1207,6 +1254,7 @@ fn real_cmc_manual_topup_contract_accepts_ledger_payment_and_delivers_cycles() -
 #[test]
 #[ignore]
 fn faucet_drives_real_ledger_index_and_cmc_without_replaying_funding() -> Result<()> {
+    prepare_e2e_wasms()?;
     let pic = build_pic_with_real_icp();
     let ledger = support::principals::icp_ledger();
     let index = support::principals::icp_index();
@@ -1346,9 +1394,7 @@ fn faucet_drives_real_ledger_index_and_cmc_without_replaying_funding() -> Result
 #[test]
 #[ignore]
 fn suite_historian_tracks_same_staking_flow_as_faucet() -> Result<()> {
-    let pic = support::pocketic::builder()
-        .with_application_subnet()
-        .build();
+    let pic = application_pic()?;
     let ledger_wasm = build_wasm("mock-icrc-ledger", None)?;
     let gov_wasm = build_wasm("mock-nns-governance", None)?;
     let index_wasm = build_wasm("mock-icp-index", None)?;
