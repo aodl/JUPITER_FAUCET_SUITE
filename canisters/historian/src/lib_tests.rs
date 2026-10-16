@@ -98,6 +98,26 @@ mod tests {
     }
 
     #[test]
+    fn relay_payment_view_is_an_update_in_rust_and_both_dids() {
+        use candid_parser::utils::CandidSource;
+        for service in [
+            __export_service(),
+            include_str!("../jupiter_historian.did").into(),
+            include_str!("../jupiter_historian_debug.did").into(),
+        ] {
+            let (env, actor) = CandidSource::Text(&service).load().unwrap();
+            let actor = actor.unwrap();
+            let method = env
+                .get_method(&actor, "get_relay_configuration_view")
+                .unwrap();
+            assert!(
+                method.modes.is_empty(),
+                "payment view must use update transport"
+            );
+        }
+    }
+
+    #[test]
     fn committed_historian_did_matches_rust_service_semantically() {
         use candid_parser::utils::{service_equal, CandidSource};
         use std::path::Path;

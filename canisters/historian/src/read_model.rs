@@ -332,7 +332,9 @@ pub(super) fn get_public_status() -> PublicStatus {
     })
 }
 
-#[ic_cdk::query]
+// Payment-authorizing configuration and Active mappings require consensus.
+// setup_view is a bounded synchronous read of local state, with no outcalls.
+#[ic_cdk::update]
 pub(super) fn get_relay_configuration_view(args: RelaySetupArgs) -> RelaySetupViewResult {
     crate::relay_setup::setup_view(args)
 }

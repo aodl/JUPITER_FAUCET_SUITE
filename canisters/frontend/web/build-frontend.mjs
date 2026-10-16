@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { ICP_LEDGER_CANISTER_ID } from './src/app/config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,6 +37,8 @@ const resolveCanisterId = (name) => {
 const runtimeConfig = {
   network,
   historianCanisterId: resolveCanisterId('jupiter_historian'),
+  // Explicit trusted build configuration, never public-status/query or URL data.
+  ledgerCanisterId: network === 'local' ? resolveCanisterId('mock_icrc_ledger') : ICP_LEDGER_CANISTER_ID,
   frontendCanisterId: resolveCanisterId('jupiter_faucet_frontend'),
 };
 

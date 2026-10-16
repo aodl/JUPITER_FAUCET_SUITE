@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Principal } from '@icp-sdk/core/principal';
+import { IDL } from '@icp-sdk/core/candid';
+import { createActor, idlFactory } from '../declarations/jupiter_historian/index.js';
 
 import {
   createRelaySetupController,
@@ -353,6 +355,9 @@ function controllerHarness({
   notifyRelay,
   loadNeuron,
   createHistorianBundle,
+  publicStatus = { ledger_canister_id: Principal.fromText(LEDGER) },
+  frontendConfig = { historianCanisterId: HISTORIAN },
+  local = false,
   copyTextToClipboard = null,
 } = {}) {
   const calls = {
@@ -365,6 +370,8 @@ function controllerHarness({
     intervals: 0,
     clears: 0,
     copied: [],
+    ledgerActors: [],
+    publicStatus: 0,
     notifyArgs: [],
   };
   let currentView = view;
@@ -376,7 +383,8 @@ function controllerHarness({
       return getView ? getView(args, calls.view) : { Ok: currentView };
     },
     async get_public_status() {
-      return { ledger_canister_id: Principal.fromText(LEDGER) };
+      calls.publicStatus += 1;
+      return publicStatus;
     },
     notify_relay_configuration(args) {
       calls.notify += 1;
@@ -385,19 +393,23 @@ function controllerHarness({
     },
   };
   const controller = createRelaySetupController({
-    frontendConfig: { historianCanisterId: HISTORIAN },
+    frontendConfig,
+    isLocalHost: () => local,
     createHistorian: async () => {
       calls.historianBundles += 1;
       return createHistorianBundle
         ? createHistorianBundle({ agent: {}, historian: actor }, calls.historianBundles)
         : { agent: {}, historian: actor };
     },
-    ledgerActorFactory: () => ({
+    ledgerActorFactory: (canisterId) => {
+      calls.ledgerActors.push(canisterId);
+      return {
       async icrc1_balance_of(account) {
         calls.balance += 1;
         return getBalance ? getBalance(account, calls.balance) : currentBalance;
       },
-    }),
+      };
+    },
     governanceActorFactory: () => {
       calls.governanceActors += 1;
       return { list_neurons() {} };
@@ -467,6 +479,133 @@ test('initial prompt is visible before target submission', async () => {
     controller.render();
     assert.equal(nodes.get('relay-setup-result').hidden, false);
     assert.equal(nodes.get('relay-setup-summary').hidden, true);
+  });
+});
+
+test('ordinary query replies cannot authorize any Relay funding destination through the SDK actor', async () => {
+  for (const mutation of ['owner-and-identifier', 'subaccount', 'key', 'active']) {
+    await withDom(async (nodes) => {
+      const view = viewFor();
+      if (mutation === 'owner-and-identifier') {
+        view.setup_account[0].owner = Principal.fromText(RELAY);
+        view.setup_account_identifier = [accountIdentifierHex(view.setup_account[0])];
+      } else if (mutation === 'subaccount') {
+        view.setup_account[0].subaccount = [Array(32).fill(9)];
+        view.setup_account_identifier = [accountIdentifierHex(view.setup_account[0])];
+      } else if (mutation === 'key') {
+        view.setup_key_identifier = 'ff'.repeat(32);
+      } else {
+        view.state = { Active: { relay_canister_id: Principal.fromText(RELAY) } };
+      }
+      const service = idlFactory({ IDL });
+      const method = service._fields.find(([name]) => name === 'get_relay_configuration_view')[1];
+      let queries = 0;
+      let updates = 0;
+      const agent = {
+        async query() {
+          queries += 1;
+          return { status: 'replied', reply: { arg: IDL.encode(method.retTypes, [{ Ok: view }]) } };
+        },
+        async call() { updates += 1; throw new Error('authenticated update unavailable'); },
+      };
+      const harness = controllerHarness({
+        createHistorianBundle: () => {
+          const sdkActor = createActor(HISTORIAN, { agent });
+          return { agent, historian: {
+            get_relay_configuration_view: sdkActor.get_relay_configuration_view,
+            get_public_status: async () => ({ ledger_canister_id: Principal.fromText(LEDGER) }),
+          } };
+        },
+      });
+      await submit(nodes, harness);
+      assert.equal(harness.controller.state.view, null, `${mutation}: query must not authorize a view`);
+      assert.equal(nodes.get('relay-setup-create').disabled, true);
+      assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+      assert.equal(nodes.get('relay-funding-section').hidden, true);
+      assert.equal(queries, 0);
+      assert.equal(updates, 1);
+    });
+  }
+});
+
+test('an uncertified public-status Ledger principal cannot select the payment Ledger actor', async () => {
+  await withDom(async (nodes) => {
+    const harness = controllerHarness({ publicStatus: { ledger_canister_id: Principal.fromText(RELAY) } });
+    await submit(nodes, harness);
+    assert.deepEqual(harness.calls.ledgerActors, [LEDGER]);
+    assert.equal(harness.calls.publicStatus, 0);
+    assert.equal(nodes.get('relay-setup-create').disabled, false);
+  });
+});
+
+test('local payment Ledger requires explicit trusted local build configuration', async () => {
+  for (const configured of ['', RELAY]) {
+    await withDom(async (nodes) => {
+      const harness = controllerHarness({ local: true,
+        frontendConfig: { network: 'local', historianCanisterId: HISTORIAN, ledgerCanisterId: configured },
+      });
+      await submit(nodes, harness);
+      assert.deepEqual(harness.calls.ledgerActors, configured ? [RELAY] : []);
+      assert.equal(nodes.get('relay-setup-create').disabled, !configured);
+      assert.equal(harness.calls.publicStatus, 0);
+    });
+  }
+});
+
+test('setup identifier and copy controls derive only from the authenticated account', async () => {
+  await withDom(async (nodes) => {
+    const view = viewFor();
+    view.setup_account_identifier = ['ff'.repeat(32)];
+    const harness = controllerHarness({ view });
+    harness.controller.bindPane();
+    await submit(nodes, harness);
+    const expected = accountIdentifierHex(view.setup_account[0]);
+    assert.equal(nodes.get('relay-setup-account-identifier').textContent, expected);
+    assert.ok(nodes.get('relay-setup-account-identifier-link').href.endsWith(expected));
+    await nodes.get('copy-relay-setup-account-identifier').listeners.get('click')();
+    assert.deepEqual(harness.calls.copied, [expected]);
+  });
+});
+
+test('overlapping snapshots cannot regress authenticated Active mapping and polls are single-flight', async () => {
+  await withDom(async (nodes) => {
+    const older = deferred();
+    const harness = controllerHarness({ getView: (_args, call) => call === 2 ? older.promise : { Ok: viewFor() } });
+    await submit(nodes, harness);
+    harness.runPoll();
+    await flushMicrotasks();
+    harness.runPoll();
+    await flushMicrotasks();
+    assert.equal(harness.calls.view, 2, 'no overlapping poll update');
+    const active = viewFor({ account: null, state: { Active: { relay_canister_id: Principal.fromText(RELAY) } } });
+    harness.actor.get_relay_configuration_view = async () => ({ Ok: active });
+    await harness.controller.refresh();
+    older.resolve({ Ok: viewFor() });
+    await flushMicrotasks(20);
+    assert.equal(harness.controller.state.activeRelayId, RELAY);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-funding-section').hidden, false);
+    harness.actor.get_relay_configuration_view = async () => ({ Ok: viewFor() });
+    await harness.controller.refresh();
+    assert.equal(harness.controller.state.activeRelayId, RELAY, 'Active is irreversible within this configuration');
+  });
+});
+
+test('trusted network identity changes invalidate an in-flight authenticated view', async () => {
+  await withDom(async (nodes) => {
+    const response = deferred();
+    const config = { historianCanisterId: HISTORIAN };
+    const harness = controllerHarness({ frontendConfig: config, getView: () => response.promise });
+    seedTargetRow(nodes, TARGET_A);
+    seedRecipientRow(nodes, RECIPIENT_A);
+    const pending = harness.controller.submitConfiguration();
+    await flushMicrotasks();
+    config.historianCanisterId = RELAY;
+    response.resolve({ Ok: viewFor() });
+    await pending;
+    assert.equal(harness.controller.state.view, null);
+    assert.equal(nodes.get('relay-setup-create').disabled, true);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
   });
 });
 

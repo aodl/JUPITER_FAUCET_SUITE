@@ -2,7 +2,7 @@ import { Principal } from '@icp-sdk/core/principal';
 import { createActor as createLedgerActor } from '../../declarations/icp_ledger/index.js';
 import { createActor as createGovernanceActor } from '../../declarations/nns_governance/index.js';
 import { createHistorianClient, normalizeError } from './agent.js';
-import { GOVERNANCE_CANISTER_ID } from './config.js';
+import { GOVERNANCE_CANISTER_ID, ICP_LEDGER_CANISTER_ID } from './config.js';
 import {
   accountIdentifierHex,
   bytesToHex,
@@ -304,6 +304,8 @@ export function createRelaySetupController({
     fundingDestinations: [],
   };
   let generation = 0;
+  let refreshSequence = 0;
+  let pollInFlight = false;
   let pollHandle = null;
   const listSpecs = {
     target: {
@@ -405,6 +407,11 @@ export function createRelaySetupController({
 
   function configurationFingerprint() {
     return JSON.stringify({
+      historian: frontendConfig.historianCanisterId,
+      network: frontendConfig.network,
+      ledger: frontendConfig.ledgerCanisterId,
+      host: hostProvider(),
+      local: isLocalHost(),
       targets: rawListValues('target'),
       surplusMode: recipientRoutingMode() ? 'routing' : 'all-cycles',
       surplusRecipients: recipientRowsValues({ trim: false }),
@@ -810,6 +817,7 @@ export function createRelaySetupController({
 
   function invalidateCurrentConfiguration() {
     generation += 1;
+    refreshSequence += 1;
     stopPolling();
     state.targets = [];
     state.surplusRecipients = [];
@@ -944,10 +952,11 @@ export function createRelaySetupController({
     });
   }
 
-  async function loadLedger({ agent, historian }) {
-    const status = await historian.get_public_status();
-    const ledgerId = principalText(status?.ledger_canister_id);
-    if (!ledgerId) throw new Error('Historian did not return an ICP ledger canister ID.');
+  function loadLedger({ agent }) {
+    const local = frontendConfig.network === 'local' && isLocalHost();
+    const configured = local ? frontendConfig.ledgerCanisterId : ICP_LEDGER_CANISTER_ID;
+    if (!configured) throw new Error('Local ICP Ledger is not configured for this build.');
+    const ledgerId = Principal.fromText(configured).toText();
     return ledgerActorFactory(ledgerId, { agent });
   }
 
@@ -1006,6 +1015,11 @@ export function createRelaySetupController({
   }
 
   function render() {
+    if (state.checkedConfigurationFingerprint
+      && configurationFingerprint() !== state.checkedConfigurationFingerprint) {
+      invalidateCurrentConfiguration();
+      return;
+    }
     const view = state.view;
     const kind = viewState(view);
     const stateDetails = view?.state?.[kind];
@@ -1017,7 +1031,7 @@ export function createRelaySetupController({
     const notification = notifyPresentation();
     const account = readOptional(view?.setup_account);
     const accountText = account ? icrcAccountText(account) : '';
-    const identifier = readOptional(view?.setup_account_identifier) || (account ? accountIdentifierHex(account) : '');
+    const identifier = account ? accountIdentifierHex(account) : '';
     const notifiedRelayId = ['Active', 'InProgress', 'ManualRecoveryRequired'].includes(notifyKind)
       ? principalText(notifyDetails?.relay_canister_id)
       : '';
@@ -1136,6 +1150,7 @@ export function createRelaySetupController({
     staleMessage = 'The Relay configuration changed. Check it again.',
   } = {}) {
     if (!state.targets.length) return;
+    const sequence = ++refreshSequence;
     const { agent, historian } = await historianBundle();
     if (!ensureConfigurationContinuationIsCurrent(
       expectedConfiguration,
@@ -1149,6 +1164,7 @@ export function createRelaySetupController({
       staleMessage,
     )) return;
     const view = unwrapView(result);
+    if (sequence !== refreshSequence) return;
     const kind = viewState(view);
     const account = readOptional(view.setup_account);
     const isNewConfiguration = kind === 'NotFunded' && Boolean(account);
@@ -1162,7 +1178,7 @@ export function createRelaySetupController({
     }
     let balance = null;
     if (isNewConfiguration) {
-      const ledger = await loadLedger({ agent, historian });
+      const ledger = loadLedger({ agent });
       if (!ensureConfigurationContinuationIsCurrent(
         expectedConfiguration,
         requestGeneration,
@@ -1175,6 +1191,10 @@ export function createRelaySetupController({
         staleMessage,
       )) return;
     }
+    if (sequence !== refreshSequence) return;
+    // An immutable authenticated Active mapping must not regress to a funding
+    // account when an older snapshot or continuation completes later.
+    if (viewState(state.view) === 'Active' && kind !== 'Active') return;
     state.view = view;
     state.checkedConfigurationFingerprint = expectedConfiguration;
     state.requestFingerprint = '';
@@ -1198,14 +1218,18 @@ export function createRelaySetupController({
     const expectedConfiguration = state.checkedConfigurationFingerprint;
     const requestGeneration = generation;
     pollHandle = setIntervalFn(() => {
+      if (pollInFlight) return;
+      pollInFlight = true;
       void refresh({ expectedConfiguration, requestGeneration }).catch((error) => {
         if (!ensureConfigurationContinuationIsCurrent(
           expectedConfiguration,
           requestGeneration,
         )) return;
         state.error = normalizeError(error);
+        state.view = null;
+        stopPolling();
         render();
-      });
+      }).finally(() => { pollInFlight = false; });
     }, pollIntervalMs);
   }
 
@@ -1363,6 +1387,11 @@ export function createRelaySetupController({
     if (!button || button.dataset.bound === 'true') return;
     button.dataset.bound = 'true';
     button.addEventListener('click', async () => {
+      if (!checkedConfigurationStillMatchesVisibleForm()) {
+        rejectStaleCheckedConfiguration('The Relay configuration changed. Check it again.');
+        return;
+      }
+      if (state.error) return;
       const value = document.getElementById(valueId)?.textContent || '';
       if (typeof copyTextToClipboard === 'function' && value && value !== DASH) await copyTextToClipboard(value);
     });
@@ -1375,6 +1404,10 @@ export function createRelaySetupController({
     container.addEventListener('click', async (event) => {
       const button = event.target?.closest?.('[data-relay-funding-copy]');
       if (!button) return;
+      if (!checkedConfigurationStillMatchesVisibleForm()) {
+        rejectStaleCheckedConfiguration('The Relay configuration changed. Check it again.');
+        return;
+      }
       const index = Number.parseInt(button.dataset.relayFundingIndex || '', 10);
       const field = button.dataset.relayFundingCopy;
       const destination = state.fundingDestinations[index];

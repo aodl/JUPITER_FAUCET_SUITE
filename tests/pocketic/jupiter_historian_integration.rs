@@ -1487,7 +1487,7 @@ fn activate_target_set(
     targets: Vec<Principal>,
     surplus_recipients: Vec<RelaySurplusRecipient>,
 ) -> Result<Principal> {
-    let view_result: RelaySetupViewResult = query_one(
+    let view_result: RelaySetupViewResult = update_one(
         pic,
         historian,
         Principal::anonymous(),
@@ -1723,7 +1723,7 @@ fn relay_setup_view(
     historian: Principal,
     args: RelaySetupArgs,
 ) -> Result<RelaySetupView> {
-    let result: RelaySetupViewResult = query_one(
+    let result: RelaySetupViewResult = update_one(
         pic,
         historian,
         Principal::anonymous(),
@@ -1744,7 +1744,7 @@ fn zero_recipient_factory_child_executes_all_cycles_mode() -> Result<()> {
         target_canister_ids: vec![env.target],
         surplus_recipients: vec![],
     };
-    let setup: RelaySetupViewResult = query_one(
+    let setup: RelaySetupViewResult = update_one(
         &env.pic,
         env.historian,
         Principal::anonymous(),
@@ -2001,7 +2001,18 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
         target_canister_ids: vec![targets[1]],
         surplus_recipients: vec![recipients[0].clone()],
     };
-    let underfunded_view: RelaySetupViewResult = query_one(
+    let query: Result<RelaySetupViewResult> = query_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "get_relay_configuration_view",
+        underfunded_args.clone(),
+    );
+    assert!(
+        query.is_err(),
+        "payment view must not export an ordinary query"
+    );
+    let underfunded_view: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2049,7 +2060,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
         below_result,
         RelaySetupNotifyResult::BelowMinimum { .. }
     ));
-    let underfunded_view_after_notify: RelaySetupViewResult = query_one(
+    let underfunded_view_after_notify: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2070,7 +2081,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
         target_canister_ids: vec![targets[2]],
         surplus_recipients: vec![relay_neuron_recipient(hidden_neuron_id, vec![])],
     };
-    let hidden_view: RelaySetupViewResult = query_one(
+    let hidden_view: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2167,7 +2178,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
         },
     )?;
     assert_eq!(relay_instances_after.items, relay_instances_before.items);
-    let hidden_after: RelaySetupViewResult = query_one(
+    let hidden_after: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2189,7 +2200,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
         vec![targets[0]],
         recipients[..2].to_vec(),
     )?;
-    let first_singleton_view: RelaySetupViewResult = query_one(
+    let first_singleton_view: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2202,7 +2213,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
     let RelaySetupViewResult::Ok(first_singleton_view) = first_singleton_view else {
         bail!("active singleton configuration was not readable")
     };
-    let alternate_view: RelaySetupViewResult = query_one(
+    let alternate_view: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2238,7 +2249,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
         relay_neuron_recipient(42, vec![0x80, 0x00]),
         relay_neuron_recipient(11614578985374291210, vec![0x2a; 32]),
     ];
-    let memoed_view: RelaySetupViewResult = query_one(
+    let memoed_view: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2256,7 +2267,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
         unreachable!()
     };
     memo[1] ^= 1;
-    let changed_memo_view: RelaySetupViewResult = query_one(
+    let changed_memo_view: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2270,7 +2281,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
         bail!("memo-byte-changed configuration was rejected")
     };
     assert_ne!(changed_memo_view.setup_account, memoed_view.setup_account);
-    let empty_memo_identity: RelaySetupViewResult = query_one(
+    let empty_memo_identity: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2283,7 +2294,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
             )],
         },
     )?;
-    let zero_byte_memo_identity: RelaySetupViewResult = query_one(
+    let zero_byte_memo_identity: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2308,7 +2319,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
         zero_byte_memo_identity.setup_account
     );
     let setup_count_before_invalid = relay_setup_entry_count(&pic, historian);
-    let duplicate_destination: RelaySetupViewResult = query_one(
+    let duplicate_destination: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2324,7 +2335,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
     assert!(
         matches!(duplicate_destination, RelaySetupViewResult::Err(message) if message.contains("duplicate"))
     );
-    let overlong_memo: RelaySetupViewResult = query_one(
+    let overlong_memo: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2356,7 +2367,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
         target_canister_ids: vec![targets[3]],
         surplus_recipients: vec![],
     };
-    let zero_before: RelaySetupViewResult = query_one(
+    let zero_before: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2457,7 +2468,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
     }
     assert_spawned_relay_fixed_splitter(&pic, ledger, index, singleton_relay)?;
 
-    let reversed: RelaySetupViewResult = query_one(
+    let reversed: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2485,7 +2496,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
     let mut type_changed_recipients = memoed_recipients.clone();
     type_changed_recipients[4] =
         relay_principal_recipient(Principal::from_slice(&[0x7e, 4]), vec![]);
-    let type_changed: RelaySetupViewResult = query_one(
+    let type_changed: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2544,7 +2555,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
     );
 
     upgrade_historian_without_config_changes(&pic, historian)?;
-    let after_upgrade: RelaySetupViewResult = query_one(
+    let after_upgrade: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2563,7 +2574,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
             relay_canister_id: multi_relay
         }
     );
-    let singleton_after_upgrade: RelaySetupViewResult = query_one(
+    let singleton_after_upgrade: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -2736,7 +2747,7 @@ fn active_setup_survives_target_becoming_configured_cmc_without_external_work() 
     .map_err(|error| anyhow!("Historian policy-change upgrade failed: {error:?}"))?;
     tick_n(&pic, 10);
 
-    let view: RelaySetupViewResult = query_one(
+    let view: RelaySetupViewResult = update_one(
         &pic,
         historian,
         Principal::anonymous(),
@@ -3619,7 +3630,7 @@ fn historian_factory_zero_settings_and_interval_survive_no_argument_upgrade() ->
             "no-argument upgrade changed unrelated durable root state"
         );
         support::governance::start_canister_as(&env.pic, env.historian, controller)?;
-        let view: RelaySetupViewResult = query_one(
+        let view: RelaySetupViewResult = update_one(
             &env.pic,
             env.historian,
             Principal::anonymous(),

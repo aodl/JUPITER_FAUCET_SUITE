@@ -1,4 +1,5 @@
 export const GOVERNANCE_CANISTER_ID = 'rrkah-fqaaa-aaaaa-aaaaq-cai';
+export const ICP_LEDGER_CANISTER_ID = 'ryjl3-tyaaa-aaaaa-aaaba-cai';
 export const JUPITER_NEURON_ID = 11614578985374291210n;
 export const MAINNET_CMC_CANISTER_ID = 'rkp4c-7iaaa-aaaaa-aaaca-cai';
 export const JUPITER_RELAY_CANISTER_ID = 'u2qkp-aqaaa-aaaar-qb7ea-cai';

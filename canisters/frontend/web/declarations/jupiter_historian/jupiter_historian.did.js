@@ -419,7 +419,7 @@ export const idlFactory = ({ IDL }) => {
     'get_relay_configuration_view' : IDL.Func(
         [RelaySetupArgs],
         [RelaySetupViewResult],
-        ['query'],
+        [],
       ),
     'list_canisters' : IDL.Func(
         [ListCanistersArgs],
