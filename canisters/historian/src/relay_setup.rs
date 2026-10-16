@@ -1619,6 +1619,7 @@ pub(crate) fn debug_setup_entries() -> Vec<RelaySetupDebugEntry> {
 pub(crate) fn clear_setup_entries_for_debug() {
     state::with_relay_setup_entries_map(|map| map.clear_new());
     state::set_relay_creating_keys(Vec::new());
+    admission::reset_for_debug();
 }
 
 #[cfg(test)]
@@ -1722,6 +1723,43 @@ mod tests {
         admission::reset_for_test();
         clear_setup_entries_for_debug();
         state::set_state(State::new(config(), 0));
+    }
+
+    #[test]
+    fn debug_fixture_reset_releases_admission_without_reviving_stale_tickets() {
+        reset();
+        admission::set_time_for_test(120);
+        let key = key_for_targets(&[principal(80)]);
+        let old = admission::Guard::acquire(key, admission::Lane::New).unwrap();
+        let stale = old.ticket();
+        for target in 81..88 {
+            drop(
+                admission::Guard::acquire(
+                    key_for_targets(&[principal(target)]),
+                    admission::Lane::New,
+                )
+                .expect("initial window must admit eight attempts"),
+            );
+        }
+        clear_setup_entries_for_debug();
+        let successor = admission::Guard::acquire(key, admission::Lane::New)
+            .expect("fresh debug fixture must not inherit slots or spent rate tokens");
+        assert!(matches!(stale.check(), Err(RelaySetupNotifyResult::Busy)));
+        drop(old);
+        assert!(successor.ticket().check().is_ok());
+        for target in 81..88 {
+            drop(
+                admission::Guard::acquire(
+                    key_for_targets(&[principal(target)]),
+                    admission::Lane::New,
+                )
+                .expect("reset fixture must receive one fresh bounded window"),
+            );
+        }
+        assert!(
+            admission::Guard::acquire(key_for_targets(&[principal(88)]), admission::Lane::New,)
+                .is_none()
+        );
     }
 
     #[test]

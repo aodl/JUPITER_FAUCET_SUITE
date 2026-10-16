@@ -202,8 +202,8 @@ impl Ticket {
     }
 }
 
-#[cfg(test)]
-pub(super) fn reset_for_test() {
+#[cfg(any(test, feature = "debug_api"))]
+pub(super) fn reset_for_debug() {
     LIMITER.with(|limiter| {
         let next_token = limiter.borrow().next_token;
         *limiter.borrow_mut() = Limiter {
@@ -211,6 +211,13 @@ pub(super) fn reset_for_test() {
             ..Default::default()
         };
     });
+    #[cfg(feature = "debug_api")]
+    TRAP_AFTER_CALL.with(|flag| flag.set(false));
+}
+
+#[cfg(test)]
+pub(super) fn reset_for_test() {
+    reset_for_debug();
     TEST_SECONDS.with(|clock| clock.set(0));
     LAST_CALLS.with(|count| count.set(0));
 }

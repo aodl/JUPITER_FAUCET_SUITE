@@ -4050,6 +4050,7 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
         ),
         || {
             reset_historian_local_replica_state()?;
+            let mut admitted = 0;
             for id in 0..50u8 {
                 let spam_target = Principal::from_slice(&[91, id]);
                 let result: RelaySetupNotifyResult = call_raw(
@@ -4060,8 +4061,13 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                         &[relay_principal_recipient(recipient_a)],
                     ),
                 )?;
-                if !matches!(result, RelaySetupNotifyResult::BelowMinimum { .. }) {
-                    bail!("expected BelowMinimum for zero-balance notify, got {result:?}");
+                match result {
+                    RelaySetupNotifyResult::BelowMinimum { .. } => admitted += 1,
+                    // Admission is deliberately bounded. Exact window/refill
+                    // counts use fake-clock unit and PocketIC regressions;
+                    // this live local scenario checks no durable unfunded work.
+                    RelaySetupNotifyResult::Busy => {}
+                    other => bail!("unexpected zero-balance notify result: {other:?}"),
                 }
                 let jobs: Vec<RelaySetupDebugEntry> = call_raw(
                     "jupiter_historian_dbg",
@@ -4071,6 +4077,9 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 if !jobs.is_empty() {
                     bail!("zero-balance notify persisted a setup job for {spam_target}");
                 }
+            }
+            if admitted == 0 {
+                bail!("fresh fixture must execute an admitted zero-balance check");
             }
             let transfers: Vec<TransferRecord> =
                 call_raw_noargs("mock_icrc_ledger", "debug_transfers")?;
