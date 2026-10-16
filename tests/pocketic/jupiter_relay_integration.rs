@@ -3385,6 +3385,75 @@ impl RealSplitterRewardEnv {
 
 #[test]
 #[ignore]
+fn multi_page_valid_reward_epoch_preserves_allocations_with_bounded_work() -> Result<()> {
+    let mut env = RealSplitterRewardEnv::new(2)?;
+    tick_n(&env.pic, 30);
+    let alice = env.owners[0];
+    let bob = env.owners[1];
+    let unknown = Principal::self_authenticating([99; 32]);
+    for (owner, funding) in [
+        (alice, 500_000_000),
+        (bob, 900_000_000),
+        (unknown, 9_300_000_000),
+    ] {
+        env.fund_owner(owner, funding)?;
+    }
+    for (owner, amount) in [
+        (alice, 400_000_000),
+        (bob, 600_000_000),
+        (unknown, 9_000_000_000),
+    ] {
+        env.send_to_relay(owner, relay_subaccount_one(), amount)?;
+    }
+    env.main_tick()?;
+    let relay_history = account_identifier_text(env.relay, Some(relay_subaccount_one()));
+    wait_for_real_index_transactions(&env.pic, env.icp_index, &relay_history, 4)?;
+    env.refresh_snapshot()?;
+    // Actual coherent Ledger records, not an Index-only invented epoch. The
+    // same 1,002,000-unit pot as the ordinary pro-rata case spans two pages.
+    for _ in 0..1_500 {
+        env.credit_reward_pot(668)?;
+    }
+    let before_cycles = env.pic.cycle_balance(env.relay);
+    env.reward_sweep()?;
+    let cycle_delta = before_cycles.saturating_sub(env.pic.cycle_balance(env.relay));
+    assert_eq!(env.reward_balance(alice)?, 399_800);
+    assert_eq!(env.reward_balance(bob)?, 600_200);
+    assert_eq!(env.reward_balance(unknown)?, 0);
+    assert_eq!(env.reward_balance(env.relay)?, 0);
+    let journal = env.journal()?;
+    assert!(journal.pending_payout.is_none());
+    assert!(journal.last_sweep_attempt_timestamp_seconds > 0);
+    let logs = env
+        .pic
+        .fetch_canister_logs(env.relay, Principal::anonymous())
+        .map_err(|error| anyhow::anyhow!("reward logs: {error:?}"))?;
+    let work = logs
+        .iter()
+        .rev()
+        .find_map(|entry| {
+            let line = String::from_utf8_lossy(&entry.content);
+            line.contains("RELAY_REWARD_WORK ")
+                .then(|| line.into_owned())
+        })
+        .context("successful reward attempt must report charged work")?;
+    let field = |name: &str| -> Result<u64> {
+        work.split_whitespace()
+            .find_map(|word| word.strip_prefix(name))
+            .context("missing reward work metric")?
+            .parse()
+            .map_err(Into::into)
+    };
+    assert!((1_500..=16_384).contains(&field("retained_records=")?));
+    assert!(field("calls=")? <= 64);
+    assert!(field("retained_bytes=")? <= 8 * 1024 * 1024);
+    assert!(field("work_units=")? <= 2_000_000);
+    eprintln!("reward-valid fixture_mints=1500 token_pages=2 cycle_delta={cycle_delta} stable_bytes={} {work}", env.pic.get_stable_memory(env.relay).len());
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn oversized_reward_epoch_is_held_after_core_funding_and_next_funding_pass_progresses() -> Result<()>
 {
     let mut env = RealSplitterRewardEnv::new(0)?;

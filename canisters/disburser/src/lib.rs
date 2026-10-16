@@ -855,7 +855,7 @@ fn debug_event_horizon_policy_accepts_only_exact_fixture() {
     let near = Principal::from_slice(&[0, 0, 0, 0, 2, 48, 15, 70, 1, 2]);
     assert!(event_horizon_caller_is_whitelisted(exact));
     assert!(!event_horizon_caller_is_whitelisted(near));
-    let item = |target, amount| EventHorizonPokeMatch {
+    let item = |target, amount: u64| EventHorizonPokeMatch {
         target,
         max_amount: Nat::from(amount),
     };

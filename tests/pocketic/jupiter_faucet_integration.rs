@@ -2396,6 +2396,70 @@ fn faucet_large_history_repeated_runs_keep_serialized_debug_state_bounded() -> R
 
 #[test]
 #[ignore]
+fn faucet_no_debug_wasm_upgrade_and_timer_payout_preserve_the_tranche() -> Result<()> {
+    static PRODUCTION: OnceLock<Vec<u8>> = OnceLock::new();
+    let env = FaucetEnv::new()?;
+    let wasm = if let Some(path) = std::env::var_os("JUPITER_FAUCET_RELEASE_TEST_WASM") {
+        std::fs::read(path)?
+    } else {
+        support::wasm::build_wasm_cached_for_test(&PRODUCTION, "jupiter-faucet", None)?
+    };
+    let expected_hash = sha2::Sha256::digest(&wasm).to_vec();
+    env.advance_time_and_tick(2, 2);
+    env.pic
+        .upgrade_canister(env.faucet, wasm, encode_args(())?, None)
+        .map_err(|error| anyhow!("no-debug upgrade: {error:?}"))?;
+    assert_eq!(
+        env.pic
+            .canister_status(env.faucet, None)
+            .map_err(|error| anyhow!("status: {error:?}"))?
+            .module_hash,
+        Some(expected_hash)
+    );
+    assert!(env
+        .pic
+        .query_call(
+            env.faucet,
+            Principal::anonymous(),
+            "debug_state",
+            encode_args(())?
+        )
+        .is_err());
+    assert!(env
+        .pic
+        .update_call(
+            env.faucet,
+            Principal::anonymous(),
+            "debug_main_tick",
+            encode_args(())?
+        )
+        .is_err());
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    env.credit_payout(100_000_000)?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    env.advance_time_and_tick(61, 80);
+    let transfers = env.ledger_transfers()?;
+    assert_eq!(transfers.len(), 1);
+    assert_eq!(transfers[0].amount, Nat::from(99_990_000_u64));
+    assert_eq!(transfers[0].fee, Nat::from(10_000_u64));
+    assert_eq!(transfers[0].to.owner, env.cmc);
+    assert_eq!(
+        transfers[0].to.subaccount,
+        Some(principal_to_subaccount(target))
+    );
+    assert_eq!(env.notifications()?.len(), 1);
+    assert_eq!(
+        icrc1_balance(&env.pic, env.ledger, &env.accounts.payout)?,
+        0
+    );
+    env.advance_time_and_tick(61, 40);
+    assert_eq!(env.ledger_transfers()?.len(), 1);
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn faucet_timer_cadence_waits_for_elapsed_time_before_running_automatically() -> Result<()> {
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;

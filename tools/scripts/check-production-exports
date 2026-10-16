@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Fail closed on release Wasm/DID mode drift or production debug exports.
+
+Uses executable Wasm tooling, not source-text endpoint searches. Artifacts are
+never rewritten; the only generated input is a temporary lifecycle allowlist.
+"""
+import argparse
+import gzip
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+
+
+ROOT = Path(__file__).resolve().parents[2]
+COMPONENTS = ("disburser", "faucet", "historian", "relay", "sns_rewards", "lifeline", "faucet_frontend")
+DIRECTORIES = {"sns_rewards": "sns-rewards", "faucet_frontend": "frontend"}
+HIDDEN = {
+    "canister_init", "canister_pre_upgrade", "canister_post_upgrade",
+    "canister_inspect_message", "canister_global_timer", "canister_heartbeat",
+    "get_candid_pointer", "canister_update <ic-cdk internal> timer_executor",
+}
+
+
+def output(*command):
+    return subprocess.check_output(command, text=True)
+
+
+def check(artifacts: Path):
+    with tempfile.TemporaryDirectory(prefix="jupiter-export-check-") as temporary:
+        temporary = Path(temporary)
+        for component in COMPONENTS:
+            wasm = artifacts / f"jupiter_{component}.wasm"
+            if not wasm.is_file() or wasm.stat().st_size == 0:
+                raise RuntimeError(f"missing required production Wasm: {wasm}")
+            did = ROOT / "canisters" / DIRECTORIES.get(component, component) / f"jupiter_{component}.did"
+            info = output("ic-wasm", str(wasm), "info")
+            block = re.search(r"Exported methods: (\[.*?\])", info, re.S)
+            if block is None:
+                raise RuntimeError(f"cannot read Wasm exports: {wasm}")
+            # ic-wasm prints JSON strings with a trailing array comma.
+            exports = json.loads(re.sub(r",\s*\]", "]", block[1]))
+            names = [re.sub(r" \(func_\d+\)$", "", name) for name in exports]
+            for name in names:
+                if re.match(r"canister_(?:update|query|composite_query) (?:debug_|admin_)", name):
+                    raise RuntimeError(f"production test/admin export: {wasm}: {name}")
+            metadata = output("ic-wasm", str(wasm), "metadata", "candid:service")
+            actual_did = temporary / "actual.did"
+            actual_did.write_text(metadata)
+            subprocess.run(["didc", "check", "--strict", str(actual_did), str(did)], check=True)
+            hidden = temporary / "hidden.txt"
+            hidden.write_text("\n".join(
+                name.replace("canister_update ", "canister_update:", 1)
+                for name in names if name in HIDDEN
+            ) + "\n")
+            subprocess.run(["ic-wasm", str(wasm), "check-endpoints", "--candid", str(did), "--hidden", str(hidden)], check=True)
+            print(f"production exports and Candid agree: {component}", flush=True)
+    relay_raw = (artifacts / "jupiter_relay.wasm").read_bytes()
+    relay_payload = (artifacts / "jupiter_relay.wasm.gz").read_bytes()
+    historian_raw = (artifacts / "jupiter_historian.wasm").read_bytes()
+    if gzip.decompress(relay_payload) != relay_raw:
+        raise RuntimeError("Relay gzip payload does not decompress to the candidate raw Relay")
+    if relay_payload not in historian_raw:
+        raise RuntimeError("Historian does not embed the exact candidate compressed Relay payload")
+    print(f"embedded child binding raw={hashlib.sha256(relay_raw).hexdigest()} gzip={hashlib.sha256(relay_payload).hexdigest()}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--artifacts-dir", type=Path, default=ROOT / "release-artifacts")
+    check(parser.parse_args().artifacts_dir.resolve())

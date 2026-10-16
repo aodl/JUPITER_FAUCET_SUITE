@@ -16,6 +16,12 @@ if ! docker buildx version >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ ! -f release-artifacts/release-artifacts.sha256 ]]; then
+  echo "canonical candidate artifacts are required; run tools/scripts/docker-build first" >&2
+  exit 1
+fi
+sha256sum -c release-artifacts/release-artifacts.sha256
+
 workdir="$(mktemp -d)"
 containers=()
 images=()
@@ -78,3 +84,15 @@ if ! diff -u "$workdir/run-a.sha256" "$workdir/run-b.sha256"; then
 fi
 
 echo "release artifacts match across clean same-environment rebuilds"
+
+# Equality of two rebuilds alone does not bind them to the candidate being
+# released. Compare every emitted file (including build-info) with that
+# candidate, permitting extra evidence such as SBOMs in release-artifacts/.
+while IFS= read -r -d '' artifact; do
+  relative="${artifact#"$workdir/run-a/"}"
+  if ! cmp -- "$artifact" "release-artifacts/$relative"; then
+    echo "clean rebuild does not match canonical candidate: $relative" >&2
+    exit 1
+  fi
+done < <(find "$workdir/run-a" -type f -print0 | sort -z)
+echo "clean rebuilds also match the canonical candidate, including build metadata"

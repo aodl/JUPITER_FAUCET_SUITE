@@ -1,15 +1,38 @@
 name: Behavioral Tests
 
 on:
+  pull_request:
+  push:
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: behavioral-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  POCKET_IC_MUTE_SERVER: 1
+
 jobs:
-  unit:
-    name: Unit, contract, and browser matrix
+  behavioral:
+    name: Behavioral (${{ matrix.suite }})
     runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - test_unit
+          - faucet_pocketic_integration
+          - historian_pocketic_integration
+          - relay_pocketic_integration
 
     steps:
       - name: Check out repository
@@ -38,5 +61,116 @@ jobs:
       - name: Install locked Node dependencies
         run: npm ci --no-fund --no-audit
 
-      - name: Run behavioural unit matrix
-        run: cargo run -p xtask -- test_unit
+      - name: Check formatting and frontend input consistency
+        if: matrix.suite == 'test_unit'
+        run: |
+          cargo fmt --all -- --check
+          npm run check:npm-lock-hermetic
+          npm run lint:frontend-exports
+
+      - name: Install pinned local-call tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dfinity/icp-cli/releases/download/v1.2.0/icp-cli-installer.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          cargo install didc --version 0.4.0 --locked
+
+      - name: Install Nix for the vendored blackhole build
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.25.3/install
+          set_as_trusted_user: false
+          enable_kvm: false
+
+      - name: Provision the repository-pinned local launcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          icp --version
+          didc --version
+          icp network start local --background
+          icp network stop local
+
+      - name: Run selected behavioural suite
+        run: cargo run --locked -p xtask -- ${{ matrix.suite }}
+
+  release-artifacts:
+    name: Canonical release validation
+    if: github.event_name != 'pull_request'
+    needs: behavioral
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$toolchain" --profile minimal --target wasm32-unknown-unknown
+          rustup default "$toolchain"
+
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          cache: npm
+
+      - name: Install locked validation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-fund --no-audit
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dfinity/icp-cli/releases/download/v1.2.0/icp-cli-installer.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          cargo install didc --version 0.4.0 --locked
+          cargo install ic-wasm --version 0.11.0 --locked
+          cargo install cargo-audit --version 0.22.1 --locked
+          cargo install cargo-deny --version 0.19.8 --locked
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          curl -fsSLo /tmp/osv-scanner_linux_amd64 https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64
+          curl -fsSLo /tmp/osv-scanner_SHA256SUMS https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_SHA256SUMS
+          grep 'osv-scanner_linux_amd64$' /tmp/osv-scanner_SHA256SUMS | (cd /tmp && sha256sum -c -)
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 /tmp/osv-scanner_linux_amd64 "$HOME/.local/bin/osv-scanner"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Nix for the local factory smoke test
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.25.3/install
+          set_as_trusted_user: false
+          enable_kvm: false
+
+      - name: Provision the repository-pinned local launcher
+        run: |
+          icp network start local --background
+          icp network stop local
+
+      - name: Build and validate canonical artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./tools/scripts/docker-build
+          sha256sum -c release-artifacts/release-artifacts.sha256
+          python3 ./tools/scripts/validate-mainnet-install-args
+          cargo run --locked -p xtask -- release_artifact_validation
+          ./tools/scripts/check-production-reachability
+          ./tools/scripts/preflight-historian-production-upgrade
+          ./tools/scripts/security-scan
+          npm run verify:reproducible-artifacts
+          sha256sum -c release-artifacts/release-artifacts.sha256
+          python3 ./tools/scripts/validate-mainnet-install-args
+          npm run check:production-exports
+
+      - name: Retain release evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canonical-release-evidence
+          path: release-artifacts/
+          if-no-files-found: error

@@ -5943,6 +5943,9 @@ fn run_unit_xtask_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
 fn run_unit_debug_contract_suites(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
     for (component, package) in [
+        ("disburser-debug-api", "jupiter-disburser"),
+        ("faucet-debug-api", "jupiter-faucet"),
+        ("historian-debug-api", "jupiter-historian"),
         ("relay-debug-api", "jupiter-relay"),
         ("sns-rewards-debug-api", "jupiter-sns-rewards"),
     ] {
@@ -6525,6 +6528,79 @@ fn cmd_scoped(component: TestComponent, scope: TestScope) -> Result<()> {
     }
 }
 
+fn cmd_release_artifact_validation() -> Result<()> {
+    let root = repo_root();
+    let mut outcomes = Vec::new();
+    run_cargo_test_suite(
+        &mut outcomes,
+        "release",
+        "exports",
+        "npm",
+        &["run", "check:production-exports"],
+        &root,
+        (&[], false),
+    )?;
+    let common = pocketic_test_env()?;
+    let historian = std::path::Path::new(&root).join("release-artifacts/jupiter_historian.wasm.gz");
+    let relay = std::path::Path::new(&root).join("release-artifacts/jupiter_relay.wasm.gz");
+    let faucet = std::path::Path::new(&root).join("release-artifacts/jupiter_faucet.wasm.gz");
+    let mut envs = common.to_vec();
+    envs.extend([
+        (
+            "JUPITER_HISTORIAN_RELEASE_TEST_WASM",
+            historian.to_str().context("Historian artifact path")?,
+        ),
+        (
+            "JUPITER_RELAY_RELEASE_TEST_WASM",
+            relay.to_str().context("Relay artifact path")?,
+        ),
+        (
+            "JUPITER_FAUCET_RELEASE_TEST_WASM",
+            faucet.to_str().context("Faucet artifact path")?,
+        ),
+    ]);
+    for (package, target, test) in [
+        (
+            "jupiter-historian",
+            "jupiter_historian_integration",
+            "zero_recipient_factory_child_executes_all_cycles_mode",
+        ),
+        (
+            "jupiter-faucet",
+            "jupiter_faucet_integration",
+            "faucet_no_debug_wasm_upgrade_and_timer_payout_preserve_the_tranche",
+        ),
+    ] {
+        run_cargo_test_suite(
+            &mut outcomes,
+            "release",
+            package,
+            "cargo",
+            &[
+                "test",
+                "--locked",
+                "-p",
+                package,
+                "--test",
+                target,
+                test,
+                "--",
+                "--exact",
+                "--ignored",
+                "--color",
+                "always",
+            ],
+            &root,
+            (&envs, true),
+        )?;
+    }
+    finish_outcomes(
+        outcomes,
+        "release artifact validation failed",
+        "release_artifact_validation complete",
+    )
+}
+
 fn main() -> Result<()> {
     let cmd = env::args().nth(1).unwrap_or_else(|| "help".to_string());
     if let Some((component, scope)) = parse_scoped_command(&cmd) {
@@ -6535,12 +6611,14 @@ fn main() -> Result<()> {
         "setup" => cmd_setup(),
         "teardown" => cmd_teardown(),
         "frontend_setup" => cmd_frontend_setup(),
+        "release_artifact_validation" => cmd_release_artifact_validation(),
         "faucet_production_reinstall_cutover" => cmd_faucet_production_reinstall_cutover(),
         _ => {
             eprintln!(
                 "Usage: cargo run -p xtask -- <command>
 
                  Utility commands:
+                 - release_artifact_validation (requires canonical artifacts)
                  - setup
                  - teardown
                  - frontend_setup

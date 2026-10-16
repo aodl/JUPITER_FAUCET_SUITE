@@ -12,6 +12,7 @@
     "test:frontend-browser": "docker run --rm --ipc=host --user \"$(id -u):$(id -g)\" -e HOME=/tmp ${JUPITER_DOCKER_CIDFILE:+--cidfile=$JUPITER_DOCKER_CIDFILE} -e JUPITER_TEST_OMIT_NAVBAR_CSS -v \"$PWD:/work\" -w /work mcr.microsoft.com/playwright:v1.63.0-noble node --test canisters/frontend/web/test/navbar-browser.test.mjs",
     "test:frontend-dashboard-local": "node --test canisters/frontend/web/test/dashboard-data.local-replica.test.mjs",
     "lint:frontend-exports": "node tools/scripts/check-frontend-exports.mjs",
+    "check:production-exports": "python3 tools/scripts/check-production-exports",
     "security:scan": "./tools/scripts/security-scan",
     "sbom": "./tools/scripts/security-scan",
     "verify:reproducible-artifacts": "bash ./tools/scripts/verify-reproducible-artifacts"
