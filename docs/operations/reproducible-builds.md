@@ -8,17 +8,22 @@ This flow compares the live canister module hash with the canonical Docker-built
 
 ## Canonical Docker artifact build
 
-Before producing canonical artifacts, run the dependency-security gate from the repo root and require the pushed commit's [Dependency Security workflow](../../.github/workflows/dependency-security.yml) to be green:
-
-```bash
-./tools/scripts/security-scan
-```
-
-Do not substitute `test_all` for this networked release gate; the canonical release procedure requires both. Then run the canonical Docker build:
+Follow the complete [release gates](deployment.md#production-release-flow) on the
+frozen candidate. Require the pushed commit's
+[Dependency Security workflow](../../.github/workflows/dependency-security.yml)
+to be green separately; a local run does not establish remote enforcement.
+Run the local security gate after the canonical build, which replaces the
+artifact directory, so its SBOM evidence survives:
 
 ```bash
 ./tools/scripts/docker-build
+sha256sum -c release-artifacts/release-artifacts.sha256
+./tools/scripts/security-scan
 ```
+
+Do not substitute `test_all` for the networked security gate; the release
+procedure requires both, plus artifact-present validation and local lifecycle
+rehearsal. A source-only validator skip does not count as artifact approval.
 
 This runs [`Dockerfile.repro`](../../Dockerfile.repro), copies artifacts into `release-artifacts/`, writes `release-artifacts/release-artifacts.sha256`, and prints the main verification hashes.
 
@@ -69,16 +74,16 @@ Use the canister-specific README for expected config fields.
 | Canonical artifact build | `./tools/scripts/docker-build` | Docker-built `.wasm.gz` packages and hash manifest. |
 | Production deploy from canonical artifacts | `JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --mode upgrade` | Deploys the existing Docker-built `.wasm.gz` package through `icp deploy`. |
 | Ordinary local `icp deploy` | `icp deploy <canister_name> --environment ic --mode upgrade` | Runs the configured local build helper and deploys the resulting package. Convenient, but not canonical reproducibility evidence. |
-| Same-environment determinism check | `npm run verify:reproducible-artifacts` | Two clean Docker builds compared on the same machine. |
+| Same-environment determinism check | `npm run verify:reproducible-artifacts` | Two clean Docker builds compared with each other and the canonical candidate, including build metadata. |
 
 With `relay_factory_enabled = opt true` in the checked-in Historian mainnet args, both `build-canister all` and Docker builds produce `release-artifacts/jupiter_historian.wasm.gz` as the production Historian package.
 
 ## Deploying Docker-built artifacts with icp deploy
 
-The strongest production release flow is:
+After all local release gates and operator prerequisites are satisfied, the
+separately authorized deployment step is:
 
 ```bash
-./tools/scripts/docker-build
 JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --mode upgrade
 ```
 
@@ -116,7 +121,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian \
   --mode upgrade
 ```
 
-Deploy the maintenance frontend, then record all public query evidence while Historian is still running. The maintenance frontend prevents ordinary UI submissions but is not a security boundary. Stop Historian and wait until it is `Stopped`; this is the authoritative self-service factory pause and call drain. Upgrade in place, start Historian, and compare the public evidence. Active mappings must be verified through representative known exact target-and-recipient configurations, and independent `RelayTarget`/`RelayInstance` counts must be preserved. The production canister cannot enumerate every configuration hash because `debug_api` entry listing exists only in local tests, PocketIC, and non-production debug builds.
+Deploy the maintenance frontend, then record public evidence while Historian is still running. Use the authenticated setup-view update for representative known exact target-and-recipient mappings; ordinary dashboard queries are not payment authorization. The maintenance frontend prevents ordinary UI submissions but is not a security boundary. Stop Historian and wait until it is `Stopped`; this is the authoritative self-service factory pause and call drain. Upgrade in place, start Historian, and compare the public evidence. Active mappings and independent `RelayTarget`/`RelayInstance` counts must be preserved. The production canister cannot enumerate every configuration hash because `debug_api` entry listing exists only in local tests, PocketIC, and non-production debug builds.
 
 Memory 26 contains the sole current self-service Relay setup map, keyed by the 32-byte canonical configuration hash and storing the current `RelaySetupEntry`. Normal upgrades remove interrupted `Reserved`/`ProbingTargets` entries, convert later interrupted `Creating` phases to `ManualRecoveryRequired`, and preserve existing `Active`/`ManualRecoveryRequired` entries. Reconciliation makes no external call. Historian does not upgrade or reconstruct controllerless children. Deploy the matching frontend while Historian remains stopped and start Historian only after both artifacts are verified. Snapshots are risk-based: strongly recommend or require one when stable schema, stable-memory layout, migration logic, authoritative historical state, or another rollback-sensitive area changes; routine low-risk upgrades that preserve those contracts do not require one universally.
 

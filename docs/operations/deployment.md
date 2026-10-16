@@ -105,15 +105,67 @@ The intermediate posture from this migration has the developer principal as the 
 
 Before a later governance-approved handoff, verify that the canister itself is already a controller, public status works for a non-controller, Lifeline identity/governance has been reviewed, and real health/value flow has succeeded. Only then deliberately arm autonomous rescue, acknowledging that reconciliation may narrow controllers to self only. This migration does not perform that handoff and must not remove the developer principal.
 
+## Readiness and recovery boundaries
+
+The developer's unused-factory inventory applies to self-service setup, not to
+canonical Faucet/Historian accounts or history. This release preserves those
+live roots and authoritative maps. Faucet's memory 2 records one pending
+transfer's dispatch provenance without changing its strict V1 root. Missing
+provenance is conservative (possibly dispatched), never proof of no debit.
+Deploy Faucet only at its existing active-payout quiescent boundary. A possible
+debit consumes its tranche budget even if later rejected retries cannot resolve
+it; unused real funds can remain conservatively held without being counted as
+confirmed delivery. No balancing transfer or automatic recovery replay exists.
+
+The factory's authoritative setup view is a consensus-backed update, not a
+payment-authorizing query. Coordinate backend/frontend method mode in one
+maintenance window; an authenticated read failure must leave funding controls
+disabled. Factory admission is bounded and best effort, with a separate
+completion allowance; see [factory limits](../relay-setup-recovery.md).
+
+Controllerless children remain immutable. Updating Historian's embedded Relay
+changes new children only. Existing canonical Relay and factory-template
+identities must be recorded separately rather than inferred from one another.
+
+Lifeline is only a reserved recovery-authority principal. Its present module
+has no recovery methods and cannot itself execute a rescue upgrade. Recovery
+requires the actual authorized controller/governance route, a separately
+reviewed failure-specific artifact and arguments, preserved state inventory,
+and a local rehearsal of the proposed operation. Existing controller-roundtrip,
+upgrade, factory-finalization and interruption tests exercise those supported
+boundaries, not a hypothetical universal rescue. An ambiguous external spend,
+lost child ID, mismatched child module or `ManualRecoveryRequired` record needs
+investigation; neither a canister snapshot nor a Lifeline upgrade rolls back
+Ledger/CMC/management effects. Do not add a hidden child controller or reinstall
+a stateful canonical canister as a shortcut.
+
 ## Production release flow
 
-Generic release sequence for routine production upgrades:
+Freeze and review source commits before collecting release evidence. The local
+release gates are not deployment authorization:
 
 ```bash
-python3 ./tools/scripts/validate-mainnet-install-args
+POCKET_IC_MUTE_SERVER=1 cargo run --locked -p xtask -- test_all
 ./tools/scripts/docker-build
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy <canister_name> --environment ic --mode upgrade
+sha256sum -c release-artifacts/release-artifacts.sha256
+python3 ./tools/scripts/validate-mainnet-install-args
+POCKET_IC_MUTE_SERVER=1 cargo run --locked -p xtask -- release_artifact_validation
+./tools/scripts/check-production-reachability
+./tools/scripts/preflight-historian-production-upgrade
+./tools/scripts/security-scan
+npm run verify:reproducible-artifacts
 ```
+
+Retain exact command exits, source identity, tool versions, logs and raw/gzip
+hashes outside the source tree. Preserve earlier evidence before Docker replaces
+`release-artifacts/`. Security runs after the build so SBOMs are not erased.
+The verifier compares two clean same-environment builds with each other and the
+canonical candidate, including build metadata; this is not independent-toolchain
+or installed-mainnet equality. An absent artifact, skipped required suite,
+unapproved hash or failed gate blocks release. See the required CI status names
+and operator-only enforcement steps in [testing](../development/testing.md).
+Only the separately authorized operator may then execute the component's
+reviewed deployment procedure below.
 
 `./tools/scripts/docker-build` produces canonical `.wasm.gz` install packages and `release-artifacts/release-artifacts.sha256`. `JUPITER_USE_CANONICAL_ARTIFACTS=1` tells the `icp.yaml` build helper to verify that manifest and deploy those existing packages instead of rebuilding with the local toolchain.
 
@@ -320,11 +372,13 @@ Ordinary Relay infrastructure allocations and SNS reward distributions are perpe
 
 `jupiter_sns_rewards` discovers Governance and Ledger from its one configured SNS Root. The checked-in fresh-install argument configures OpenChat Root `3e3x2-xyaaa-aaaaq-aaalq-cai` only as a development placeholder. No Governance, CHAT Ledger, or future jUP Ledger ID is separately configured.
 
-Before enabling the canonical Relay reward path, verify that recent canonical Relay subaccount-1 history contains supported debit shapes and reconciles into completed Faucet endowments. Attribution paginates backwards on demand without a lifetime page, transaction, or source-count cutoff; source ownership is resolved in deterministic API-sized chunks against one snapshot. Relay inverts each account's indexed transactions from the response's current balance and trusts a suffix only when it proves a zero opening balance. Genuine account genesis means that no older transactions exist, while the reconstructed opening balance must still reconcile exactly to zero. This proof includes post-cutoff account activity and applies independently to subaccount 1 and every referenced splitter. Older history is fetched only when FIFO carry or newer ineligible endowments require it, while pagination and reconstruction inconsistencies fail closed.
+Before enabling the canonical Relay reward path, verify that recent canonical Relay subaccount-1 history contains supported debit shapes and reconciles into completed Faucet endowments. Attribution paginates backwards on demand within one shared per-attempt allowance: 64 external calls, 16,384 retained history records, 8 MiB of encoded history and 2,000,000 charged work units, with a 120-second deadline and main-lease fencing. Nested splitter scans, owner-resolution chunks and repeated reconstruction share that allowance. Core funding runs first and records completed heap cadence before the optional reward stage's first await, while retaining the exclusive lease. This survives a later reward callback trap, not a replacement-style Relay upgrade. An exhausted attempt holds rewards without paying from incomplete attribution or consuming successful weekly cadence; it can defer indefinitely, retrying on an accepted ordinary funding tick rather than in a tight loop. Already pinned payout identities/progress remain pinned. A deadline does not cancel an already dispatched call or guarantee an exact wall-clock duration under arbitrary network delay.
+
+Source ownership is resolved in deterministic API-sized chunks against one snapshot. Relay inverts each account's indexed transactions from the response's current balance and trusts a suffix only when it proves a zero opening balance. Genuine account genesis means that no older transactions exist, while the reconstructed opening balance must still reconcile exactly to zero. This proof includes post-cutoff account activity and applies independently to subaccount 1 and every referenced splitter. Older history is fetched only when FIFO carry or newer ineligible endowments require it, while pagination and reconstruction inconsistencies fail closed. A history that cannot establish that proof inside the attempt allowance is unsupported for that attempt, not truncated or treated as empty.
 
 Relay also reads the ICP Ledger `query_blocks(start=0, length=0).chain_length` before the ICP Index `status().num_blocks_synced` and requires the Index to cover the observed Ledger prefix. Index lag therefore cannot hide a net-zero newer deposit-plus-endowment pair and redirect the payout to an older endowment; an unavailable or behind Index retries daily without consuming weekly cadence.
 
-Also verify that the context's pinned SNS Root returns the same Root and reward Ledger from `list_sns_canisters`, returns an Index, and that the Index `ledger_id` names that reward Ledger. Relay reconstructs its live reward balance from that Index back to the latest zero-balance boundary or account genesis, where genesis proves that no older transactions exist and the reconstructed opening balance must still be zero, then FIFO-replays incoming credits against outgoing payouts and fees. The oldest remaining non-zero reward-credit Ledger block time and owner-snapshot scan-start time form the effective exclusive ICP cutoff. There is no reward-history cursor or depth cutoff. Detectable Index lag, including any live/index balance mismatch, retries on the next accepted daily tick without consuming weekly cadence. An undetectable unindexed net-zero outgoing-plus-incoming suffix can conservatively make the reconstructed cutoff older, but cannot make it newer than the fully synchronized cutoff.
+Also verify that the context's pinned SNS Root returns the same Root and reward Ledger from `list_sns_canisters`, returns an Index, and that the Index `ledger_id` names that reward Ledger. Relay reconstructs its live reward balance from that Index back to the latest zero-balance boundary or account genesis, where genesis proves that no older transactions exist and the reconstructed opening balance must still be zero, then FIFO-replays incoming credits against outgoing payouts and fees. The oldest remaining non-zero reward-credit Ledger block time and owner-snapshot scan-start time form the effective exclusive ICP cutoff. There is no persistent reward-history cursor; the same attempt budget covers both token and ICP provenance. Detectable Index lag, including any live/index balance mismatch, retries on the next accepted daily tick without consuming weekly cadence. An undetectable unindexed net-zero outgoing-plus-incoming suffix can conservatively make the reconstructed cutoff older, but cannot make it newer than the fully synchronized cutoff. Funding performed earlier in the tick cannot replace that historical cutoff or capture an older reward pot.
 
 Use this deployment order for the first usable reward epoch:
 

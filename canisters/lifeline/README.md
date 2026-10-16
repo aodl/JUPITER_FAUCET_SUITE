@@ -32,6 +32,14 @@ If their durable rescue policy concludes that value flow is broken, they widen t
 
 That means this canister is a **reserved rescue principal**, not an active coordinator. It has no normal recovery API, periodic controller orchestration, or speculative recovery workflow. A real Lifeline event can be handled by a separately reviewed, failure-specific Lifeline upgrade.
 
+Before such an operation, the operator must verify the actual controller or
+governance authority, retain the affected canister's module/state inventory,
+review the precise recovery Wasm and arguments, and rehearse that operation
+locally. Existing timer/lifecycle and controller-roundtrip tests do not certify
+an unimplemented recovery plan. Recovery cannot undo a completed external
+Ledger spend or give Lifeline authority over an immutable controllerless Relay.
+See the [release and recovery boundaries](../../docs/operations/deployment.md#readiness-and-recovery-boundaries).
+
 Observation is a separate concern: Jupiter protocol canisters use public `canister_status`, so Lifeline does not need controller authority merely to expose status or cycles.
 
 ## Install and upgrade
