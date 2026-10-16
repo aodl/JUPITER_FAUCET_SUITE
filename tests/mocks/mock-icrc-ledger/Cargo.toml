@@ -7,6 +7,11 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+# Admission tests need a persistent callee-side read counter. Ordinary query
+# execution discards writes; other scenarios keep the default Ledger surface.
+balance_read_counter = []
+
 [dependencies]
 candid = { workspace = true }
 serde = { workspace = true }

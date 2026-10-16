@@ -2198,7 +2198,7 @@ test('Busy message survives the immediate setup-view refresh', async () => {
     await submit(nodes, harness);
     await harness.controller.createRelay();
     assert.equal(nodes.get('relay-setup-status').textContent, 'Busy');
-    assert.match(nodes.get('relay-setup-status-label').textContent, /maximum number of funded setups/);
+    assert.match(nodes.get('relay-setup-status-label').textContent, /admission is busy or rate-limited/);
   });
 });
 

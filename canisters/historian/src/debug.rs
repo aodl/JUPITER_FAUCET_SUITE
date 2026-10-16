@@ -1,4 +1,12 @@
 use super::*;
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+pub(super) fn debug_trap_after_factory_call(value: bool) {
+    guard_debug_api_not_production();
+    relay_setup::debug_trap_after_factory_call(value);
+}
+
 #[cfg(feature = "debug_api")]
 #[derive(CandidType, Deserialize)]
 pub struct DebugState {

@@ -121,6 +121,7 @@ struct LedgerState {
     index_hidden_newest_transactions: u64,
     reward_history_fixture: Option<(Account, u64, u64)>,
     reward_history_fixture_calls: u64,
+    balance_read_count: u64,
 }
 
 thread_local! {
@@ -188,8 +189,11 @@ fn icrc1_fee() -> Nat {
     })
 }
 
-#[ic_cdk::query]
+#[cfg_attr(feature = "balance_read_counter", ic_cdk::update)]
+#[cfg_attr(not(feature = "balance_read_counter"), ic_cdk::query)]
 fn icrc1_balance_of(a: Account) -> Nat {
+    #[cfg(feature = "balance_read_counter")]
+    ST.with(|state| state.borrow_mut().balance_read_count += 1);
     ST.with(|s| {
         let st = s.borrow();
         let bal = *st.balances.get(&key(&a)).unwrap_or(&0);
@@ -595,6 +599,11 @@ fn debug_set_reward_history_fixture(account: Account, count: u64, unit: u64) {
 #[ic_cdk::query]
 fn debug_reward_history_fixture_calls() -> u64 {
     ST.with(|state| state.borrow().reward_history_fixture_calls)
+}
+
+#[ic_cdk::query]
+fn debug_balance_read_count() -> u64 {
+    ST.with(|state| state.borrow().balance_read_count)
 }
 
 #[ic_cdk::query]

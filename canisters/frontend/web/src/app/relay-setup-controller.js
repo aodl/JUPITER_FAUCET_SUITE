@@ -990,7 +990,7 @@ export function createRelaySetupController({
       case 'Busy':
         return {
           status: 'Busy',
-          message: 'Relay factory is processing the maximum number of funded setups. Try again shortly.',
+          message: 'Relay factory admission is busy or rate-limited, or funded setup capacity is full. Try again shortly; an existing setup may still be progressing.',
         };
       case 'InProgress':
         return {

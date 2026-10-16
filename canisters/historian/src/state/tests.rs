@@ -1895,6 +1895,14 @@ mod tests {
                     .to_bytes()
                     .into_owned()
             });
+            let started = std::time::Instant::now();
+            let restored = restore_state_from_stable().unwrap();
+            let restore_us = started.elapsed().as_micros();
+            assert!(
+                restored.commitment_history.is_empty(),
+                "bulk history remains lazy"
+            );
+            drop(restored);
             STATE.with(|state| {
                 let mut state = state.borrow_mut();
                 let state = state.as_mut().unwrap();
@@ -1934,7 +1942,7 @@ mod tests {
                     .first_seen_ts),
                 Some(123)
             );
-            eprintln!("factory-root tracked={size} old_whole_heap_clone_us={clone_us} scoped_flush_us={scoped_us} registry_keys_written=1");
+            eprintln!("factory-root tracked={size} restore_us={restore_us} old_whole_heap_clone_us={clone_us} scoped_flush_us={scoped_us} registry_keys_written=1");
         }
     }
 

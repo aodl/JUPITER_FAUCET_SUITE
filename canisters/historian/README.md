@@ -200,6 +200,17 @@ Creation is an explicit user action. A narrow same-key reservation prevents dupl
 
 On Historian upgrade, interrupted `Reserved` and `ProbingTargets` entries are removed. Every later `Creating` phase becomes terminal manual recovery with `HistorianUpgradeInterrupted`; active mappings and existing manual-recovery entries are preserved without calling any child.
 
+Permissionless notification acquires transient admission before its first external read. New preflights have four outstanding slots and eight attempts per aligned 60-second window; resumable finalization has two independent slots and eight independent attempts per window. Both lanes share per-configuration single-flight protection, and cheap terminal entry reads consume no token. Failed attempts do not refund tokens. Unfunded keys never become durable entries. The existing four-funded-Creating limit remains a separate circuit breaker.
+
+An admitted attempt has a five-minute lease and at most 512 charged external calls, including nested Auto probe discovery. Every call checks its generation before dispatch and after reply. Expiry fences later work but does not cancel a dispatched call. A normally returning expired neuron/target read releases only its own pre-spend reservation; a trap still uses the existing upgrade reconciliation. Transfer preparation and later durable spend/create evidence are never reset by expiry. Lost transient slots expire; old callbacks and drops cannot clear successors. Later interrupted value-moving phases retain evidence for the existing upgrade/manual-recovery rules. The aligned-window policy can admit a double burst across a window boundary and promises neither unconditional admission nor new-caller fairness under a Sybil flood.
+
+The deterministic 20-target/one-recipient setup fixture uses 73 external calls;
+the ceiling leaves headroom for supported discovery routes. An unfunded attempt
+uses one balance read: 100 distinct notifications admit eight such reads per
+fresh window and store no setup entries. Rate tokens bound admitted attempts,
+not the completion time of calls already dispatched in an earlier window.
+These limits are not an exact cycle-cost or wall-clock guarantee.
+
 ## Timers and driver model
 
 ### Default cadence

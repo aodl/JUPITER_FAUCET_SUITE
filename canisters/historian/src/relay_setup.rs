@@ -1,3 +1,4 @@
+mod admission;
 mod recipient_set;
 mod setup_key;
 mod setup_spec;
@@ -24,8 +25,6 @@ use jupiter_ic_clients::management::{
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::cell::RefCell;
-use std::collections::BTreeSet;
 
 pub(crate) const EXTRA_TARGET_CHARGE_E8S: u64 = 25_000_000;
 pub(crate) const MAX_CONCURRENT_FUNDED_RELAY_SETUPS: usize = 4;
@@ -39,34 +38,20 @@ const TOP_UP_CANISTER_MEMO: u64 = 1_347_768_404;
 const MAX_DIAGNOSTIC_BYTES: usize = 1_024;
 pub(crate) const MAX_RELAY_SETUP_ENTRY_BYTES: u32 = 4_096;
 
-thread_local! {
-    static ACTIVE_FINALIZATIONS: RefCell<BTreeSet<RelaySetupKey>> = const {
-        RefCell::new(BTreeSet::new())
+#[cfg(feature = "debug_api")]
+pub(crate) fn debug_trap_after_factory_call(value: bool) {
+    admission::debug_trap_after_factory_call(value);
+}
+
+// Every external call is fenced by its own transient attempt generation. A
+// stale response must return before phase updates or another charged call.
+macro_rules! admitted_call {
+    ($ticket:expr, $future:expr) => {
+        match $ticket.call($future).await {
+            Ok(result) => result,
+            Err(result) => return result,
+        }
     };
-}
-
-struct FinalizationGuard {
-    key: RelaySetupKey,
-}
-
-impl FinalizationGuard {
-    fn acquire(key: RelaySetupKey) -> Option<Self> {
-        ACTIVE_FINALIZATIONS.with(|active| {
-            if active.borrow_mut().insert(key) {
-                Some(Self { key })
-            } else {
-                None
-            }
-        })
-    }
-}
-
-impl Drop for FinalizationGuard {
-    fn drop(&mut self) {
-        ACTIVE_FINALIZATIONS.with(|active| {
-            active.borrow_mut().remove(&self.key);
-        });
-    }
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -912,15 +897,8 @@ async fn drive_relay_finalization(
     setup: &CanonicalRelaySetup,
     historian: Principal,
     management: &dyn ManagementClient,
+    ticket: admission::Ticket,
 ) -> RelaySetupNotifyResult {
-    let Some(_guard) = FinalizationGuard::acquire(key) else {
-        return get_entry(key).map(notify_for_entry).unwrap_or(
-            RelaySetupNotifyResult::FailedPreSpend {
-                message: "relay setup reservation no longer exists".to_string(),
-            },
-        );
-    };
-
     let initial_progress = match get_entry(key) {
         Some(RelaySetupEntry::Creating(progress))
             if matches!(
@@ -950,7 +928,7 @@ async fn drive_relay_finalization(
         );
     };
 
-    let observed = management.canister_status(relay_canister_id).await;
+    let observed = admitted_call!(ticket, management.canister_status(relay_canister_id));
     let current_progress = match require_phase(key, initial_phase) {
         Ok(progress) => progress,
         Err(result) => return result,
@@ -1006,8 +984,9 @@ async fn drive_relay_finalization(
         return result;
     }
 
-    let finalization_result = management
-        .update_settings(&jupiter_ic_clients::management::UpdateSettingsArgs {
+    let finalization_result = admitted_call!(
+        ticket,
+        management.update_settings(&jupiter_ic_clients::management::UpdateSettingsArgs {
             canister_id: relay_canister_id,
             settings: jupiter_ic_clients::management::CanisterSettings {
                 controllers: Some(Vec::new()),
@@ -1015,11 +994,11 @@ async fn drive_relay_finalization(
                 status_visibility: Some(StatusVisibility::Public),
             },
         })
-        .await;
+    );
     if let Err(result) = require_phase(key, RelayCreationPhase::FinalizationAttempted) {
         return result;
     }
-    let finalized_status = management.canister_status(relay_canister_id).await;
+    let finalized_status = admitted_call!(ticket, management.canister_status(relay_canister_id));
     let current_progress = match require_phase(key, RelayCreationPhase::FinalizationAttempted) {
         Ok(progress) => progress,
         Err(result) => return result,
@@ -1114,12 +1093,22 @@ async fn validate_neuron_recipients(
     key: RelaySetupKey,
     setup: &CanonicalRelaySetup,
     neuron_resolver: &dyn RelayNeuronResolver,
+    ticket: admission::Ticket,
 ) -> Result<(), RelaySetupNotifyResult> {
     for recipient in setup.surplus_recipients() {
         let RelaySurplusRecipient::Neuron { neuron_id, .. } = recipient else {
             continue;
         };
-        let resolution = neuron_resolver.neuron_staking_subaccount(*neuron_id).await;
+        let resolution = match ticket
+            .call(neuron_resolver.neuron_staking_subaccount(*neuron_id))
+            .await
+        {
+            Ok(resolution) => resolution,
+            Err(result) => {
+                remove_reservation(key, RelayCreationPhase::Reserved);
+                return Err(result);
+            }
+        };
         require_phase(key, RelayCreationPhase::Reserved)?;
         if resolution.is_err() {
             remove_reservation(key, RelayCreationPhase::Reserved);
@@ -1157,7 +1146,13 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
             RelaySetupEntry::Creating(RelayCreationProgress {
                 phase: RelayCreationPhase::RelayFunded | RelayCreationPhase::FinalizationAttempted,
                 ..
-            }) => drive_relay_finalization(key, &setup, historian, management).await,
+            }) => {
+                let Some(guard) = admission::Guard::acquire(key, admission::Lane::Completion)
+                else {
+                    return RelaySetupNotifyResult::Busy;
+                };
+                drive_relay_finalization(key, &setup, historian, management, guard.ticket()).await
+            }
             entry => notify_for_entry(entry),
         };
     }
@@ -1170,8 +1165,15 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     if let Some(message) = factory_blocked_reason(&config) {
         return RelaySetupNotifyResult::FailedPreSpend { message };
     }
+    if state::relay_creating_keys().len() >= MAX_CONCURRENT_FUNDED_RELAY_SETUPS {
+        return RelaySetupNotifyResult::Busy;
+    }
+    let Some(guard) = admission::Guard::acquire(key, admission::Lane::New) else {
+        return RelaySetupNotifyResult::Busy;
+    };
+    let ticket = guard.ticket();
     let setup_account = setup_account_for(historian, key);
-    let balance_e8s = match ledger.balance_of_e8s(setup_account).await {
+    let balance_e8s = match admitted_call!(ticket, ledger.balance_of_e8s(setup_account)) {
         Ok(balance) => balance,
         Err(error) => {
             return RelaySetupNotifyResult::FailedPreSpend {
@@ -1190,7 +1192,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
             shortfall_e8s: nominal - balance_e8s,
         };
     }
-    let fee_e8s = match ledger.fee_e8s().await {
+    let fee_e8s = match admitted_call!(ticket, ledger.fee_e8s()) {
         Ok(fee) => fee,
         Err(error) => {
             return RelaySetupNotifyResult::FailedPreSpend {
@@ -1198,7 +1200,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
             };
         }
     };
-    let rate = match cmc.get_icp_xdr_conversion_rate().await {
+    let rate = match admitted_call!(ticket, cmc.get_icp_xdr_conversion_rate()) {
         Ok(rate) => rate,
         Err(error) => {
             return RelaySetupNotifyResult::FailedPreSpend {
@@ -1221,7 +1223,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     if let Err(result) = reserve(key) {
         return result;
     }
-    if let Err(result) = validate_neuron_recipients(key, &setup, neuron_resolver).await {
+    if let Err(result) = validate_neuron_recipients(key, &setup, neuron_resolver, ticket).await {
         return result;
     }
     if let Err(result) = update_progress(key, RelayCreationPhase::Reserved, |progress| {
@@ -1230,6 +1232,10 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
         return result;
     }
     for target in setup.targets() {
+        if let Err(result) = ticket.check() {
+            remove_reservation(key, RelayCreationPhase::ProbingTargets);
+            return result;
+        }
         let cached_route =
             state::with_state(|state| state.cached_cycles_probe_routes.get(target).cloned());
         let result = probe_cycles_for_audience(
@@ -1237,9 +1243,16 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
             *target,
             cached_route,
             CyclesProbeAudience::AnyCanister,
-            cycles_probe_client,
+            &admission::Probe {
+                inner: cycles_probe_client,
+                ticket,
+            },
         )
         .await;
+        if let Err(result) = ticket.check() {
+            remove_reservation(key, RelayCreationPhase::ProbingTargets);
+            return result;
+        }
         if let Err(result) = require_phase(key, RelayCreationPhase::ProbingTargets) {
             return result;
         }
@@ -1286,14 +1299,15 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
         return result;
     }
     let cmc_id = config.cmc_canister_id.expect("static checks require CMC");
-    let transfer_result = ledger
-        .icrc1_transfer(transfer_arg(
+    let transfer_result = admitted_call!(
+        ticket,
+        ledger.icrc1_transfer(transfer_arg(
             key,
             cmc_deposit_account(cmc_id, historian),
             &cmc_record,
             Some(TOP_UP_CANISTER_MEMO.to_le_bytes().to_vec()),
         ))
-        .await;
+    );
     if let Err(result) = require_phase(key, RelayCreationPhase::CmcTransferPrepared) {
         return result;
     }
@@ -1321,7 +1335,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     }) {
         return result;
     }
-    let minted_cycles = cmc.notify_top_up(historian, cmc_block).await;
+    let minted_cycles = admitted_call!(ticket, cmc.notify_top_up(historian, cmc_block));
     if let Err(result) = require_phase(key, RelayCreationPhase::CmcTransferAccepted) {
         return result;
     }
@@ -1357,8 +1371,9 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     }) {
         return result;
     }
-    let create_result = management
-        .create_canister(
+    let create_result = admitted_call!(
+        ticket,
+        management.create_canister(
             &jupiter_ic_clients::management::CreateCanisterArgs {
                 settings: Some(jupiter_ic_clients::management::CanisterSettings {
                     controllers: Some(vec![historian]),
@@ -1368,7 +1383,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
             },
             config.relay_initial_cycles,
         )
-        .await;
+    );
     if let Err(result) = require_phase(key, RelayCreationPhase::CreateDispatched) {
         return result;
     }
@@ -1393,19 +1408,20 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
         .to_vec();
     let expected_hash =
         approved_relay_onchain_module_hash().expect("static checks require Relay hash");
-    let install_result = management
-        .install_code(&jupiter_ic_clients::management::InstallCodeArgs {
+    let install_result = admitted_call!(
+        ticket,
+        management.install_code(&jupiter_ic_clients::management::InstallCodeArgs {
             mode: jupiter_ic_clients::management::InstallMode::Install,
             canister_id: relay_canister_id,
             wasm_module: wasm,
             arg: relay_init_arg(&config, &setup),
         })
-        .await;
+    );
     if let Err(result) = require_phase(key, RelayCreationPhase::ChildCreated) {
         return result;
     }
     if let Err(install_error) = install_result {
-        let observed = management.canister_status(relay_canister_id).await;
+        let observed = admitted_call!(ticket, management.canister_status(relay_canister_id));
         if let Err(result) = require_phase(key, RelayCreationPhase::ChildCreated) {
             return result;
         }
@@ -1432,9 +1448,10 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     }) {
         return result;
     }
-    let remaining_balance = ledger
-        .balance_of_e8s(setup_account_for(historian, key))
-        .await;
+    let remaining_balance = admitted_call!(
+        ticket,
+        ledger.balance_of_e8s(setup_account_for(historian, key))
+    );
     if let Err(result) = require_phase(key, RelayCreationPhase::CodeInstalled) {
         return result;
     }
@@ -1448,7 +1465,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
             );
         }
     };
-    let funding_fee = ledger.fee_e8s().await;
+    let funding_fee = admitted_call!(ticket, ledger.fee_e8s());
     if let Err(result) = require_phase(key, RelayCreationPhase::CodeInstalled) {
         return result;
     }
@@ -1498,14 +1515,15 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     }) {
         return result;
     }
-    let funding_result = ledger
-        .icrc1_transfer(transfer_arg(
+    let funding_result = admitted_call!(
+        ticket,
+        ledger.icrc1_transfer(transfer_arg(
             key,
             relay_subaccount_one(relay_canister_id),
             &funding_record,
             None,
         ))
-        .await;
+    );
     if let Err(result) = require_phase(key, RelayCreationPhase::RelayFundingPrepared) {
         return result;
     }
@@ -1536,7 +1554,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     {
         return result;
     }
-    drive_relay_finalization(key, &setup, historian, management).await
+    drive_relay_finalization(key, &setup, historian, management, ticket).await
 }
 
 pub(crate) async fn notify_relay_configuration(args: RelaySetupArgs) -> RelaySetupNotifyResult {
@@ -1609,7 +1627,7 @@ mod tests {
     use jupiter_ic_clients::sns::{
         DeployedSns, ListDeployedSnsesResponse, ListSnsCanistersResponse,
     };
-    use std::collections::{BTreeMap, VecDeque};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::future::Future;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -1698,6 +1716,7 @@ mod tests {
     }
 
     fn reset() {
+        admission::reset_for_test();
         clear_setup_entries_for_debug();
         state::set_state(State::new(config(), 0));
     }
@@ -1747,19 +1766,27 @@ mod tests {
                         .collect::<Vec<_>>()
                 });
                 SETUP_ENTRY_READS.with(|count| count.set(0));
+                let admission_started = std::time::Instant::now();
+                let admission = reserve(key(30_000));
+                let admission_us = admission_started.elapsed().as_micros();
+                assert_eq!(SETUP_ENTRY_READS.with(|count| count.get()), 1);
                 if in_flight == 4 {
-                    assert_eq!(reserve(key(30_000)), Err(RelaySetupNotifyResult::Busy));
-                    assert_eq!(SETUP_ENTRY_READS.with(|count| count.get()), 1);
+                    assert_eq!(admission, Err(RelaySetupNotifyResult::Busy));
+                } else {
+                    assert!(admission.is_ok());
+                    remove_entry(key(30_000));
                 }
                 SETUP_ENTRY_READS.with(|count| count.set(0));
+                let reconcile_started = std::time::Instant::now();
                 reconcile_interrupted_creating_entries_after_upgrade();
+                let reconcile_us = reconcile_started.elapsed().as_micros();
                 let visited = SETUP_ENTRY_READS.with(|count| count.get());
                 assert_eq!(visited, in_flight as usize);
                 assert!(state::relay_creating_keys().is_empty());
                 for (k, entry) in completed {
                     assert_eq!(get_entry(k), Some(entry));
                 }
-                eprintln!("factory-index lifetime={lifetime} creating={in_flight} reconciliation_visits={visited} fixture_and_check_ms={}", started.elapsed().as_millis());
+                eprintln!("factory-index lifetime={lifetime} creating={in_flight} admission_us={admission_us} reconciliation_us={reconcile_us} reconciliation_visits={visited} fixture_and_check_ms={}", started.elapsed().as_millis());
             }
         }
     }
@@ -1925,6 +1952,7 @@ mod tests {
     struct MockCmc {
         rate_calls: AtomicUsize,
         notify_calls: AtomicUsize,
+        expire_after_notify: bool,
         rate_error: Option<String>,
         notify_error: Option<String>,
         minted_cycles: u128,
@@ -1995,6 +2023,9 @@ mod tests {
             _block_index: u64,
         ) -> Result<u128, jupiter_ic_clients::cmc::NotifyTopUpError> {
             self.notify_calls.fetch_add(1, Ordering::SeqCst);
+            if self.expire_after_notify {
+                admission::set_time_for_test(300);
+            }
             if let Some(error) = &self.notify_error {
                 Err(jupiter_ic_clients::cmc::NotifyTopUpError::Transport(
                     error.clone(),
@@ -2007,6 +2038,7 @@ mod tests {
 
     struct MockCyclesProbe {
         succeeds: bool,
+        expire_after_read: bool,
         calls: AtomicUsize,
         blackhole_calls: AtomicUsize,
     }
@@ -2255,6 +2287,9 @@ mod tests {
         ) -> Result<u128, jupiter_ic_clients::ClientError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.blackhole_calls.fetch_add(1, Ordering::SeqCst);
+            if self.expire_after_read {
+                admission::set_time_for_test(300);
+            }
             self.succeeds
                 .then_some(1_000_000)
                 .ok_or_else(|| jupiter_ic_clients::ClientError::Call("not observable".to_string()))
@@ -2373,6 +2408,7 @@ mod tests {
 
     struct MockNeuronResolver {
         calls: Mutex<Vec<u64>>,
+        expire_after_read: bool,
         unreadable: Option<u64>,
         expected_reserved_key: Option<RelaySetupKey>,
         reserved_observations: Mutex<Vec<bool>>,
@@ -2382,6 +2418,7 @@ mod tests {
         fn readable() -> Self {
             Self {
                 calls: Mutex::new(Vec::new()),
+                expire_after_read: false,
                 unreadable: None,
                 expected_reserved_key: None,
                 reserved_observations: Mutex::new(Vec::new()),
@@ -2393,6 +2430,9 @@ mod tests {
     impl RelayNeuronResolver for MockNeuronResolver {
         async fn neuron_staking_subaccount(&self, neuron_id: u64) -> Result<[u8; 32], String> {
             self.calls.lock().unwrap().push(neuron_id);
+            if self.expire_after_read {
+                admission::set_time_for_test(300);
+            }
             if let Some(key) = self.expected_reserved_key {
                 self.reserved_observations.lock().unwrap().push(matches!(
                     get_entry(key),
@@ -2609,12 +2649,14 @@ mod tests {
             ledger,
             MockCyclesProbe {
                 succeeds: probe_succeeds,
+                expire_after_read: false,
                 calls: AtomicUsize::new(0),
                 blackhole_calls: AtomicUsize::new(0),
             },
             MockCmc {
                 rate_calls: AtomicUsize::new(0),
                 notify_calls: AtomicUsize::new(0),
+                expire_after_notify: false,
                 rate_error: None,
                 notify_error: None,
                 minted_cycles: 2_000_000_000_000,
@@ -3633,6 +3675,7 @@ mod tests {
         let cmc = MockCmc {
             rate_calls: AtomicUsize::new(0),
             notify_calls: AtomicUsize::new(0),
+            expire_after_notify: false,
             rate_error: None,
             notify_error: None,
             minted_cycles: 2_000_000_000_000,
@@ -3841,6 +3884,7 @@ mod tests {
         let cmc = MockCmc {
             rate_calls: AtomicUsize::new(0),
             notify_calls: AtomicUsize::new(0),
+            expire_after_notify: false,
             rate_error: None,
             notify_error: None,
             minted_cycles: 2_000_000_000_000,
@@ -3888,11 +3932,337 @@ mod tests {
     }
 
     #[test]
-    fn same_key_async_notify_contention_has_one_workflow_and_one_in_progress_result() {
+    fn factory_preflight_twenty_target_supported_workload_has_call_budget_headroom() {
+        reset();
+        let (ledger, probe, cmc, management) = mocks(
+            MockLedger::new(
+                [775_000_000, 772_990_000],
+                [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+            ),
+            true,
+            None,
+        );
+        let result = block_on(notify_with_clients_for_historian(
+            setup_args((100..120).map(principal).collect()),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+        assert!(
+            matches!(result, RelaySetupNotifyResult::Active { .. }),
+            "{result:?}"
+        );
+        let calls = admission::last_calls_for_test();
+        assert!(
+            (20..=100).contains(&calls),
+            "supported 20-target workload calls={calls}"
+        );
+        eprintln!("factory-admission targets=20 recipients=1 external_calls={calls} call_ceiling=512 new_slots=4 completion_slots=2 aligned_window_seconds=60 attempts_per_lane=8");
+    }
+
+    #[test]
+    fn factory_preflight_unfunded_distinct_keys_have_a_bounded_attempt_budget() {
+        reset();
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([0; 100], []), true, None);
+        let mut busy = 0;
+        for n in 0..100_u64 {
+            let target = Principal::from_slice(&[vec![0x7f], n.to_be_bytes().to_vec()].concat());
+            let result = block_on(notify_with_clients_for_historian(
+                setup_args(vec![target]),
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            ));
+            if matches!(result, RelaySetupNotifyResult::Busy) {
+                busy += 1;
+            }
+        }
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 8);
+        assert_eq!(busy, 92);
+        assert!(state::with_relay_setup_entries_map(|map| map.is_empty()));
+        assert_eq!(ledger.fee_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn factory_preflight_pre_spend_failure_does_not_refund_the_rate_budget() {
+        reset();
+        let (ledger, probe, cmc, management) =
+            mocks(MockLedger::new([300_000_000; 100], []), false, None);
+        for _ in 0..100 {
+            let _ = block_on(notify_with_clients_for_historian(
+                setup_args(vec![principal(1)]),
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            ));
+        }
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 8);
+        assert_eq!(ledger.fee_calls.load(Ordering::SeqCst), 8);
+        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 8);
+        assert!(state::with_relay_setup_entries_map(|map| map.is_empty()));
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn factory_preflight_external_read_failures_consume_tokens_but_release_slots() {
+        for failed_read in 0..3 {
+            reset();
+            let ledger = if failed_read == 0 {
+                MockLedger::new([], [])
+            } else {
+                MockLedger::new([300_000_000; 8], []).with_fee_failures([failed_read == 1; 8])
+            };
+            let (ledger, probe, mut cmc, management) = mocks(ledger, true, None);
+            if failed_read == 2 {
+                cmc.rate_error = Some("unavailable".into());
+            }
+            for attempt in 0..9 {
+                let result = block_on(notify_with_clients_for_historian(
+                    setup_args(vec![principal(1)]),
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                ));
+                if attempt < 8 {
+                    assert!(matches!(
+                        result,
+                        RelaySetupNotifyResult::FailedPreSpend { .. }
+                    ));
+                } else {
+                    assert_eq!(result, RelaySetupNotifyResult::Busy);
+                }
+            }
+            assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 8);
+            assert!(debug_setup_entries().is_empty());
+            assert!(ledger.transfers.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn factory_preflight_expired_pre_spend_reads_release_only_their_reservation() {
+        for expire_neuron in [true, false] {
+            reset();
+            let args = RelaySetupArgs {
+                target_canister_ids: vec![principal(1)],
+                surplus_recipients: vec![neuron_recipient(7, vec![])],
+            };
+            let (ledger, mut probe, cmc, management) =
+                mocks(MockLedger::new([400_000_000], []), true, None);
+            probe.expire_after_read = !expire_neuron;
+            let mut resolver = MockNeuronResolver::readable();
+            resolver.expire_after_read = expire_neuron;
+            assert_eq!(
+                block_on(notify_with_clients_and_neuron_resolver(
+                    args.clone(),
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                    &resolver,
+                )),
+                RelaySetupNotifyResult::Busy
+            );
+            assert!(
+                debug_setup_entries().is_empty(),
+                "expired read must release pre-spend reservation"
+            );
+            assert!(state::relay_creating_keys().is_empty());
+            assert!(ledger.transfers.lock().unwrap().is_empty());
+            assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+            let fresh_ledger = MockLedger::new([0], []);
+            assert!(matches!(
+                block_on(notify_with_clients_and_neuron_resolver(
+                    args,
+                    principal(42),
+                    &fresh_ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                    &resolver,
+                )),
+                RelaySetupNotifyResult::BelowMinimum { .. }
+            ));
+            assert_eq!(fresh_ledger.balance_calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    fn factory_preflight_saturation_preserves_finalization_and_cheap_active_reads() {
+        reset();
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([0; 8], []), true, None);
+        for _ in 0..8 {
+            assert!(matches!(
+                block_on(notify_with_clients_for_historian(
+                    setup_args(vec![principal(2)]),
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                )),
+                RelaySetupNotifyResult::BelowMinimum { .. }
+            ));
+        }
+        let args = setup_args(vec![principal(1)]);
+        insert_resumable_setup(&args, RelayCreationPhase::RelayFunded, principal(80));
+        // The default mock starts controlled by Historian, then observes the
+        // finalized controllerless child. Exercise the protected paid tail,
+        // not just the cheap already-finalized observation.
+        for _ in 0..20 {
+            assert_eq!(
+                block_on(notify_with_clients_for_historian(
+                    args.clone(),
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                )),
+                RelaySetupNotifyResult::Active {
+                    relay_canister_id: principal(80)
+                }
+            );
+        }
+        assert_eq!(management.update_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(management.status_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 8);
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn factory_preflight_expiry_after_spend_never_releases_durable_evidence() {
+        reset();
+        let args = setup_args(vec![principal(1)]);
+        let key = CanonicalRelaySetup::canonicalize(
+            args.target_canister_ids.clone(),
+            args.surplus_recipients.clone(),
+        )
+        .unwrap()
+        .key();
+        let (ledger, probe, mut cmc, management) = mocks(
+            MockLedger::new([300_000_000], [LedgerOutcome::Accepted(10)]),
+            true,
+            None,
+        );
+        cmc.expire_after_notify = true;
+        assert_eq!(
+            block_on(notify_with_clients_for_historian(
+                args.clone(),
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            )),
+            RelaySetupNotifyResult::Busy
+        );
+        let Some(RelaySetupEntry::Creating(progress)) = get_entry(key) else {
+            panic!("expiry must preserve possible spend evidence");
+        };
+        assert_eq!(progress.phase, RelayCreationPhase::CmcTransferAccepted);
+        assert_eq!(progress.cmc_transfer.unwrap().block_index, Some(10));
+        assert_eq!(state::relay_creating_keys(), vec![key]);
+        admission::set_time_for_test(301);
+        assert!(matches!(
+            block_on(notify_with_clients_for_historian(
+                args,
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            )),
+            RelaySetupNotifyResult::InProgress {
+                phase: RelayCreationPhase::CmcTransferAccepted,
+                ..
+            }
+        ));
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn factory_preflight_expired_rate_callback_cannot_spend_or_replace_new_active_mapping() {
+        reset();
+        let args = setup_args(vec![principal(1)]);
+        let ledger = MockLedger::new([300_000_000], []);
+        let cmc = ReadBarrierCmc::new();
+        let (_, probe, _, management) = mocks(MockLedger::new([], []), true, None);
+        block_on(async {
+            let old = notify_with_clients_for_historian(
+                args.clone(),
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            );
+            futures::pin_mut!(old);
+            assert!(futures::poll!(old.as_mut()).is_pending());
+            admission::set_time_for_test(300);
+            let (new_ledger, new_probe, new_cmc, new_management) = mocks(
+                MockLedger::new(
+                    [300_000_000, 297_990_000],
+                    [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+                ),
+                true,
+                None,
+            );
+            let active = notify_with_clients_for_historian(
+                args.clone(),
+                principal(42),
+                &new_ledger,
+                &new_probe,
+                &new_cmc,
+                &new_management,
+            )
+            .await;
+            assert_eq!(
+                active,
+                RelaySetupNotifyResult::Active {
+                    relay_canister_id: principal(80)
+                }
+            );
+            for release in cmc.rate_releases.lock().unwrap().take().unwrap() {
+                release.send(()).unwrap();
+            }
+            assert_eq!(old.await, RelaySetupNotifyResult::Busy);
+            assert_eq!(
+                notify_with_clients_for_historian(
+                    args,
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                )
+                .await,
+                active
+            );
+        });
+        assert!(ledger.transfers.lock().unwrap().is_empty());
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn factory_preflight_same_key_is_singleflight_before_any_reservation() {
         reset();
         let args = setup_args(vec![principal(1)]);
         let ledger = MockLedger::new(
-            [300_000_000, 300_000_000, 297_990_000],
+            [300_000_000, 297_990_000],
             [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
         );
         let probe = YieldingCyclesProbe {
@@ -3931,18 +4301,29 @@ mod tests {
             &cmc,
             &management,
         );
-        let (first, second) = block_on(futures::future::join(first, second));
+        let (first, second) = block_on(async {
+            futures::pin_mut!(first);
+            assert!(futures::poll!(first.as_mut()).is_pending());
+            let second = second.await;
+            if let Some(releases) = cmc.rate_releases.lock().unwrap().take() {
+                for release in releases {
+                    let _ = release.send(());
+                }
+            }
+            (first.await, second)
+        });
         assert!(matches!(
             (&first, &second),
             (
                 RelaySetupNotifyResult::Active { .. },
-                RelaySetupNotifyResult::InProgress { .. }
+                RelaySetupNotifyResult::Busy
             ) | (
-                RelaySetupNotifyResult::InProgress { .. },
+                RelaySetupNotifyResult::Busy,
                 RelaySetupNotifyResult::Active { .. }
             )
         ));
-        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(cmc.rate_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 2);
         assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 1);
         assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
         assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
@@ -4870,6 +5251,7 @@ mod tests {
             mocks(MockLedger::new([400_000_000], []), true, None);
         let resolver = MockNeuronResolver {
             calls: Mutex::new(Vec::new()),
+            expire_after_read: false,
             unreadable: Some(42),
             expected_reserved_key: Some(key),
             reserved_observations: Mutex::new(Vec::new()),
@@ -5685,13 +6067,7 @@ mod tests {
             &cmc,
             &management,
         ));
-        assert_eq!(
-            same_key,
-            RelaySetupNotifyResult::InProgress {
-                phase: RelayCreationPhase::RelayFunded,
-                relay_canister_id: Some(relay_canister_id),
-            }
-        );
+        assert_eq!(same_key, RelaySetupNotifyResult::Busy);
         assert_eq!(management.inner.status_calls.load(Ordering::SeqCst), 0);
 
         let unrelated_args = setup_args(vec![principal(2)]);

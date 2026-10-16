@@ -45,9 +45,11 @@ static XRC_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static RELAY_ENABLED_HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static RELAY_ENABLED_DEBUG_HISTORIAN_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static CYCLE_BURNER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static NNS_GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+static ADMISSION_LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 const EVENT_HORIZON_PROXY_BYTES: &[u8] = &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1];
 const RELEVANT_STAKING_MAX_AMOUNT: u64 = 100_000_000;
@@ -92,7 +94,19 @@ fn nns_governance_wasm() -> Result<Vec<u8>> {
     support::wasm::build_wasm_cached_for_test(&NNS_GOVERNANCE_WASM, "mock-nns-governance", None)
 }
 fn relay_enabled_historian_wasm() -> Result<Vec<u8>> {
-    if let Some(bytes) = RELAY_ENABLED_HISTORIAN_WASM.get() {
+    if let Some(path) = std::env::var_os("JUPITER_HISTORIAN_RELEASE_TEST_WASM") {
+        return std::fs::read(path).context("read canonical Historian release test artifact");
+    }
+    build_relay_enabled_historian_wasm(false)
+}
+
+fn build_relay_enabled_historian_wasm(debug: bool) -> Result<Vec<u8>> {
+    let cache = if debug {
+        &RELAY_ENABLED_DEBUG_HISTORIAN_WASM
+    } else {
+        &RELAY_ENABLED_HISTORIAN_WASM
+    };
+    if let Some(bytes) = cache.get() {
         return Ok(bytes.clone());
     }
     let relay = relay_wasm()?;
@@ -112,16 +126,20 @@ fn relay_enabled_historian_wasm() -> Result<Vec<u8>> {
     std::fs::write(&relay_gz_path, gzip_status.stdout)?;
     let raw_hash = hex::encode(Sha256::digest(std::fs::read(&relay_path)?));
     let gz_hash = hex::encode(Sha256::digest(std::fs::read(&relay_gz_path)?));
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "--target",
-            "wasm32-unknown-unknown",
-            "--release",
-            "-p",
-            "jupiter-historian",
-            "--locked",
-        ])
+    let mut command = Command::new("cargo");
+    command.args([
+        "build",
+        "--target",
+        "wasm32-unknown-unknown",
+        "--release",
+        "-p",
+        "jupiter-historian",
+        "--locked",
+    ]);
+    if debug {
+        command.args(["--features", "debug_api"]);
+    }
+    let status = command
         .env("JUPITER_RELAY_WASM_PATH", &relay_gz_path)
         .env("JUPITER_RELAY_RAW_WASM_PATH", &relay_path)
         .env("JUPITER_RELAY_RAW_WASM_SHA256", &raw_hash)
@@ -133,7 +151,7 @@ fn relay_enabled_historian_wasm() -> Result<Vec<u8>> {
     }
     let path = workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_historian.wasm");
     let bytes = std::fs::read(&path)?;
-    let _ = RELAY_ENABLED_HISTORIAN_WASM.set(bytes.clone());
+    let _ = cache.set(bytes.clone());
     assert!(
         !relay.is_empty(),
         "non-debug relay wasm used for embedding must not be empty"
@@ -1891,6 +1909,149 @@ fn relay_setup_view(
 
 #[test]
 #[ignore]
+fn factory_admission_bounds_unfunded_outcalls_and_recovers_after_callback_traps() -> Result<()> {
+    // A real update/callback trap rolls back the callback, not the admission
+    // already committed before its Ledger read. No durable setup is created.
+    let wasm = build_relay_enabled_historian_wasm(true)?;
+    let ledger_wasm = support::wasm::build_wasm_cached_for_test(
+        &ADMISSION_LEDGER_WASM,
+        "mock-icrc-ledger",
+        Some("balance_read_counter"),
+    )?;
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
+    let ledger = pic.create_canister();
+    let historian = pic.create_canister();
+    for canister in [ledger, historian] {
+        pic.add_cycles(canister, 40_000_000_000_000);
+    }
+    pic.install_canister(ledger, ledger_wasm, vec![], None);
+    assert!(
+        pic.query_call(
+            ledger,
+            Principal::anonymous(),
+            "icrc1_balance_of",
+            encode_one(Account {
+                owner: historian,
+                subaccount: None
+            })?
+        )
+        .is_err(),
+        "counter fixture must actually execute reads as replicated updates"
+    );
+    let dependency = Principal::from_slice(&[0x7d, 1]);
+    pic.install_canister(
+        historian,
+        wasm,
+        encode_one(self_service_historian_init(
+            ledger, dependency, dependency, dependency,
+        ))?,
+        None,
+    );
+    let args = |n: u8| RelaySetupArgs {
+        target_canister_ids: vec![Principal::from_slice(&[0x7e, n])],
+        surplus_recipients: vec![],
+    };
+    let reads = || -> Result<u64> {
+        query_one(
+            &pic,
+            ledger,
+            Principal::anonymous(),
+            "debug_balance_read_count",
+            (),
+        )
+    };
+    let before = reads()?;
+    update_one::<_, ()>(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "debug_trap_after_factory_call",
+        true,
+    )?;
+    for n in 0..4 {
+        let error = update_one::<_, RelaySetupNotifyResult>(
+            &pic,
+            historian,
+            Principal::anonymous(),
+            "notify_relay_configuration",
+            args(n),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("debug factory callback interruption"));
+    }
+    update_one::<_, ()>(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "debug_trap_after_factory_call",
+        false,
+    )?;
+    let mut cleanup_released = 0;
+    for n in 0..30 {
+        let result: RelaySetupNotifyResult = update_one(
+            &pic,
+            historian,
+            Principal::anonymous(),
+            "notify_relay_configuration",
+            args(n),
+        )?;
+        match result {
+            RelaySetupNotifyResult::BelowMinimum { .. } => cleanup_released += 1,
+            RelaySetupNotifyResult::Busy => (),
+            other => bail!("unexpected post-trap admission: {other:?}"),
+        }
+    }
+    // CDK cleanup may release a read-only attempt after a trap. If it does
+    // not, its lease must expire below. Neither outcome refunds rate tokens.
+    assert!(cleanup_released <= 4);
+    assert_eq!(
+        reads()? - before,
+        4 + cleanup_released,
+        "denied calls must not reach the Ledger"
+    );
+    assert_eq!(relay_setup_entry_count(&pic, historian), 0);
+    pic.advance_time(Duration::from_secs(300));
+    tick_n(&pic, 5);
+    let before = reads()?;
+    let mut admitted = 0;
+    for n in 0..100 {
+        let result: RelaySetupNotifyResult = update_one(
+            &pic,
+            historian,
+            Principal::anonymous(),
+            "notify_relay_configuration",
+            args(n),
+        )?;
+        match result {
+            RelaySetupNotifyResult::BelowMinimum { .. } => admitted += 1,
+            RelaySetupNotifyResult::Busy => (),
+            other => bail!("unexpected admission result: {other:?}"),
+        }
+    }
+    assert_eq!(admitted, 8);
+    assert_eq!(reads()? - before, 8);
+    assert_eq!(relay_setup_entry_count(&pic, historian), 0);
+    pic.advance_time(Duration::from_secs(60));
+    let result: RelaySetupNotifyResult = update_one(
+        &pic,
+        historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        args(0),
+    )?;
+    assert!(matches!(
+        result,
+        RelaySetupNotifyResult::BelowMinimum { .. }
+    ));
+    assert_eq!(reads()? - before, 9);
+    eprintln!("factory-admission callback_traps=4 cleanup_released_reads={cleanup_released} denied_outcalls=0 unfunded_attempts=100 admitted_reads=8 durable_unfunded_entries=0");
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn zero_recipient_factory_child_executes_all_cycles_mode() -> Result<()> {
     let env = SelfServiceTestEnv::new(relay_enabled_historian_wasm()?)?;
     let args = RelaySetupArgs {
@@ -1919,6 +2080,36 @@ fn zero_recipient_factory_child_executes_all_cycles_mode() -> Result<()> {
         vec![],
     )?;
     assert!(env.pic.get_controllers(relay).is_empty());
+    assert!(env
+        .pic
+        .query_call(
+            env.historian,
+            Principal::anonymous(),
+            "debug_state",
+            encode_args(())?
+        )
+        .is_err());
+    assert!(env
+        .pic
+        .query_call(
+            relay,
+            Principal::anonymous(),
+            "debug_config",
+            encode_args(())?
+        )
+        .is_err());
+    if let Some(path) = std::env::var_os("JUPITER_RELAY_RELEASE_TEST_WASM") {
+        let expected = Sha256::digest(std::fs::read(path)?).to_vec();
+        let status = env
+            .pic
+            .canister_status(relay, None)
+            .map_err(|error| anyhow!("canonical child status: {error:?}"))?;
+        assert_eq!(
+            status.module_hash,
+            Some(expected),
+            "factory child differs from canonical compressed Relay"
+        );
+    }
     let relay_instances: ListCanistersResponse = query_one(
         &env.pic,
         env.historian,

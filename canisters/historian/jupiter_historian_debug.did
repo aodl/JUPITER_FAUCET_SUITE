@@ -420,6 +420,7 @@ service : (InitArgs) -> {
   debug_state : () -> (DebugState) query;
   debug_config : () -> (DebugConfig) query;
   debug_driver_tick : () -> ();
+  debug_trap_after_factory_call : (bool) -> ();
   debug_refresh_icp_xdr_rate_cache : () -> (DebugRefreshIcpXdrRateResult);
   debug_set_last_completed_cycles_sweep_ts : (opt nat64) -> ();
   debug_set_last_sns_discovery_ts : (opt nat64) -> ();
