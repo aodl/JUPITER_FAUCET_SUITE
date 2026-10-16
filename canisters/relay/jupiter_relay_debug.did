@@ -22,7 +22,6 @@ type Config = record {
   ledger_canister_id : principal;
   cmc_canister_id : principal;
   governance_canister_id : principal;
-  blackhole_canister_id : principal;
   sns_rewards_canister_id : principal;
   icp_index_canister_id : principal;
   cycles_probe_policy : CyclesProbePolicy;

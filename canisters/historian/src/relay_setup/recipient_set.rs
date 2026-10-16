@@ -4,7 +4,6 @@ use jupiter_memo_policy::MAX_RELAY_SURPLUS_MEMO_BYTES;
 use std::cmp::Ordering;
 
 pub(crate) const MAX_SURPLUS_RECIPIENTS: usize = 5;
-const MAX_STRUCTURAL_SURPLUS_RECIPIENTS: usize = u8::MAX as usize;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CanonicalSurplusRecipientSet(Vec<RelaySurplusRecipient>);
@@ -38,9 +37,9 @@ fn destination_cmp(left: &RelaySurplusRecipient, right: &RelaySurplusRecipient) 
 
 impl CanonicalSurplusRecipientSet {
     pub(crate) fn canonicalize(mut recipients: Vec<RelaySurplusRecipient>) -> Result<Self, String> {
-        if recipients.len() > MAX_STRUCTURAL_SURPLUS_RECIPIENTS {
+        if recipients.len() > MAX_SURPLUS_RECIPIENTS {
             return Err(format!(
-                "at most {MAX_STRUCTURAL_SURPLUS_RECIPIENTS} surplus recipients can be canonicalized"
+                "at most {MAX_SURPLUS_RECIPIENTS} surplus recipients are allowed"
             ));
         }
         for recipient in &recipients {
@@ -86,15 +85,6 @@ impl CanonicalSurplusRecipientSet {
         Ok(Self(recipients))
     }
 
-    pub(crate) fn validate_for_new_setup(&self) -> Result<(), String> {
-        if self.len() > MAX_SURPLUS_RECIPIENTS {
-            return Err(format!(
-                "at most {MAX_SURPLUS_RECIPIENTS} surplus recipients are allowed"
-            ));
-        }
-        Ok(())
-    }
-
     pub(crate) fn recipients(&self) -> &[RelaySurplusRecipient] {
         &self.0
     }
@@ -126,7 +116,7 @@ mod tests {
     #[test]
     fn validates_recipient_cardinality_and_destinations() {
         let zero = CanonicalSurplusRecipientSet::canonicalize(Vec::new()).unwrap();
-        assert!(zero.validate_for_new_setup().is_ok());
+        assert!(zero.recipients().is_empty());
         assert!(CanonicalSurplusRecipientSet::canonicalize(vec![
             RelaySurplusRecipient::Principal {
                 principal: Principal::anonymous(),
@@ -146,15 +136,10 @@ mod tests {
         );
         assert!(
             CanonicalSurplusRecipientSet::canonicalize(vec![principal_recipient(1, vec![])])
-                .unwrap()
-                .validate_for_new_setup()
                 .is_ok()
         );
         assert!(
-            CanonicalSurplusRecipientSet::canonicalize(vec![neuron_recipient(1, vec![])])
-                .unwrap()
-                .validate_for_new_setup()
-                .is_ok()
+            CanonicalSurplusRecipientSet::canonicalize(vec![neuron_recipient(1, vec![])]).is_ok()
         );
 
         let five = CanonicalSurplusRecipientSet::canonicalize(vec![
@@ -165,12 +150,11 @@ mod tests {
             neuron_recipient(u64::MAX, vec![]),
         ])
         .unwrap();
-        assert!(five.validate_for_new_setup().is_ok());
-        let six = CanonicalSurplusRecipientSet::canonicalize(
+        assert_eq!(five.len(), 5);
+        assert!(CanonicalSurplusRecipientSet::canonicalize(
             (1..=6).map(|id| neuron_recipient(id, vec![])).collect(),
         )
-        .unwrap();
-        assert!(six.validate_for_new_setup().is_err());
+        .is_err());
     }
 
     #[test]

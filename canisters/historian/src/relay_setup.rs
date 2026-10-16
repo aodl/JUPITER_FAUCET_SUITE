@@ -566,7 +566,10 @@ fn setup_view_for_historian(args: RelaySetupArgs, historian: Principal) -> Relay
         }
         let existing_entry = get_entry(key);
         if existing_entry.is_none() {
-            if let Err(message) = setup.validate_for_new_setup(&state.config, historian) {
+            // Format/cardinality always pass through canonicalize above.
+            // New-target eligibility must not hide an existing Active mapping
+            // when a configured dependency or external availability changes.
+            if let Err(message) = setup.validate_new_target_eligibility(&state.config, historian) {
                 return RelaySetupViewResult::Err(message);
             }
         }
@@ -1159,7 +1162,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     if let Err(message) = reject_reserved_canonical_target_set(&config, &setup) {
         return RelaySetupNotifyResult::FailedPreSpend { message };
     }
-    if let Err(message) = setup.validate_for_new_setup(&config, historian) {
+    if let Err(message) = setup.validate_new_target_eligibility(&config, historian) {
         return RelaySetupNotifyResult::FailedPreSpend { message };
     }
     if let Some(message) = factory_blocked_reason(&config) {
@@ -2749,26 +2752,22 @@ mod tests {
     }
 
     #[test]
-    fn canonical_relay_config_accepts_structural_sets_and_rejects_invalid_pairings() {
+    fn canonical_relay_config_uses_current_bounds_and_rejects_invalid_pairings() {
         let mut cfg = config();
         cfg.canonical_relay_canister_id = None;
         cfg.canonical_relay_targets.clear();
         assert_eq!(validate_canonical_relay_config(&cfg), Ok(()));
 
         cfg.canonical_relay_canister_id = Some(principal(70));
-        cfg.canonical_relay_targets = (0..255)
+        cfg.canonical_relay_targets = (0..20)
             .map(|index| Principal::from_slice(&[0x7f, (index >> 8) as u8, index as u8]))
             .collect();
         assert_eq!(validate_canonical_relay_config(&cfg), Ok(()));
         validate_config(&cfg);
-        cfg.canonical_relay_targets.truncate(21);
-        assert_eq!(validate_canonical_relay_config(&cfg), Ok(()));
-        validate_config(&cfg);
-
         cfg.canonical_relay_targets
             .push(cfg.canonical_relay_targets[0]);
         assert!(validate_canonical_relay_config(&cfg).is_err());
-        cfg.canonical_relay_targets = (0..256)
+        cfg.canonical_relay_targets = (0..21)
             .map(|index| Principal::from_slice(&[0x7f, (index >> 8) as u8, index as u8]))
             .collect();
         assert!(validate_canonical_relay_config(&cfg).is_err());
@@ -3214,6 +3213,54 @@ mod tests {
             assert!(matches!(
                 setup_view_for_historian(setup_args(vec![target]), historian,),
                 RelaySetupViewResult::Err(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn existing_entry_cannot_bypass_current_configuration_format_bounds() {
+        for args in [
+            setup_args((100..121).map(principal).collect()),
+            RelaySetupArgs {
+                target_canister_ids: vec![principal(1)],
+                surplus_recipients: (1..=6).map(|id| neuron_recipient(id, vec![])).collect(),
+            },
+        ] {
+            reset();
+            // Synthetic unsupported registry data is not a historical cohort
+            // that the unused factory needs to accept.
+            let key = RelaySetupKey::from_canonical_configuration(
+                &args.target_canister_ids,
+                &args.surplus_recipients,
+            );
+            insert_entry(
+                key,
+                RelaySetupEntry::Active {
+                    relay_canister_id: principal(80),
+                },
+            );
+            assert!(matches!(
+                setup_view_for_historian(args.clone(), principal(42)),
+                RelaySetupViewResult::Err(_)
+            ));
+            let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), false, None);
+            assert!(matches!(
+                block_on(notify_with_clients_for_historian(
+                    args,
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                )),
+                RelaySetupNotifyResult::FailedPreSpend { .. }
+            ));
+            assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(probe.calls.load(Ordering::SeqCst), 0);
+            assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+            assert!(matches!(
+                get_entry(key),
+                Some(RelaySetupEntry::Active { .. })
             ));
         }
     }

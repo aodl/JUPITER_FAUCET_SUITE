@@ -336,7 +336,11 @@ pub(crate) fn validate_config(cfg: &Config, self_id: Principal) -> Result<(), St
     validate_canister_principal("ledger_canister_id", cfg.ledger_canister_id)?;
     validate_canister_principal("cmc_canister_id", cfg.cmc_canister_id)?;
     validate_canister_principal("governance_canister_id", cfg.governance_canister_id)?;
-    validate_canister_principal("blackhole_canister_id", cfg.blackhole_canister_id)?;
+    if let jupiter_ic_clients::cycles_probe::CyclesProbePolicy::FixedBlackhole { canister_id } =
+        cfg.cycles_probe_policy
+    {
+        validate_canister_principal("blackhole_canister_id", canister_id)?;
+    }
     validate_canister_principal("sns_rewards_canister_id", cfg.sns_rewards_canister_id)?;
     validate_canister_principal("icp_index_canister_id", cfg.icp_index_canister_id)?;
 
@@ -838,7 +842,6 @@ mod tests {
             ledger_canister_id: canister_b(),
             cmc_canister_id: canister_b(),
             governance_canister_id: canister_b(),
-            blackhole_canister_id: canister_b(),
             sns_rewards_canister_id: canister_b(),
             icp_index_canister_id: canister_b(),
             cycles_probe_policy:
@@ -1214,6 +1217,22 @@ mod tests {
         assert!(validate_config(&cfg, self_id)
             .unwrap_err()
             .contains("duplicate surplus recipient target"));
+    }
+
+    #[test]
+    fn config_validation_uses_the_authoritative_probe_policy() {
+        let mut cfg = config();
+        for canister_id in [Principal::anonymous(), Principal::management_canister()] {
+            cfg.cycles_probe_policy =
+                jupiter_ic_clients::cycles_probe::CyclesProbePolicy::FixedBlackhole { canister_id };
+            assert!(validate_config(&cfg, canister_c()).is_err());
+        }
+        cfg.cycles_probe_policy = jupiter_ic_clients::cycles_probe::CyclesProbePolicy::Auto;
+        assert!(validate_config(&cfg, canister_c()).is_ok());
+        assert_eq!(
+            cfg.diagnostic_blackhole_canister_id(),
+            crate::mainnet_blackhole_id()
+        );
     }
 
     #[test]

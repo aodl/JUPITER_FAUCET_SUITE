@@ -190,6 +190,14 @@ Self-service setup accepts 1–20 external target canisters and either zero or 1
 
 Memory ID 26 is the one Relay setup map. Its key is the 32-byte canonical configuration hash and its value is the current `RelaySetupEntry`. Targets and Relay instances remain visible independently through generic tracking reasons and `list_canisters` filtering. A finalized child is immutable because it has zero controllers; it is never upgraded through Historian and is never queried to reconstruct configuration.
 
+Canonicalization uses that same 1–20 target / 0–5 recipient domain for every
+configuration, including reads and canonical Relay configuration. There is no
+wider pre-launch cohort. Current valid hash preimages, ordering and memo bytes
+are unchanged. New-target eligibility/probes are separate: an existing Active
+mapping remains readable if a target becomes unavailable or a configured
+dependency changes. Before upgrading, verify any stored canonical target list
+is within the current domain; unknown unsupported state is rejected, not resized.
+
 Memory 30 is its authoritative Creating-key index, containing at most four keys. Entry/index transitions commit together without an intervening await. Admission counts the bounded set and upgrade reconciliation visits only its entries, not every completed setup. Activation persists only the affected target/child registry records without cloning loaded histories. The developer confirmed the factory is unused (2026-10-16); the initial index may be initialized only over an empty memory-26 registry. Missing index over nonempty state rejects restoration. Canonical Historian history remains live and must be preserved by in-place upgrade.
 
 The deterministic setup subaccount is the 32-byte SHA-256 configuration hash. Every configuration uses the explicitly framed `jupiter-relay-configuration-v1\0` encoding documented in [`../../docs/relay-setup-recovery.md`](../../docs/relay-setup-recovery.md). Empty memos and zero recipients are encoded explicitly in that same format. Funding uses only aggregate ICP ledger `icrc1_balance_of`, with no index/history scan or payer attribution. Pricing remains target-based: notification computes `max(singleton nominal minimum, conversion + safety margin + configured seed + two ledger fees) + 0.25 ICP × extra targets`. Recipient count affects Relay's runtime allocation and transfer cap, not creation price. Deposits are not automatically discovered, refunded, or swept.

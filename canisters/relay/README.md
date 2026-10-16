@@ -44,7 +44,7 @@ The current self-service configuration is:
 ### Creation flow
 
 1. Choose the targets and surplus recipients in the frontend.
-2. Historian canonicalizes both lists and returns the deterministic setup account and its **nominal** minimum for that complete configuration. This query is not a live funding quote.
+2. Historian's authenticated setup-view update canonicalizes both lists and returns the deterministic setup account and its **nominal** minimum for that complete configuration. This bounded replicated read is not a live funding quote.
 3. Fund the setup account, then explicitly press **Create Relay**. Funding alone never starts creation.
 4. Historian verifies that every target is observable, creates the child canister, installs the reviewed Relay Wasm and immutable configuration, and sends the remaining eligible setup balance to the child's **subaccount 1**.
 5. Historian verifies the installed module/settings, atomically removes all controllers while retaining public logs and public status, directly audits that controllerless state, and records the configuration as active.
@@ -54,7 +54,7 @@ After activation, fund the **Relay itself**, not the setup account. Historian do
 
 Targets, recipient destinations, and exact memo bytes jointly define the immutable configuration. One explicitly framed canonical encoder covers every configuration, including empty memos and zero recipients. Order does not matter, but changing any target, destination, type, or memo produces a different setup account and Relay configuration. Repeating the exact same configuration returns its existing active Relay rather than creating a duplicate.
 
-Setup deposits are aggregate protocol deposits: Historian does not attribute them to individual payers and does not automatically refund an incorrectly funded configuration. When the user explicitly requests creation, Historian checks the live ICP Ledger fee and CMC conversion requirements before irreversible work. That authoritative update may require more ICP than the nominal query showed; the frontend preserves the live shortfall until the user funds it and explicitly retries, rather than lowering it on a later nominal refresh.
+Setup deposits are aggregate protocol deposits: Historian does not attribute them to individual payers and does not automatically refund an incorrectly funded configuration. When the user explicitly requests creation, Historian checks the live ICP Ledger fee and CMC conversion requirements before irreversible work. That update may require more ICP than the nominal setup view showed; the frontend preserves the live shortfall until the user funds it and explicitly retries, rather than lowering it on a later nominal refresh.
 
 The detailed factory state machine, funding formula, fail-closed reconciliation, `ManualRecoveryRequired` behavior, and deployment sequence are intentionally documented once in [`../../docs/relay-setup-recovery.md`](../../docs/relay-setup-recovery.md).
 
@@ -66,6 +66,12 @@ Relay must be able to measure cycles balances before it can allocate by burn. Se
 
 A manually installed Relay can instead set `blackhole_canister_id`, selecting a fixed blackhole route for non-self targets.
 
+`cycles_probe_policy` is the sole internal routing configuration. The public
+install argument and diagnostic blackhole value are projections: Fixed mode
+reports its configured principal; Auto reports the canonical diagnostic default
+without treating it as a fixed route. Neither the compact stable reward state
+nor the splitter journal stores a duplicate probe setting.
+
 A newly installed Relay is a replenishment controller, not an initial rescue mechanism: the first complete sample establishes a baseline and spends no default-account ICP. If a later baseline-only run contains a newly observable target, it seeds only that target's missing baseline and preserves established targets' accounting intervals. Targets should start with enough cycles to survive until a later sample can measure burn and fund them.
 
 ## Event Horizon acceleration
@@ -74,7 +80,7 @@ Relay uses the single declaration `X.u2qkpaqaaaaaaarqb7eacai.0-90`. Event Horizo
 
 A poke never starts a new default allocation job, takes a fresh cycles sample, establishes a burn baseline, or makes a new infrastructure-demand or surplus decision. Subaccount `0` is therefore intentionally relevant: existing active jobs may resume using their pinned economic plan, while new default-account funds remain for the next ordinary daily sample. Poke neither runs the independent SNS reward sweep nor advances Relay's daily cadence, and all durable splitter fencing and quarantine rules remain unchanged.
 
-Existing controllerless self-service Relays cannot be upgraded and remain polling-only. A future Relay using the new artifact needs only `X.<compact-relay-principal>.0-90`; no per-instance callback IDs are embedded in Wasm.
+Controllerless self-service Relays cannot be upgraded. A Relay built from this artifact needs only `X.<compact-relay-principal>.0-90`; no per-instance callback IDs are embedded in Wasm.
 
 If a scheduled target probe fails, Relay fails closed for that target. After three consecutive scheduled failures it may classify the target as unavailable **for that run only**, allowing other observable targets to progress. Temporary unavailability excludes the target from that run's allocation without erasing its previous baseline, Relay-minted correction, or carried recovery deficit. Later ticks keep probing it, and any successful sample resets the failure count.
 

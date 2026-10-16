@@ -2,7 +2,6 @@ use crate::state::Config;
 use candid::Principal;
 
 pub(crate) const MAX_RELAY_TARGETS: usize = 20;
-const MAX_STRUCTURAL_RELAY_TARGETS: usize = u8::MAX as usize;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CanonicalRelayTargetSet(Vec<Principal>);
@@ -15,7 +14,7 @@ impl CanonicalRelayTargetSet {
         historian: Principal,
     ) -> Result<Self, String> {
         let canonical = Self::canonicalize(targets)?;
-        canonical.validate_for_new_setup(config, historian)?;
+        canonical.validate_new_target_eligibility(config, historian)?;
         Ok(canonical)
     }
 
@@ -23,9 +22,9 @@ impl CanonicalRelayTargetSet {
         if targets.is_empty() {
             return Err("at least one target canister is required".to_string());
         }
-        if targets.len() > MAX_STRUCTURAL_RELAY_TARGETS {
+        if targets.len() > MAX_RELAY_TARGETS {
             return Err(format!(
-                "at most {MAX_STRUCTURAL_RELAY_TARGETS} target canisters can be canonicalized"
+                "at most {MAX_RELAY_TARGETS} target canisters are allowed"
             ));
         }
         for target in &targets {
@@ -43,16 +42,11 @@ impl CanonicalRelayTargetSet {
         Ok(Self(targets))
     }
 
-    pub(crate) fn validate_for_new_setup(
+    pub(crate) fn validate_new_target_eligibility(
         &self,
         config: &Config,
         historian: Principal,
     ) -> Result<(), String> {
-        if self.len() > MAX_RELAY_TARGETS {
-            return Err(format!(
-                "at most {MAX_RELAY_TARGETS} target canisters are allowed"
-            ));
-        }
         for target in &self.0 {
             validate_target(*target, config, historian)?;
         }
@@ -173,15 +167,15 @@ mod tests {
     }
 
     #[test]
-    fn structural_bounds_are_independent_of_self_service_policy() {
+    fn every_canonical_target_set_uses_the_current_product_domain() {
         let cfg = config();
         let historian = principal(50);
         let twenty = CanonicalRelayTargetSet::canonicalize(structural_principals(20)).unwrap();
-        assert!(twenty.validate_for_new_setup(&cfg, historian).is_ok());
-
-        let twenty_one = CanonicalRelayTargetSet::canonicalize(structural_principals(21)).unwrap();
-        assert!(twenty_one.validate_for_new_setup(&cfg, historian).is_err());
-        assert!(CanonicalRelayTargetSet::canonicalize(structural_principals(255)).is_ok());
+        assert!(twenty
+            .validate_new_target_eligibility(&cfg, historian)
+            .is_ok());
+        assert!(CanonicalRelayTargetSet::canonicalize(structural_principals(21)).is_err());
+        assert!(CanonicalRelayTargetSet::canonicalize(structural_principals(255)).is_err());
         assert!(CanonicalRelayTargetSet::canonicalize(structural_principals(256)).is_err());
     }
 

@@ -751,7 +751,6 @@ mod tests {
             ledger_canister_id: ledger_id(),
             cmc_canister_id: Principal::from_slice(&[2]),
             governance_canister_id: Principal::from_slice(&[3]),
-            blackhole_canister_id: Principal::from_slice(&[4]),
             sns_rewards_canister_id: Principal::from_slice(&[5]),
             icp_index_canister_id: Principal::from_slice(&[6]),
             cycles_probe_policy: CyclesProbePolicy::Auto,

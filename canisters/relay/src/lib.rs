@@ -153,9 +153,7 @@ fn public_surplus_recipients_from_args(
 }
 
 fn config_from_init_args(args: InitArgs) -> crate::state::Config {
-    let configured_blackhole = args.blackhole_canister_id;
-    let blackhole_canister_id = configured_blackhole.unwrap_or_else(mainnet_blackhole_id);
-    let cycles_probe_policy = match configured_blackhole {
+    let cycles_probe_policy = match args.blackhole_canister_id {
         Some(canister_id) => CyclesProbePolicy::FixedBlackhole { canister_id },
         None => CyclesProbePolicy::Auto,
     };
@@ -166,7 +164,6 @@ fn config_from_init_args(args: InitArgs) -> crate::state::Config {
         governance_canister_id: args
             .governance_canister_id
             .unwrap_or_else(mainnet_governance_id),
-        blackhole_canister_id,
         sns_rewards_canister_id: args
             .sns_rewards_canister_id
             .unwrap_or_else(mainnet_sns_rewards_id),
@@ -366,7 +363,7 @@ fn debug_config() -> DebugConfig {
         ledger_canister_id: st.config.ledger_canister_id,
         cmc_canister_id: st.config.cmc_canister_id,
         governance_canister_id: st.config.governance_canister_id,
-        blackhole_canister_id: st.config.blackhole_canister_id,
+        blackhole_canister_id: st.config.diagnostic_blackhole_canister_id(),
         sns_rewards_canister_id: st.config.sns_rewards_canister_id,
         icp_index_canister_id: st.config.icp_index_canister_id,
         cycles_probe_policy: st.config.cycles_probe_policy.clone(),
@@ -418,7 +415,7 @@ fn debug_set_cycles_sample(canister_id: Principal, cycles: u128) {
     crate::state::with_state_mut(|st| {
         let route = (canister_id != self_id).then_some(
             jupiter_ic_clients::cycles_probe::CyclesProbeRoute::Blackhole {
-                canister_id: st.config.blackhole_canister_id,
+                canister_id: st.config.diagnostic_blackhole_canister_id(),
             },
         );
         st.last_completed_cycles.insert(
@@ -728,14 +725,14 @@ mod tests {
     }
 
     #[test]
-    fn config_from_init_args_some_blackhole_uses_fixed_policy_and_legacy_field() {
+    fn config_from_init_args_some_blackhole_uses_fixed_policy_and_diagnostic_projection() {
         let fiduciary = principal("77deu-baaaa-aaaar-qb6za-cai");
         let mut args = sample_init_args();
         args.blackhole_canister_id = Some(fiduciary);
 
         let cfg = config_from_init_args(args);
 
-        assert_eq!(cfg.blackhole_canister_id, fiduciary);
+        assert_eq!(cfg.diagnostic_blackhole_canister_id(), fiduciary);
         assert_eq!(
             cfg.cycles_probe_policy,
             CyclesProbePolicy::FixedBlackhole {
@@ -745,14 +742,14 @@ mod tests {
     }
 
     #[test]
-    fn config_from_init_args_none_uses_auto_policy_and_legacy_default_only() {
+    fn config_from_init_args_none_uses_auto_policy_and_diagnostic_default_only() {
         let mut args = sample_init_args();
         args.blackhole_canister_id = None;
 
         let cfg = config_from_init_args(args);
 
         assert_eq!(
-            cfg.blackhole_canister_id,
+            cfg.diagnostic_blackhole_canister_id(),
             principal("77deu-baaaa-aaaar-qb6za-cai")
         );
         assert_eq!(cfg.cycles_probe_policy, CyclesProbePolicy::Auto);

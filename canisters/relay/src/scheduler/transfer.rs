@@ -1085,7 +1085,6 @@ mod tests {
             ledger_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
-            blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
             sns_rewards_canister_id: principal("alk7f-5aaaa-aaaar-qb4ra-cai"),
             icp_index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
             cycles_probe_policy: CyclesProbePolicy::FixedBlackhole {
@@ -1158,7 +1157,6 @@ mod tests {
             ledger_canister_id: principal("qaa6y-5yaaa-aaaaa-aaafa-cai"),
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
-            blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
             sns_rewards_canister_id: principal("alk7f-5aaaa-aaaar-qb4ra-cai"),
             icp_index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
             cycles_probe_policy: CyclesProbePolicy::FixedBlackhole {

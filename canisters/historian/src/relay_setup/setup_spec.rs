@@ -21,13 +21,13 @@ impl CanonicalRelaySetup {
         })
     }
 
-    pub(crate) fn validate_for_new_setup(
+    pub(crate) fn validate_new_target_eligibility(
         &self,
         config: &Config,
         historian: Principal,
     ) -> Result<(), String> {
-        self.targets.validate_for_new_setup(config, historian)?;
-        self.surplus_recipients.validate_for_new_setup()
+        self.targets
+            .validate_new_target_eligibility(config, historian)
     }
 
     pub(crate) fn targets(&self) -> &[Principal] {

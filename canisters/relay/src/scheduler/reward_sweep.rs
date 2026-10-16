@@ -1214,7 +1214,6 @@ mod tests {
                 ledger_canister_id: principal(10),
                 cmc_canister_id: principal(11),
                 governance_canister_id: principal(12),
-                blackhole_canister_id: principal(13),
                 sns_rewards_canister_id: principal(14),
                 icp_index_canister_id: principal(15),
                 cycles_probe_policy:

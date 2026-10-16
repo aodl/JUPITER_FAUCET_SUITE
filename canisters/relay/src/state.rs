@@ -24,13 +24,23 @@ pub struct Config {
     pub ledger_canister_id: Principal,
     pub cmc_canister_id: Principal,
     pub governance_canister_id: Principal,
-    pub blackhole_canister_id: Principal,
     pub sns_rewards_canister_id: Principal,
     pub icp_index_canister_id: Principal,
     pub cycles_probe_policy: CyclesProbePolicy,
     pub main_interval_seconds: u64,
     pub max_transfers_per_tick: Option<u32>,
     pub surplus_recipients: Vec<SurplusRecipient>,
+}
+
+impl Config {
+    // Preserve the diagnostic/init projection without a second source of
+    // truth for routing. Auto does not use this value as a fixed route.
+    pub(crate) fn diagnostic_blackhole_canister_id(&self) -> Principal {
+        match self.cycles_probe_policy {
+            CyclesProbePolicy::FixedBlackhole { canister_id } => canister_id,
+            CyclesProbePolicy::Auto => crate::mainnet_blackhole_id(),
+        }
+    }
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -401,7 +411,7 @@ pub(crate) fn runtime_config_log_line(cfg: &Config, self_id: Principal) -> Strin
         cfg.ledger_canister_id.to_text(),
         cfg.cmc_canister_id.to_text(),
         cfg.governance_canister_id.to_text(),
-        cfg.blackhole_canister_id.to_text(),
+        cfg.diagnostic_blackhole_canister_id().to_text(),
         cfg.sns_rewards_canister_id.to_text(),
         cfg.icp_index_canister_id.to_text(),
         cycles_probe_policy_text(&cfg.cycles_probe_policy),
@@ -738,7 +748,6 @@ mod tests {
             ledger_canister_id: principal("ryjl3-tyaaa-aaaaa-aaaba-cai"),
             cmc_canister_id: principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
             governance_canister_id: principal("rrkah-fqaaa-aaaaa-aaaaq-cai"),
-            blackhole_canister_id: principal("77deu-baaaa-aaaar-qb6za-cai"),
             sns_rewards_canister_id: principal("alk7f-5aaaa-aaaar-qb4ra-cai"),
             icp_index_canister_id: principal("qhbym-qaaaa-aaaaa-aaafq-cai"),
             cycles_probe_policy: CyclesProbePolicy::FixedBlackhole {
