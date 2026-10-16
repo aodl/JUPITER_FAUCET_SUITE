@@ -65,6 +65,27 @@ enum TransferIdentityOutcome {
     Stale,
 }
 
+fn set_dispatch_started(
+    job_id: u64,
+    expected: &PendingTransfer,
+    lease: MainLeaseToken,
+    started: bool,
+) -> bool {
+    state::with_state(|st| {
+        if !lease.is_current_in(st) {
+            return false;
+        }
+        let Some(job) = st.active_payout_job.as_ref() else {
+            return false;
+        };
+        if job.id != job_id || job.pending_transfer.as_ref() != Some(expected) {
+            return false;
+        }
+        state::set_pending_transfer_dispatch(job_id, expected, started);
+        true
+    })
+}
+
 async fn transfer_identity_with_one_retry(
     ledger: &impl LedgerClient,
     job_id: u64,
@@ -72,55 +93,42 @@ async fn transfer_identity_with_one_retry(
     first_arg: TransferArg,
     second_arg: TransferArg,
 ) -> TransferIdentityOutcome {
-    let first = transfer_once(ledger, first_arg).await;
-    if !pending_transfer_matches(job_id, expected) {
-        return TransferIdentityOutcome::Stale;
-    }
-    match first {
-        TransferAttemptOutcome::Accepted(block_index) => {
-            TransferIdentityOutcome::Accepted(block_index)
+    let lease = MainLeaseToken::capture();
+    for (attempt, arg) in [first_arg, second_arg].into_iter().enumerate() {
+        let prior_uncertainty = state::pending_transfer_may_have_dispatched(job_id, expected);
+        // This write commits with the outgoing call, before the callback can trap.
+        if !set_dispatch_started(job_id, expected, lease, true) {
+            return TransferIdentityOutcome::Stale;
         }
-        TransferAttemptOutcome::AcceptedWithUnusableBlockIndex => {
-            TransferIdentityOutcome::AcceptedWithUnusableBlockIndex
+        let outcome = transfer_once(ledger, arg).await;
+        if !lease.is_current() || !pending_transfer_matches(job_id, expected) {
+            return TransferIdentityOutcome::Stale;
         }
-        TransferAttemptOutcome::DefiniteNoDebit { retryable: false } => {
-            TransferIdentityOutcome::DefiniteNoDebit
-        }
-        TransferAttemptOutcome::DefiniteNoDebit { retryable: true } => {
-            let second = transfer_once(ledger, second_arg).await;
-            if !pending_transfer_matches(job_id, expected) {
-                return TransferIdentityOutcome::Stale;
+        match outcome {
+            TransferAttemptOutcome::Accepted(block) => {
+                return TransferIdentityOutcome::Accepted(block)
             }
-            match second {
-                TransferAttemptOutcome::Accepted(block_index) => {
-                    TransferIdentityOutcome::Accepted(block_index)
-                }
-                TransferAttemptOutcome::AcceptedWithUnusableBlockIndex => {
-                    TransferIdentityOutcome::AcceptedWithUnusableBlockIndex
-                }
-                TransferAttemptOutcome::DefiniteNoDebit { .. } => {
-                    TransferIdentityOutcome::DefiniteNoDebit
-                }
-                TransferAttemptOutcome::Uncertain => TransferIdentityOutcome::Uncertain,
+            TransferAttemptOutcome::AcceptedWithUnusableBlockIndex => {
+                return TransferIdentityOutcome::AcceptedWithUnusableBlockIndex;
             }
-        }
-        TransferAttemptOutcome::Uncertain => {
-            let second = transfer_once(ledger, second_arg).await;
-            if !pending_transfer_matches(job_id, expected) {
-                return TransferIdentityOutcome::Stale;
-            }
-            match second {
-                TransferAttemptOutcome::Accepted(block_index) => {
-                    TransferIdentityOutcome::Accepted(block_index)
+            TransferAttemptOutcome::DefiniteNoDebit { retryable } => {
+                // A rejection disproves only this dispatch, not an earlier unknown
+                // one. In particular TooOld cannot authorize a fresh fallback.
+                if !prior_uncertainty && !set_dispatch_started(job_id, expected, lease, false) {
+                    return TransferIdentityOutcome::Stale;
                 }
-                TransferAttemptOutcome::AcceptedWithUnusableBlockIndex => {
-                    TransferIdentityOutcome::AcceptedWithUnusableBlockIndex
+                if !retryable || attempt == 1 {
+                    return if prior_uncertainty {
+                        TransferIdentityOutcome::Uncertain
+                    } else {
+                        TransferIdentityOutcome::DefiniteNoDebit
+                    };
                 }
-                TransferAttemptOutcome::DefiniteNoDebit { .. }
-                | TransferAttemptOutcome::Uncertain => TransferIdentityOutcome::Uncertain,
             }
+            TransferAttemptOutcome::Uncertain => {}
         }
     }
+    TransferIdentityOutcome::Uncertain
 }
 
 fn fresh_transition_created_at_time(
@@ -173,11 +181,13 @@ fn stage_raw_fallback_after_definite_rejection(
         notification.transfer_memo = Some(Vec::new());
         notification.destination_subaccount = None;
         notification.neuron_id = None;
-        job.pending_transfer = Some(PendingTransfer {
+        let staged = PendingTransfer {
             notification,
             created_at_time_nanos,
             phase: PendingTransferPhase::AwaitingTransfer,
-        });
+        };
+        state::set_pending_transfer_dispatch(job.id, &staged, false);
+        job.pending_transfer = Some(staged);
         Ok(true)
     })
 }
@@ -247,7 +257,7 @@ fn transition_refunded_beneficiary_to_raw_fallback(
             return RefundFallbackTransition::InvariantBroken;
         };
         job.gross_outflow_e8s = released_gross_outflow_e8s;
-        job.pending_transfer = Some(PendingTransfer {
+        let staged = PendingTransfer {
             notification: PendingNotification {
                 kind: TransferKind::CyclesTopUpRawFallback,
                 beneficiary: accepted.beneficiary,
@@ -261,7 +271,9 @@ fn transition_refunded_beneficiary_to_raw_fallback(
             },
             created_at_time_nanos,
             phase: PendingTransferPhase::AwaitingTransfer,
-        });
+        };
+        state::set_pending_transfer_dispatch(job.id, &staged, false);
+        job.pending_transfer = Some(staged);
         RefundFallbackTransition::Staged
     })
 }
@@ -277,28 +289,25 @@ fn record_accepted_transfer_with_unusable_block_index(
         if job.id != job_id || job.pending_transfer.as_ref() != Some(expected) {
             return false;
         }
-        let Some(pending) = job.pending_transfer.take() else {
+        let Some(pending) = job.pending_transfer.as_ref() else {
             return false;
         };
-        let accounting_broken = match job
+        let total = match job
             .gross_outflow_e8s
             .checked_add(pending.notification.gross_share_e8s)
         {
-            Some(total) if total <= job.pot_start_e8s => {
-                job.gross_outflow_e8s = total;
-                false
-            }
-            _ => {
-                // The ledger accepted the transfer, so conservatively reserve every remaining e8
-                // rather than risk releasing accepted value into remainder cleanup.
-                job.gross_outflow_e8s = job.pot_start_e8s;
-                true
-            }
+            Some(total) if total <= job.pot_start_e8s => total,
+            // Preserve the unresolved identity and halt instead of disguising
+            // invalid accounting as a successfully exhausted tranche.
+            _ => return true,
         };
+        job.gross_outflow_e8s = total;
         if pending.notification.kind.is_beneficiary_payout() {
             job.ambiguous_topups = job.ambiguous_topups.saturating_add(1);
         }
-        accounting_broken
+        job.pending_transfer = None;
+        state::clear_pending_transfer_dispatch();
+        false
     })
 }
 
@@ -323,12 +332,7 @@ fn reserve_ambiguous_awaiting_transfer_gross(
         let Some(pending) = job.pending_transfer.as_ref() else {
             return AmbiguousPendingGrossReservation::NotApplicable;
         };
-        if pending.phase != PendingTransferPhase::AwaitingTransfer
-            || !matches!(
-                pending.notification.kind,
-                TransferKind::CyclesTopUpRawFallback | TransferKind::RemainderToRelay
-            )
-        {
+        if pending.phase != PendingTransferPhase::AwaitingTransfer {
             return AmbiguousPendingGrossReservation::NotApplicable;
         }
 
@@ -340,21 +344,20 @@ fn reserve_ambiguous_awaiting_transfer_gross(
                 job.gross_outflow_e8s = total;
                 AmbiguousPendingGrossReservation::Reserved
             }
-            _ => {
-                job.gross_outflow_e8s = job.pot_start_e8s;
-                AmbiguousPendingGrossReservation::InvariantBroken
-            }
+            _ => AmbiguousPendingGrossReservation::InvariantBroken,
         }
     })
 }
 
-fn reserve_then_clear_ambiguous_awaiting_transfer(job_id: u64, expected: &PendingTransfer) {
+fn reserve_then_clear_ambiguous_awaiting_transfer(job_id: u64, expected: &PendingTransfer) -> bool {
     if reserve_ambiguous_awaiting_transfer_gross(job_id, expected)
         == AmbiguousPendingGrossReservation::InvariantBroken
     {
         state::latch_forced_rescue_reason(ForcedRescueReason::AccountingInvariantBroken);
+        return false;
     }
     clear_pending_transfer(job_id, expected, PendingTransferTerminalStatus::Ambiguous);
+    true
 }
 
 fn is_proven_refund_with_block(outcome: &NotifyAttemptOutcome) -> bool {
@@ -385,6 +388,7 @@ pub(super) async fn drive_pending_transfer(
     now_nanos: u64,
     now_secs: u64,
 ) -> bool {
+    let lease = MainLeaseToken::capture();
     let mut fallback_transitions = 0u8;
     loop {
         let Some((job_id, staged)) = current_pending_transfer() else {
@@ -396,8 +400,7 @@ pub(super) async fn drive_pending_transfer(
                 if !created_at_time_is_valid_for_ledger(staged.created_at_time_nanos, now_nanos) {
                     // Once the created_at_time expires we can no longer safely distinguish “never accepted”
                     // from “accepted but the reply was lost”, so we surface this as ambiguous rather than failed.
-                    reserve_then_clear_ambiguous_awaiting_transfer(job_id, &staged);
-                    return true;
+                    return reserve_then_clear_ambiguous_awaiting_transfer(job_id, &staged);
                 }
 
                 let to = deposit_account_for_pending(cmc_id, &staged.notification);
@@ -450,14 +453,14 @@ pub(super) async fn drive_pending_transfer(
                         return true;
                     }
                     TransferIdentityOutcome::Uncertain => {
-                        reserve_then_clear_ambiguous_awaiting_transfer(job_id, &staged);
-                        return true;
+                        return reserve_then_clear_ambiguous_awaiting_transfer(job_id, &staged);
                     }
                     TransferIdentityOutcome::AcceptedWithUnusableBlockIndex => {
                         if record_accepted_transfer_with_unusable_block_index(job_id, &staged) {
                             state::latch_forced_rescue_reason(
                                 ForcedRescueReason::AccountingInvariantBroken,
                             );
+                            return false;
                         }
                         return true;
                     }
@@ -490,7 +493,7 @@ pub(super) async fn drive_pending_transfer(
                         "persistence batch must be dropped before neuron claim/refresh"
                     );
                     let _ = governance.claim_or_refresh_neuron(neuron_id).await;
-                    if !pending_transfer_matches(job_id, &accepted) {
+                    if !lease.is_current() || !pending_transfer_matches(job_id, &accepted) {
                         return false;
                     }
                 }
@@ -500,7 +503,7 @@ pub(super) async fn drive_pending_transfer(
         }
 
         let first_notify = notify_once(cmc, job_id, &accepted).await;
-        if !pending_transfer_matches(job_id, &accepted) {
+        if !lease.is_current() || !pending_transfer_matches(job_id, &accepted) {
             return false;
         }
         if matches!(first_notify, NotifyAttemptOutcome::Succeeded) {
@@ -544,7 +547,7 @@ pub(super) async fn drive_pending_transfer(
         // final classification without risking an extra outflow. A proven refund is already
         // terminal and deliberately bypasses this second notification.
         let second_notify = notify_once(cmc, job_id, &accepted).await;
-        if !pending_transfer_matches(job_id, &accepted) {
+        if !lease.is_current() || !pending_transfer_matches(job_id, &accepted) {
             return false;
         }
         if matches!(second_notify, NotifyAttemptOutcome::Succeeded) {

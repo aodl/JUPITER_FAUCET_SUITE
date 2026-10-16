@@ -231,6 +231,17 @@ struct TransferRecord {
     result: String,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct TransferAttemptRecord {
+    from_subaccount: Option<[u8; 32]>,
+    to: Account,
+    amount: Nat,
+    fee: Option<Nat>,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+    result: String,
+}
+
 type NeuronMinimal = Neuron;
 
 const NNS_NEURON_VISIBILITY_PUBLIC: i32 = 2;
@@ -412,6 +423,8 @@ fn set_neuron_visibility_public(
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 enum DebugNextTransferError {
+    PassThrough,
+    AcceptThenTrap,
     TemporarilyUnavailable,
     TooOld,
     CreatedInFuture { ledger_time: u64 },
@@ -715,6 +728,16 @@ impl FaucetEnv {
         )
     }
 
+    fn set_real_trap_after_successful_transfers(&self, n: Option<u32>) -> Result<()> {
+        update_one(
+            &self.pic,
+            self.faucet,
+            Principal::anonymous(),
+            "debug_set_real_trap_after_successful_transfers",
+            n,
+        )
+    }
+
     fn rescue_tick(&self) -> Result<()> {
         update_noargs::<()>(
             &self.pic,
@@ -839,6 +862,16 @@ impl FaucetEnv {
             self.ledger,
             Principal::anonymous(),
             "debug_transfers",
+            (),
+        )
+    }
+
+    fn ledger_attempts(&self) -> Result<Vec<TransferAttemptRecord>> {
+        query_one(
+            &self.pic,
+            self.ledger,
+            Principal::anonymous(),
+            "debug_transfer_attempts",
             (),
         )
     }
@@ -1988,6 +2021,78 @@ fn faucet_raw_icp_memo_directive_allows_empty_transfer_memo_after_dot() -> Resul
 
     Ok(())
 }
+#[test]
+#[ignore]
+fn faucet_callback_trap_then_too_old_preserves_other_tranche() -> Result<()> {
+    let env = FaucetEnv::new_with_init_overrides(|init| {
+        init.main_interval_seconds = Some(7 * 24 * 60 * 60);
+        init.rescue_interval_seconds = Some(7 * 24 * 60 * 60);
+    })?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_payout(100_000_000)?;
+    env.credit_payout(100_000_000)?;
+    env.append_pending_funding_tranches()?;
+    env.set_real_trap_after_successful_transfers(Some(1))?;
+    let trapped = update_noargs::<()>(
+        &env.pic,
+        env.faucet,
+        Principal::anonymous(),
+        "debug_main_tick",
+    );
+    assert!(
+        trapped.is_err(),
+        "must exercise a real caller callback trap"
+    );
+    assert_eq!(env.ledger_transfers()?.len(), 1);
+    assert_eq!(
+        icrc1_balance(&env.pic, env.ledger, &env.accounts.payout)?,
+        100_000_000
+    );
+    assert!(env.state()?.active_payout_job_present);
+    assert!(env.notifications()?.is_empty());
+
+    env.set_real_trap_after_successful_transfers(None)?;
+    // A Ledger can reject an aged identity before the caller's local window
+    // closes. Rejection of this retry says nothing about its earlier debit.
+    env.pic.advance_time(Duration::from_secs(24 * 60 * 60 - 60));
+    env.set_ledger_next_error(Some(DebugNextTransferError::TooOld))?;
+    env.set_main_lock_expires_at_ts(Some(0))?;
+    env.main_tick()?;
+    assert_eq!(
+        env.ledger_transfers()?.len(),
+        1,
+        "no fresh raw fallback or remainder debit"
+    );
+    assert_eq!(
+        icrc1_balance(&env.pic, env.ledger, &env.accounts.payout)?,
+        100_000_000
+    );
+    let attempts = env.ledger_attempts()?;
+    assert_eq!(attempts.len(), 2);
+    let mut original = attempts[0].clone();
+    original.result = attempts[1].result.clone();
+    assert_eq!(original, attempts[1], "all retry identity bytes must match");
+    assert_eq!(attempts[1].result, "TooOld");
+    let summary = env.summary()?;
+    assert_eq!(summary.ambiguous_topups, 1);
+    assert_eq!(summary.topped_up_count, 0);
+    assert_eq!(summary.remainder_to_relay_e8s, 0);
+    env.main_tick()?;
+    assert_eq!(
+        env.ledger_transfers()?.len(),
+        2,
+        "second tranche remains processable"
+    );
+    assert_eq!(env.notifications()?.len(), 1);
+    assert_eq!(
+        icrc1_balance(&env.pic, env.ledger, &env.accounts.payout)?,
+        0
+    );
+    Ok(())
+}
+
 #[test]
 #[ignore]
 fn faucet_upgrade_rejects_current_state_with_active_payout_job() -> Result<()> {
@@ -3874,6 +3979,51 @@ fn faucet_stable_payload(env: &FaucetEnv) -> Vec<u8> {
     StableCell::<Vec<u8>, _>::init(manager.get(MemoryId::new(0)), Vec::new())
         .get()
         .clone()
+}
+
+#[test]
+#[ignore]
+fn faucet_reviewed_predecessor_root_upgrades_without_schema_or_value_replacement() -> Result<()> {
+    use ic_stable_structures::{
+        memory_manager::{MemoryId, MemoryManager},
+        StableCell,
+    };
+    let bytes = hex::decode(include_str!("fixtures/faucet-5130c35-quiescent-root.hex").trim())?;
+    assert_eq!(
+        hex::encode(sha2::Sha256::digest(&bytes)),
+        "eb9034aace621e9f8ad2732c0b6a9b4ef9d7d5a7980bf3485395b10940e6e3af"
+    );
+    let env = FaucetEnv::new()?;
+    let wasm = faucet_wasm()?;
+    env.advance_time_and_tick(2, 2);
+    env.pic
+        .stop_canister(env.faucet, None)
+        .map_err(|e| anyhow!("{e:?}"))?;
+    let memory = std::rc::Rc::new(RefCell::new(env.pic.get_stable_memory(env.faucet)));
+    {
+        let manager = MemoryManager::init(memory.clone());
+        let mut cell = StableCell::<Vec<u8>, _>::init(manager.get(MemoryId::new(0)), Vec::new());
+        cell.set(bytes.clone());
+    }
+    // The stopped test canister cannot overwrite offline predecessor bytes.
+    env.pic.set_stable_memory(
+        env.faucet,
+        memory.borrow().clone(),
+        pocket_ic::common::rest::BlobCompression::NoCompression,
+    );
+    env.pic
+        .upgrade_canister(env.faucet, wasm, encode_args(())?, None)
+        .map_err(|e| anyhow!("predecessor-root upgrade failed: {e:?}"))?;
+    assert_eq!(
+        faucet_stable_payload(&env),
+        bytes,
+        "no-argument upgrade preserves every root byte"
+    );
+    env.pic
+        .start_canister(env.faucet, None)
+        .map_err(|e| anyhow!("{e:?}"))?;
+    assert!(!env.state()?.active_payout_job_present);
+    Ok(())
 }
 
 fn faucet_stable_field(bytes: &[u8], name: &str) -> Result<candid::types::value::IDLValue> {

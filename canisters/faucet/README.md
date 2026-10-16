@@ -219,7 +219,7 @@ The detailed reward-environment caveats and the rationale for the PocketIC whale
 
 At the end of a payout job, any spendable remainder is sent as raw ICP to the build-time canonical Jupiter Relay's default ICP account. The transfer uses an empty memo, does not call the CMC, and explicitly does **not** use Relay subaccount 1.
 
-Internally the faucet tracks `gross_outflow_e8s` as **Ledger-accepted outflow plus narrowly scoped conservative reservations** for ambiguous or expired raw-fallback and Relay-cleanup identities. Only allocations proven not to have been committed by the Ledger are automatically part of the remainder. A definitely rejected raw fallback therefore leaves its gross credit eligible for Relay cleanup, while an ambiguous or expired raw fallback is reserved and is not swept. Likewise, an ambiguous or expired `RemainderToRelay` Ledger identity is not replaced with a fresh cleanup identity. This can leave actual ICP in the payout account when an ambiguous transfer did not land, but it prevents later funding-tranche liquidity from funding a duplicate allocation. The longstanding ambiguity accounting for original beneficiary, explicit raw-ICP, and neuron transfers is intentionally unchanged.
+Internally the faucet tracks `gross_outflow_e8s` as Ledger-accepted outflow plus conservative gross reservations for every ambiguous or expired transfer identity: original beneficiary, raw-ICP, neuron, raw-fallback and Relay-cleanup transfers. Only allocations proven not to have been committed across their entire dispatch history are available for remainder routing. An unresolved identity is not replaced with a fresh identity. This can leave actual ICP unused when an ambiguous transfer did not land, but protects later funding-tranche liquidity. Reservations are not confirmed-delivery counters.
 
 ### 6) A computed share at or below the fee is not a failure
 
@@ -330,7 +330,7 @@ An active payout job persists:
 - the scan cursor (`next_start`)
 - aggregate counters used for the eventual summary
 - CMC attempt / success counters used by rescue heuristics
-- the currently in-flight top-up phase (`AwaitingTransfer` vs `TransferAccepted`) together with the original `created_at_time`, so ordinary scheduler retries preserve the Ledger identity
+- the currently in-flight top-up phase (`AwaitingTransfer` vs `TransferAccepted`), original `created_at_time`, and dispatch provenance, so ordinary scheduler retries preserve the Ledger identity and prior uncertainty
 
 The runtime still does **not** buffer an unbounded deferred retry queue; it only persists the single in-flight transfer/notify phase for the active job. That keeps state bounded, and the faucet's recovery model remains cadence-based after an ordinary failed tick: interrupted work is preserved rather than discarded, then retried on the next available scheduler opportunity.
 
@@ -346,6 +346,12 @@ Typed terminal `TransactionTooOld`, `InvalidTransaction`, and `Refunded` replies
 ### Duplicate-proof behavior
 
 If the ledger replies with `Duplicate`, the faucet reuses the returned block index and continues with `notify_top_up` instead of sending a second transfer. Immediate transfer retries reuse the same transfer identity (`memo` + `created_at_time`) so duplicate detection remains safe.
+
+Before dispatch, the Faucet persists that the identity may execute. A later typed rejection (including `TooOld`) cannot disprove an earlier unresolved dispatch. Only a clean first dispatch with no older uncertainty permits definite-rejection fallback; a proven CMC refund retains its separate checked refund/fee rules. Missing dispatch provenance is conservative, not “never sent.” The strict current-V1 decoder and active-job upgrade prohibition remain unchanged: deploy only at the existing quiescent boundary, never reinstall or assume an existing pending transfer was not dispatched.
+
+Stable memory 0 retains the byte-exact V1 root, and memory 1 retains the skip-range map. New memory 2 holds at most one dispatch record, bound to the exact job and pending transfer. Staging, dispatch marking and terminal clearing update that record synchronously with the matching root operation, without an intervening await. Missing or mismatched evidence means possible prior dispatch; only an explicitly prepared matching record proves a fresh identity. This separate cell avoids changing even the nested type encoding of the supported V1 root.
+
+Every unresolved original or fallback transfer reserves its entire gross allocation, including the Ledger fee, before clearing the pending phase. It is not counted as confirmed delivery. Remainder routing uses only the tranche's uncommitted budget, so a partial ambiguous allocation can still leave a smaller legitimate remainder, but cannot borrow from later tranches. If the Ledger did not actually debit, conservative reservation can leave funds unused; there is no automatic balance-matching reallocation. Accounting invariant failures halt processing and retain unresolved evidence rather than clamp invalid arithmetic into apparent success.
 
 ### Bounded retry policy
 

@@ -1,0 +1,21 @@
+Frozen quiescent V1 root written by the saved predecessor Faucet Wasm.
+This is local schema/restore evidence, not a production snapshot or installed
+module-identity attestation. No current Rust encoder generated these bytes.
+
+Generation: installed the saved canonical package into a fresh PocketIC 15
+application subnet; read MemoryManager memory 0's StableCell payload immediately
+after installation. The generating test and logs are retained in the task's
+external evidence directory; no fixture generator is shipped in production.
+Configuration: Governance staking subaccount [9;32], canonical funding source,
+default Ledger/Index/CMC, unarmed rescue, weekly timers, 1 ICP minimum.
+
+Checkout inspected when generated: 5130c353d5663b0af0157fd83841b804a600613b.
+The saved build predates these remediation edits; the checkout ID is not a
+claim that the saved artifact was built after that commit was created.
+Predecessor raw Wasm SHA-256:
+4109d080361f4ed237c06fbc62242b4b56a2e2ea5c2513fecfb7061734275acb
+Predecessor compressed package SHA-256:
+e27e4f1d6e28a94a42e90fc82da7abb65ddc8c6e000e3789618e5411d72dc8d2
+Decoded fixture bytes: 1018.
+Decoded fixture SHA-256:
+eb9034aace621e9f8ad2732c0b6a9b4ef9d7d5a7980bf3485395b10940e6e3af

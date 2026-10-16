@@ -75,11 +75,13 @@ pub(super) fn pending_transfer_matches(job_id: u64, expected: &PendingTransfer) 
 pub(super) fn stage_pending_transfer(pending: PendingNotification, created_at_time_nanos: u64) {
     state::with_state_mut(|st| {
         if let Some(job) = st.active_payout_job.as_mut() {
-            job.pending_transfer = Some(PendingTransfer {
+            let staged = PendingTransfer {
                 notification: pending,
                 created_at_time_nanos,
                 phase: PendingTransferPhase::AwaitingTransfer,
-            });
+            };
+            state::set_pending_transfer_dispatch(job.id, &staged, false);
+            job.pending_transfer = Some(staged);
         }
     });
 }
@@ -137,6 +139,7 @@ pub(super) fn clear_pending_transfer(
             // Remainder-to-Relay transfers are not beneficiary payouts and do not
             // increment beneficiary failure or ambiguity counters.
             job.pending_transfer = None;
+            state::clear_pending_transfer_dispatch();
         }
     });
 }
@@ -260,6 +263,7 @@ pub(super) fn record_completed_transfer(job_id: u64, expected: &PendingTransfer,
         }
         logic::apply_notified_transfer(job, pending);
         job.pending_transfer = None;
+        state::clear_pending_transfer_dispatch();
     });
 }
 pub(super) async fn finalize_completed_job(

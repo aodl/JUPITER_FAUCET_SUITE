@@ -62,6 +62,10 @@ impl MainGuard {
 pub(super) struct MainLeaseToken(Option<u64>);
 
 impl MainLeaseToken {
+    pub(super) fn capture() -> Self {
+        Self(state::with_state(|st| st.main_lock_state_ts))
+    }
+
     pub(super) fn is_current(self) -> bool {
         state::with_state(|st| self.is_current_in(st))
     }
@@ -72,7 +76,7 @@ impl MainLeaseToken {
 
     #[cfg(test)]
     pub(super) fn capture_for_test() -> Self {
-        Self(state::with_state(|st| st.main_lock_state_ts))
+        Self::capture()
     }
 }
 

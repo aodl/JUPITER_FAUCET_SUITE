@@ -9,6 +9,12 @@ use jupiter_ic_clients::account::{account_text, subaccount_text};
 use serde::Serialize;
 use std::borrow::Cow;
 
+mod transfer_dispatch;
+pub(crate) use transfer_dispatch::{
+    clear_pending_transfer_dispatch, pending_transfer_may_have_dispatched,
+    set_pending_transfer_dispatch,
+};
+
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub(crate) struct Config {
     pub staking_account: Account,
@@ -1447,6 +1453,51 @@ mod tests {
                 .remainder_to_relay_e8s,
             12_345_678
         );
+    }
+
+    #[test]
+    fn predecessor_quiescent_root_keeps_the_exact_supported_v1_schema() {
+        let bytes = hex::decode(
+            include_str!("../../../tests/pocketic/fixtures/faucet-5130c35-quiescent-root.hex")
+                .trim(),
+        )
+        .unwrap();
+        let restored = decode_versioned_stable_state(&bytes)
+            .expect("predecessor current V1 root must restore byte-exactly");
+        let VersionedStableState::V1(st) = restored else {
+            panic!("expected V1")
+        };
+        assert!(st.active_payout_job.is_none());
+        assert!(crate::validate_upgrade_quiescence(&st).is_ok());
+        assert_eq!(
+            candid::encode_one(VersionedStableState::V1(st)).unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn pending_dispatch_provenance_roundtrip_and_absence_are_distinct() {
+        let pending = sample_pending_transfer(
+            TransferKind::Beneficiary,
+            PendingTransferPhase::AwaitingTransfer,
+        );
+        clear_pending_transfer_dispatch();
+        assert!(pending_transfer_may_have_dispatched(7, &pending));
+        for dispatched in [false, true] {
+            set_pending_transfer_dispatch(7, &pending, dispatched);
+            transfer_dispatch::evict_heap_cache_for_test();
+            assert_eq!(
+                pending_transfer_may_have_dispatched(7, &pending),
+                dispatched
+            );
+            assert!(pending_transfer_may_have_dispatched(8, &pending));
+            let mut changed = pending.clone();
+            changed.notification.amount_e8s += 1;
+            assert!(pending_transfer_may_have_dispatched(7, &changed));
+        }
+        clear_pending_transfer_dispatch();
+        transfer_dispatch::evict_heap_cache_for_test();
+        assert!(pending_transfer_may_have_dispatched(7, &pending));
     }
 
     #[test]

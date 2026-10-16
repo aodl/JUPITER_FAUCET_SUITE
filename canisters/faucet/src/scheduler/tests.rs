@@ -276,6 +276,9 @@ mod tests {
     #[derive(Clone)]
     enum LedgerStep {
         Ok(u64),
+        AcceptedReplyLost(u64),
+        AcceptedInterrupted,
+        TooOld,
         Duplicate(u64),
         OkUnusableBlockIndex,
         DuplicateUnusableBlockIndex,
@@ -292,6 +295,8 @@ mod tests {
         destinations: Arc<Mutex<Vec<Account>>>,
         memos: Arc<Mutex<Vec<Option<Vec<u8>>>>>,
         amounts: Arc<Mutex<Vec<u64>>>,
+        balance: Option<Arc<Mutex<u64>>>,
+        accepted: Arc<Mutex<Vec<TransferArg>>>,
     }
 
     impl ScriptedLedger {
@@ -304,7 +309,28 @@ mod tests {
                 destinations: Arc::new(Mutex::new(Vec::new())),
                 memos: Arc::new(Mutex::new(Vec::new())),
                 amounts: Arc::new(Mutex::new(Vec::new())),
+                balance: None,
+                accepted: Arc::new(Mutex::new(Vec::new())),
             }
+        }
+
+        fn with_balance(mut self, balance: u64) -> Self {
+            self.balance = Some(Arc::new(Mutex::new(balance)));
+            self
+        }
+
+        fn accept(&self, arg: TransferArg) {
+            assert!(
+                !self.accepted.lock().unwrap().contains(&arg),
+                "duplicate debit"
+            );
+            if let Some(balance) = &self.balance {
+                let gross = u64::try_from(arg.amount.0.clone()).unwrap()
+                    + u64::try_from(arg.fee.as_ref().unwrap().0.clone()).unwrap();
+                let mut balance = balance.lock().unwrap();
+                *balance = balance.checked_sub(gross).expect("unbacked tranche debit");
+            }
+            self.accepted.lock().unwrap().push(arg);
         }
 
         fn transfer_calls(&self) -> usize {
@@ -362,19 +388,33 @@ mod tests {
             self.memos
                 .lock()
                 .unwrap()
-                .push(arg.memo.map(|memo| memo.0.to_vec()));
+                .push(arg.memo.as_ref().map(|memo| memo.0.to_vec()));
             self.amounts
                 .lock()
                 .unwrap()
-                .push(u64::try_from(arg.amount.0).expect("scripted amount must fit u64"));
-            match self
+                .push(u64::try_from(arg.amount.0.clone()).expect("scripted amount must fit u64"));
+            let step = self
                 .steps
                 .lock()
                 .unwrap()
                 .pop_front()
-                .expect("missing ledger step")
-            {
-                LedgerStep::Ok(block) => Ok(Ok(BlockIndex::from(block))),
+                .expect("missing ledger step");
+            match step {
+                LedgerStep::Ok(block) => {
+                    self.accept(arg);
+                    Ok(Ok(BlockIndex::from(block)))
+                }
+                LedgerStep::AcceptedReplyLost(_block) => {
+                    self.accept(arg);
+                    Err(crate::clients::ClientError::Call(
+                        "accepted reply lost".into(),
+                    ))
+                }
+                LedgerStep::AcceptedInterrupted => {
+                    self.accept(arg);
+                    pending().await
+                }
+                LedgerStep::TooOld => Ok(Err(TransferError::TooOld)),
                 LedgerStep::Duplicate(block) => Ok(Err(TransferError::Duplicate {
                     duplicate_of: BlockIndex::from(block),
                 })),
@@ -952,6 +992,12 @@ mod tests {
         }
         let mut st = state::State::new(cfg.clone(), now_secs);
         st.active_payout_job = Some(job);
+        // This helper constructs fresh synthetic jobs, not restored dispatches.
+        if let Some(job) = &st.active_payout_job {
+            if let Some(pending) = &job.pending_transfer {
+                state::set_pending_transfer_dispatch(job.id, pending, false);
+            }
+        }
         state::clear_skip_ranges();
         state::set_state(st);
         cfg
@@ -1695,7 +1741,7 @@ mod tests {
             let job = st.active_payout_job.as_ref().unwrap();
             assert_eq!(job.failed_topups, 0);
             assert_eq!(job.ambiguous_topups, 1);
-            assert_eq!(job.gross_outflow_e8s, 0);
+            assert_eq!(job.gross_outflow_e8s, 100_000_000);
         });
     }
 
@@ -2560,6 +2606,285 @@ mod tests {
     }
 
     #[test]
+    fn uncertain_original_transfers_conserve_two_tranches() {
+        for kind in [
+            TransferKind::Beneficiary,
+            TransferKind::RawIcp,
+            TransferKind::NeuronStake,
+        ] {
+            for partial in [false, true] {
+                for debited in [true, false] {
+                    let now_secs = 1_420_u64;
+                    let cfg = set_active_job(
+                        now_secs,
+                        ActivePayoutJob::new(
+                            24,
+                            10_000,
+                            100_000_000,
+                            if partial { 200_000_000 } else { 100_000_000 },
+                            now_secs * 1_000_000_000,
+                        ),
+                    );
+                    let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+                    let memo = match kind {
+                        TransferKind::Beneficiary => beneficiary.to_text(),
+                        TransferKind::RawIcp => {
+                            format!("{}.route", beneficiary.to_text().replace('-', ""))
+                        }
+                        TransferKind::NeuronStake => "42".into(),
+                        _ => unreachable!(),
+                    };
+                    let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+                    let index = ExclusiveIndex::new(vec![commitment_tx(
+                        10,
+                        &staking_id,
+                        100_000_000,
+                        Some(memo.into_bytes()),
+                    )]);
+                    let mut steps = vec![
+                        if debited {
+                            LedgerStep::AcceptedReplyLost(90)
+                        } else {
+                            LedgerStep::CallErr
+                        },
+                        LedgerStep::PermanentErr,
+                    ];
+                    if partial {
+                        steps.push(LedgerStep::Ok(91));
+                    }
+                    steps.push(LedgerStep::Ok(92));
+                    let ledger = ScriptedLedger::new(steps).with_balance(200_000_000);
+                    let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+                    let governance = ScriptedGovernance::new(vec![Ok([7; 32]), Ok([7; 32])]);
+                    assert!(run_ready(process_payout(
+                        &ledger,
+                        &index,
+                        &cmc,
+                        &governance,
+                        &crate::clients::canister_info::NoopCanisterStatusClient,
+                        now_secs * 1_000_000_000,
+                        now_secs,
+                    )));
+                    let reserved = if partial { 50_000_000 } else { 100_000_000 };
+                    assert_eq!(*ledger.balance.as_ref().unwrap().lock().unwrap(),
+                        100_000_000 + if debited { 0 } else { reserved },
+                        "later tranche backing changed: {kind:?}, partial={partial}, debited={debited}");
+                    let summary = state::with_state(|st| st.last_summary.clone().unwrap());
+                    assert_eq!(summary.topped_up_count, 0);
+                    assert_eq!(summary.ambiguous_topups, 1);
+                    assert_eq!(
+                        summary.remainder_to_relay_e8s,
+                        if partial { 49_990_000 } else { 0 }
+                    );
+                    let args = ledger.transfer_args();
+                    assert_eq!(args[0], args[1], "retry must keep every identity byte");
+
+                    state::with_state_mut(|st| {
+                        st.active_payout_job = Some(ActivePayoutJob::new(
+                            25,
+                            10_000,
+                            100_000_000,
+                            100_000_000,
+                            (now_secs + 1) * 1_000_000_000,
+                        ))
+                    });
+                    assert!(run_ready(process_payout(
+                        &ledger,
+                        &index,
+                        &cmc,
+                        &governance,
+                        &crate::clients::canister_info::NoopCanisterStatusClient,
+                        (now_secs + 1) * 1_000_000_000,
+                        now_secs + 1,
+                    )));
+                    assert_eq!(
+                        state::with_state(|st| st.last_summary.as_ref().unwrap().topped_up_count),
+                        1
+                    );
+                    assert_eq!(
+                        *ledger.balance.as_ref().unwrap().lock().unwrap(),
+                        if debited { 0 } else { reserved }
+                    );
+                    // Re-entering completed processing cannot spend or count the identity again.
+                    let accepted = ledger.accepted.lock().unwrap().len();
+                    assert!(run_ready(drive_pending_transfer(
+                        &ledger,
+                        &cmc,
+                        &governance,
+                        cfg.cmc_canister_id,
+                        10_000,
+                        (now_secs + 1) * 1_000_000_000,
+                        now_secs + 1
+                    )));
+                    assert_eq!(ledger.accepted.lock().unwrap().len(), accepted);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn resumed_or_missing_dispatch_provenance_never_becomes_a_fresh_rejection() {
+        for marker in [None, Some(true)] {
+            for steps in [
+                vec![LedgerStep::TooOld],
+                vec![LedgerStep::CallErr, LedgerStep::TooOld],
+                vec![LedgerStep::TemporarilyUnavailable, LedgerStep::PermanentErr],
+                vec![LedgerStep::CallErr, LedgerStep::CallErr],
+            ] {
+                let now = 11_000_000_000;
+                set_pending_cycles_transfer(
+                    now,
+                    100_000_000,
+                    PendingTransferPhase::AwaitingTransfer,
+                );
+                let (job_id, pending) = current_pending_transfer().unwrap();
+                match marker {
+                    None => state::clear_pending_transfer_dispatch(),
+                    Some(dispatched) => {
+                        state::set_pending_transfer_dispatch(job_id, &pending, dispatched)
+                    }
+                }
+                let ledger = ScriptedLedger::new(steps);
+                assert!(run_ready(drive_pending_transfer(
+                    &ledger,
+                    &ScriptedCmc::new(vec![]),
+                    &NoopGovernance,
+                    test_config().cmc_canister_id,
+                    10_000,
+                    now,
+                    11
+                )));
+                state::with_state(|st| {
+                    let job = st.active_payout_job.as_ref().unwrap();
+                    assert_eq!(job.gross_outflow_e8s, 100_000_000);
+                    assert_eq!(job.ambiguous_topups, 1);
+                    assert_eq!(job.failed_topups, 0);
+                    assert_eq!(job.topped_up_count, 0);
+                });
+                assert!(ledger.accepted.lock().unwrap().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_resolves_old_uncertainty_and_charges_once() {
+        let now = 11_000_000_000;
+        set_pending_cycles_transfer(now, 100_000_000, PendingTransferPhase::AwaitingTransfer);
+        state::clear_pending_transfer_dispatch();
+        let ledger = ScriptedLedger::new(vec![LedgerStep::Duplicate(90)]);
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+        for _ in 0..2 {
+            assert!(run_ready(drive_pending_transfer(
+                &ledger,
+                &cmc,
+                &NoopGovernance,
+                test_config().cmc_canister_id,
+                10_000,
+                now,
+                11
+            )));
+        }
+        state::with_state(|st| {
+            let job = st.active_payout_job.as_ref().unwrap();
+            assert_eq!(job.gross_outflow_e8s, 100_000_000);
+            assert_eq!(job.ambiguous_topups, 0);
+            assert_eq!(job.topped_up_count, 1);
+        });
+        assert_eq!(ledger.transfer_calls(), 1);
+        assert_eq!(cmc.call_count(), 1);
+    }
+
+    #[test]
+    fn expired_original_identity_reserves_without_dispatch_for_every_original_kind() {
+        for kind in [
+            TransferKind::Beneficiary,
+            TransferKind::RawIcp,
+            TransferKind::NeuronStake,
+        ] {
+            let now = 11_000_000_000;
+            set_pending_cycles_transfer(now, 100_000_000, PendingTransferPhase::AwaitingTransfer);
+            state::with_state_mut(|st| {
+                let pending = st
+                    .active_payout_job
+                    .as_mut()
+                    .unwrap()
+                    .pending_transfer
+                    .as_mut()
+                    .unwrap();
+                pending.notification.kind = kind;
+            });
+            let (job_id, pending) = current_pending_transfer().unwrap();
+            state::set_pending_transfer_dispatch(job_id, &pending, true);
+            let ledger = ScriptedLedger::new(vec![]);
+            assert!(run_ready(drive_pending_transfer(
+                &ledger,
+                &ScriptedCmc::new(vec![]),
+                &NoopGovernance,
+                test_config().cmc_canister_id,
+                10_000,
+                now + LEDGER_CREATED_AT_MAX_AGE_NANOS + 1,
+                100_000
+            )));
+            assert_eq!(ledger.transfer_calls(), 0);
+            assert_eq!(
+                state::with_state(|st| st.active_payout_job.as_ref().unwrap().gross_outflow_e8s),
+                100_000_000
+            );
+        }
+    }
+
+    #[test]
+    fn interrupted_dispatch_then_too_old_cannot_authorize_a_fallback() {
+        let now = 11_000_000_000;
+        set_pending_cycles_transfer(now, 100_000_000, PendingTransferPhase::AwaitingTransfer);
+        let ledger = ScriptedLedger::new(vec![
+            LedgerStep::AcceptedInterrupted,
+            LedgerStep::TooOld,
+            LedgerStep::Ok(92),
+        ])
+        .with_balance(200_000_000);
+        let cmc = ScriptedCmc::new(vec![]);
+        let mut future = Box::pin(drive_pending_transfer(
+            &ledger,
+            &cmc,
+            &NoopGovernance,
+            test_config().cmc_canister_id,
+            10_000,
+            now,
+            11,
+        ));
+        assert!(matches!(poll_once(future.as_mut()), Poll::Pending));
+        drop(future);
+        assert_eq!(ledger.accepted.lock().unwrap().len(), 1);
+        assert!(run_ready(drive_pending_transfer(
+            &ledger,
+            &cmc,
+            &NoopGovernance,
+            test_config().cmc_canister_id,
+            10_000,
+            now + 1,
+            11,
+        )));
+        assert_eq!(
+            *ledger.balance.as_ref().unwrap().lock().unwrap(),
+            100_000_000
+        );
+        assert_eq!(
+            ledger.accepted.lock().unwrap().len(),
+            1,
+            "no new fallback debit"
+        );
+        assert_eq!(ledger.transfer_args()[0], ledger.transfer_args()[1]);
+        state::with_state(|st| {
+            let job = st.active_payout_job.as_ref().unwrap();
+            assert_eq!(job.gross_outflow_e8s, 100_000_000);
+            assert_eq!(job.ambiguous_topups, 1);
+            assert_eq!(job.topped_up_count, 0);
+            assert!(job.pending_transfer.is_none());
+        });
+    }
+
+    #[test]
     fn raw_icp_retry_exhaustion_counts_ambiguous_without_cmc_health_attempt() {
         let now_secs = 1_425_u64;
         let cfg = set_active_job(
@@ -2601,7 +2926,7 @@ mod tests {
         assert_eq!(
             ledger.transfer_calls(),
             3,
-            "ambiguous raw ICP transfer should still allow remainder cleanup"
+            "a partial possible debit permits only the uncommitted remainder"
         );
         assert_eq!(cmc.call_count(), 0, "Relay remainder must not call CMC");
         let summary =
@@ -2609,7 +2934,7 @@ mod tests {
         assert_eq!(summary.topped_up_count, 0);
         assert_eq!(summary.failed_topups, 0);
         assert_eq!(summary.ambiguous_topups, 1);
-        assert_eq!(summary.remainder_to_relay_e8s, 79_990_000);
+        assert_eq!(summary.remainder_to_relay_e8s, 39_990_000);
         assert_eq!(
             state::with_state(|st| st.consecutive_cmc_zero_success_runs),
             Some(1)
@@ -3173,7 +3498,7 @@ mod tests {
         assert_eq!(summary.topped_up_count, 0);
         assert_eq!(summary.failed_topups, 0);
         assert_eq!(summary.ambiguous_topups, 1);
-        assert_eq!(summary.remainder_to_relay_e8s, 79_990_000);
+        assert_eq!(summary.remainder_to_relay_e8s, 39_990_000);
         assert_eq!(summary.pot_remaining_e8s, 0);
     }
 
@@ -3219,7 +3544,7 @@ mod tests {
         assert_eq!(summary.topped_up_count, 0);
         assert_eq!(summary.failed_topups, 0);
         assert_eq!(summary.ambiguous_topups, 1);
-        assert_eq!(summary.remainder_to_relay_e8s, 79_990_000);
+        assert_eq!(summary.remainder_to_relay_e8s, 39_990_000);
     }
 
     #[test]
@@ -5361,7 +5686,7 @@ mod tests {
     }
 
     #[test]
-    fn ambiguous_reservation_invariant_failure_caps_outflow_and_latches_rescue() {
+    fn ambiguous_reservation_invariant_failure_retains_identity_and_latches_rescue() {
         let now_nanos = LEDGER_CREATED_AT_MAX_AGE_NANOS + 2_005_000_000_000;
         let mut job = ActivePayoutJob::new(56, 10_000, 80_000_000, 1, now_nanos + 1);
         job.scan_complete = true;
@@ -5384,7 +5709,7 @@ mod tests {
         set_active_job(now_nanos / 1_000_000_000, job);
         let ledger = ScriptedLedger::new(vec![]);
 
-        assert!(run_ready(drive_pending_transfer(
+        assert!(!run_ready(drive_pending_transfer(
             &ledger,
             &ScriptedCmc::new(vec![]),
             &NoopGovernance,
@@ -5401,8 +5726,8 @@ mod tests {
                 Some(ForcedRescueReason::AccountingInvariantBroken)
             );
             let job = st.active_payout_job.as_ref().unwrap();
-            assert_eq!(job.gross_outflow_e8s, job.pot_start_e8s);
-            assert!(job.pending_transfer.is_none());
+            assert_eq!(job.gross_outflow_e8s, 50_000_000);
+            assert!(job.pending_transfer.is_some());
             assert_eq!(job.remainder_to_relay_e8s, 0);
         });
     }
