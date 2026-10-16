@@ -244,8 +244,6 @@ async fn run_main_tick_with_clients_for_relay<
 
     #[cfg(not(test))]
     log_cycles_and_config();
-    #[cfg(not(test))]
-    super::reward_sweep::process(now_nanos, now_secs, false, lease).await;
     if !guard.is_current() {
         return MainTickOutcome::Completed;
     }
@@ -288,6 +286,15 @@ async fn run_main_tick_with_clients_for_relay<
             guard.finish(now_secs);
             return MainTickOutcome::Completed;
         }
+    }
+    // Commit completed core cadence before the optional stage's first await.
+    // Keep the same exclusive lease while rewards run; a callback trap must
+    // not erase funding progress already committed in a preceding message.
+    guard.record_core_progress(now_secs);
+    #[cfg(not(test))]
+    {
+        let reward_now = ic_cdk::api::time();
+        super::reward_sweep::process(reward_now, reward_now / 1_000_000_000, false, lease).await;
     }
     guard.finish(now_secs);
     MainTickOutcome::Completed
@@ -1602,6 +1609,25 @@ mod tests {
         );
         state::set_state(relay_state);
         crate::splitter_state::reset_for_test();
+    }
+
+    #[test]
+    fn completed_core_cadence_keeps_lease_and_survives_reward_driver_unwind() {
+        reset_daily_cadence_state();
+        let guard = MainGuard::acquire(100_000).unwrap();
+        let lease = guard.lease_token();
+        guard.record_core_progress(100_000);
+        assert!(lease.is_current());
+        assert!(MainGuard::acquire(100_001).is_none());
+        // Native unwind exercises guard cleanup. The canister regression
+        // separately covers message-boundary persistence in Wasm.
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = guard;
+            panic!("optional reward interruption");
+        }))
+        .is_err());
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), 100_000);
+        assert!(MainGuard::acquire(100_001).is_some());
     }
 
     async fn run_daily_cadence_tick(

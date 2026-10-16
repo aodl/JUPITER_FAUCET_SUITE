@@ -46,6 +46,16 @@ impl MainGuard {
         });
     }
 
+    pub(super) fn record_core_progress(&self, now_secs: u64) {
+        state::with_state_mut(|st| {
+            if self.inner.is_active()
+                && st.main_lock_state_ts == Some(self.inner.lease_expires_at_ts())
+            {
+                st.last_main_run_ts = now_secs;
+            }
+        });
+    }
+
     #[cfg(test)]
     pub(super) fn lease_expires_at_ts(&self) -> u64 {
         self.inner.lease_expires_at_ts()

@@ -119,6 +119,8 @@ struct LedgerState {
     index_transactions: Vec<TransactionWithId>,
     index_source_ledger: Option<Principal>,
     index_hidden_newest_transactions: u64,
+    reward_history_fixture: Option<(Account, u64, u64)>,
+    reward_history_fixture_calls: u64,
 }
 
 thread_local! {
@@ -577,6 +579,24 @@ fn debug_set_index_hidden_newest_transactions(count: u64) {
     ST.with(|s| s.borrow_mut().index_hidden_newest_transactions = count);
 }
 
+// A coherent paged mint epoch without materializing its entire lifetime in an
+// inter-canister response. Used only by local resource-bound regressions.
+#[ic_cdk::update]
+fn debug_set_reward_history_fixture(account: Account, count: u64, unit: u64) {
+    assert!(count > 0 && count <= 100_000 && unit > 0);
+    assert!(count.checked_mul(unit).is_some());
+    ST.with(|state| {
+        let mut state = state.borrow_mut();
+        state.reward_history_fixture = Some((account, count, unit));
+        state.reward_history_fixture_calls = 0;
+    });
+}
+
+#[ic_cdk::query]
+fn debug_reward_history_fixture_calls() -> u64 {
+    ST.with(|state| state.borrow().reward_history_fixture_calls)
+}
+
 #[ic_cdk::query]
 fn debug_index_transactions() -> Vec<TransactionWithId> {
     ST.with(|s| s.borrow().index_transactions.clone())
@@ -640,6 +660,32 @@ fn indexed_balance(transactions: &[TransactionWithId], account: &Account) -> Nat
 async fn get_account_transactions(
     args: GetAccountTransactionsArgs,
 ) -> GetAccountTransactionsResult {
+    if let Some((account, count, unit)) = ST.with(|state| state.borrow().reward_history_fixture) {
+        assert_eq!(args.account, account);
+        ST.with(|state| state.borrow_mut().reward_history_fixture_calls += 1);
+        let end = args.start.as_ref().map(nat_u64).unwrap_or(count).min(count);
+        let start = end.saturating_sub(nat_u64(&args.max_results).min(1_000));
+        return Ok(GetAccountTransactionsResponse {
+            balance: Nat::from(count * unit),
+            oldest_tx_id: Some(Nat::from(0_u8)),
+            transactions: (start..end)
+                .rev()
+                .map(|id| TransactionWithId {
+                    id: Nat::from(id),
+                    transaction: Transaction::mint(
+                        Mint {
+                            amount: Nat::from(unit),
+                            to: account,
+                            memo: None,
+                            created_at_time: None,
+                            fee: None,
+                        },
+                        id + 1,
+                    ),
+                })
+                .collect(),
+        });
+    }
     let (source, hidden) = ST.with(|s| {
         let st = s.borrow();
         (

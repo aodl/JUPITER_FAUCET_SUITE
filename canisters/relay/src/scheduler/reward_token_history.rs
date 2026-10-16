@@ -1,3 +1,4 @@
+use super::reward_budget::WorkBudget;
 use std::collections::{BTreeSet, VecDeque};
 
 use async_trait::async_trait;
@@ -139,6 +140,7 @@ fn transaction_effect(
 /// Heap-only backwards reconstruction of the current reward-balance epoch. Nothing in this
 /// reader survives the adjudication that created it.
 struct BackwardRewardHistory {
+    budget: WorkBudget,
     account: Account,
     live_balance: Nat,
     balance_after: Nat,
@@ -153,8 +155,9 @@ struct BackwardRewardHistory {
 }
 
 impl BackwardRewardHistory {
-    fn new(account: Account, live_balance: Nat) -> Self {
+    fn new(account: Account, live_balance: Nat, budget: WorkBudget) -> Self {
         Self {
+            budget,
             account,
             balance_after: live_balance.clone(),
             live_balance,
@@ -174,13 +177,23 @@ impl BackwardRewardHistory {
             return Ok(());
         }
         let requested_start = self.next_start.clone();
-        let page = index
-            .get_transactions(
+        let page = self
+            .budget
+            .call(index.get_transactions(
                 self.account,
                 requested_start.clone(),
                 Nat::from(REWARD_HISTORY_PAGE_SIZE),
-            )
-            .await?;
+            ))
+            .await??;
+        if page.transactions.len() > REWARD_HISTORY_PAGE_SIZE as usize {
+            return Err("reward_history_oversized_page".into());
+        }
+        self.budget.retain(
+            page.transactions.len(),
+            candid::encode_one(&page)
+                .map_err(|_| "reward_history_encoding_failed".to_string())?
+                .len(),
+        )?;
         #[cfg(test)]
         {
             self.pages_requested += 1;
@@ -201,6 +214,7 @@ impl BackwardRewardHistory {
         let mut page_ids = Vec::with_capacity(page.transactions.len());
         let mut previous = self.previous_tx_id;
         for entry in &page.transactions {
+            self.budget.work(1)?;
             let id = nat_to_u64(&entry.id)?;
             if requested_start_u64.is_some_and(|start| id >= start)
                 || previous.is_some_and(|previous_id| id >= previous_id)
@@ -217,6 +231,7 @@ impl BackwardRewardHistory {
         }
 
         for entry in page.transactions {
+            self.budget.work(1)?;
             let effect = transaction_effect(&entry.transaction, &self.account)?;
             match effect {
                 BalanceEffect::Credit { amount, .. } => {
@@ -254,6 +269,7 @@ impl BackwardRewardHistory {
         }
         let mut credits = VecDeque::<RewardCredit>::new();
         for entry in self.transactions.iter().rev() {
+            self.budget.work(1)?;
             match transaction_effect(&entry.transaction, &self.account)? {
                 BalanceEffect::Credit {
                     amount,
@@ -269,6 +285,7 @@ impl BackwardRewardHistory {
                 BalanceEffect::Debit { amount } => {
                     let mut remaining = amount.0;
                     while remaining > 0_u8.into() {
+                        self.budget.work(1)?;
                         let Some(front) = credits.front_mut() else {
                             return Err("reward_history_malformed".to_string());
                         };
@@ -296,12 +313,22 @@ impl BackwardRewardHistory {
     }
 }
 
-pub(super) async fn reward_pot_cutoff<I: RewardTokenHistoryClient>(
+#[cfg(test)]
+async fn reward_pot_cutoff<I: RewardTokenHistoryClient>(
     index: &I,
     account: Account,
     live_balance: Nat,
 ) -> Result<u64, String> {
-    let mut history = BackwardRewardHistory::new(account, live_balance);
+    reward_pot_cutoff_bounded(index, account, live_balance, WorkBudget::for_test()).await
+}
+
+pub(super) async fn reward_pot_cutoff_bounded<I: RewardTokenHistoryClient>(
+    index: &I,
+    account: Account,
+    live_balance: Nat,
+    budget: WorkBudget,
+) -> Result<u64, String> {
+    let mut history = BackwardRewardHistory::new(account, live_balance, budget);
     while !history.boundary_found && !history.exhausted {
         history.extend(index).await?;
     }
@@ -402,6 +429,40 @@ mod tests {
             balance: Nat::from(balance),
             transactions,
             oldest_tx_id: oldest.map(Nat::from),
+        }
+    }
+
+    #[test]
+    fn shared_record_limit_holds_an_unproven_reward_epoch_instead_of_truncating_it() {
+        use super::super::reward_budget::{EXHAUSTED, MAX_RECORDS};
+        for remaining in [2, 3, 4] {
+            let relay = account(1);
+            let index = MockIndex {
+                pages: Mutex::new(VecDeque::from([
+                    page(
+                        3,
+                        vec![mint(3, relay, 1, 30), mint(2, relay, 1, 20)],
+                        Some(1),
+                    ),
+                    page(3, vec![mint(1, relay, 1, 10)], Some(1)),
+                ])),
+                starts: Mutex::new(Vec::new()),
+            };
+            let budget = WorkBudget::for_test();
+            budget.retain(MAX_RECORDS - remaining, 0).unwrap();
+            let result = block_on(reward_pot_cutoff_bounded(
+                &index,
+                relay,
+                Nat::from(3_u8),
+                budget.clone(),
+            ));
+            if remaining == 2 {
+                assert_eq!(result.unwrap_err(), EXHAUSTED);
+                assert_eq!(budget.usage().records, MAX_RECORDS);
+            } else {
+                assert_eq!(result.unwrap(), 10);
+            }
+            assert_eq!(index.starts.lock().unwrap().len(), 2);
         }
     }
 
@@ -541,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn history_without_zero_until_genesis_has_no_depth_limit() {
+    fn supported_twelve_page_epoch_reaches_genesis_within_the_attempt_budget() {
         let relay = account(1);
         let mut pages = VecDeque::new();
         for page_number in 0..12_u64 {

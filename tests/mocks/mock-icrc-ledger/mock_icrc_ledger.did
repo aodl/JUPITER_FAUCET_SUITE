@@ -183,6 +183,8 @@ service : {
   debug_credit : (Account, nat64) -> ();
   debug_set_index_source : (principal) -> ();
   debug_set_index_hidden_newest_transactions : (nat64) -> ();
+  debug_set_reward_history_fixture : (Account, nat64, nat64) -> ();
+  debug_reward_history_fixture_calls : () -> (nat64) query;
   debug_index_transactions : () -> (vec IndexTransactionWithId) query;
   debug_transfer_attempts : () -> (vec TransferAttemptRecord) query;
   debug_transfers : () -> (vec TransferRecord) query;

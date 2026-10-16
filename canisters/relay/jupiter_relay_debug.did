@@ -178,5 +178,6 @@ service : (InitArgs) -> {
   debug_pause_after_persisted_splitter_leg : (bool) -> ();
   debug_trap_after_successful_transfer : (bool) -> ();
   debug_reward_sweep : () -> ();
+  debug_trap_after_reward_call : (bool) -> ();
   debug_reward_state : () -> (RewardState) query;
 }

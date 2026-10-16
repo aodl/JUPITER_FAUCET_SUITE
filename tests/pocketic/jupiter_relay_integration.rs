@@ -3043,7 +3043,7 @@ fn wait_for_real_index_transactions(
     index: Principal,
     account_identifier: &str,
     minimum: usize,
-) -> Result<()> {
+) -> Result<jupiter_ic_clients::index::GetAccountIdentifierTransactionsResponse> {
     for _ in 0..60 {
         let result: GetAccountIdentifierTransactionsResult = query_one(
             pic,
@@ -3056,9 +3056,10 @@ fn wait_for_real_index_transactions(
                 account_identifier: account_identifier.to_string(),
             },
         )?;
-        if matches!(result, GetAccountIdentifierTransactionsResult::Ok(ref page) if page.transactions.len() >= minimum)
-        {
-            return Ok(());
+        if let GetAccountIdentifierTransactionsResult::Ok(page) = result {
+            if page.transactions.len() >= minimum {
+                return Ok(page);
+            }
         }
         pic.advance_time(Duration::from_secs(1));
         tick_n(pic, 5);
@@ -3074,6 +3075,7 @@ struct RealSplitterRewardEnv {
     reward_ledger: Principal,
     reward_index: Principal,
     sns_rewards: Principal,
+    governance: Principal,
     relay: Principal,
     owners: Vec<Principal>,
     rewards_installed: bool,
@@ -3194,6 +3196,7 @@ impl RealSplitterRewardEnv {
             reward_ledger,
             reward_index,
             sns_rewards,
+            governance: nns_governance,
             relay,
             owners,
             rewards_installed: false,
@@ -3335,6 +3338,7 @@ impl RealSplitterRewardEnv {
             &account_identifier_text(self.relay, Some(relay_numbered_subaccount(splitter))),
             3,
         )
+        .map(|_| ())
     }
 
     fn journal(&self) -> Result<RewardJournalView> {
@@ -3377,6 +3381,235 @@ impl RealSplitterRewardEnv {
         )?;
         result.map_err(|error| anyhow::anyhow!(error.message))
     }
+}
+
+#[test]
+#[ignore]
+fn oversized_reward_epoch_is_held_after_core_funding_and_next_funding_pass_progresses() -> Result<()>
+{
+    let mut env = RealSplitterRewardEnv::new(0)?;
+    tick_n(&env.pic, 30);
+    env.refresh_snapshot()?;
+    const RECORDS: u64 = 16_385;
+    env.credit_reward_pot(RECORDS * 1_000)?;
+    let _: () = update_bytes(
+        &env.pic,
+        env.reward_index,
+        Principal::anonymous(),
+        "debug_set_reward_history_fixture",
+        encode_args((
+            Account {
+                owner: env.relay,
+                subaccount: None,
+            },
+            RECORDS,
+            1_000_u64,
+        ))?,
+    )?;
+    let owner = Principal::self_authenticating([99; 32]);
+    env.fund_owner(owner, 400_000_000)?;
+    for pass in 0..2 {
+        if pass > 0 {
+            env.pic.advance_time(Duration::from_secs(86_400));
+            tick_n(&env.pic, 5);
+        }
+        env.send_to_relay(owner, relay_subaccount_one(), 100_010_000)?;
+        let before_cycles = env.pic.cycle_balance(env.relay);
+        env.main_tick()?;
+        let after_cycles = env.pic.cycle_balance(env.relay);
+        let source = account_identifier_text(env.relay, Some(relay_subaccount_one()));
+        wait_for_real_index_transactions(
+            &env.pic,
+            env.icp_index,
+            &source,
+            ((pass + 1) * 2) as usize,
+        )?;
+        let history: GetAccountIdentifierTransactionsResult = update_one(
+            &env.pic,
+            env.icp_index,
+            Principal::anonymous(),
+            "get_account_identifier_transactions",
+            GetAccountIdentifierTransactionsArgs {
+                account_identifier: source.clone(),
+                start: None,
+                max_results: 1_000,
+            },
+        )?;
+        let GetAccountIdentifierTransactionsResult::Ok(history) = history else {
+            bail!("funding history unavailable")
+        };
+        let mut staking = [0; 32];
+        staking[24..].copy_from_slice(&11_614_578_985_374_291_210_u64.to_be_bytes());
+        let destination = account_identifier_text(env.governance, Some(staking));
+        let outgoing = history.transactions.iter().filter(|entry| matches!(&entry.transaction.operation,
+            jupiter_ic_clients::index::IndexOperation::Transfer { from, to, amount, fee, .. }
+                if from == &source && to == &destination && amount.e8s() == 100_000_000 && fee.e8s() == 10_000)).collect::<Vec<_>>();
+        assert_eq!(outgoing.len(), (pass + 1) as usize);
+        let memo = format!("{}.Relay", env.relay.to_text().replace('-', "")).into_bytes();
+        assert!(outgoing
+            .iter()
+            .all(|entry| entry.transaction.icrc1_memo.as_deref() == Some(memo.as_slice())));
+        assert_eq!(
+            support::ledger::icrc1_balance(
+                &env.pic,
+                env.icp_ledger,
+                &Account {
+                    owner: env.relay,
+                    subaccount: Some(relay_subaccount_one())
+                }
+            )?,
+            0
+        );
+        let journal = env.journal()?;
+        assert_eq!(journal.last_sweep_attempt_timestamp_seconds, 0);
+        assert!(journal.pending_payout.is_none());
+        assert_eq!(env.reward_balance(env.relay)?, RECORDS * 1_000);
+        let calls: u64 = query_one(
+            &env.pic,
+            env.reward_index,
+            Principal::anonymous(),
+            "debug_reward_history_fixture_calls",
+            (),
+        )?;
+        assert_eq!(calls, (2 * pass + 1) * 17);
+        let logs = env
+            .pic
+            .fetch_canister_logs(env.relay, Principal::anonymous())
+            .map_err(|error| anyhow::anyhow!("reward logs: {error:?}"))?;
+        assert!(logs
+            .iter()
+            .any(|entry| String::from_utf8_lossy(&entry.content)
+                .contains("reason=reward_work_budget_exhausted")));
+        assert!(logs
+            .iter()
+            .any(|entry| String::from_utf8_lossy(&entry.content)
+                .contains("RELAY_REWARD_WORK calls=22 retained_records=16000")));
+        for entry in &logs {
+            let line = String::from_utf8_lossy(&entry.content);
+            if line.contains("RELAY_REWARD_WORK calls=22 retained_records=16000") {
+                eprintln!("reward-work {line}");
+                break;
+            }
+        }
+        eprintln!("reward-bound fixture_records={RECORDS} pass={pass} history_pages=17 cycle_delta={} stable_bytes={}", before_cycles.saturating_sub(after_cycles), env.pic.get_stable_memory(env.relay).len());
+        // Existing forwarding deliberately separates Ledger acceptance from its
+        // later neuron-refresh tick. Finish that phase before the next deposit;
+        // reward deferral must not prevent either half from progressing.
+        env.main_tick()?;
+        tick_n(&env.pic, 20);
+        let state: DebugState = query_one(
+            &env.pic,
+            env.relay,
+            Principal::anonymous(),
+            "debug_state",
+            (),
+        )?;
+        assert!(!state.active_faucet_commitment_transfer_present);
+        let calls: u64 = query_one(
+            &env.pic,
+            env.reward_index,
+            Principal::anonymous(),
+            "debug_reward_history_fixture_calls",
+            (),
+        )?;
+        assert_eq!(calls, (2 * pass + 2) * 17);
+        assert_eq!(env.journal()?.last_sweep_attempt_timestamp_seconds, 0);
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn reward_callback_trap_cannot_erase_completed_funding_cadence() -> Result<()> {
+    let env = RealSplitterRewardEnv::new(0)?;
+    tick_n(&env.pic, 30);
+    let owner = Principal::self_authenticating([98; 32]);
+    env.fund_owner(owner, 200_000_000)?;
+    env.send_to_relay(owner, relay_subaccount_one(), 100_010_000)?;
+    let before: DebugState = query_one(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    update_one::<_, ()>(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_trap_after_reward_call",
+        true,
+    )?;
+    let failed = env.main_tick().unwrap_err();
+    assert!(format!("{failed:#}").contains("debug reward callback interruption"));
+    update_one::<_, ()>(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_trap_after_reward_call",
+        false,
+    )?;
+    let after: DebugState = query_one(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    assert!(after.last_main_run_ts > before.last_main_run_ts);
+    // Ledger acceptance is committed; the existing later refresh phase remains
+    // pinned rather than being discarded by the reward callback interruption.
+    assert!(after.active_faucet_commitment_transfer_present);
+    assert_eq!(
+        support::ledger::icrc1_balance(
+            &env.pic,
+            env.icp_ledger,
+            &Account {
+                owner: env.relay,
+                subaccount: Some(relay_subaccount_one())
+            }
+        )?,
+        0
+    );
+    env.pic.advance_time(Duration::from_secs(1_801));
+    tick_n(&env.pic, 5);
+    env.main_tick()?;
+    tick_n(&env.pic, 20);
+    let resumed: DebugState = query_one(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_state",
+        (),
+    )?;
+    assert!(!resumed.active_faucet_commitment_transfer_present);
+    let source = account_identifier_text(env.relay, Some(relay_subaccount_one()));
+    let history = wait_for_real_index_transactions(&env.pic, env.icp_index, &source, 2)?;
+    assert_eq!(
+        history
+            .transactions
+            .iter()
+            .filter(|entry| matches!(
+                &entry.transaction.operation,
+                jupiter_ic_clients::index::IndexOperation::Transfer { from, .. } if from == &source
+            ))
+            .count(),
+        1,
+        "callback resumption must not repeat the accepted debit"
+    );
+    assert_eq!(
+        support::ledger::icrc1_balance(
+            &env.pic,
+            env.icp_ledger,
+            &Account {
+                owner: env.relay,
+                subaccount: Some(relay_subaccount_one())
+            }
+        )?,
+        0
+    );
+    assert_eq!(env.journal()?.last_sweep_attempt_timestamp_seconds, 0);
+    Ok(())
 }
 
 #[test]
@@ -3574,13 +3807,12 @@ fn reward_arrival_before_newer_commitment_fences_that_funder_out() -> Result<()>
     env.pic.advance_time(Duration::from_secs(2));
     tick_n(&env.pic, 5);
     env.send_to_relay(bob, relay_subaccount_one(), 110_000_000)?;
+    env.refresh_snapshot()?;
     env.main_tick()?;
     tick_n(&env.pic, 5);
     env.main_tick()?;
     wait_for_real_index_transactions(&env.pic, env.icp_index, &relay_history, 4)?;
-    env.refresh_snapshot()?;
-
-    env.reward_sweep()?;
+    env.main_tick()?;
     assert_eq!(env.reward_balance(alice)?, 100_000);
     assert_eq!(env.reward_balance(bob)?, 0);
     let logs = env

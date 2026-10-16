@@ -13,6 +13,7 @@ use jupiter_ic_clients::index::{IcpIndexCanister, IndexOperation, IndexTransacti
 use jupiter_ic_clients::ledger::IcrcLedgerCanister;
 use jupiter_ic_clients::sns::{ListSnsCanistersResponse, SnsRootCanister};
 
+use super::reward_budget::WorkBudget;
 use crate::clients::governance::NnsGovernanceCanister;
 use crate::clients::GovernanceClient;
 use crate::reward_state::{self, PendingRewardPayout, PendingRewardRecipient};
@@ -124,16 +125,19 @@ fn validate_icp_index_tip(
     }
 }
 
-async fn resolve_reward_index(context: &RelayRewardContext) -> Result<IcrcIndexCanister, String> {
-    let components = SnsRootCanister
-        .list_sns_canisters(context.sns_root_canister_id)
-        .await
+async fn resolve_reward_index(
+    context: &RelayRewardContext,
+    budget: &WorkBudget,
+) -> Result<IcrcIndexCanister, String> {
+    let components = budget
+        .call(SnsRootCanister.list_sns_canisters(context.sns_root_canister_id))
+        .await?
         .map_err(|_| "reward_index_unavailable".to_string())?;
     let index_id = validate_reward_index_components(context, components)?;
     let index = IcrcIndexCanister::new(index_id);
-    let indexed_ledger = index
-        .ledger_id()
-        .await
+    let indexed_ledger = budget
+        .call(index.ledger_id())
+        .await?
         .map_err(|_| "reward_index_unavailable".to_string())?;
     if indexed_ledger != context.sns_ledger_canister_id {
         return Err("reward_index_component_mismatch".to_string());
@@ -250,20 +254,31 @@ impl OwnerResolverClient for Principal {
     }
 }
 
+#[cfg(test)]
 async fn resolve_accounts_chunked<R: OwnerResolverClient>(
     resolver: &R,
     snapshot_id: u64,
     accounts: &BTreeMap<[u8; 32], u64>,
 ) -> Result<Vec<Option<Principal>>, String> {
+    resolve_accounts_bounded(resolver, snapshot_id, accounts, &WorkBudget::for_test()).await
+}
+
+async fn resolve_accounts_bounded<R: OwnerResolverClient>(
+    resolver: &R,
+    snapshot_id: u64,
+    accounts: &BTreeMap<[u8; 32], u64>,
+    budget: &WorkBudget,
+) -> Result<Vec<Option<Principal>>, String> {
+    budget.work(accounts.len())?;
     let ordered = accounts.keys().copied().collect::<Vec<_>>();
     let mut owners = Vec::with_capacity(ordered.len());
     for chunk in ordered.chunks(OWNER_RESOLUTION_CHUNK_SIZE) {
-        let response = resolver
-            .resolve(
+        let response = budget
+            .call(resolver.resolve(
                 snapshot_id,
                 chunk.iter().map(|account| account.to_vec()).collect(),
-            )
-            .await
+            ))
+            .await?
             .map_err(|_| "owner_lookup_failed".to_string())?;
         match response {
             ResolveDefaultIcpAccountsResult::Ok(mut resolved) => {
@@ -292,8 +307,10 @@ pub(crate) async fn process(
     force: bool,
     main_lease: MainLeaseToken,
 ) {
-    if reward_state::get().pending_payout.is_some() {
-        let result = drive_pending(now_nanos).await;
+    let budget = WorkBudget::new(ic_cdk::api::time(), main_lease);
+    let (last_completed_sweep_secs, pending_ledger) = reward_state::scheduler_status();
+    if pending_ledger.is_some() {
+        let result = drive_pending(now_nanos, &budget).await;
         record_pinned_payout_result(result, now_secs);
         RewardLog {
             status: result.status(),
@@ -305,7 +322,7 @@ pub(crate) async fn process(
     }
     let generation = SweepGeneration {
         main_lease,
-        last_completed_sweep_secs: reward_state::get().last_sweep_attempt_timestamp_seconds,
+        last_completed_sweep_secs,
     };
     if !sweep_is_due(generation.last_completed_sweep_secs, now_secs, force) {
         return;
@@ -314,15 +331,29 @@ pub(crate) async fn process(
         status: "held",
         ..Default::default()
     };
-    let disposition = match adjudicate(now_nanos, now_secs, generation, &mut log).await {
+    let disposition = match adjudicate(now_nanos, now_secs, generation, &mut log, &budget).await {
         Ok(disposition) => disposition,
         Err(reason) => {
-            log.status = "failed";
+            log.status = if reason.contains("reward_work_budget")
+                || reason.contains("reward_attempt_expired")
+            {
+                "held"
+            } else {
+                "failed"
+            };
             log.reason = Some(reason);
             SweepDisposition::RetryNextDailyTick
         }
     };
     record_sweep_disposition_if_current(disposition, now_secs, generation);
+    let used = budget.usage();
+    ic_cdk::println!(
+        "RELAY_REWARD_WORK calls={} retained_records={} retained_bytes={} work_units={}",
+        used.calls,
+        used.records,
+        used.bytes,
+        used.work
+    );
     log.emit();
 }
 
@@ -331,10 +362,12 @@ async fn adjudicate(
     now_secs: u64,
     generation: SweepGeneration,
     log: &mut RewardLog,
+    budget: &WorkBudget,
 ) -> Result<SweepDisposition, String> {
     let cfg = state::with_state(|st| st.config.clone());
-    let Some(context) = reward_context(cfg.sns_rewards_canister_id)
-        .await
+    let Some(context) = budget
+        .call(reward_context(cfg.sns_rewards_canister_id))
+        .await?
         .map_err(|_| "reward_context_unavailable".to_string())?
     else {
         return Err("reward_context_unavailable".to_string());
@@ -352,12 +385,15 @@ async fn adjudicate(
         owner: ic_cdk::api::canister_self(),
         subaccount: None,
     };
-    let balance = match reward_ledger.balance_of(reward_account).await {
+    let balance = match budget
+        .call(reward_ledger.balance_of(reward_account))
+        .await?
+    {
         Ok(value) => value,
         Err(_) => return Err("reward_balance_read_failed".to_string()),
     };
     log.token_balance = Some(balance.clone());
-    let fee = match reward_ledger.fee().await {
+    let fee = match budget.call(reward_ledger.fee()).await? {
         Ok(value) => value,
         Err(_) => return Err("reward_fee_read_failed".to_string()),
     };
@@ -367,10 +403,14 @@ async fn adjudicate(
         return Ok(SweepDisposition::Completed);
     }
 
-    let reward_index = resolve_reward_index(&context).await?;
-    let reward_pot_cutoff =
-        reward_token_history::reward_pot_cutoff(&reward_index, reward_account, balance.clone())
-            .await?;
+    let reward_index = resolve_reward_index(&context, budget).await?;
+    let reward_pot_cutoff = reward_token_history::reward_pot_cutoff_bounded(
+        &reward_index,
+        reward_account,
+        balance.clone(),
+        budget.clone(),
+    )
+    .await?;
     // This is a conservative ledger-time recency heuristic across two independent ledgers, not
     // a cryptographic causal ordering. A Faucet commitment must be recorded strictly before both
     // the owner-snapshot scan and the oldest unspent reward credit in the current pot.
@@ -382,14 +422,14 @@ async fn adjudicate(
     // prefix. Blocks created after this Ledger read cannot carry a pre-existing attribution-cutoff
     // timestamp, while paying from a stale ICP account history could select the wrong funder.
     let icp_ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
-    let ledger_chain_length = icp_ledger
-        .chain_length()
-        .await
+    let ledger_chain_length = budget
+        .call(icp_ledger.chain_length())
+        .await?
         .map_err(|_| "icp_history_sync_unavailable".to_string())?;
     let index = IcpIndexCanister::new(cfg.icp_index_canister_id);
-    let index_blocks_synced = index
-        .status()
-        .await
+    let index_blocks_synced = budget
+        .call(index.status())
+        .await?
         .map_err(|_| "icp_history_sync_unavailable".to_string())?
         .num_blocks_synced;
     validate_icp_index_tip(ledger_chain_length, index_blocks_synced)?;
@@ -397,10 +437,14 @@ async fn adjudicate(
     let relay = ic_cdk::api::canister_self();
     let relay_account_identifier =
         account_identifier_text(relay, Some(logic::relay_subaccount_one()));
-    let mut history = reward_history::BackwardHistory::new(relay_account_identifier);
-    let staking_subaccount = NnsGovernanceCanister::new(cfg.governance_canister_id)
-        .neuron_staking_subaccount(logic::JUPITER_FAUCET_NEURON_ID)
-        .await
+    let mut history =
+        reward_history::BackwardHistory::with_budget(relay_account_identifier, budget.clone());
+    let staking_subaccount = budget
+        .call(
+            NnsGovernanceCanister::new(cfg.governance_canister_id)
+                .neuron_staking_subaccount(logic::JUPITER_FAUCET_NEURON_ID),
+        )
+        .await?
         .map_err(|_| "faucet_staking_account_unavailable".to_string())?;
     let faucet_account_identifier =
         account_identifier_text(cfg.governance_canister_id, Some(staking_subaccount));
@@ -410,15 +454,16 @@ async fn adjudicate(
     let relay_account_identifier =
         account_identifier_text(relay, Some(logic::relay_subaccount_one()));
     let mut examined_commitments = BTreeSet::new();
-    let mut splitter_cache = reward_splitter::SplitterHistoryCache::new();
+    let mut splitter_cache = reward_splitter::SplitterHistoryCache::with_budget(budget.clone());
     let mut splitter_transactions_scanned = 0_usize;
 
     loop {
+        budget.work(1)?;
         if history.transactions().is_empty() && !history.exhausted() {
             history.extend(&index).await?;
             log.scanned_transactions = history.transactions().len();
         }
-        let batches = match reconstruct_batches_with_splitters(
+        let batches = match reconstruct_batches_bounded(
             history.authoritative_transactions(),
             history.authoritative(),
             attribution_cutoff,
@@ -426,6 +471,7 @@ async fn adjudicate(
             &faucet_account_identifier,
             &commitment_memo,
             &intrinsic_splitters,
+            budget,
         ) {
             reward_history::HistoricalReconstruction::Complete(batches) => batches,
             reward_history::HistoricalReconstruction::NeedOlderHistory => {
@@ -444,6 +490,7 @@ async fn adjudicate(
         };
 
         for batch in batches.into_iter().rev() {
+            budget.work(1)?;
             if !examined_commitments.insert(batch.commitment_tx_id) {
                 continue;
             }
@@ -461,13 +508,21 @@ async fn adjudicate(
                 .splitters_scanned
                 .checked_add(expanded.splitters_scanned)
                 .ok_or_else(|| "splitter_count_overflow".to_string())?;
+            budget.work(
+                batch
+                    .sources
+                    .len()
+                    .saturating_add(expanded.sources.len())
+                    .saturating_mul(8),
+            )?;
             let (final_sources, final_ineligible) =
                 merge_attribution(batch.sources, batch.ineligible_e8s, &expanded)?;
             log.distinct_sources = final_sources.len();
-            let owners = resolve_accounts_chunked(
+            let owners = resolve_accounts_bounded(
                 &cfg.sns_rewards_canister_id,
                 context.snapshot_id,
                 &final_sources,
+                budget,
             )
             .await?;
             let (eligible, ineligible, owner_mismatch_count) =
@@ -499,13 +554,14 @@ async fn adjudicate(
                 allocations,
                 now_nanos,
             )?;
+            budget.require_call_capacity()?;
             if !install_pending_if_current(generation, pending) {
                 log.status = "stale";
                 log.reason = Some("stale_reward_adjudication".to_string());
                 return Ok(SweepDisposition::RetryNextDailyTick);
             }
             log.status = "pending";
-            let result = drive_pending(now_nanos).await;
+            let result = drive_pending(now_nanos, budget).await;
             record_pinned_payout_result(result, now_secs);
             log.status = result.status();
             log.reason = result.reason().map(str::to_string);
@@ -695,6 +751,7 @@ fn classify_sources(
     Ok((eligible, ineligible, owner_mismatch_count))
 }
 
+#[cfg(test)]
 fn reconstruct_batches_with_splitters(
     transactions: &[IndexTransactionWithId],
     history_authoritative: bool,
@@ -704,6 +761,35 @@ fn reconstruct_batches_with_splitters(
     commitment_memo: &[u8],
     intrinsic_splitters: &BTreeMap<[u8; 32], u8>,
 ) -> reward_history::HistoricalReconstruction<Vec<ContributionBatch>> {
+    reconstruct_batches_bounded(
+        transactions,
+        history_authoritative,
+        cutoff_nanos,
+        relay_account_identifier,
+        faucet_account_identifier,
+        commitment_memo,
+        intrinsic_splitters,
+        &WorkBudget::for_test(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reconstruct_batches_bounded(
+    transactions: &[IndexTransactionWithId],
+    history_authoritative: bool,
+    cutoff_nanos: u64,
+    relay_account_identifier: &str,
+    faucet_account_identifier: &str,
+    commitment_memo: &[u8],
+    intrinsic_splitters: &BTreeMap<[u8; 32], u8>,
+    budget: &WorkBudget,
+) -> reward_history::HistoricalReconstruction<Vec<ContributionBatch>> {
+    let sort_work = transactions
+        .len()
+        .saturating_mul(1 + transactions.len().max(1).ilog2() as usize);
+    if let Err(error) = budget.work(sort_work) {
+        return reward_history::HistoricalReconstruction::Malformed(error);
+    }
     if !history_authoritative {
         return reward_history::HistoricalReconstruction::NeedOlderHistory;
     }
@@ -712,6 +798,9 @@ fn reconstruct_batches_with_splitters(
     let mut funding = VecDeque::<FundingCredit>::new();
     let mut batches = Vec::new();
     for entry in chronological {
+        if let Err(error) = budget.work(1) {
+            return reward_history::HistoricalReconstruction::Malformed(error);
+        }
         let Some(timestamp) = entry.transaction.timestamp.as_ref() else {
             return reward_history::HistoricalReconstruction::Malformed(
                 "history_timestamp_missing".to_string(),
@@ -748,6 +837,9 @@ fn reconstruct_batches_with_splitters(
                     let mut splitter_credits = Vec::new();
                     let mut ineligible_e8s = 0_u64;
                     while remaining > 0 {
+                        if let Err(error) = budget.work(1) {
+                            return reward_history::HistoricalReconstruction::Malformed(error);
+                        }
                         let Some(credit) = funding.pop_front() else {
                             return reward_history::HistoricalReconstruction::Malformed(
                                 "commitment_reconciliation_failed".to_string(),
@@ -969,6 +1061,7 @@ enum PendingDriveResult {
     Completed,
     CompletedWithAbandonment(&'static str),
     Stale,
+    Held,
 }
 
 impl PendingDriveResult {
@@ -977,6 +1070,7 @@ impl PendingDriveResult {
             Self::Completed => "accepted",
             Self::CompletedWithAbandonment(_) => "best_effort_complete",
             Self::Stale => "stale",
+            Self::Held => "held",
         }
     }
 
@@ -985,31 +1079,49 @@ impl PendingDriveResult {
             Self::Completed => None,
             Self::CompletedWithAbandonment(reason) => Some(reason),
             Self::Stale => Some("stale_reward_payout_continuation"),
+            Self::Held => Some("reward_work_budget_exhausted_or_expired"),
         }
     }
 
     fn sweep_disposition(self) -> SweepDisposition {
         match self {
             Self::Completed | Self::CompletedWithAbandonment(_) => SweepDisposition::Completed,
-            Self::Stale => SweepDisposition::RetryNextDailyTick,
+            Self::Stale | Self::Held => SweepDisposition::RetryNextDailyTick,
         }
     }
 }
 
-async fn drive_pending(now_nanos: u64) -> PendingDriveResult {
-    let Some(payout) = reward_state::get().pending_payout else {
+async fn drive_pending(now_nanos: u64, budget: &WorkBudget) -> PendingDriveResult {
+    let (_, Some(ledger_id)) = reward_state::scheduler_status() else {
         return PendingDriveResult::Completed;
     };
-    let ledger = IcrcLedgerCanister::new(payout.sns_ledger_canister_id);
-    drive_pending_with_ledger(now_nanos, &ledger).await
+    let ledger = IcrcLedgerCanister::new(ledger_id);
+    drive_pending_bounded(now_nanos, &ledger, budget).await
 }
 
+#[cfg(test)]
 async fn drive_pending_with_ledger<L: RewardLedgerClient>(
     now_nanos: u64,
     ledger: &L,
 ) -> PendingDriveResult {
+    drive_pending_bounded(now_nanos, ledger, &WorkBudget::for_test()).await
+}
+
+async fn drive_pending_bounded<L: RewardLedgerClient>(
+    now_nanos: u64,
+    ledger: &L,
+    budget: &WorkBudget,
+) -> PendingDriveResult {
     let mut last_abandonment = None;
     loop {
+        // get/compare/mutate below clone the pinned vector. Charge those visits
+        // too, including restored plans; holding never discards their identities.
+        if budget
+            .work(1 + reward_state::pending_recipient_count().saturating_mul(4))
+            .is_err()
+        {
+            return PendingDriveResult::Held;
+        }
         let Some(payout) = reward_state::get().pending_payout else {
             return last_abandonment.map_or(
                 PendingDriveResult::Completed,
@@ -1029,13 +1141,23 @@ async fn drive_pending_with_ledger<L: RewardLedgerClient>(
             }
         }
 
-        let first = transfer_once(ledger, recipient, &payout.fee).await;
+        let Ok(first) = budget
+            .call(transfer_once(ledger, recipient, &payout.fee))
+            .await
+        else {
+            return PendingDriveResult::Held;
+        };
         if reward_state::get().pending_payout.as_ref() != Some(&payout) {
             return PendingDriveResult::Stale;
         }
         let outcome = match first {
             AttemptOutcome::Retryable | AttemptOutcome::Uncertain => {
-                let second = transfer_once(ledger, recipient, &payout.fee).await;
+                let Ok(second) = budget
+                    .call(transfer_once(ledger, recipient, &payout.fee))
+                    .await
+                else {
+                    return PendingDriveResult::Held;
+                };
                 if reward_state::get().pending_payout.as_ref() != Some(&payout) {
                     return PendingDriveResult::Stale;
                 }
@@ -1932,7 +2054,7 @@ mod tests {
     }
 
     #[test]
-    fn eligible_commitment_beyond_former_limit_is_found_without_depth_veto() {
+    fn eligible_commitment_spanning_twelve_pages_is_found_within_the_attempt_budget() {
         let index = MockHistory {
             pages: Mutex::new(
                 pages_from_history(scanner_history(12_000, true))
@@ -2150,6 +2272,33 @@ mod tests {
     }
 
     #[test]
+    fn owner_chunks_share_the_attempt_call_limit_and_do_not_publish_partial_owners() {
+        use super::super::reward_budget::{EXHAUSTED, MAX_CALLS};
+        let budget = WorkBudget::for_test();
+        for _ in 0..MAX_CALLS - 1 {
+            block_on(budget.call(async {})).unwrap();
+        }
+        let sources = (0..129_u16)
+            .map(|n| {
+                let mut account = [0; 32];
+                account[..2].copy_from_slice(&n.to_be_bytes());
+                (account, 1)
+            })
+            .collect::<BTreeMap<_, _>>();
+        let resolver = MockResolver {
+            responses: Mutex::new(VecDeque::from([Ok(ResolveDefaultIcpAccountsResult::Ok(
+                vec![None; 128],
+            ))])),
+            requests: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(resolve_accounts_bounded(&resolver, 1, &sources, &budget)).unwrap_err(),
+            EXHAUSTED
+        );
+        assert_eq!(resolver.requests.lock().unwrap().len(), 1);
+    }
+
+    #[test]
     fn snapshot_change_in_any_owner_chunk_fails_the_whole_candidate() {
         let sources = (0..129_u16)
             .map(|value| {
@@ -2217,6 +2366,73 @@ mod tests {
             .build()
             .unwrap()
             .block_on(future)
+    }
+
+    #[test]
+    fn exhausted_work_holds_the_restored_payout_before_dispatch_or_progress() {
+        reward_state::reset_for_test();
+        let pending = payout();
+        reward_state::set(reward_state::RewardState {
+            pending_payout: Some(pending.clone()),
+            ..Default::default()
+        });
+        let budget = WorkBudget::for_test();
+        budget.work(super::super::reward_budget::MAX_WORK).unwrap();
+        assert_eq!(
+            reward_state::scheduler_status(),
+            (0, Some(pending.sns_ledger_canister_id))
+        );
+        assert_eq!(
+            block_on(drive_pending(56, &budget)),
+            PendingDriveResult::Held
+        );
+        assert_eq!(reward_state::get().pending_payout, Some(pending));
+        assert_eq!(reward_state::get().last_sweep_attempt_timestamp_seconds, 0);
+    }
+
+    #[test]
+    fn bounded_pinned_payout_holds_and_resumes_the_exact_remaining_identities() {
+        use super::super::reward_budget::MAX_CALLS;
+        reward_state::reset_for_test();
+        let pending = payout();
+        reward_state::set(reward_state::RewardState {
+            pending_payout: Some(pending.clone()),
+            ..Default::default()
+        });
+        let budget = WorkBudget::for_test();
+        for _ in 0..MAX_CALLS - 1 {
+            block_on(budget.call(async {})).unwrap();
+        }
+        let ledger = MockLedger {
+            transfers: Mutex::new(VecDeque::from([
+                Ok(Ok(Nat::from(1_u8))),
+                Ok(Ok(Nat::from(2_u8))),
+                Ok(Ok(Nat::from(3_u8))),
+            ])),
+            args: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            block_on(drive_pending_bounded(56, &ledger, &budget)),
+            PendingDriveResult::Held
+        );
+        let held = reward_state::get();
+        assert_eq!(held.last_sweep_attempt_timestamp_seconds, 0);
+        let remaining = held.pending_payout.unwrap();
+        assert_eq!(remaining.next_recipient_index, 1);
+        assert_eq!(remaining.recipients, pending.recipients);
+        assert_eq!(
+            block_on(drive_pending_bounded(56, &ledger, &WorkBudget::for_test())),
+            PendingDriveResult::Completed
+        );
+        assert!(reward_state::get().pending_payout.is_none());
+        assert_eq!(
+            *ledger.args.lock().unwrap(),
+            pending
+                .recipients
+                .iter()
+                .map(|recipient| reward_transfer_arg(recipient, &pending.fee))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

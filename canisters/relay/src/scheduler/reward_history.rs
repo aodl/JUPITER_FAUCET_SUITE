@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use super::reward_budget::WorkBudget;
 use async_trait::async_trait;
 use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsResponse, IcpIndexCanister, IndexOperation,
@@ -66,6 +67,7 @@ impl RewardHistoryClient for IcpIndexCanister {
 /// one reward adjudication and is not an attribution cursor.
 #[derive(Debug)]
 pub(super) struct BackwardHistory {
+    budget: WorkBudget,
     account_identifier: String,
     next_start: Option<u64>,
     seen_starts: BTreeSet<u64>,
@@ -80,8 +82,14 @@ pub(super) struct BackwardHistory {
 }
 
 impl BackwardHistory {
+    #[cfg(test)]
     pub(super) fn new(account_identifier: String) -> Self {
+        Self::with_budget(account_identifier, WorkBudget::for_test())
+    }
+
+    pub(super) fn with_budget(account_identifier: String, budget: WorkBudget) -> Self {
         Self {
+            budget,
             account_identifier,
             next_start: None,
             seen_starts: BTreeSet::new(),
@@ -125,14 +133,24 @@ impl BackwardHistory {
             return Ok(());
         }
         let requested_start = self.next_start;
-        let page = index
-            .get_transactions(
+        let page = self
+            .budget
+            .call(index.get_transactions(
                 self.account_identifier.clone(),
                 requested_start,
                 ICP_HISTORY_PAGE_SIZE,
-            )
-            .await
+            ))
+            .await?
             .map_err(|_| "history_read_failed".to_string())?;
+        if page.transactions.len() > ICP_HISTORY_PAGE_SIZE as usize {
+            return Err("history_oversized_page".into());
+        }
+        self.budget.retain(
+            page.transactions.len(),
+            candid::encode_one(&page)
+                .map_err(|_| "history_encoding_failed".to_string())?
+                .len(),
+        )?;
         #[cfg(test)]
         {
             self.pages_requested += 1;
@@ -157,6 +175,7 @@ impl BackwardHistory {
         }
 
         for transaction in &page.transactions {
+            self.budget.work(1)?;
             if requested_start.is_some_and(|start| transaction.id >= start)
                 || self
                     .previous_tx_id
@@ -324,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn backwards_history_has_no_lifetime_page_limit() {
+    fn supported_attempt_reads_twelve_pages_without_truncating_provenance() {
         let mut pages = VecDeque::new();
         for page_number in 0..12_u64 {
             let high = 12_000 - page_number * ICP_HISTORY_PAGE_SIZE;
@@ -343,6 +362,43 @@ mod tests {
         assert_eq!(history.pages_requested(), 12);
         assert_eq!(history.transactions().first().unwrap().id, 12_000);
         assert_eq!(history.transactions().last().unwrap().id, 1);
+        eprintln!(
+            "reward-history valid pages=12 records=12000 usage={:?}",
+            history.budget.usage()
+        );
+    }
+
+    #[test]
+    fn account_readers_share_record_and_call_allowances_and_reject_oversized_pages() {
+        use super::super::reward_budget::{EXHAUSTED, MAX_CALLS, MAX_RECORDS};
+        let budget = WorkBudget::for_test();
+        let index = MockHistory {
+            pages: Mutex::new(VecDeque::from([Ok(page([3, 2], 1)), Ok(page([1], 1))])),
+            requests: Mutex::new(Vec::new()),
+        };
+        let mut first = BackwardHistory::with_budget("first".into(), budget.clone());
+        block_on(first.extend(&index)).unwrap();
+        budget.retain(MAX_RECORDS - 2, 0).unwrap();
+        let mut nested = BackwardHistory::with_budget("splitter".into(), budget.clone());
+        assert_eq!(block_on(nested.extend(&index)).unwrap_err(), EXHAUSTED);
+        assert!(nested.transactions().is_empty());
+        assert_eq!(budget.usage().records, MAX_RECORDS);
+        for _ in 2..MAX_CALLS {
+            block_on(budget.call(async {})).unwrap();
+        }
+        assert_eq!(block_on(first.extend(&index)).unwrap_err(), EXHAUSTED);
+        assert_eq!(index.requests.lock().unwrap().len(), 2);
+
+        let index = MockHistory {
+            pages: Mutex::new(VecDeque::from([Ok(page((1..=1001).rev(), 1))])),
+            requests: Mutex::new(Vec::new()),
+        };
+        let mut oversized = BackwardHistory::new("oversized".into());
+        assert_eq!(
+            block_on(oversized.extend(&index)).unwrap_err(),
+            "history_oversized_page"
+        );
+        assert!(oversized.transactions().is_empty());
     }
 
     #[test]

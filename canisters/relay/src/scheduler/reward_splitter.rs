@@ -1,3 +1,4 @@
+use super::reward_budget::WorkBudget;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use candid::Principal;
@@ -143,10 +144,12 @@ fn consume_job_funding(
     funding: &mut VecDeque<UpstreamCredit>,
     sources: &mut BTreeMap<[u8; 32], u64>,
     ineligible_e8s: &mut u64,
+    budget: &WorkBudget,
 ) -> Result<(), &'static str> {
     let mut remaining = balance_e8s;
     let mut consumed = Vec::new();
     while remaining > 0 {
+        budget.work(1).map_err(|_| "reward_work_budget_exhausted")?;
         if consumed.len() == funding_credits_at_pin {
             return Err("missing_funding_credit");
         }
@@ -176,13 +179,39 @@ fn consume_job_funding(
     Ok(())
 }
 
-pub(super) fn reconstruct_splitter_history(
+#[cfg(test)]
+fn reconstruct_splitter_history(
     relay: Principal,
     splitter_number: u8,
     transactions: &[IndexTransactionWithId],
     required_credits: &[SplitterFundingCredit],
     history_authoritative: bool,
 ) -> reward_history::HistoricalReconstruction<ExpandedSplitterProvenance> {
+    reconstruct_splitter_history_bounded(
+        relay,
+        splitter_number,
+        transactions,
+        required_credits,
+        history_authoritative,
+        &WorkBudget::for_test(),
+    )
+}
+
+fn reconstruct_splitter_history_bounded(
+    relay: Principal,
+    splitter_number: u8,
+    transactions: &[IndexTransactionWithId],
+    required_credits: &[SplitterFundingCredit],
+    history_authoritative: bool,
+    budget: &WorkBudget,
+) -> reward_history::HistoricalReconstruction<ExpandedSplitterProvenance> {
+    // Charge revisits and sorting before allocating another reconstruction.
+    let sort_work = transactions
+        .len()
+        .saturating_mul(1 + transactions.len().max(1).ilog2() as usize);
+    if let Err(error) = budget.work(sort_work.saturating_add(required_credits.len())) {
+        return reward_history::HistoricalReconstruction::Malformed(error);
+    }
     if !history_authoritative {
         return reward_history::HistoricalReconstruction::NeedOlderHistory;
     }
@@ -199,6 +228,9 @@ pub(super) fn reconstruct_splitter_history(
     }
     let mut required = BTreeMap::<u64, u64>::new();
     for credit in required_credits {
+        if let Err(error) = budget.work(1) {
+            return reward_history::HistoricalReconstruction::Malformed(error);
+        }
         if required.insert(credit.tx_id, credit.amount_e8s).is_some() {
             return reward_history::HistoricalReconstruction::Malformed(provenance_error(
                 splitter_number,
@@ -225,6 +257,9 @@ pub(super) fn reconstruct_splitter_history(
     let mut result = ExpandedSplitterProvenance::default();
 
     for entry in chronological {
+        if let Err(error) = budget.work(1) {
+            return reward_history::HistoricalReconstruction::Malformed(error);
+        }
         if entry.id > last_anchor {
             continue;
         }
@@ -345,6 +380,7 @@ pub(super) fn reconstruct_splitter_history(
                         &mut funding,
                         target_sources,
                         target_ineligible,
+                        budget,
                     ) {
                         return reward_history::HistoricalReconstruction::Malformed(
                             provenance_error(splitter_number, Some(entry.id), class),
@@ -413,13 +449,20 @@ pub(super) fn reconstruct_splitter_history(
 }
 
 pub(super) struct SplitterHistoryCache {
+    budget: WorkBudget,
     histories: BTreeMap<u8, reward_history::BackwardHistory>,
     counted_splitters: BTreeSet<u8>,
 }
 
 impl SplitterHistoryCache {
+    #[cfg(test)]
     pub(super) fn new() -> Self {
+        Self::with_budget(WorkBudget::for_test())
+    }
+
+    pub(super) fn with_budget(budget: WorkBudget) -> Self {
         Self {
+            budget,
             histories: BTreeMap::new(),
             counted_splitters: BTreeSet::new(),
         }
@@ -431,6 +474,7 @@ impl SplitterHistoryCache {
         relay: Principal,
         credits: &[SplitterFundingCredit],
     ) -> Result<ExpandedSplitterProvenance, String> {
+        self.budget.work(credits.len())?;
         let referenced = credits
             .iter()
             .map(|credit| credit.splitter_number)
@@ -443,12 +487,16 @@ impl SplitterHistoryCache {
         }
         let mut expanded = ExpandedSplitterProvenance::default();
         for splitter_number in referenced {
+            self.budget.work(1)?;
             let first_use = self.counted_splitters.insert(splitter_number);
             let history = self.histories.entry(splitter_number).or_insert_with(|| {
-                reward_history::BackwardHistory::new(account_identifier_text(
-                    relay,
-                    Some(logic::relay_numbered_subaccount(splitter_number)),
-                ))
+                reward_history::BackwardHistory::with_budget(
+                    account_identifier_text(
+                        relay,
+                        Some(logic::relay_numbered_subaccount(splitter_number)),
+                    ),
+                    self.budget.clone(),
+                )
             });
             let starting_len = history.transactions().len();
             let required = credits
@@ -463,12 +511,13 @@ impl SplitterHistoryCache {
                         .await
                         .map_err(|class| provenance_error(splitter_number, None, &class))?;
                 }
-                match reconstruct_splitter_history(
+                match reconstruct_splitter_history_bounded(
                     relay,
                     splitter_number,
                     history.authoritative_transactions(),
                     &required,
                     history.authoritative(),
+                    &self.budget,
                 ) {
                     reward_history::HistoricalReconstruction::Complete(provenance) => {
                         break provenance
@@ -1068,6 +1117,69 @@ mod tests {
         )
         .unwrap_complete();
         assert_eq!(provenance.sources, BTreeMap::from([([2; 32], 490)]));
+    }
+
+    #[test]
+    fn multiple_splitters_and_cached_reconstruction_share_one_attempt_allowance() {
+        use super::super::reward_budget::{EXHAUSTED, MAX_CALLS, MAX_WORK};
+        let (first, first_anchor) = one_source_job(10, [1; 32], 1_000, 10, 10, 1);
+        let (second, second_anchor) = one_source_job(20, [2; 32], 1_000, 10, 10, 10);
+        let fixtures = || {
+            pages(first.clone())
+                .into_iter()
+                .chain(pages(second.clone()))
+                .collect()
+        };
+        let index = MockHistory {
+            pages: Mutex::new(fixtures()),
+            requests: Mutex::new(Vec::new()),
+        };
+        let budget = WorkBudget::for_test();
+        let mut cache = SplitterHistoryCache::with_budget(budget.clone());
+        let complete = block_on(cache.expand(
+            &index,
+            relay(),
+            &[first_anchor.clone(), second_anchor.clone()],
+        ))
+        .unwrap();
+        assert_eq!(
+            complete.sources,
+            BTreeMap::from([([1; 32], 890), ([2; 32], 790)])
+        );
+        assert_eq!(complete.splitters_scanned, 2);
+        assert_eq!(budget.usage().records, 6);
+        assert_eq!(budget.usage().calls, 2);
+        let used = budget.usage().work;
+        block_on(cache.expand(&index, relay(), std::slice::from_ref(&first_anchor))).unwrap();
+        assert!(
+            budget.usage().work > used,
+            "cached reconstruction is still charged"
+        );
+        budget.work(MAX_WORK - budget.usage().work).unwrap();
+        assert!(
+            block_on(cache.expand(&index, relay(), &[first_anchor.clone()]))
+                .unwrap_err()
+                .contains(EXHAUSTED)
+        );
+        assert_eq!(index.requests.lock().unwrap().len(), 2);
+
+        let index = MockHistory {
+            pages: Mutex::new(fixtures()),
+            requests: Mutex::new(Vec::new()),
+        };
+        let budget = WorkBudget::for_test();
+        for _ in 0..MAX_CALLS - 1 {
+            block_on(budget.call(async {})).unwrap();
+        }
+        let mut cache = SplitterHistoryCache::with_budget(budget.clone());
+        assert!(
+            block_on(cache.expand(&index, relay(), &[first_anchor, second_anchor]))
+                .unwrap_err()
+                .contains(EXHAUSTED)
+        );
+        assert_eq!(index.requests.lock().unwrap().len(), 1);
+        assert_eq!(budget.usage().calls, MAX_CALLS);
+        assert_eq!(budget.usage().records, 3);
     }
 
     #[test]

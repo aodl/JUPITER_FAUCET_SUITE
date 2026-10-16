@@ -91,6 +91,32 @@ pub(crate) fn get() -> RewardState {
     })
 }
 
+pub(crate) fn pending_recipient_count() -> usize {
+    initialize_if_uninitialized();
+    with_cell(|cell| match cell.get() {
+        VersionedRewardState::V3(state) => state
+            .pending_payout
+            .as_ref()
+            .map_or(0, |payout| payout.recipients.len()),
+        VersionedRewardState::Uninitialized => unreachable!(),
+    })
+}
+
+// Scheduling must not clone a restored payout before its work is admitted.
+pub(crate) fn scheduler_status() -> (u64, Option<Principal>) {
+    initialize_if_uninitialized();
+    with_cell(|cell| match cell.get() {
+        VersionedRewardState::V3(state) => (
+            state.last_sweep_attempt_timestamp_seconds,
+            state
+                .pending_payout
+                .as_ref()
+                .map(|payout| payout.sns_ledger_canister_id),
+        ),
+        VersionedRewardState::Uninitialized => unreachable!(),
+    })
+}
+
 pub(crate) fn set(state: RewardState) {
     if let Some(payout) = &state.pending_payout {
         assert!(!payout.recipients.is_empty(), "pending payout is empty");
