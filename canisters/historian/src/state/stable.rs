@@ -2,6 +2,7 @@ use super::*;
 pub(super) type Memory = VirtualMemory<DefaultMemoryImpl>;
 const RELAY_SETUP_ENTRIES_MEMORY_ID: u8 = 26;
 const COMMITMENT_ROUTE_ROLLUPS_MEMORY_ID: u8 = 29;
+const RELAY_CREATING_KEYS_MEMORY_ID: u8 = 30;
 
 // Historian stable memory IDs:
 // 0: root state
@@ -23,6 +24,7 @@ const COMMITMENT_ROUTE_ROLLUPS_MEMORY_ID: u8 = 29;
 // 27: retired Relay factory/schema experiment from repository history -- DO NOT REUSE
 // 28: retired Relay payment-claims experiment from repository history -- DO NOT REUSE
 // 29: exact commitment-route cumulative roll-ups
+// 30: bounded authoritative Creating-key index (at most four keys)
 thread_local! {
     pub(super) static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
@@ -52,6 +54,8 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     pub(super) static STABLE_RELAY_SETUP_ENTRIES_MAP: std::cell::RefCell<Option<StableBTreeMap<crate::relay_setup::RelaySetupKey, crate::relay_setup::RelaySetupEntry, Memory>>> =
         const { std::cell::RefCell::new(None) };
+    static STABLE_RELAY_CREATING_KEYS: std::cell::RefCell<Option<StableCell<CreatingKeys, Memory>>> =
+        const { std::cell::RefCell::new(None) };
     pub(super) static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
     pub(super) static PERSISTENCE_BATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     pub(super) static PERSISTENCE_DIRTY_SECTIONS: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
@@ -60,6 +64,72 @@ thread_local! {
     pub(super) static DIRTY_CYCLES_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = const { std::cell::RefCell::new(BTreeSet::new()) };
     pub(super) static DIRTY_RAW_ICP_COMMITMENT_PRINCIPALS: std::cell::RefCell<BTreeSet<Principal>> = const { std::cell::RefCell::new(BTreeSet::new()) };
     pub(super) static DIRTY_NEURON_COMMITMENT_IDS: std::cell::RefCell<BTreeSet<u64>> = const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+
+#[derive(CandidType, Deserialize, Clone, Default)]
+struct CreatingKeys(Option<Vec<crate::relay_setup::RelaySetupKey>>);
+
+impl Storable for CreatingKeys {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Owned(candid::encode_one(self).expect("encode Creating-key index"))
+    }
+    fn into_bytes(self) -> Vec<u8> {
+        self.to_bytes().into_owned()
+    }
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        candid::decode_one(&bytes).expect("decode Creating-key index")
+    }
+    const BOUND: Bound = Bound::Unbounded;
+}
+
+fn with_creating_cell<R>(f: impl FnOnce(&mut StableCell<CreatingKeys, Memory>) -> R) -> R {
+    STABLE_RELAY_CREATING_KEYS.with(|cell| {
+        if cell.borrow().is_none() {
+            MEMORY_MANAGER.with(|manager| {
+                *cell.borrow_mut() = Some(StableCell::init(
+                    manager
+                        .borrow()
+                        .get(MemoryId::new(RELAY_CREATING_KEYS_MEMORY_ID)),
+                    CreatingKeys::default(),
+                ));
+            });
+        }
+        f(cell.borrow_mut().as_mut().expect("Creating-key index"))
+    })
+}
+
+pub(crate) fn relay_creating_keys() -> Vec<crate::relay_setup::RelaySetupKey> {
+    with_creating_cell(|cell| {
+        if cell.get().0.is_none() {
+            // Operator reports this factory has never been used. Enforce that
+            // prerequisite rather than initialize over unknown pending work.
+            assert!(with_relay_setup_entries_map(|map| map.is_empty()),
+                "missing Creating-key index over nonempty Relay registry; unsupported factory baseline");
+            cell.set(CreatingKeys(Some(Vec::new())));
+        }
+        let keys = cell
+            .get()
+            .0
+            .as_ref()
+            .expect("initialized Creating-key index");
+        assert!(
+            keys.len() <= crate::relay_setup::MAX_CONCURRENT_FUNDED_RELAY_SETUPS
+                && keys.iter().collect::<BTreeSet<_>>().len() == keys.len(),
+            "invalid Creating-key index"
+        );
+        keys.clone()
+    })
+}
+
+pub(crate) fn set_relay_creating_keys(keys: Vec<crate::relay_setup::RelaySetupKey>) {
+    assert!(
+        keys.len() <= crate::relay_setup::MAX_CONCURRENT_FUNDED_RELAY_SETUPS
+            && keys.iter().collect::<BTreeSet<_>>().len() == keys.len(),
+        "invalid Creating-key index"
+    );
+    with_creating_cell(|cell| {
+        cell.set(CreatingKeys(Some(keys)));
+    });
 }
 
 pub(super) fn with_commitment_route_rollup_map<R>(
@@ -328,7 +398,38 @@ mod stable_memory_id_tests {
 
         assert_eq!(RELAY_SETUP_ENTRIES_MEMORY_ID, 26);
         assert_eq!(COMMITMENT_ROUTE_ROLLUPS_MEMORY_ID, 29);
+        assert_eq!(RELAY_CREATING_KEYS_MEMORY_ID, 30);
         assert!(!RETIRED_RELAY_MEMORY_IDS.contains(&RELAY_SETUP_ENTRIES_MEMORY_ID));
         assert!(!RETIRED_RELAY_MEMORY_IDS.contains(&COMMITMENT_ROUTE_ROLLUPS_MEMORY_ID));
+        assert!(!RETIRED_RELAY_MEMORY_IDS.contains(&RELAY_CREATING_KEYS_MEMORY_ID));
+    }
+
+    #[test]
+    fn creating_index_survives_heap_eviction_and_refuses_unknown_nonempty_baseline() {
+        use crate::relay_setup::{RelaySetupEntry, RelaySetupKey};
+        let key = RelaySetupKey::from_bytes(Cow::Owned(vec![7; 32]));
+        with_relay_setup_entries_map(|map| map.clear_new());
+        with_creating_cell(|cell| {
+            cell.set(CreatingKeys(None));
+        });
+        assert!(relay_creating_keys().is_empty());
+        set_relay_creating_keys(vec![key]);
+        STABLE_RELAY_CREATING_KEYS.with(|cell| *cell.borrow_mut() = None);
+        assert_eq!(relay_creating_keys(), vec![key]);
+        with_relay_setup_entries_map(|map| {
+            map.insert(
+                key,
+                RelaySetupEntry::Active {
+                    relay_canister_id: Principal::from_slice(&[8]),
+                },
+            );
+        });
+        with_creating_cell(|cell| {
+            cell.set(CreatingKeys(None));
+        });
+        assert!(std::panic::catch_unwind(relay_creating_keys).is_err());
+        assert_eq!(with_relay_setup_entries_map(|map| map.len()), 1);
+        with_relay_setup_entries_map(|map| map.clear_new());
+        set_relay_creating_keys(Vec::new());
     }
 }

@@ -209,6 +209,40 @@ pub(crate) fn stable_cycles_history_for(canister_id: Principal) -> Vec<CyclesSam
     load_stable_cycles_history_internal(canister_id)
 }
 
+pub(crate) fn has_stable_cycles_history(canister_id: Principal) -> bool {
+    with_cycles_history_index_map(|map| {
+        map.get(&PrincipalKey::from(&canister_id))
+            .is_some_and(|timestamps| !timestamps.0.is_empty())
+    })
+}
+
+/// Factory activation changes only its targets and child. Persist those registry
+/// entries and the root without cloning loaded bulk histories. No await is allowed.
+pub(crate) fn with_factory_tracking_state_mut<R>(
+    canisters: &BTreeSet<Principal>,
+    f: impl FnOnce(&mut State) -> R,
+) -> R {
+    assert!(
+        !persistence_batch_active(),
+        "factory activation inside persistence batch"
+    );
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        let state = state.as_mut().expect("state not initialized");
+        let result = f(state);
+        persist_snapshot_sections_scoped(
+            state,
+            DIRTY_ROOT | DIRTY_REGISTRY,
+            Some(canisters),
+            None,
+            None,
+            None,
+            None,
+        );
+        result
+    })
+}
+
 pub(crate) fn stable_raw_icp_commitment_history_for(
     canister_id: Principal,
 ) -> Vec<CommitmentSample> {

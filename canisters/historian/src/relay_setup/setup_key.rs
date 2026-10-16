@@ -10,7 +10,9 @@ const RECIPIENT_SECTION_TAG: u8 = 0x02;
 const PRINCIPAL_RECIPIENT_TAG: u8 = 0x01;
 const NEURON_RECIPIENT_TAG: u8 = 0x02;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, candid::CandidType, serde::Deserialize,
+)]
 pub(crate) struct RelaySetupKey([u8; 32]);
 
 impl RelaySetupKey {

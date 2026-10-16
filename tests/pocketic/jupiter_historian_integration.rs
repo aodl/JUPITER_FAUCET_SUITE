@@ -792,7 +792,7 @@ impl Storable for FixtureBytes {
     const BOUND: Bound = Bound::Unbounded;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, CandidType, Deserialize)]
 struct FixtureSetupKey([u8; 32]);
 
 impl Storable for FixtureSetupKey {
@@ -815,6 +815,159 @@ impl Storable for FixtureSetupKey {
 }
 
 type FixtureMemory = VirtualMemory<VectorMemory>;
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct FixtureRelayTransfer {
+    amount_e8s: u64,
+    fee_e8s: u64,
+    created_at_time_nanos: u64,
+    block_index: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct FixtureRelayProgress {
+    phase: RelayCreationPhase,
+    cmc_transfer: Option<FixtureRelayTransfer>,
+    cycles_minted: Option<u128>,
+    create_dispatched_at_ts: Option<u64>,
+    relay_canister_id: Option<Principal>,
+    relay_funding_transfer: Option<FixtureRelayTransfer>,
+    last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum FixtureRelayEntry {
+    Creating(FixtureRelayProgress),
+    Active { relay_canister_id: Principal },
+    ManualRecoveryRequired(FixtureRelayProgress),
+}
+
+#[derive(CandidType, Deserialize)]
+struct FixtureCreatingKeys(Option<Vec<FixtureSetupKey>>);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FixtureSetupValue(Vec<u8>);
+
+impl Storable for FixtureSetupValue {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(&self.0)
+    }
+    fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        Self(bytes.into_owned())
+    }
+    const BOUND: Bound = Bound::Bounded {
+        max_size: 4_096,
+        is_fixed_size: false,
+    };
+}
+
+#[test]
+#[ignore]
+fn historian_creating_index_upgrade_reconciles_only_inflight_and_preserves_spend_evidence(
+) -> Result<()> {
+    let h = Harness::new_with_scan_interval(false, 86_400)?;
+    let wasm = historian_wasm()?;
+    let controller = h.pic.get_controllers(h.historian)[0];
+    h.pic.advance_time(Duration::from_secs(2));
+    tick_n(&h.pic, 5);
+    support::governance::stop_canister_as(&h.pic, h.historian, controller)?;
+    let memory = Rc::new(RefCell::new(h.pic.get_stable_memory(h.historian)));
+    let mut completed = Vec::new();
+    let mut pending = Vec::new();
+    {
+        let manager = MemoryManager::init(memory.clone());
+        let mut entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+            manager.get(MemoryId::new(26)),
+        );
+        for n in 1..=1_000_u64 {
+            let mut key = [0; 32];
+            key[..8].copy_from_slice(&n.to_be_bytes());
+            let key = FixtureSetupKey(key);
+            let bytes = FixtureSetupValue(encode_one(FixtureRelayEntry::Active {
+                relay_canister_id: Principal::from_slice(&[9]),
+            })?);
+            entries.insert(key.clone(), bytes.clone());
+            completed.push((key, bytes));
+        }
+        for (n, phase) in [
+            RelayCreationPhase::Reserved,
+            RelayCreationPhase::ProbingTargets,
+            RelayCreationPhase::CmcTransferPrepared,
+            RelayCreationPhase::CreateDispatched,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let key = FixtureSetupKey([n as u8 + 1; 32]);
+            let may_spend = n >= 2;
+            let progress = FixtureRelayProgress {
+                phase,
+                cmc_transfer: may_spend.then_some(FixtureRelayTransfer {
+                    amount_e8s: 99,
+                    fee_e8s: 10_000,
+                    created_at_time_nanos: 111,
+                    block_index: (n == 3).then_some(12),
+                }),
+                cycles_minted: (n == 3).then_some(2_000_000_000_000),
+                create_dispatched_at_ts: (n == 3).then_some(222),
+                relay_canister_id: None,
+                relay_funding_transfer: None,
+                last_error: None,
+            };
+            entries.insert(
+                key.clone(),
+                FixtureSetupValue(encode_one(FixtureRelayEntry::Creating(progress.clone()))?),
+            );
+            pending.push((key, progress));
+        }
+        let mut index = StableCell::<FixtureBytes, FixtureMemory>::init(
+            manager.get(MemoryId::new(30)),
+            FixtureBytes(Vec::new()),
+        );
+        index.set(FixtureBytes(encode_one(FixtureCreatingKeys(Some(
+            pending.iter().map(|(key, _)| key.clone()).collect(),
+        )))?));
+    }
+    h.pic.set_stable_memory(
+        h.historian,
+        memory.borrow().clone(),
+        pocket_ic::common::rest::BlobCompression::NoCompression,
+    );
+    h.pic
+        .upgrade_canister(h.historian, wasm, encode_args(())?, Some(controller))
+        .map_err(|error| anyhow!("indexed factory upgrade: {error:?}"))?;
+    let memory = Rc::new(RefCell::new(h.pic.get_stable_memory(h.historian)));
+    let manager = MemoryManager::init(memory);
+    let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+        manager.get(MemoryId::new(26)),
+    );
+    for (key, bytes) in completed {
+        assert_eq!(entries.get(&key), Some(bytes));
+    }
+    for (n, (key, mut progress)) in pending.into_iter().enumerate() {
+        if n < 2 {
+            assert!(entries.get(&key).is_none());
+        } else {
+            progress.last_error = Some("HistorianUpgradeInterrupted".into());
+            let observed: FixtureRelayEntry = candid::decode_one(&entries.get(&key).unwrap().0)?;
+            assert_eq!(
+                observed,
+                FixtureRelayEntry::ManualRecoveryRequired(progress)
+            );
+        }
+    }
+    let index = StableCell::<FixtureBytes, FixtureMemory>::init(
+        manager.get(MemoryId::new(30)),
+        FixtureBytes(Vec::new()),
+    );
+    let index: FixtureCreatingKeys = candid::decode_one(&index.get().0)?;
+    assert!(index.0.unwrap().is_empty());
+    assert_eq!(entries.len(), 1_002);
+    Ok(())
+}
 
 fn copied_root_bytes(pic: &PocketIc, historian: Principal) -> Vec<u8> {
     let memory = Rc::new(RefCell::new(pic.get_stable_memory(historian)));

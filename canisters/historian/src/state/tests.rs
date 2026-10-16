@@ -1863,6 +1863,82 @@ mod tests {
     }
 
     #[test]
+    fn factory_tracking_flush_is_scoped_and_does_not_replace_lazy_history() {
+        for size in [100, 1_000, 10_000] {
+            reset_test_storage();
+            let target = principal(&[12]);
+            let unrelated = principal(&[13]);
+            let mut st = State::new(sample_config(), 9_000);
+            for n in 1..=size {
+                st.per_canister_meta.insert(
+                    principal(&(n as u64).to_be_bytes()),
+                    CanisterMeta::default(),
+                );
+            }
+            st.per_canister_meta
+                .insert(unrelated, CanisterMeta::default());
+            st.commitment_history.insert(
+                unrelated,
+                vec![CommitmentSample {
+                    tx_id: 31,
+                    timestamp_nanos: Some(310),
+                    amount_e8s: 500,
+                    counts_toward_faucet: true,
+                    raw_icp_destination_subaccount: None,
+                }],
+            );
+            set_state(st);
+            let history_before = snapshot_commitment_history_map();
+            let meta_before = with_canister_meta_map(|map| {
+                map.get(&PrincipalKey::from(&unrelated))
+                    .unwrap()
+                    .to_bytes()
+                    .into_owned()
+            });
+            STATE.with(|state| {
+                let mut state = state.borrow_mut();
+                let state = state.as_mut().unwrap();
+                state.commitment_history.clear(); // ordinary lazy restored heap
+                state
+                    .per_canister_meta
+                    .get_mut(&unrelated)
+                    .unwrap()
+                    .first_seen_ts = Some(999);
+            });
+            let started = std::time::Instant::now();
+            let old_clone = get_state();
+            let clone_us = started.elapsed().as_micros();
+            drop(old_clone);
+            let started = std::time::Instant::now();
+            with_factory_tracking_state_mut(&BTreeSet::from([target]), |state| {
+                state
+                    .per_canister_meta
+                    .entry(target)
+                    .or_default()
+                    .first_seen_ts = Some(123);
+            });
+            let scoped_us = started.elapsed().as_micros();
+            assert_eq!(snapshot_commitment_history_map(), history_before);
+            assert_eq!(
+                with_canister_meta_map(|map| map
+                    .get(&PrincipalKey::from(&unrelated))
+                    .unwrap()
+                    .to_bytes()
+                    .into_owned()),
+                meta_before
+            );
+            assert_eq!(
+                with_canister_meta_map(|map| map
+                    .get(&PrincipalKey::from(&target))
+                    .unwrap()
+                    .first_seen_ts),
+                Some(123)
+            );
+            eprintln!("factory-root tracked={size} old_whole_heap_clone_us={clone_us} scoped_flush_us={scoped_us} registry_keys_written=1");
+        }
+    }
+
+    #[test]
     fn section_scoped_mutation_only_flushes_target_sections() {
         reset_test_storage();
         let canister_id = principal(&[12]);

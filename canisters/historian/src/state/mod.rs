@@ -3,7 +3,10 @@ use types::*;
 pub(crate) use types::*;
 mod stable;
 use stable::*;
-pub(crate) use stable::{with_relay_setup_entries_map, DIRTY_REGISTRY, DIRTY_ROOT};
+pub(crate) use stable::{
+    relay_creating_keys, set_relay_creating_keys, with_relay_setup_entries_map, DIRTY_REGISTRY,
+    DIRTY_ROOT,
+};
 mod commitments;
 use commitments::*;
 mod commitment_route_rollups;

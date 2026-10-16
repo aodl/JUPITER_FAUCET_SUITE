@@ -315,8 +315,6 @@ pub(crate) fn mark_active_relay_tracked(
     relay_id: Principal,
     now_secs: Option<u64>,
 ) {
-    let stable_cycles_targets = state::stable_cycles_history_keys();
-
     let tracked = [
         (target, CanisterTrackingReason::RelayTarget),
         (relay_id, CanisterTrackingReason::RelayInstance),
@@ -336,7 +334,7 @@ pub(crate) fn mark_active_relay_tracked(
             .get(canister_id)
             .map(|history| !history.is_empty())
             .unwrap_or(false)
-            || stable_cycles_targets.contains(canister_id);
+            || state::has_stable_cycles_history(*canister_id);
         if !has_cycles_history && meta.last_cycles_probe_ts.is_none() {
             scheduler::enqueue_initial_cycles_probe(st, *canister_id);
         }
@@ -550,6 +548,7 @@ pub(super) fn init(args: InitArgs) {
     ensure_canonical_relay_tracking(&mut st);
     normalize_runtime_state(&mut st);
     state::set_state(st);
+    let _ = state::relay_creating_keys();
     scheduler::install_timers();
     log_lifecycle("init_complete");
 }
@@ -677,6 +676,7 @@ pub(crate) fn restore_post_upgrade_state_with_timestamp(args: Option<UpgradeArgs
     state::init_stable_storage();
     let mut st: State = state::restore_state_from_stable()
         .expect("stable state missing during historian post_upgrade");
+    let _ = state::relay_creating_keys();
     apply_upgrade_args(&mut st, args);
     let registry_principals = st.canister_tracking_reasons.keys().copied().collect();
     // Persist only small upgrade-normalized sections. Commitment/cycles histories

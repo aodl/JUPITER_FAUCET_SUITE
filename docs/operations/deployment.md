@@ -193,7 +193,9 @@ When releasing numbered raw-ICP destination support, upgrade Historian and Fauce
 
 Stopping `jupiter_historian` is the executable self-service factory pause and authoritative call drain. Record public evidence, stop it, and wait for `Stopped` before an in-place upgrade. Keep it stopped while deploying a matching frontend when the two Candid declarations change together, then explicitly start Historian after both upgrades succeed. There is no runtime factory-disable update method.
 
-Self-service Relay state is legitimate durable production state. An upgrade must preserve memory-26 setup entries, exact active configuration mappings, and `RelayTarget`/`RelayInstance` tracking. Before upgrading, record representative known full configurations and their returned Relay mappings; production cannot enumerate every configuration hash. Verify the same configurations and tracking counts after upgrade. Never reinstall Historian to resolve an audit discrepancy.
+The developer confirmed on 2026-10-16 that the self-service factory has not been used and no self-service child exists. This is distinct from the live canonical Historian/Faucet history. The first factory-index release allocates memory 30 and initializes it only when memory 26 is empty; a missing index over a nonempty registry rejects upgrade rather than guessing or scanning a historical representation. Retain the operator's unused-factory inventory as a deployment prerequisite. Never reinstall Historian to meet it.
+
+Self-service Relay state is legitimate durable production state once the factory is used: memory-26 entries, exact active configuration mappings, `RelayTarget`/`RelayInstance` tracking and the bounded memory-30 Creating-key index are authoritative. Preserve both memories together. Before future upgrades, record representative known full configurations and their Relay mappings; production cannot enumerate every configuration hash. Verify those mappings and tracking counts afterwards.
 
 After canonical artifacts exist, run `./tools/scripts/preflight-historian-production-upgrade` for a read-only artifact and upgrade-path preflight. Record:
 

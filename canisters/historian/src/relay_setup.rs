@@ -282,50 +282,65 @@ fn bounded_message(mut message: String) -> String {
 }
 
 fn get_entry(key: RelaySetupKey) -> Option<RelaySetupEntry> {
+    #[cfg(test)]
+    SETUP_ENTRY_READS.with(|count| count.set(count.get() + 1));
     state::with_relay_setup_entries_map(|map| map.get(&key))
 }
 
+#[cfg(test)]
+thread_local! { static SETUP_ENTRY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
 fn insert_entry(key: RelaySetupKey, entry: RelaySetupEntry) {
+    let mut creating = state::relay_creating_keys();
+    if matches!(&entry, RelaySetupEntry::Creating(_)) {
+        if !creating.contains(&key) {
+            assert!(
+                creating.len() < MAX_CONCURRENT_FUNDED_RELAY_SETUPS,
+                "Creating-key capacity exceeded"
+            );
+            creating.push(key);
+        }
+    } else {
+        creating.retain(|existing| existing != &key);
+    }
     state::with_relay_setup_entries_map(|map| {
         map.insert(key, entry);
     });
+    state::set_relay_creating_keys(creating);
 }
 
 fn remove_entry(key: RelaySetupKey) {
+    let mut creating = state::relay_creating_keys();
+    creating.retain(|existing| existing != &key);
     state::with_relay_setup_entries_map(|map| {
         map.remove(&key);
     });
+    state::set_relay_creating_keys(creating);
 }
 
 pub(crate) fn reconcile_interrupted_creating_entries_after_upgrade() {
-    state::with_relay_setup_entries_map(|map| {
-        let entries = map
-            .iter()
-            .map(|entry| entry.into_pair())
-            .collect::<Vec<_>>();
-        for (key, entry) in entries {
-            let RelaySetupEntry::Creating(mut progress) = entry else {
-                continue;
-            };
-            match progress.phase {
-                RelayCreationPhase::Reserved | RelayCreationPhase::ProbingTargets => {
-                    map.remove(&key);
-                }
-                RelayCreationPhase::CmcTransferPrepared
-                | RelayCreationPhase::CmcTransferAccepted
-                | RelayCreationPhase::CmcNotifySucceeded
-                | RelayCreationPhase::CreateDispatched
-                | RelayCreationPhase::ChildCreated
-                | RelayCreationPhase::CodeInstalled
-                | RelayCreationPhase::RelayFundingPrepared
-                | RelayCreationPhase::RelayFunded
-                | RelayCreationPhase::FinalizationAttempted => {
-                    progress.last_error = Some("HistorianUpgradeInterrupted".to_string());
-                    map.insert(key, RelaySetupEntry::ManualRecoveryRequired(progress));
-                }
+    for key in state::relay_creating_keys() {
+        let Some(RelaySetupEntry::Creating(mut progress)) = get_entry(key) else {
+            panic!("Creating-key index does not name a Creating entry");
+        };
+        match progress.phase {
+            RelayCreationPhase::Reserved | RelayCreationPhase::ProbingTargets => {
+                remove_entry(key);
+            }
+            RelayCreationPhase::CmcTransferPrepared
+            | RelayCreationPhase::CmcTransferAccepted
+            | RelayCreationPhase::CmcNotifySucceeded
+            | RelayCreationPhase::CreateDispatched
+            | RelayCreationPhase::ChildCreated
+            | RelayCreationPhase::CodeInstalled
+            | RelayCreationPhase::RelayFundingPrepared
+            | RelayCreationPhase::RelayFunded
+            | RelayCreationPhase::FinalizationAttempted => {
+                progress.last_error = Some("HistorianUpgradeInterrupted".to_string());
+                insert_entry(key, RelaySetupEntry::ManualRecoveryRequired(progress));
             }
         }
-    });
+    }
 }
 
 fn notify_for_entry(entry: RelaySetupEntry) -> RelaySetupNotifyResult {
@@ -615,21 +630,15 @@ fn setup_view_for_historian(args: RelaySetupArgs, historian: Principal) -> Relay
 }
 
 fn reserve(key: RelaySetupKey) -> Result<RelayCreationProgress, RelaySetupNotifyResult> {
-    state::with_relay_setup_entries_map(|map| {
-        if let Some(entry) = map.get(&key) {
-            return Err(notify_for_entry(entry));
-        }
-        let creating = map
-            .iter()
-            .filter(|entry| matches!(entry.value(), RelaySetupEntry::Creating(_)))
-            .count();
-        if creating >= MAX_CONCURRENT_FUNDED_RELAY_SETUPS {
-            return Err(RelaySetupNotifyResult::Busy);
-        }
-        let progress = RelayCreationProgress::reserved();
-        map.insert(key, RelaySetupEntry::Creating(progress.clone()));
-        Ok(progress)
-    })
+    if let Some(entry) = get_entry(key) {
+        return Err(notify_for_entry(entry));
+    }
+    if state::relay_creating_keys().len() >= MAX_CONCURRENT_FUNDED_RELAY_SETUPS {
+        return Err(RelaySetupNotifyResult::Busy);
+    }
+    let progress = RelayCreationProgress::reserved();
+    insert_entry(key, RelaySetupEntry::Creating(progress.clone()));
+    Ok(progress)
 }
 
 fn remove_reservation(key: RelaySetupKey, expected: RelayCreationPhase) {
@@ -884,7 +893,13 @@ fn activate_relay_setup(
         Err(message) => return manual_recovery(key, expected_phase, message),
     };
     insert_entry(key, RelaySetupEntry::Active { relay_canister_id });
-    state::with_state_mut_sections(state::DIRTY_ROOT | state::DIRTY_REGISTRY, |state| {
+    let tracked = setup
+        .targets()
+        .iter()
+        .copied()
+        .chain([relay_canister_id])
+        .collect();
+    state::with_factory_tracking_state_mut(&tracked, |state| {
         for target in setup.targets() {
             mark_active_relay_tracked(state, *target, relay_canister_id, Some(now_secs()));
         }
@@ -1582,6 +1597,7 @@ pub(crate) fn debug_setup_entries() -> Vec<RelaySetupDebugEntry> {
 #[cfg(any(test, feature = "debug_api"))]
 pub(crate) fn clear_setup_entries_for_debug() {
     state::with_relay_setup_entries_map(|map| map.clear_new());
+    state::set_relay_creating_keys(Vec::new());
 }
 
 #[cfg(test)]
@@ -1684,6 +1700,115 @@ mod tests {
     fn reset() {
         clear_setup_entries_for_debug();
         state::set_state(State::new(config(), 0));
+    }
+
+    #[test]
+    fn creating_index_bounds_admission_and_reconciliation_as_lifetime_registry_grows() {
+        fn key(n: u64) -> RelaySetupKey {
+            RelaySetupKey::from_canonical_configuration(
+                &[Principal::from_slice(&n.to_be_bytes())],
+                &[],
+            )
+        }
+        for lifetime in [0, 100, 10_000] {
+            for in_flight in [0, 1, 4] {
+                reset();
+                let started = std::time::Instant::now();
+                for n in 1..=lifetime {
+                    insert_entry(
+                        key(n),
+                        if n % 2 == 0 {
+                            RelaySetupEntry::Active {
+                                relay_canister_id: principal(80),
+                            }
+                        } else {
+                            RelaySetupEntry::ManualRecoveryRequired(progress_for_phase(
+                                RelayCreationPhase::CreateDispatched,
+                            ))
+                        },
+                    );
+                }
+                for n in 0..in_flight {
+                    let k = key(20_000 + n);
+                    reserve(k).unwrap();
+                    if n % 2 == 1 {
+                        insert_entry(
+                            k,
+                            RelaySetupEntry::Creating(progress_for_phase(
+                                RelayCreationPhase::CreateDispatched,
+                            )),
+                        );
+                    }
+                }
+                let completed = state::with_relay_setup_entries_map(|map| {
+                    map.iter()
+                        .filter(|entry| !matches!(entry.value(), RelaySetupEntry::Creating(_)))
+                        .map(|entry| entry.into_pair())
+                        .collect::<Vec<_>>()
+                });
+                SETUP_ENTRY_READS.with(|count| count.set(0));
+                if in_flight == 4 {
+                    assert_eq!(reserve(key(30_000)), Err(RelaySetupNotifyResult::Busy));
+                    assert_eq!(SETUP_ENTRY_READS.with(|count| count.get()), 1);
+                }
+                SETUP_ENTRY_READS.with(|count| count.set(0));
+                reconcile_interrupted_creating_entries_after_upgrade();
+                let visited = SETUP_ENTRY_READS.with(|count| count.get());
+                assert_eq!(visited, in_flight as usize);
+                assert!(state::relay_creating_keys().is_empty());
+                for (k, entry) in completed {
+                    assert_eq!(get_entry(k), Some(entry));
+                }
+                eprintln!("factory-index lifetime={lifetime} creating={in_flight} reconciliation_visits={visited} fixture_and_check_ms={}", started.elapsed().as_millis());
+            }
+        }
+    }
+
+    #[test]
+    fn creating_index_matches_reference_map_across_every_transition() {
+        reset();
+        let keys = (1..=4)
+            .map(|n| RelaySetupKey::from_canonical_configuration(&[principal(n)], &[]))
+            .collect::<Vec<_>>();
+        for step in 0..80 {
+            let key = keys[step % keys.len()];
+            match step % 5 {
+                0 => {
+                    let _ = reserve(key);
+                }
+                1 => insert_entry(
+                    key,
+                    RelaySetupEntry::Creating(progress_for_phase(
+                        RelayCreationPhase::CmcTransferPrepared,
+                    )),
+                ),
+                2 => insert_entry(
+                    key,
+                    RelaySetupEntry::Active {
+                        relay_canister_id: principal(80),
+                    },
+                ),
+                3 => insert_entry(
+                    key,
+                    RelaySetupEntry::ManualRecoveryRequired(progress_for_phase(
+                        RelayCreationPhase::CreateDispatched,
+                    )),
+                ),
+                _ => remove_entry(key),
+            }
+            let reference = state::with_relay_setup_entries_map(|map| {
+                map.iter()
+                    .filter(|entry| matches!(entry.value(), RelaySetupEntry::Creating(_)))
+                    .map(|entry| *entry.key())
+                    .collect::<BTreeSet<_>>()
+            });
+            assert_eq!(
+                state::relay_creating_keys()
+                    .into_iter()
+                    .collect::<BTreeSet<_>>(),
+                reference
+            );
+        }
     }
 
     fn progress_for_phase(phase: RelayCreationPhase) -> RelayCreationProgress {

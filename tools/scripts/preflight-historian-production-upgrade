@@ -76,6 +76,8 @@ icp canister call jupiter_historian get_commitment_route_summaries \
 CMD
 echo
 echo "Preserve memory-26 setup entries, exact active configuration mappings, and RelayTarget/RelayInstance tracking; record representative known configurations before upgrade and verify them afterwards."
+echo "Preserve the bounded Creating-key index in memory 30 together with memory 26. For its first deployment, retain the developer's unused-factory inventory: an uninitialized index is supported only over an empty factory registry. Unknown nonempty state rejects upgrade; it is not scanned or reconstructed."
+echo "This local preflight does not verify the installed Historian module identity, live factory inventory, or historical accounting. The operator must retain the required installed-writer/state evidence separately."
 echo "Snapshots are risk-based. Strongly recommend or require one for stable-schema, stable-memory-layout, migration, authoritative-history, or other rollback-sensitive changes; see docs/operations/deployment.md."
 echo
 echo "The command above resolves jupiter_historian through icp.yaml, which must build/copy:"

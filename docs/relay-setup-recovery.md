@@ -90,6 +90,9 @@ Historian persists one Relay setup map keyed by the 32-byte canonical configurat
 | Purpose | Memory ID | Key | Value |
 |---|---:|---|---|
 | Relay setup entries | 26 | `RelaySetupKey([u8; 32])` | current `RelaySetupEntry` |
+| In-flight creation index | 30 | one cell | at most four Creating keys |
+
+The developer confirmed on 2026-10-16 that no self-service Relay has been created. This initial index release requires an empty factory registry if memory 30 has not been initialized; it fails closed over a nonempty unknown registry. No history scan, migration ladder or state reset is used. Once initialized, registry transitions and index membership change atomically in the same message; both memories must be preserved together. Canonical indexing/payout history is not pre-launch or disposable.
 
 Normal upgrades preserve current entries. `Reserved` and `ProbingTargets` entries can be removed because no irreversible action occurred. Later interrupted `Creating` phases—including same-version-resumable `RelayFunded` and `FinalizationAttempted`—become `ManualRecoveryRequired` with `HistorianUpgradeInterrupted`. `Active` and existing manual-recovery entries remain unchanged. Reconciliation issues no external call. The installed Relay hash is not persisted in setup progress, so finalization resumption deliberately does not cross a Historian upgrade; maintenance must stop Historian and drain factory calls first.
 
