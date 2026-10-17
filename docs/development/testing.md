@@ -97,12 +97,19 @@ credentials, bounded timeouts, and cancellation of superseded runs. Native
 debug information/incremental caches are disabled in CI to reduce disk use;
 the canonical Docker build configuration is unchanged.
 
-Provisioning pins Node 24.15.0, repository Rust, icp-cli 1.2.0, didc 0.4.0,
+Provisioning pins Node 24.15.0, repository Rust, icp-cli 1.2.0, didc 0.6.2,
 Nix 2.25.3 and the launcher version in `icp.yaml`. The launcher is downloaded
 by a local network start/stop, then xtask verifies its server version. The
 vendored blackhole remains built from its checked-in Nix inputs. Browser tests
 use the existing Playwright image. Missing tools or unavailable suites fail;
 there is no release skip mode.
+
+Both behavioral and canonical-release jobs install the official DFINITY
+`didc-v0.6.2` x86_64 Linux MUSL release archive, checking its pinned SHA-256
+before extraction/installation. The workflow's shared version/digest pins
+must be reviewed together; didc is not installed from crates.io or a moving
+installer. Local acceptance must use that version for DID encode/decode,
+strict compatibility and actual Wasm export checks, not just `--version`.
 
 Repository owners must require these exact statuses on pull requests:
 
@@ -139,3 +146,11 @@ test endpoint or mainnet operation is required.
 Workflow source cannot establish branch protection or an actual successful PR
 run. Operators must verify required-check settings and retain an ordinary-PR
 execution on the candidate. No release job deploys or authorizes deployment.
+The 2026-10-16 inspection found `master` unprotected with no repository rulesets.
+Enable and verify branch/ruleset protection requiring the five PR statuses
+listed above; a green workflow without enforcement does not close this gate.
+Retain green candidate run IDs for all four Behavioral jobs and Dependency
+Security, plus a non-PR `Canonical release validation` before release promotion.
+Run `38977454083` on `34fc00441bead8cd1d7d43408d124f836c02c126`
+failed during didc provisioning before any selected suite ran; its skipped
+canonical job is not release evidence.

@@ -19,6 +19,9 @@ env:
   CARGO_PROFILE_DEV_DEBUG: 0
   CARGO_PROFILE_TEST_DEBUG: 0
   POCKET_IC_MUTE_SERVER: 1
+  DIDC_VERSION: 0.6.2
+  # Official dfinity/candid didc-v0.6.2 x86_64 Linux MUSL archive.
+  DIDC_ARCHIVE_SHA256: ced232a08d12190f7124110b6a39d8023732160838c062285e015d2c03bcc930
 
 jobs:
   behavioral:
@@ -74,7 +77,13 @@ jobs:
           set -euo pipefail
           curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dfinity/icp-cli/releases/download/v1.2.0/icp-cli-installer.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          cargo install didc --version 0.4.0 --locked
+          archive="$RUNNER_TEMP/didc-x86_64-unknown-linux-musl.tar.xz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            "https://github.com/dfinity/candid/releases/download/didc-v${DIDC_VERSION}/didc-x86_64-unknown-linux-musl.tar.xz" -o "$archive"
+          printf '%s  %s\n' "$DIDC_ARCHIVE_SHA256" "$archive" | sha256sum --check --strict
+          tar -xJf "$archive" -C "$RUNNER_TEMP" didc-x86_64-unknown-linux-musl/didc
+          install -Dm0755 "$RUNNER_TEMP/didc-x86_64-unknown-linux-musl/didc" "$HOME/.local/bin/didc"
+          test "$("$HOME/.local/bin/didc" --version)" = "didc $DIDC_VERSION"
 
       - name: Install Nix for the vendored blackhole build
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
@@ -128,7 +137,13 @@ jobs:
           npm ci --no-fund --no-audit
           curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dfinity/icp-cli/releases/download/v1.2.0/icp-cli-installer.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          cargo install didc --version 0.4.0 --locked
+          archive="$RUNNER_TEMP/didc-x86_64-unknown-linux-musl.tar.xz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            "https://github.com/dfinity/candid/releases/download/didc-v${DIDC_VERSION}/didc-x86_64-unknown-linux-musl.tar.xz" -o "$archive"
+          printf '%s  %s\n' "$DIDC_ARCHIVE_SHA256" "$archive" | sha256sum --check --strict
+          tar -xJf "$archive" -C "$RUNNER_TEMP" didc-x86_64-unknown-linux-musl/didc
+          install -Dm0755 "$RUNNER_TEMP/didc-x86_64-unknown-linux-musl/didc" "$HOME/.local/bin/didc"
+          test "$("$HOME/.local/bin/didc" --version)" = "didc $DIDC_VERSION"
           cargo install ic-wasm --version 0.11.0 --locked
           cargo install cargo-audit --version 0.22.1 --locked
           cargo install cargo-deny --version 0.19.8 --locked
