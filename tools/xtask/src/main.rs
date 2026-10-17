@@ -6076,6 +6076,100 @@ fn cmd_frontend_setup() -> Result<()> {
     Ok(())
 }
 
+fn validate_frontend_unit_assets(assets: &std::path::Path) -> Result<()> {
+    let manifest_path = assets.join("generated/frontend-bundle.json");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).with_context(|| {
+            format!(
+                "missing frontend build manifest: {}",
+                manifest_path.display()
+            )
+        })?)
+        .context("invalid frontend build manifest after npm run build:frontend")?;
+    let bundle_path = manifest["bundlePath"]
+        .as_str()
+        .context("frontend build manifest is missing bundlePath")?;
+    let hash = bundle_path
+        .strip_prefix("generated/app.")
+        .and_then(|name| name.strip_suffix(".js"))
+        .context("frontend build manifest must name generated/app.<content-hash>.js")?;
+    anyhow::ensure!(
+        hash.len() == 12 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "frontend application bundle must have a 12-digit content hash: {bundle_path}"
+    );
+    let bundle = assets.join(bundle_path);
+    anyhow::ensure!(
+        bundle.is_file() && bundle.metadata()?.len() > 0,
+        "missing or empty frontend application bundle after npm run build:frontend: {}",
+        bundle.display()
+    );
+    Ok(())
+}
+
+fn prepare_frontend_unit_assets() -> Result<()> {
+    ensure_frontend_node_modules()?;
+    let root = repo_root();
+    eprintln!("frontend Rust tests: building assets before workspace compilation");
+    let status = Command::new("npm")
+        .args(["run", "build:frontend"])
+        .current_dir(&root)
+        .status()
+        .context("failed to run npm run build:frontend before workspace Rust tests")?;
+    anyhow::ensure!(status.success(), "npm run build:frontend failed: {status}");
+    validate_frontend_unit_assets(&std::path::Path::new(&root).join("canisters/frontend/public"))
+}
+
+#[cfg(test)]
+mod frontend_unit_asset_tests {
+    use super::*;
+
+    #[test]
+    fn frontend_unit_assets_require_manifest_and_nonempty_hashed_bundle() {
+        let assets = env::temp_dir().join(format!(
+            "jupiter-frontend-unit-assets-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let generated = assets.join("generated");
+        fs::create_dir_all(&generated).unwrap();
+        let manifest = generated.join("frontend-bundle.json");
+        assert!(validate_frontend_unit_assets(&assets)
+            .unwrap_err()
+            .to_string()
+            .contains("missing frontend build manifest"));
+        for invalid in [
+            "app.js",
+            "../app.0123456789ab.js",
+            "generated/app.nohash.js",
+        ] {
+            fs::write(
+                &manifest,
+                serde_json::json!({"bundlePath": invalid}).to_string(),
+            )
+            .unwrap();
+            assert!(validate_frontend_unit_assets(&assets).is_err());
+        }
+        fs::write(
+            &manifest,
+            r#"{"bundlePath":"generated/app.0123456789ab.js"}"#,
+        )
+        .unwrap();
+        assert!(validate_frontend_unit_assets(&assets)
+            .unwrap_err()
+            .to_string()
+            .contains("missing or empty frontend application bundle"));
+        let bundle = generated.join("app.0123456789ab.js");
+        fs::write(&bundle, "").unwrap();
+        assert!(validate_frontend_unit_assets(&assets).is_err());
+        fs::write(&bundle, "export {};").unwrap();
+        validate_frontend_unit_assets(&assets).unwrap();
+        fs::remove_dir_all(assets).unwrap();
+    }
+}
+
 fn run_frontend_unit_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     ensure_frontend_node_modules()?;
     let root = repo_root();
@@ -6284,6 +6378,8 @@ fn run_unit_component(outcomes: &mut Vec<ScenarioOutcome>, component: TestCompon
     match component {
         TestComponent::Test => {
             run_repo_validation_suite(outcomes)?;
+            // include_dir! embeds public/ while the Rust asset tests compile.
+            prepare_frontend_unit_assets()?;
             run_unit_workspace_suite(outcomes)?;
             run_unit_xtask_suite(outcomes)?;
             run_unit_debug_contract_suites(outcomes)?;

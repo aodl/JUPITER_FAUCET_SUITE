@@ -34,6 +34,11 @@ workspace library target through Cargo's workspace discovery, xtask's own binary
 tests, the Disburser, Faucet, Historian, Relay and SNS Rewards `debug_api` variants in addition to their
 default variants, the frontend asset-canister Rust tests, all mock-canister unit
 tests, the Node controller/static tests, and the Playwright navbar browser test.
+Before compiling workspace Rust tests, it prepares the locked frontend Node
+dependencies, runs `npm run build:frontend`, and requires the generated manifest
+and its nonempty hashed application bundle. This supports a clean checkout:
+`include_dir!` embeds `public/` at compile time. Later Node suites reuse these
+assets; the browser fixture still builds its distinct local-network bundle.
 The runner requires complete libtest or Node summaries, reconciles Cargo's
 discovered selections with execution per target, and requires at least one
 passing test for each behavioural command. An explicitly empty library target
