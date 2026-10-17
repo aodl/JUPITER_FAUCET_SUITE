@@ -43,8 +43,7 @@ pub(crate) fn debug_trap_after_factory_call(value: bool) {
     admission::debug_trap_after_factory_call(value);
 }
 
-// Every external call is fenced by its own transient attempt generation. A
-// stale response must return before phase updates or another charged call.
+// Pre-spend work and explicitly resumable finalization use transient admission.
 macro_rules! admitted_call {
     ($ticket:expr, $future:expr) => {
         match $ticket.call($future).await {
@@ -52,6 +51,15 @@ macro_rules! admitted_call {
             Err(result) => return result,
         }
     };
+}
+
+// The paid creation tail is bounded by the durable journal, not a transient
+// deadline. Each caller checks its expected phase immediately after the await.
+async fn creation_call<T>(future: impl std::future::Future<Output = T>) -> T {
+    let result = future.await;
+    #[cfg(feature = "debug_api")]
+    admission::debug_callback_boundary();
+    result
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -1295,6 +1303,12 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
         created_at_time_nanos: now_nanos(),
         block_index: None,
     };
+    // Last transient fence, in the same message as preparation and dispatch.
+    // No await may separate this check from the first value-moving call.
+    if let Err(result) = ticket.check() {
+        remove_reservation(key, RelayCreationPhase::ProbingTargets);
+        return result;
+    }
     if let Err(result) = update_progress(key, RelayCreationPhase::ProbingTargets, |progress| {
         progress.phase = RelayCreationPhase::CmcTransferPrepared;
         progress.cmc_transfer = Some(cmc_record.clone());
@@ -1302,15 +1316,13 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
         return result;
     }
     let cmc_id = config.cmc_canister_id.expect("static checks require CMC");
-    let transfer_result = admitted_call!(
-        ticket,
-        ledger.icrc1_transfer(transfer_arg(
-            key,
-            cmc_deposit_account(cmc_id, historian),
-            &cmc_record,
-            Some(TOP_UP_CANISTER_MEMO.to_le_bytes().to_vec()),
-        ))
-    );
+    let transfer_result = creation_call(ledger.icrc1_transfer(transfer_arg(
+        key,
+        cmc_deposit_account(cmc_id, historian),
+        &cmc_record,
+        Some(TOP_UP_CANISTER_MEMO.to_le_bytes().to_vec()),
+    )))
+    .await;
     if let Err(result) = require_phase(key, RelayCreationPhase::CmcTransferPrepared) {
         return result;
     }
@@ -1338,7 +1350,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     }) {
         return result;
     }
-    let minted_cycles = admitted_call!(ticket, cmc.notify_top_up(historian, cmc_block));
+    let minted_cycles = creation_call(cmc.notify_top_up(historian, cmc_block)).await;
     if let Err(result) = require_phase(key, RelayCreationPhase::CmcTransferAccepted) {
         return result;
     }
@@ -1374,19 +1386,17 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     }) {
         return result;
     }
-    let create_result = admitted_call!(
-        ticket,
-        management.create_canister(
-            &jupiter_ic_clients::management::CreateCanisterArgs {
-                settings: Some(jupiter_ic_clients::management::CanisterSettings {
-                    controllers: Some(vec![historian]),
-                    log_visibility: Some(LogVisibility::Public),
-                    status_visibility: Some(StatusVisibility::Public),
-                }),
-            },
-            config.relay_initial_cycles,
-        )
-    );
+    let create_result = creation_call(management.create_canister(
+        &jupiter_ic_clients::management::CreateCanisterArgs {
+            settings: Some(jupiter_ic_clients::management::CanisterSettings {
+                controllers: Some(vec![historian]),
+                log_visibility: Some(LogVisibility::Public),
+                status_visibility: Some(StatusVisibility::Public),
+            }),
+        },
+        config.relay_initial_cycles,
+    ))
+    .await;
     if let Err(result) = require_phase(key, RelayCreationPhase::CreateDispatched) {
         return result;
     }
@@ -1411,20 +1421,20 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
         .to_vec();
     let expected_hash =
         approved_relay_onchain_module_hash().expect("static checks require Relay hash");
-    let install_result = admitted_call!(
-        ticket,
-        management.install_code(&jupiter_ic_clients::management::InstallCodeArgs {
+    let install_result = creation_call(management.install_code(
+        &jupiter_ic_clients::management::InstallCodeArgs {
             mode: jupiter_ic_clients::management::InstallMode::Install,
             canister_id: relay_canister_id,
             wasm_module: wasm,
             arg: relay_init_arg(&config, &setup),
-        })
-    );
+        },
+    ))
+    .await;
     if let Err(result) = require_phase(key, RelayCreationPhase::ChildCreated) {
         return result;
     }
     if let Err(install_error) = install_result {
-        let observed = admitted_call!(ticket, management.canister_status(relay_canister_id));
+        let observed = creation_call(management.canister_status(relay_canister_id)).await;
         if let Err(result) = require_phase(key, RelayCreationPhase::ChildCreated) {
             return result;
         }
@@ -1451,10 +1461,8 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     }) {
         return result;
     }
-    let remaining_balance = admitted_call!(
-        ticket,
-        ledger.balance_of_e8s(setup_account_for(historian, key))
-    );
+    let remaining_balance =
+        creation_call(ledger.balance_of_e8s(setup_account_for(historian, key))).await;
     if let Err(result) = require_phase(key, RelayCreationPhase::CodeInstalled) {
         return result;
     }
@@ -1468,7 +1476,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
             );
         }
     };
-    let funding_fee = admitted_call!(ticket, ledger.fee_e8s());
+    let funding_fee = creation_call(ledger.fee_e8s()).await;
     if let Err(result) = require_phase(key, RelayCreationPhase::CodeInstalled) {
         return result;
     }
@@ -1518,15 +1526,13 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     }) {
         return result;
     }
-    let funding_result = admitted_call!(
-        ticket,
-        ledger.icrc1_transfer(transfer_arg(
-            key,
-            relay_subaccount_one(relay_canister_id),
-            &funding_record,
-            None,
-        ))
-    );
+    let funding_result = creation_call(ledger.icrc1_transfer(transfer_arg(
+        key,
+        relay_subaccount_one(relay_canister_id),
+        &funding_record,
+        None,
+    )))
+    .await;
     if let Err(result) = require_phase(key, RelayCreationPhase::RelayFundingPrepared) {
         return result;
     }
@@ -1641,6 +1647,20 @@ mod tests {
     type AuditedCanisterStatusKind = CanisterStatusKind;
     type AuditedCanisterSettings = jupiter_ic_clients::management::DefiniteCanisterSettings;
 
+    thread_local! {
+        // Mock callback clock only; no production clock override or public API.
+        static EXPIRE_AFTER: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+    }
+
+    fn expire_callback(point: &str) {
+        EXPIRE_AFTER.with(|pending| {
+            if pending.get() == Some(point) {
+                pending.set(None);
+                admission::set_time_for_test(admission::time_for_test() + 300);
+            }
+        });
+    }
+
     fn principal(byte: u8) -> Principal {
         Principal::from_slice(&[byte])
     }
@@ -1720,6 +1740,7 @@ mod tests {
     }
 
     fn reset() {
+        EXPIRE_AFTER.with(|pending| pending.set(None));
         admission::reset_for_test();
         clear_setup_entries_for_debug();
         state::set_state(State::new(config(), 0));
@@ -1910,6 +1931,7 @@ mod tests {
     }
 
     struct MockLedger {
+        created_seconds: u64,
         balances: Mutex<VecDeque<u64>>,
         fees: Mutex<VecDeque<u64>>,
         fee_failures: Mutex<VecDeque<bool>>,
@@ -1925,6 +1947,7 @@ mod tests {
             outcomes: impl IntoIterator<Item = LedgerOutcome>,
         ) -> Self {
             Self {
+                created_seconds: admission::time_for_test(),
                 balances: Mutex::new(balances.into_iter().collect()),
                 fees: Mutex::new(VecDeque::new()),
                 fee_failures: Mutex::new(VecDeque::new()),
@@ -1949,7 +1972,8 @@ mod tests {
     #[async_trait::async_trait]
     impl LedgerClient for MockLedger {
         async fn fee_e8s(&self) -> Result<u64, ClientError> {
-            self.fee_calls.fetch_add(1, Ordering::SeqCst);
+            let call = self.fee_calls.fetch_add(1, Ordering::SeqCst);
+            expire_callback(if call == 0 { "fee" } else { "funding_fee" });
             if self
                 .fee_failures
                 .lock()
@@ -1963,7 +1987,12 @@ mod tests {
         }
 
         async fn balance_of_e8s(&self, _account: Account) -> Result<u64, ClientError> {
-            self.balance_calls.fetch_add(1, Ordering::SeqCst);
+            let call = self.balance_calls.fetch_add(1, Ordering::SeqCst);
+            expire_callback(if call == 0 {
+                "balance"
+            } else {
+                "funding_balance"
+            });
             self.balances
                 .lock()
                 .unwrap()
@@ -1975,6 +2004,18 @@ mod tests {
             &self,
             arg: TransferArg,
         ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+            let first = self.transfers.lock().unwrap().is_empty();
+            if first {
+                assert!(
+                    admission::time_for_test() < self.created_seconds + 300,
+                    "CMC dispatch must have a live preflight lease"
+                );
+            }
+            expire_callback(if first {
+                "cmc_transfer"
+            } else {
+                "funding_transfer"
+            });
             self.transfers.lock().unwrap().push(arg);
             match self.outcomes.lock().unwrap().pop_front() {
                 Some(LedgerOutcome::Accepted(block)) => Ok(Ok(Nat::from(block))),
@@ -2048,6 +2089,7 @@ mod tests {
     #[async_trait::async_trait]
     impl CmcClient for MockCmc {
         async fn get_icp_xdr_conversion_rate(&self) -> Result<IcpXdrConversionRate, ClientError> {
+            expire_callback("rate");
             self.rate_calls.fetch_add(1, Ordering::SeqCst);
             if let Some(error) = &self.rate_error {
                 return Err(ClientError::Call(error.clone()));
@@ -2063,6 +2105,7 @@ mod tests {
             _canister_id: Principal,
             _block_index: u64,
         ) -> Result<u128, jupiter_ic_clients::cmc::NotifyTopUpError> {
+            expire_callback("notify");
             self.notify_calls.fetch_add(1, Ordering::SeqCst);
             if self.expire_after_notify {
                 admission::set_time_for_test(300);
@@ -2574,6 +2617,7 @@ mod tests {
             args: &jupiter_ic_clients::management::CreateCanisterArgs,
             _cycles: u128,
         ) -> Result<jupiter_ic_clients::management::CreateCanisterResult, String> {
+            expire_callback("create");
             self.create_calls.fetch_add(1, Ordering::SeqCst);
             self.creates.lock().unwrap().push(args.clone());
             if let Some(error) = &self.create_error {
@@ -2589,6 +2633,7 @@ mod tests {
             &self,
             args: &jupiter_ic_clients::management::InstallCodeArgs,
         ) -> Result<(), String> {
+            expire_callback("install");
             self.installs.lock().unwrap().push(args.clone());
             self.install_error.clone().map_or(Ok(()), Err)
         }
@@ -2597,6 +2642,7 @@ mod tests {
             &self,
             _canister_id: Principal,
         ) -> Result<AuditedCanisterStatus, String> {
+            expire_callback("status");
             let call_index = self.status_calls.fetch_add(1, Ordering::SeqCst);
             let side_effect = self.status_side_effects.lock().unwrap().remove(&call_index);
             if let Some(side_effect) = side_effect {
@@ -2625,6 +2671,7 @@ mod tests {
             &self,
             args: &jupiter_ic_clients::management::UpdateSettingsArgs,
         ) -> Result<(), String> {
+            expire_callback("update");
             self.update_calls.fetch_add(1, Ordering::SeqCst);
             self.updates.lock().unwrap().push(args.clone());
             self.finalization_phase_observed_at_update.store(
@@ -4227,7 +4274,267 @@ mod tests {
     }
 
     #[test]
-    fn factory_preflight_expiry_after_spend_never_releases_durable_evidence() {
+    fn factory_preflight_expiry_during_balance_fee_or_rate_never_reserves_or_spends() {
+        for point in ["balance", "fee", "rate"] {
+            reset();
+            EXPIRE_AFTER.with(|pending| pending.set(Some(point)));
+            let (ledger, probe, cmc, management) =
+                mocks(MockLedger::new([300_000_000], []), true, None);
+            assert_eq!(
+                block_on(notify_with_clients_for_historian(
+                    setup_args(vec![principal(1)]),
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                )),
+                RelaySetupNotifyResult::Busy,
+                "{point}"
+            );
+            assert!(debug_setup_entries().is_empty(), "{point}");
+            assert!(state::relay_creating_keys().is_empty());
+            assert!(ledger.transfers.lock().unwrap().is_empty());
+            assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[test]
+    fn factory_paid_tail_expiry_reaches_resumable_finalization_without_replaying_spend() {
+        for point in [
+            "cmc_transfer",
+            "notify",
+            "create",
+            "install",
+            "funding_balance",
+            "funding_fee",
+            "funding_transfer",
+        ] {
+            reset();
+            EXPIRE_AFTER.with(|pending| pending.set(Some(point)));
+            let args = setup_args(vec![principal(1)]);
+            let key = key_for_targets(&args.target_canister_ids);
+            let (ledger, probe, cmc, management) = mocks(
+                MockLedger::new(
+                    [300_000_000, 297_990_000],
+                    [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+                ),
+                true,
+                None,
+            );
+            assert_eq!(
+                block_on(notify_with_clients_for_historian(
+                    args.clone(),
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                )),
+                RelaySetupNotifyResult::Busy,
+                "{point}"
+            );
+            let Some(RelaySetupEntry::Creating(progress)) = get_entry(key) else {
+                panic!("{point}: lost journal");
+            };
+            assert_eq!(progress.phase, RelayCreationPhase::RelayFunded, "{point}");
+            assert_eq!(progress.cmc_transfer.unwrap().block_index, Some(10));
+            assert_eq!(
+                progress.relay_funding_transfer.unwrap().block_index,
+                Some(11)
+            );
+            assert_eq!(
+                block_on(notify_with_clients_for_historian(
+                    args,
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                )),
+                RelaySetupNotifyResult::Active {
+                    relay_canister_id: principal(80)
+                },
+                "{point}"
+            );
+            assert!(state::relay_creating_keys().is_empty());
+            assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
+            assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(management.installs.lock().unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn factory_delayed_cmc_transfer_uses_actual_result_and_never_replays_ambiguity() {
+        for outcome in [
+            LedgerOutcome::Rejected,
+            LedgerOutcome::Ambiguous,
+            LedgerOutcome::Duplicate(10),
+        ] {
+            reset();
+            EXPIRE_AFTER.with(|pending| pending.set(Some("cmc_transfer")));
+            let args = setup_args(vec![principal(1)]);
+            let (ledger, probe, mut cmc, management) =
+                mocks(MockLedger::new([300_000_000], [outcome]), true, None);
+            cmc.notify_error = Some("notify unavailable".into());
+            let result = block_on(notify_with_clients_for_historian(
+                args.clone(),
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            ));
+            match outcome {
+                LedgerOutcome::Rejected => {
+                    assert!(matches!(
+                        result,
+                        RelaySetupNotifyResult::FailedPreSpend { .. }
+                    ));
+                    assert!(debug_setup_entries().is_empty());
+                    assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 0);
+                }
+                _ => {
+                    let phase = if matches!(outcome, LedgerOutcome::Ambiguous) {
+                        RelayCreationPhase::CmcTransferPrepared
+                    } else {
+                        RelayCreationPhase::CmcTransferAccepted
+                    };
+                    assert!(
+                        matches!(result, RelaySetupNotifyResult::ManualRecoveryRequired { phase: observed, .. } if observed == phase),
+                        "{result:?}"
+                    );
+                    assert_eq!(
+                        block_on(notify_with_clients_for_historian(
+                            args,
+                            principal(42),
+                            &ledger,
+                            &probe,
+                            &cmc,
+                            &management,
+                        )),
+                        result
+                    );
+                }
+            }
+            assert!(state::relay_creating_keys().is_empty());
+            assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
+            assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[test]
+    fn factory_four_expired_paid_attempts_cannot_exhaust_creating_slots() {
+        reset();
+        for (n, point) in ["cmc_transfer", "notify", "create", "install"]
+            .into_iter()
+            .enumerate()
+        {
+            let (ledger, probe, mut cmc, mut management) = mocks(
+                MockLedger::new(
+                    [300_000_000],
+                    [if n == 0 {
+                        LedgerOutcome::Ambiguous
+                    } else {
+                        LedgerOutcome::Accepted(n as u64)
+                    }],
+                ),
+                true,
+                None,
+            );
+            if n == 1 {
+                cmc.notify_error = Some("notify unavailable".into());
+            }
+            if n == 2 {
+                management.create_error = Some("create reply lost".into());
+            }
+            if n == 3 {
+                management.install_error = Some("install reply lost".into());
+                management
+                    .status_results
+                    .lock()
+                    .unwrap()
+                    .push_back(Err("cannot reconcile module".into()));
+            }
+            EXPIRE_AFTER.with(|pending| pending.set(Some(point)));
+            assert!(matches!(
+                block_on(notify_with_clients_for_historian(
+                    setup_args(vec![principal(100 + n as u8)]),
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                )),
+                RelaySetupNotifyResult::ManualRecoveryRequired { .. }
+            ));
+            assert!(state::relay_creating_keys().is_empty());
+        }
+        assert_eq!(debug_setup_entries().len(), 4);
+        let (ledger, probe, cmc, management) = mocks(MockLedger::new([0], []), true, None);
+        assert!(matches!(
+            block_on(notify_with_clients_for_historian(
+                setup_args(vec![principal(5)]),
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            )),
+            RelaySetupNotifyResult::BelowMinimum { .. }
+        ));
+        assert_eq!(ledger.balance_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn factory_completion_admission_expiry_keeps_both_safe_phases_resumable() {
+        for point in ["status", "update"] {
+            reset();
+            let args = setup_args(vec![principal(1)]);
+            let phase = if point == "status" {
+                RelayCreationPhase::RelayFunded
+            } else {
+                RelayCreationPhase::FinalizationAttempted
+            };
+            let key = insert_resumable_setup(&args, phase, principal(80));
+            let (ledger, probe, cmc, management) = mocks(MockLedger::new([], []), true, None);
+            EXPIRE_AFTER.with(|pending| pending.set(Some(point)));
+            assert_eq!(
+                block_on(notify_with_clients_for_historian(
+                    args.clone(),
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                )),
+                RelaySetupNotifyResult::Busy
+            );
+            assert!(
+                matches!(get_entry(key), Some(RelaySetupEntry::Creating(progress)) if progress.phase == phase)
+            );
+            assert_eq!(
+                block_on(notify_with_clients_for_historian(
+                    args,
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                )),
+                RelaySetupNotifyResult::Active {
+                    relay_canister_id: principal(80)
+                }
+            );
+            assert!(state::relay_creating_keys().is_empty());
+            assert!(ledger.transfers.lock().unwrap().is_empty());
+            assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[test]
+    fn factory_preflight_expiry_after_spend_classifies_notify_failure_and_releases_slot() {
         reset();
         let args = setup_args(vec![principal(1)]);
         let key = CanonicalRelaySetup::canonicalize(
@@ -4242,7 +4549,8 @@ mod tests {
             None,
         );
         cmc.expire_after_notify = true;
-        assert_eq!(
+        cmc.notify_error = Some("CMC response unavailable".into());
+        assert!(matches!(
             block_on(notify_with_clients_for_historian(
                 args.clone(),
                 principal(42),
@@ -4251,14 +4559,17 @@ mod tests {
                 &cmc,
                 &management,
             )),
-            RelaySetupNotifyResult::Busy
-        );
-        let Some(RelaySetupEntry::Creating(progress)) = get_entry(key) else {
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::CmcTransferAccepted,
+                ..
+            }
+        ));
+        let Some(RelaySetupEntry::ManualRecoveryRequired(progress)) = get_entry(key) else {
             panic!("expiry must preserve possible spend evidence");
         };
         assert_eq!(progress.phase, RelayCreationPhase::CmcTransferAccepted);
         assert_eq!(progress.cmc_transfer.unwrap().block_index, Some(10));
-        assert_eq!(state::relay_creating_keys(), vec![key]);
+        assert!(state::relay_creating_keys().is_empty());
         admission::set_time_for_test(301);
         assert!(matches!(
             block_on(notify_with_clients_for_historian(
@@ -4269,7 +4580,7 @@ mod tests {
                 &cmc,
                 &management,
             )),
-            RelaySetupNotifyResult::InProgress {
+            RelaySetupNotifyResult::ManualRecoveryRequired {
                 phase: RelayCreationPhase::CmcTransferAccepted,
                 ..
             }

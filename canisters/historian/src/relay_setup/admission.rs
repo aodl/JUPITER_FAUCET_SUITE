@@ -50,6 +50,13 @@ pub(super) fn debug_trap_after_factory_call(value: bool) {
     TRAP_AFTER_CALL.with(|flag| flag.set(value));
 }
 
+#[cfg(feature = "debug_api")]
+pub(super) fn debug_callback_boundary() {
+    if TRAP_AFTER_CALL.with(|flag| flag.get()) {
+        ic_cdk::trap("debug factory callback interruption");
+    }
+}
+
 #[cfg(test)]
 thread_local! { static TEST_SECONDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
 #[cfg(test)]
@@ -63,6 +70,11 @@ pub(super) fn last_calls_for_test() -> usize {
 #[cfg(test)]
 pub(super) fn set_time_for_test(seconds: u64) {
     TEST_SECONDS.with(|clock| clock.set(seconds));
+}
+
+#[cfg(test)]
+pub(super) fn time_for_test() -> u64 {
+    now()
 }
 
 fn now() -> u64 {
@@ -194,9 +206,7 @@ impl Ticket {
         self.visit(true)?;
         let result = future.await;
         #[cfg(feature = "debug_api")]
-        if TRAP_AFTER_CALL.with(|flag| flag.get()) {
-            ic_cdk::trap("debug factory callback interruption");
-        }
+        debug_callback_boundary();
         self.check()?;
         Ok(result)
     }

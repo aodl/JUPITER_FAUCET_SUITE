@@ -2052,6 +2052,136 @@ fn factory_admission_bounds_unfunded_outcalls_and_recovers_after_callback_traps(
 
 #[test]
 #[ignore]
+fn factory_expired_cmc_call_enters_manual_recovery_without_replay() -> Result<()> {
+    // Real Ledger messages: let the bounded call and admission both expire
+    // after dispatch. A deadline rejection is uncertain, not admission Busy.
+    let env = SelfServiceTestEnv::new(relay_enabled_historian_wasm()?)?;
+    eprintln!("admission-expiry: environment ready");
+    let args = RelaySetupArgs {
+        target_canister_ids: vec![env.target],
+        surplus_recipients: vec![],
+    };
+    let view = relay_setup_view(&env.pic, env.historian, args.clone())?;
+    let setup_account = view.setup_account.unwrap();
+    env.fund_account(setup_account, view.nominal_minimum_e8s)?;
+    eprintln!("admission-expiry: setup funded");
+    let call = env
+        .pic
+        .submit_call(
+            env.historian,
+            Principal::anonymous(),
+            "notify_relay_configuration",
+            encode_one(args.clone())?,
+        )
+        .map_err(|error| anyhow!("{error}"))?;
+    let mut dispatch_seen = false;
+    for _ in 0..100 {
+        env.pic.tick();
+        let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
+        let manager = MemoryManager::init(memory);
+        let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+            manager.get(MemoryId::new(26)),
+        );
+        for entry in entries.iter() {
+            let state: FixtureRelayEntry = candid::decode_one(&entry.value().0)?;
+            if matches!(
+                state,
+                FixtureRelayEntry::Creating(FixtureRelayProgress {
+                    phase: RelayCreationPhase::CmcTransferPrepared,
+                    ..
+                })
+            ) {
+                dispatch_seen = true;
+            }
+        }
+        if dispatch_seen {
+            eprintln!("admission-expiry: CMC transfer dispatched");
+            break;
+        }
+    }
+    assert!(
+        dispatch_seen,
+        "test must intercept the actual CMC transfer boundary"
+    );
+    env.pic.advance_time(Duration::from_secs(301));
+    let reply = env
+        .pic
+        .await_call(call)
+        .map_err(|error| anyhow!("{error}"))?;
+    let result: RelaySetupNotifyResult = candid::decode_one(&reply)?;
+    eprintln!("admission-expiry: delayed reply result {result:?}");
+    assert!(
+        matches!(result, RelaySetupNotifyResult::ManualRecoveryRequired {
+        phase: RelayCreationPhase::CmcTransferPrepared,
+        relay_canister_id: None,
+        ref message,
+    } if message.contains("Call deadline has expired")),
+        "{result:?}"
+    );
+    let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
+    let manager = MemoryManager::init(memory);
+    let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+        manager.get(MemoryId::new(26)),
+    );
+    let before = entries
+        .iter()
+        .map(|entry| entry.value().0)
+        .collect::<Vec<_>>();
+    let balance_before = support::ledger::icrc1_balance(&env.pic, env.ledger, &setup_account)?;
+    let result: RelaySetupNotifyResult = update_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        args.clone(),
+    )?;
+    assert!(
+        matches!(
+            result,
+            RelaySetupNotifyResult::ManualRecoveryRequired {
+                phase: RelayCreationPhase::CmcTransferPrepared,
+                relay_canister_id: None,
+                ..
+            }
+        ),
+        "{result:?}"
+    );
+    assert_eq!(
+        support::ledger::icrc1_balance(&env.pic, env.ledger, &setup_account)?,
+        balance_before,
+        "terminal notification must not repeat any possible debit"
+    );
+    assert_eq!(relay_setup_entry_count(&env.pic, env.historian), 1);
+    let FixtureRelayEntry::ManualRecoveryRequired(progress) = candid::decode_one(&before[0])?
+    else {
+        bail!("missing manual recovery journal");
+    };
+    assert!(progress.cmc_transfer.is_some());
+    assert!(progress.relay_funding_transfer.is_none());
+    let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
+    let manager = MemoryManager::init(memory);
+    let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+        manager.get(MemoryId::new(26)),
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.value().0)
+            .collect::<Vec<_>>(),
+        before,
+        "terminal notification must preserve the exact recovery evidence"
+    );
+    let keys = StableCell::<FixtureBytes, FixtureMemory>::init(
+        manager.get(MemoryId::new(30)),
+        FixtureBytes(Vec::new()),
+    );
+    let keys: FixtureCreatingKeys = candid::decode_one(&keys.get().0)?;
+    assert!(keys.0.unwrap().is_empty());
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn zero_recipient_factory_child_executes_all_cycles_mode() -> Result<()> {
     let env = SelfServiceTestEnv::new(relay_enabled_historian_wasm()?)?;
     let args = RelaySetupArgs {
