@@ -1,4 +1,5 @@
 use super::*;
+pub(super) const MAX_CMC_DIAGNOSTIC_WITNESSES: usize = 16;
 #[cfg(test)]
 pub(super) async fn probe_index_health(
     index: &impl IndexClient,
@@ -360,9 +361,14 @@ pub(super) async fn zero_success_run_counts_toward_rescue(
     if job.cmc_attempt_count.unwrap_or(0) == 0 || job.cmc_success_count.unwrap_or(0) > 0 {
         return false;
     }
-    let beneficiaries = job.cmc_attempted_beneficiaries.clone().unwrap_or_default();
-    for beneficiary in beneficiaries {
-        if matches!(status_client.canister_exists(beneficiary).await, Ok(true)) {
+    // Also bound work for a restored job written before witness retention was capped.
+    for beneficiary in job
+        .cmc_attempted_beneficiaries
+        .iter()
+        .flatten()
+        .take(MAX_CMC_DIAGNOSTIC_WITNESSES)
+    {
+        if matches!(status_client.canister_exists(*beneficiary).await, Ok(true)) {
             return true;
         }
     }

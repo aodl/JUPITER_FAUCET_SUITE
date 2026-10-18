@@ -1573,6 +1573,65 @@ mod tests {
     }
 
     #[test]
+    fn cmc_witnesses_are_bounded_and_discarded_after_confirmed_success() {
+        set_pending_cycles_transfer(
+            9_000_000_000,
+            100_000,
+            PendingTransferPhase::TransferAccepted,
+        );
+        for index in 0..1_000_u64 {
+            state::with_state_mut(|st| {
+                st.active_payout_job
+                    .as_mut()
+                    .unwrap()
+                    .pending_transfer
+                    .as_mut()
+                    .unwrap()
+                    .notification
+                    .beneficiary = Principal::from_slice(&index.to_be_bytes());
+            });
+            let (id, pending) = current_pending_transfer().unwrap();
+            note_attempted_beneficiary(id, &pending);
+            increment_cmc_attempts(id, &pending);
+        }
+        state::with_state(|st| {
+            assert!(
+                st.active_payout_job
+                    .as_ref()
+                    .unwrap()
+                    .cmc_attempted_beneficiaries
+                    .as_ref()
+                    .unwrap()
+                    .len()
+                    <= 16
+            )
+        });
+        let (id, pending) = current_pending_transfer().unwrap();
+        record_completed_transfer(id, &pending, 9);
+        state::with_state(|st| {
+            let job = st.active_payout_job.as_ref().unwrap();
+            assert_eq!(job.cmc_attempt_count, Some(1_000));
+            assert_eq!(job.cmc_success_count, Some(1));
+            assert!(job.cmc_attempted_beneficiaries.as_ref().unwrap().is_empty());
+        });
+        // A subsequent recipient remains payable without reviving the diagnostic.
+        state::with_state_mut(|st| {
+            st.active_payout_job.as_mut().unwrap().pending_transfer = Some(pending.clone())
+        });
+        note_attempted_beneficiary(id, &pending);
+        state::with_state(|st| {
+            assert!(st
+                .active_payout_job
+                .as_ref()
+                .unwrap()
+                .cmc_attempted_beneficiaries
+                .as_ref()
+                .unwrap()
+                .is_empty())
+        });
+    }
+
+    #[test]
     fn stale_ledger_callback_cannot_mutate_replacement_payout_job() {
         let now_nanos = 9_000_000_000;
         set_pending_cycles_transfer(

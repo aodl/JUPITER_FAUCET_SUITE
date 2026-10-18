@@ -46,8 +46,15 @@ pub(super) fn note_attempted_beneficiary(job_id: u64, expected: &PendingTransfer
             if job.id != job_id || job.pending_transfer.as_ref() != Some(expected) {
                 return;
             }
+            if job.cmc_success_count.unwrap_or(0) > 0 {
+                job.cmc_attempted_beneficiaries = Some(Vec::new());
+                return;
+            }
             let beneficiaries = job.cmc_attempted_beneficiaries.get_or_insert_with(Vec::new);
-            if !beneficiaries.contains(&expected.notification.beneficiary) {
+            beneficiaries.truncate(MAX_CMC_DIAGNOSTIC_WITNESSES);
+            if beneficiaries.len() < MAX_CMC_DIAGNOSTIC_WITNESSES
+                && !beneficiaries.contains(&expected.notification.beneficiary)
+            {
                 beneficiaries.push(expected.notification.beneficiary);
             }
         }
@@ -260,6 +267,7 @@ pub(super) fn record_completed_transfer(job_id: u64, expected: &PendingTransfer,
         if pending.kind.requires_cmc_notify() {
             st.last_successful_transfer_ts = Some(now_secs);
             job.cmc_success_count = Some(job.cmc_success_count.unwrap_or(0).saturating_add(1));
+            job.cmc_attempted_beneficiaries = Some(Vec::new());
         }
         logic::apply_notified_transfer(job, pending);
         job.pending_transfer = None;
