@@ -17,6 +17,13 @@ pub(super) struct MainGuard {
 }
 
 impl MainGuard {
+    fn is_current(&self) -> bool {
+        state::with_state(|st| {
+            self.inner.is_active()
+                && st.main_lock_state_ts == Some(self.inner.lease_expires_at_ts())
+        })
+    }
+
     pub(super) fn acquire(now_secs: u64) -> Option<Self> {
         state::with_state_mut(|st| {
             let inner =
@@ -232,6 +239,10 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
         .map(|v| !v.is_empty())
         .unwrap_or(false);
 
+    if !guard.is_current() {
+        return MainTickOutcome::Completed;
+    }
+
     let log_config = !in_flight;
     if !in_flight {
         // 1) payout stage
@@ -252,19 +263,21 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
             };
 
             if !skip_maturity_initiation {
+                if !guard.is_current() {
+                    return MainTickOutcome::Completed;
+                }
                 let canister_owner = self_canister_principal();
                 let age_seconds = now_secs.saturating_sub(neuron.aging_since_timestamp_seconds);
+                // Persist before dispatch: a successful Governance operation may
+                // lose its reply. A late callback must never rewrite this snapshot.
+                state::with_state_mut(|st| st.prev_age_seconds = age_seconds);
 
                 let disb_ok = gov
                     .disburse_maturity_to_account(cfg.neuron_id, 100, canister_owner, None)
                     .await
                     .is_ok();
 
-                if disb_ok {
-                    // 3) record age for next payout split
-                    state::with_state_mut(|st| st.prev_age_seconds = age_seconds);
-                } else {
-                    // do not update prev_age_seconds if initiation failed
+                if !disb_ok {
                     err = Some(1003);
                 }
             }

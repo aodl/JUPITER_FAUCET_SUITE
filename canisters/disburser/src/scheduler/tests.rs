@@ -615,6 +615,7 @@ mod tests {
 
     struct BalanceTrackingLedger {
         balance: Mutex<u64>,
+        transfers: Mutex<Vec<TransferArg>>,
         fee: u64,
         steps: Mutex<VecDeque<TransferScriptStep>>,
         transfer_calls: AtomicUsize,
@@ -624,6 +625,7 @@ mod tests {
         fn new(balance: u64, fee: u64, steps: Vec<TransferScriptStep>) -> Self {
             Self {
                 balance: Mutex::new(balance),
+                transfers: Mutex::new(Vec::new()),
                 fee,
                 steps: Mutex::new(steps.into()),
                 transfer_calls: AtomicUsize::new(0),
@@ -657,6 +659,7 @@ mod tests {
             arg: TransferArg,
         ) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
             self.transfer_calls.fetch_add(1, Ordering::SeqCst);
+            self.transfers.lock().unwrap().push(arg.clone());
             let step = self
                 .steps
                 .lock()
@@ -1287,6 +1290,65 @@ mod tests {
     }
 
     #[test]
+    fn lost_maturity_reply_preserves_capped_age_and_routes_100_icp_once() {
+        let now = 5 * 365 * 86_400;
+        let cfg = test_config();
+        state::set_state(state::State::new(cfg.clone(), 0));
+        let gov = ScriptedGovernance::new(
+            vec![Ok(Neuron {
+                aging_since_timestamp_seconds: 0,
+                ..Default::default()
+            })],
+            vec![Err(GovernanceError {
+                error_message: "accepted request, reply lost".into(),
+                error_type: 1,
+            })],
+        );
+        run_ready(run_main_tick_with_clients(
+            true,
+            now * 1_000_000_000,
+            now,
+            &cfg,
+            &ZeroBalanceLedger,
+            &gov,
+        ));
+        let ledger = BalanceTrackingLedger::new(
+            100 * 100_000_000,
+            10_000,
+            (1..=3)
+                .map(|block| TransferScriptStep::Ok(Nat::from(block as u64)))
+                .collect(),
+        );
+        assert!(run_ready(process_payout(
+            &ledger,
+            &cfg,
+            (now + 1) * 1_000_000_000,
+            now + 1
+        )));
+        let transfers = ledger.transfers.lock().unwrap();
+        assert_eq!(transfers.len(), 3);
+        for (transfer, (to, gross)) in transfers.iter().zip([
+            (cfg.normal_recipient, 80_u64 * 100_000_000),
+            (cfg.age_bonus_recipient_1, 19 * 100_000_000),
+            (cfg.age_bonus_recipient_2, 100_000_000),
+        ]) {
+            assert_eq!(transfer.to, to);
+            assert_eq!(transfer.amount, Nat::from(gross - 10_000));
+            assert_eq!(transfer.fee, Some(Nat::from(10_000_u64)));
+        }
+        drop(transfers);
+        assert_eq!(gov.disburse_calls(), 1);
+        assert_eq!(ledger.balance(), 0);
+        assert!(run_ready(process_payout(
+            &ledger,
+            &cfg,
+            (now + 2) * 1_000_000_000,
+            now + 2
+        )));
+        assert_eq!(ledger.transfer_calls(), 3);
+    }
+
+    #[test]
     fn ambiguous_initiation_is_reconciled_via_in_flight_neuron_state() {
         let now_secs = 2_000_u64;
         state::set_state(state::State::new(test_config(), now_secs));
@@ -1332,8 +1394,8 @@ mod tests {
         assert_eq!(gov.claim_or_refresh_calls(), 1);
         assert_eq!(
             state::with_state(|st| st.prev_age_seconds),
-            0,
-            "failed initiation must not update prev_age_seconds"
+            now_secs - 100,
+            "an ambiguous initiation must retain its pre-dispatch age snapshot"
         );
 
         let later_secs = now_secs + 61;

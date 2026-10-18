@@ -109,7 +109,10 @@ If the staged balance is zero on a payout pass, any stale persisted payout plan 
 
 ### Age multiplier
 
-The split depends on the neuron age captured when `DisburseMaturity` is successfully initiated.
+The split depends on the neuron age persisted immediately before dispatching
+`DisburseMaturity`, after the previous payout finishes and Governance confirms
+no maturity is in flight. The snapshot survives a lost reply; delayed callbacks
+do not overwrite a newer snapshot.
 
 The code uses:
 
