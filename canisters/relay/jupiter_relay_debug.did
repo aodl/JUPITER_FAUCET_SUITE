@@ -168,6 +168,7 @@ type RewardState = record {
 service : (InitArgs) -> {
   poke : (vec EventHorizonPokeMatch) -> ();
   debug_main_tick : () -> ();
+  debug_hold_main_lease : (nat64) -> ();
   debug_state : () -> (DebugState) query;
   debug_config : () -> (DebugConfig) query;
   debug_last_summary : () -> (opt RelaySummary) query;

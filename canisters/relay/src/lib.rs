@@ -464,6 +464,16 @@ fn debug_trap_after_successful_transfer(v: bool) {
     crate::scheduler::debug_set_trap_after_successful_transfer(v);
 }
 
+// Deterministic local fixture for scheduled-timer collisions; absent from production.
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_hold_main_lease(seconds: u64) {
+    guard_debug_api_not_production();
+    assert!((1..=1_800).contains(&seconds));
+    let deadline = (ic_cdk::api::time() / 1_000_000_000).saturating_add(seconds);
+    state::with_state_mut(|st| st.main_lock_state_ts = Some(deadline));
+}
+
 ic_cdk::export_candid!();
 
 #[cfg(test)]

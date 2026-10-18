@@ -312,6 +312,7 @@ enum RelayMode {
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct RelaySummary {
+    started_at_ts_nanos: u64,
     mode: RelayMode,
     total_burn_cycles: u128,
     total_target_topup_cycles: u128,
@@ -1019,6 +1020,79 @@ fn assert_splitter_transfer_pair_records(
     {
         bail!("splitter {splitter_number} did not conserve its pinned balance");
     }
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn scheduled_daily_tick_resumes_after_two_minute_lease_collision_and_early_gap() -> Result<()> {
+    let env = RelayEnv::new(None)?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+    tick_n(&env.pic, 30);
+    env.pic.advance_time(Duration::from_secs(60));
+    tick_n(&env.pic, 30);
+    env.pic
+        .upgrade_canister(
+            env.relay,
+            relay_wasm()?,
+            encode_one(RelayInitArg {
+                managed_canisters: vec![env.cmc],
+                ledger_canister_id: Some(env.ledger),
+                cmc_canister_id: Some(env.cmc),
+                governance_canister_id: Some(env.governance),
+                blackhole_canister_id: Some(env.blackhole),
+                main_interval_seconds: Some(86_400),
+                max_transfers_per_tick: None,
+                surplus_canister_recipients: None,
+                surplus_neuron_recipients: vec![],
+            })?,
+            None,
+        )
+        .map_err(|err| anyhow::anyhow!("daily fixture upgrade: {err:?}"))?;
+    let installed = (env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+    let advance_to = |seconds: u64| {
+        let current = (env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+        assert!(seconds >= current);
+        env.pic.advance_time(Duration::from_secs(seconds - current));
+        tick_n(&env.pic, 80);
+    };
+    let read_state = || {
+        query_one::<(), DebugState>(
+            &env.pic,
+            env.relay,
+            Principal::anonymous(),
+            "debug_state",
+            (),
+        )
+    };
+    let initial_completion = read_state()?.last_main_run_ts;
+    let _: () = update_one(
+        &env.pic,
+        env.relay,
+        Principal::anonymous(),
+        "debug_hold_main_lease",
+        120_u64,
+    )?;
+    advance_to(installed + 1);
+    assert_eq!(read_state()?.last_main_run_ts, initial_completion);
+    advance_to(installed + 61);
+    assert_eq!(read_state()?.last_main_run_ts, initial_completion);
+    advance_to(installed + 122);
+    let completed = read_state()?.last_main_run_ts;
+    assert_eq!(completed, installed + 122);
+    let summary = env.summary()?;
+    advance_to(installed + 86_400);
+    assert_eq!(read_state()?.last_main_run_ts, completed);
+    assert_eq!(
+        env.summary()?.started_at_ts_nanos,
+        summary.started_at_ts_nanos
+    );
+    advance_to(installed + 86_420);
+    assert_eq!(read_state()?.last_main_run_ts, completed);
+    advance_to(installed + 86_465);
+    assert_eq!(read_state()?.last_main_run_ts, installed + 86_465);
+    advance_to(installed + 86_485);
+    assert_eq!(read_state()?.last_main_run_ts, installed + 86_465);
     Ok(())
 }
 
