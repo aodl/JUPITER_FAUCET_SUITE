@@ -92,6 +92,24 @@ jobs:
           set_as_trusted_user: false
           enable_kvm: false
 
+      - name: Prepare verified real blackhole fixture
+        if: matrix.suite == 'historian_pocketic_integration'
+        timeout-minutes: 32
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_log="$RUNNER_TEMP/blackhole-repro-build.log"
+          timeout --signal=TERM --kill-after=30s 30m \
+            make --no-print-directory -C vendor/ic-blackhole repro-build 2>&1 | tee "$build_log"
+          output="$(sed -n '\|^/nix/store/[^[:space:]]*$|p' "$build_log" | tail -n 1)"
+          test -n "$output"
+          fixture="$RUNNER_TEMP/blackhole-opt.wasm"
+          cp "$output/bin/blackhole-opt.wasm" "$fixture"
+          printf '%s  %s\n' \
+            '210cf941e5ca77daac314a91517483ac171264527e3d0d713b92bb95239d7de0' \
+            "$fixture" | sha256sum --check --strict
+          echo "JUPITER_BLACKHOLE_TEST_WASM=$fixture" >> "$GITHUB_ENV"
+
       - name: Provision the repository-pinned local launcher
         shell: bash
         run: |

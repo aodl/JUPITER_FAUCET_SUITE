@@ -148,8 +148,9 @@ finalizes its embedded no-debug Relay, and the canonical no-debug Faucet
 upgrades at quiescence then pays through its ordinary timers. No production
 test endpoint or mainnet operation is required.
 
-Canonical CI prepares the vendored real blackhole before these scenarios in a
-visible build step with a 30-minute command timeout (32-minute step limit).
+Canonical CI and the Historian behavioral CI lane prepare the vendored real
+blackhole before their scenarios in a visible build step with a 30-minute
+command timeout (32-minute step limit).
 It verifies the existing production SHA-256 and exports the prepared path as
 `JUPITER_BLACKHOLE_TEST_WASM`. The PocketIC fixture verifies that hash again and
 loads those bytes without invoking Nix. A missing or mismatched override fails
