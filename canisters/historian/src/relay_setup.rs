@@ -1420,7 +1420,13 @@ async fn continue_paid_creation(
         }
         let minted_cycles = match minted_cycles {
             Ok(cycles) => cycles,
-            Err(jupiter_ic_clients::cmc::NotifyTopUpError::Retryable(error)) => {
+            Err(error)
+                if matches!(
+                    &error,
+                    jupiter_ic_clients::cmc::NotifyTopUpError::Retryable(_)
+                        | jupiter_ic_clients::cmc::NotifyTopUpError::Transport(_)
+                ) =>
+            {
                 return match update_progress(
                     key,
                     RelayCreationPhase::CmcTransferAccepted,
@@ -2145,7 +2151,7 @@ mod tests {
         notify_calls: AtomicUsize,
         expire_after_notify: bool,
         rate_error: Option<String>,
-        notify_error: Option<String>,
+        notify_error: Option<jupiter_ic_clients::cmc::NotifyTopUpError>,
         minted_cycles: u128,
     }
 
@@ -2220,9 +2226,7 @@ mod tests {
                 admission::set_time_for_test(300);
             }
             if let Some(error) = &self.notify_error {
-                Err(jupiter_ic_clients::cmc::NotifyTopUpError::Transport(
-                    error.clone(),
-                ))
+                Err(error.clone())
             } else {
                 Ok(self.minted_cycles)
             }
@@ -3041,6 +3045,171 @@ mod tests {
         assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
         assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
         assert_eq!(management.installs.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn paid_creation_rejects_configuration_changes_before_mutation() {
+        reset();
+        let key = key_for_targets(&[principal(1)]);
+        insert_entry(
+            key,
+            RelaySetupEntry::Creating(progress_for_phase(RelayCreationPhase::CmcTransferAccepted)),
+        );
+        let original = state::with_state(Clone::clone);
+        for args in [
+            crate::UpgradeArgs {
+                ledger_canister_id: Some(principal(99)),
+                ..Default::default()
+            },
+            crate::UpgradeArgs {
+                cmc_canister_id: Some(principal(99)),
+                ..Default::default()
+            },
+            crate::UpgradeArgs {
+                faucet_canister_id: Some(principal(99)),
+                ..Default::default()
+            },
+            crate::UpgradeArgs {
+                relay_initial_cycles: Some(original.config.relay_initial_cycles + 1),
+                ..Default::default()
+            },
+            crate::UpgradeArgs {
+                relay_cycle_safety_margin_e8s: Some(
+                    original.config.relay_cycle_safety_margin_e8s + 1,
+                ),
+                ..Default::default()
+            },
+            crate::UpgradeArgs {
+                relay_min_subaccount_one_seed_e8s: Some(
+                    original.config.relay_min_subaccount_one_seed_e8s + 1,
+                ),
+                ..Default::default()
+            },
+            crate::UpgradeArgs {
+                self_service_relay_interval_seconds: Some(
+                    original.config.self_service_relay_interval_seconds + 1,
+                ),
+                ..Default::default()
+            },
+        ] {
+            let mut candidate = original.clone();
+            assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::lifecycle::apply_upgrade_args(&mut candidate, Some(args))
+            }))
+            .is_err());
+            assert_eq!(
+                candid::encode_one(&candidate).unwrap(),
+                candid::encode_one(&original).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn notification_classification_retries_only_reconcilable_paid_outcomes() {
+        use jupiter_ic_clients::cmc::{
+            NotifyRetryableError, NotifyTerminalError, NotifyTopUpError,
+        };
+        struct ClassifiedCmc {
+            error: NotifyTopUpError,
+            blocks: Mutex<Vec<u64>>,
+        }
+        #[async_trait::async_trait]
+        impl CmcClient for ClassifiedCmc {
+            async fn get_icp_xdr_conversion_rate(
+                &self,
+            ) -> Result<IcpXdrConversionRate, ClientError> {
+                Ok(IcpXdrConversionRate {
+                    timestamp_seconds: 1,
+                    xdr_permyriad_per_icp: 1_000_000,
+                })
+            }
+            async fn notify_top_up(
+                &self,
+                _: Principal,
+                block: u64,
+            ) -> Result<u128, NotifyTopUpError> {
+                self.blocks.lock().unwrap().push(block);
+                Err(self.error.clone())
+            }
+        }
+        for (error, retryable) in [
+            (
+                NotifyTopUpError::Retryable(NotifyRetryableError::Processing),
+                true,
+            ),
+            (
+                NotifyTopUpError::Retryable(NotifyRetryableError::Other {
+                    error_code: 1,
+                    error_message: "temporary".into(),
+                }),
+                true,
+            ),
+            (NotifyTopUpError::Transport("lost reply".into()), true),
+            (
+                NotifyTopUpError::Terminal(NotifyTerminalError::Refunded {
+                    reason: "refunded".into(),
+                    block_index: Some(12),
+                }),
+                false,
+            ),
+            (
+                NotifyTopUpError::Terminal(NotifyTerminalError::TransactionTooOld(11)),
+                false,
+            ),
+            (
+                NotifyTopUpError::Terminal(NotifyTerminalError::InvalidTransaction(
+                    "invalid".into(),
+                )),
+                false,
+            ),
+            (NotifyTopUpError::Decode("malformed".into()), false),
+            (NotifyTopUpError::Convert("overflow".into()), false),
+        ] {
+            reset();
+            let (ledger, probe, _, management) = mocks(
+                MockLedger::new([300_000_000], [LedgerOutcome::Accepted(11)]),
+                true,
+                None,
+            );
+            let cmc = ClassifiedCmc {
+                error,
+                blocks: Mutex::new(Vec::new()),
+            };
+            for _ in 0..2 {
+                let result = block_on(notify_with_clients_for_historian(
+                    setup_args(vec![principal(1)]),
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management,
+                ));
+                assert_eq!(
+                    matches!(
+                        result,
+                        RelaySetupNotifyResult::InProgress {
+                            phase: RelayCreationPhase::CmcTransferAccepted,
+                            ..
+                        }
+                    ),
+                    retryable,
+                    "{result:?}"
+                );
+                if !retryable {
+                    assert!(matches!(
+                        result,
+                        RelaySetupNotifyResult::ManualRecoveryRequired { .. }
+                    ));
+                }
+            }
+            assert_eq!(
+                *cmc.blocks.lock().unwrap(),
+                if retryable { vec![11, 11] } else { vec![11] }
+            );
+            assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
+            assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+            assert!(management.installs.lock().unwrap().is_empty());
+        }
     }
 
     #[test]
@@ -4731,7 +4900,11 @@ mod tests {
             let args = setup_args(vec![principal(1)]);
             let (ledger, probe, mut cmc, management) =
                 mocks(MockLedger::new([300_000_000], [outcome]), true, None);
-            cmc.notify_error = Some("notify unavailable".into());
+            cmc.notify_error = Some(jupiter_ic_clients::cmc::NotifyTopUpError::Terminal(
+                jupiter_ic_clients::cmc::NotifyTerminalError::InvalidTransaction(
+                    "terminal notification rejection".into(),
+                ),
+            ));
             let result = block_on(notify_with_clients_for_historian(
                 args.clone(),
                 principal(42),
@@ -4798,7 +4971,11 @@ mod tests {
                 None,
             );
             if n == 1 {
-                cmc.notify_error = Some("notify unavailable".into());
+                cmc.notify_error = Some(jupiter_ic_clients::cmc::NotifyTopUpError::Terminal(
+                    jupiter_ic_clients::cmc::NotifyTerminalError::InvalidTransaction(
+                        "terminal notification rejection".into(),
+                    ),
+                ));
             }
             if n == 2 {
                 management.create_error = Some("create reply lost".into());
@@ -4888,7 +5065,7 @@ mod tests {
     }
 
     #[test]
-    fn factory_preflight_expiry_after_spend_classifies_notify_failure_and_releases_slot() {
+    fn factory_preflight_expiry_after_spend_retains_reconcilable_notify_evidence() {
         reset();
         let args = setup_args(vec![principal(1)]);
         let key = CanonicalRelaySetup::canonicalize(
@@ -4903,7 +5080,9 @@ mod tests {
             None,
         );
         cmc.expire_after_notify = true;
-        cmc.notify_error = Some("CMC response unavailable".into());
+        cmc.notify_error = Some(jupiter_ic_clients::cmc::NotifyTopUpError::Transport(
+            "CMC response unavailable".into(),
+        ));
         assert!(matches!(
             block_on(notify_with_clients_for_historian(
                 args.clone(),
@@ -4913,17 +5092,17 @@ mod tests {
                 &cmc,
                 &management,
             )),
-            RelaySetupNotifyResult::ManualRecoveryRequired {
+            RelaySetupNotifyResult::InProgress {
                 phase: RelayCreationPhase::CmcTransferAccepted,
                 ..
             }
         ));
-        let Some(RelaySetupEntry::ManualRecoveryRequired(progress)) = get_entry(key) else {
+        let Some(RelaySetupEntry::Creating(progress)) = get_entry(key) else {
             panic!("expiry must preserve possible spend evidence");
         };
         assert_eq!(progress.phase, RelayCreationPhase::CmcTransferAccepted);
         assert_eq!(progress.cmc_transfer.unwrap().block_index, Some(10));
-        assert!(state::relay_creating_keys().is_empty());
+        assert_eq!(state::relay_creating_keys(), vec![key]);
         admission::set_time_for_test(301);
         assert!(matches!(
             block_on(notify_with_clients_for_historian(
@@ -4934,7 +5113,7 @@ mod tests {
                 &cmc,
                 &management,
             )),
-            RelaySetupNotifyResult::ManualRecoveryRequired {
+            RelaySetupNotifyResult::InProgress {
                 phase: RelayCreationPhase::CmcTransferAccepted,
                 ..
             }
@@ -5294,7 +5473,9 @@ mod tests {
             true,
             None,
         );
-        cmc.notify_error = Some("CMC notification transport failed".to_string());
+        cmc.notify_error = Some(jupiter_ic_clients::cmc::NotifyTopUpError::Transport(
+            "CMC notification transport failed".into(),
+        ));
         let notify_error = block_on(notify_with_clients_for_historian(
             args.clone(),
             principal(42),
@@ -5305,7 +5486,7 @@ mod tests {
         ));
         assert!(matches!(
             notify_error,
-            RelaySetupNotifyResult::ManualRecoveryRequired {
+            RelaySetupNotifyResult::InProgress {
                 phase: RelayCreationPhase::CmcTransferAccepted,
                 ..
             }
@@ -5320,10 +5501,10 @@ mod tests {
         ));
         assert!(matches!(
             repeated,
-            RelaySetupNotifyResult::ManualRecoveryRequired { .. }
+            RelaySetupNotifyResult::InProgress { .. }
         ));
         assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
-        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 2);
         assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
 
         reset();
