@@ -2393,8 +2393,6 @@ test('earlier in-progress phases never expose the finalization resume action', a
     'Reserved',
     'ProbingTargets',
     'CmcTransferPrepared',
-    'CmcTransferAccepted',
-    'CmcNotifySucceeded',
     'CreateDispatched',
     'ChildCreated',
     'CodeInstalled',
@@ -2411,6 +2409,44 @@ test('earlier in-progress phases never expose the finalization resume action', a
       assert.equal(nodes.get('relay-setup-create-panel').hidden, true, phase);
       assert.equal(nodes.get('relay-setup-finalization-resume-note').hidden, true, phase);
       assert.equal(nodes.get('relay-setup-create').textContent, 'Create Relay', phase);
+    });
+  }
+});
+
+test('paid CMC phases expose one explicit creation resume without another payment', async () => {
+  for (const phase of ['CmcTransferAccepted', 'CmcNotifySucceeded']) {
+    await withDom(async (nodes) => {
+      const pending = deferred();
+      const inProgress = { InProgress: { phase: { [phase]: null }, relay_canister_id: [] } };
+      const harness = controllerHarness({
+        view: viewFor({ account: null, factoryAvailable: false, state: inProgress }),
+        notifyRelay: async () => pending.promise,
+      });
+      harness.controller.bindPane();
+      await submit(nodes, harness);
+      assert.equal(nodes.get('relay-setup-create-panel').hidden, false);
+      assert.equal(nodes.get('relay-setup-create').textContent, 'Resume creation');
+      assert.equal(nodes.get('relay-setup-create').disabled, false);
+      assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+      assert.match(nodes.get('relay-setup-finalization-resume-note').textContent, /no additional conversion payment/i);
+      nodes.get('relay-setup-create').listeners.get('click')();
+      nodes.get('relay-setup-create').listeners.get('click')();
+      while (harness.calls.notify === 0) await Promise.resolve();
+      assert.equal(harness.calls.notify, 1);
+      assert.equal(nodes.get('relay-setup-create').disabled, true);
+      assert.equal(nodes.get('relay-setup-status').textContent, 'Resuming creation…');
+      assert.deepEqual(harness.calls.notifyArgs, [{
+        target_canister_ids: [Principal.fromText(TARGET_A)],
+        surplus_recipients: [{ Principal: { principal: Principal.fromText(RECIPIENT_A), memo: [] } }],
+      }]);
+      pending.resolve(inProgress);
+      while (harness.calls.view < 2) await Promise.resolve();
+      await flushMicrotasks();
+      harness.runPoll();
+      while (harness.calls.view < 3) await Promise.resolve();
+      await flushMicrotasks();
+      assert.equal(harness.calls.balance, 0);
+      assert.equal(harness.calls.notify, 1);
     });
   }
 });
