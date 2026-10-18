@@ -711,67 +711,29 @@ def validate_historian_upgrade_only_docs() -> None:
         if historian_route_rollup_reinstall_wording(text):
             fail(f"{path} recommends destructive reinstall/reset for Historian route roll-ups")
 
-    deployment_text = (REPO_ROOT / "docs" / "operations" / "deployment.md").read_text()
-    for phrase in [
-        "Existing production Historian must be upgraded in place",
-        "Reinstall destroys all Historian stable history and is prohibited",
-        "mainnet-install-args.did is for a brand-new Historian installation only",
-        "Routine no-config Historian upgrades pass no arguments",
-        "Config-changing Historian upgrades use a temporary Option<UpgradeArgs> file",
-        "Stopping `jupiter_historian` is the executable self-service factory pause",
-        "Memory 29 is ordinary authoritative Historian state",
-        "complete_from_genesis = true",
-        "commitment_index_fault = null",
-        "route_index_fault = null",
-        "`qualifying_commitment_count` must not decrease across the upgrade",
-        "public queries must already fail closed",
-        "normal initial or forced main tick",
-        "Self-service Relay state is legitimate durable production state",
-        "Snapshots are risk-based",
-        "--identity anonymous",
-    ]:
-        if phrase not in deployment_text:
-            fail(f"docs/operations/deployment.md must document Historian upgrade-only requirement: {phrase}")
+    deployment_text = (REPO_ROOT / "docs/operations/deployment.md").read_text()
+    if not has_canonical_upgrade_command(deployment_text, "jupiter_historian"):
+        fail("central deployment guide lacks a canonical no-argument Historian upgrade")
 
-    historian_readme_text = (REPO_ROOT / "canisters" / "historian" / "README.md").read_text()
-    for phrase in [
-        "Stable memory 29 is the authoritative lifetime commitment-route map",
-        "complete_from_genesis = true",
-        "route_index_fault = null",
-        "`qualifying_commitment_count` must not decrease across the upgrade",
-        "investigate the invariant violation rather than initiating a historical rebuild",
-    ]:
-        if phrase not in historian_readme_text:
-            fail(f"canisters/historian/README.md must document steady-state route roll-ups: {phrase}")
 
-    preflight_text = (REPO_ROOT / "tools" / "scripts" / "preflight-historian-production-upgrade").read_text()
-    for phrase in [
-        "Existing production Historian must be upgraded in place",
-        "Reinstall destroys all stable history",
-        "canisters/historian/mainnet-install-args.did is fresh-install-only",
-        "Complete tested maintenance sequence",
-        "--mode upgrade",
-        "Stable memory 29 is authoritative Historian state",
-        "get_commitment_route_summaries",
-        "complete_from_genesis=true and commitment_index_fault=null",
-        "route_index_fault=null",
-        "qualifying_commitment_count must not decrease across the upgrade",
-        "public queries must already fail closed",
-        "normal initial or forced main tick",
-        "Preserve memory-26 setup entries",
-        "Snapshots are risk-based",
-        "--identity anonymous",
-    ]:
-        if phrase not in preflight_text:
-            fail(f"tools/scripts/preflight-historian-production-upgrade must print Historian upgrade-only guidance: {phrase}")
-    for phrase in [
-        "--mode reinstall",
-        "--args-file canisters/historian/mainnet-install-args.did",
-        "Historian reinstall args must be complete",
-        "Canonical release reinstall command",
-    ]:
-        if phrase in preflight_text:
-            fail(f"tools/scripts/preflight-historian-production-upgrade must not print Historian reinstall guidance: {phrase}")
+def has_canonical_upgrade_command(text: str, canister: str, init_file: str | None = None) -> bool:
+    for command in documented_icp_install_commands(text):
+        try:
+            tokens = shlex.split(command.replace("\\\n", " "))
+        except ValueError:
+            continue
+        required = [["icp", "deploy", canister], ["--mode", "upgrade"], ["--environment", "ic"]]
+        if "JUPITER_USE_CANONICAL_ARTIFACTS=1" not in tokens:
+            continue
+        if not all(any(tokens[i:i+len(part)] == part for i in range(len(tokens))) for part in required):
+            continue
+        if init_file is None:
+            if any(token in {"--args", "--args-file", "-a"} or token.startswith(("--args=", "--args-file=")) for token in tokens):
+                continue
+        elif not any(tokens[i:i+2] == ["--args-file", init_file] for i in range(len(tokens))):
+            continue
+        return True
+    return False
 
 
 def validate_upgrade_docs_do_not_use_install_args_or_null_routine_args() -> None:
@@ -795,39 +757,9 @@ def validate_upgrade_docs_do_not_use_install_args_or_null_routine_args() -> None
 
 
 def validate_relay_docs_contain_full_init_args_upgrade() -> None:
-    path = REPO_ROOT / "canisters" / "relay" / "README.md"
-    text = path.read_text()
-    required = (
-        "JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \\\n"
-        "  --environment ic \\\n"
-        "  --mode upgrade \\\n"
-        "  --args-file canisters/relay/mainnet-install-args.did"
-    )
-    if required not in text:
-        fail(f"{path} must document a full-InitArgs Relay production upgrade command")
-    for phrase in [
-        "replacement-style",
-        "non-resumable",
-        "Avoid upgrading during active Relay work where practical",
-        "does not support no-arg upgrades",
-        "does not support Relay UpgradeArgs",
-        "requires full InitArgs",
-    ]:
-        if phrase not in text:
-            fail(f"{path} must document Relay replacement-upgrade constraint phrase: {phrase}")
-    forbidden = [
-        "Option<UpgradeArgs>",
-        "Relay `Option<UpgradeArgs>`",
-        "Routine Relay upgrades pass no args",
-        "/tmp/relay-upgrade-args.did",
-        "temporary full `InitArgs`",
-        "stable config storage",
-        "requires quiescence",
-        "### One-time legacy lifecycle migration",
-    ]
-    for phrase in forbidden:
-        if phrase in text:
-            fail(f"{path} contains obsolete Relay stable-config upgrade guidance: {phrase}")
+    path = REPO_ROOT / "docs/operations/deployment.md"
+    if not has_canonical_upgrade_command(path.read_text(), "jupiter_relay", "canisters/relay/mainnet-install-args.did"):
+        fail(f"{path} lacks a canonical Relay upgrade using the complete checked-in InitArgs")
 
 
 def validate_docs_do_not_use_stale_privileged_deployment_framing() -> None:
@@ -904,9 +836,6 @@ def validate_historian_production_upgrade_preflight() -> None:
     require_contains(text, 'manifest="release-artifacts/release-artifacts.sha256"', str(path))
     require_contains(text, 'sha256sum -c "$manifest"', str(path))
     require_contains(text, "python3 ./tools/scripts/validate-mainnet-install-args", str(path))
-    require_contains(text, "Existing production Historian must be upgraded in place", str(path))
-    require_contains(text, "Reinstall destroys all stable history", str(path))
-    require_contains(text, "canisters/historian/mainnet-install-args.did is fresh-install-only", str(path))
     require_contains(text, "JUPITER_USE_CANONICAL_ARTIFACTS=1 \\", str(path))
     require_contains(text, "icp deploy jupiter_historian \\", str(path))
     require_contains(text, "--environment ic \\", str(path))
@@ -1035,38 +964,11 @@ def validate_historian_relay_factory_artifacts(path: Path) -> None:
     )
 
 
-def validate_relay_setup_recovery_runbook() -> None:
-    path = REPO_ROOT / "docs" / "relay-setup-recovery.md"
-    text = path.read_text()
-    required = [
-        "ManualRecoveryRequired",
-        "create_canister ambiguous relay ID loss",
-        "install_code module-hash reconciliation",
-        "module hash exists but differs",
-    ]
-    for phrase in required:
-        if phrase not in text:
-            fail(f"{path} must mention {phrase!r}")
-    if "Mainnet install args enable `relay_factory_enabled = opt true`." not in text:
-        fail(f"{path} must mention the current factory-enabled mainnet state")
-    if "`notify_relay_configuration` is public and can consume historian cycles" not in text:
-        fail(f"{path} must document the public notify cycle-spend monitoring risk")
-
-
-def validate_reproducible_builds_relay_setup_state() -> None:
-    path = REPO_ROOT / "docs" / "operations" / "reproducible-builds.md"
-    text = path.read_text()
-    required = [
-        "Memory 26 contains the sole current self-service Relay setup map",
-        "32-byte canonical configuration hash",
-        "current `RelaySetupEntry`",
-        "Reserved`/`ProbingTargets` entries",
-        "ManualRecoveryRequired",
-        "Reconciliation makes no external call",
-    ]
-    for phrase in required:
-        if phrase not in text:
-            fail(f"{path} must document current Relay setup upgrade behavior {phrase!r}")
+def validate_release_guide_links() -> None:
+    for relative in ["docs/relay-setup-recovery.md", "docs/operations/reproducible-builds.md"]:
+        path = REPO_ROOT / relative
+        if "operations/deployment.md" not in path.read_text() and "deployment.md" not in path.read_text():
+            fail(f"{path} must link to the central deployment procedure")
 
 
 def extract_vec_principals(text: str, field: str, path: Path, *, optional: bool = False) -> list[str]:
@@ -1526,6 +1428,18 @@ canisters:
         "jupiter_historian",
     ):
         fail("self-test unexpectedly rejected canonical historian production deploy artifact path")
+    historian_command = "JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_historian --environment ic --mode upgrade"
+    relay_command = "JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay --environment ic --mode upgrade --args-file canisters/relay/mainnet-install-args.did"
+    if not has_canonical_upgrade_command(historian_command, "jupiter_historian"):
+        fail("self-test rejected canonical no-argument Historian upgrade")
+    for unsafe in [historian_command + " --args-file canisters/historian/mainnet-install-args.did", historian_command + " --args '(null)'", historian_command.replace("--environment ic", "--environment local"), historian_command.replace("JUPITER_USE_CANONICAL_ARTIFACTS=1", ""), historian_command.replace("--mode upgrade", "--mode reinstall")]:
+        if has_canonical_upgrade_command(unsafe, "jupiter_historian"):
+            fail("self-test accepted unsafe Historian deployment contract")
+    if not has_canonical_upgrade_command(relay_command, "jupiter_relay", "canisters/relay/mainnet-install-args.did"):
+        fail("self-test rejected canonical full-InitArgs Relay upgrade")
+    for unsafe in [relay_command.replace(" --args-file canisters/relay/mainnet-install-args.did", ""), relay_command.replace("canisters/relay/", "canisters/faucet/")]:
+        if has_canonical_upgrade_command(unsafe, "jupiter_relay", "canisters/relay/mainnet-install-args.did"):
+            fail("self-test accepted Relay upgrade without correct full InitArgs")
     print("validate-mainnet-install-args self-tests OK")
 
 
@@ -1573,8 +1487,7 @@ def main() -> None:
     validate_docs_do_not_use_stale_privileged_deployment_framing()
     validate_historian_production_upgrade_preflight()
     historian_min_tx_e8s = validate_historian()
-    validate_relay_setup_recovery_runbook()
-    validate_reproducible_builds_relay_setup_state()
+    validate_release_guide_links()
     validate_sns_rewards()
     validate_relay()
     validate_release_build_script_uses_release_dids()

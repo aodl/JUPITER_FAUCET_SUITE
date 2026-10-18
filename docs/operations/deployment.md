@@ -8,102 +8,9 @@ Historian production deploys are factory-enabled. The checked-in mainnet histori
 
 Existing production Historian must be upgraded in place. Reinstall destroys all Historian stable history and is prohibited for the existing production canister because it clears endowment histories, cycles histories, tracking metadata, active self-service hash mappings, setup progress, index cursors, aggregates, and other durable state. mainnet-install-args.did is for a brand-new Historian installation only; `canisters/historian/mainnet-install-args.did` must not be passed to an existing Historian upgrade.
 
-## Fiduciary-controller retirement migration
+## Controller and release authority
 
-This section separates repository preparation from live settings mutations. Repository changes and release artifacts may be prepared, reviewed, and staged without changing mainnet. Every live command below is an operator action requiring the appropriate controller identity and an independently reviewed maintenance window; automation and Codex must not execute it merely because the repository is ready.
-
-Historical stable-state migration record: evidence captured on 2026-09-10 showed that Faucet module `07a01016f88ab0e039378b49c03a33da31b82075668437fba09bb84573fa91af` published `blackhole_armed=none` and Disburser module `af801944f58dba1f9357f91cbf1bd04a30f281ed1254268eb2b0a1e672b99af2` published `blackhole_armed=false`; neither published `autonomous_rescue_armed`, so both predated controller-separation commit `b17a8f9ef127a547f6792e8bd42bd2a54af819c2`. A second public check on 2026-09-11 confirmed the Faucet's recurring `CONFIG` published `canonical_relay_canister_id=u2qkp-aqaaa-aaaar-qb7ea-cai`. That discriminating marker was introduced in commit `0c9a7a26765eb72a606593199caf141521a73126`, the same source change that replaced the stable `RemainderToSelf`/`remainder_to_self_e8s` representation with `RemainderToRelay`/`remainder_to_relay_e8s`; `funding_source_account` predates that transition. On 2026-09-11 the reviewed Faucet bridge module `e9a9a687d7551e5e001f79386375ea668b50a25ee0aaccc248cd930446ef37f7` and Disburser bridge module `3f2d4e6df4d5e7384ce4dd551687040508f30c7ec267b78eace0aa6c0b641870` both reached `post_upgrade_complete` under the unchanged two-controller posture. Those lifecycle boundaries run only after stable restoration and persistence of current state, proving both one-hop bridges crossed. Their compatibility decoders are now retired. This completed stable-state migration is separate from the future live Fiduciary controller/settings removal documented below.
-
-Migration record (2026-09-01): the operator reported that every Jupiter protocol canister already has `status_visibility = public`. Treat that as a completed prerequisite for this rollout, not as permission to repeat the mutation. Reverify the live value before removing any controller.
-
-The repository-supported `icp 1.2.0` settings-update command supports `--remove-controller` but does not expose a `status_visibility` setter. Consequently `icp.yaml` does not declare that setting. Use compatible management-canister tooling to establish or inspect public status, retain the evidence, and keep normal builds/deployments on the repository-supported CLI path.
-
-### Step A — record controllers and verify public status
-
-For every production canister, first record controller-authorized settings and the original pre-migration module hash. Separately call management-canister `canister_status` through a non-controller/anonymous identity and require the returned setting to be exactly `Public`, not merely caller-specific `AllowedViewers`. A public state-tree status lookup alone is not equivalent to this capability check. Record the exact controller vector before any mutation. This inventory is historical deployment evidence; Step D captures a fresh live baseline immediately before each individual controller removal.
-
-Before the completed Step C bridge upgrades, recurring `CONFIG` logs from the pre-refactor Faucet and Disburser were inspected for `blackhole_armed=false` (or its exact equivalent old-schema unarmed value) and the reviewed Lifeline/rescue principal. That established that no autonomous controller reconciliation was authorized. This is retained as migration evidence, not as a decoder supported by current source.
-
-### Step B — deploy canonical Relay with Auto probing
-
-Before removing the Fiduciary controller from any canister whose cycles canonical Relay must observe, upgrade canonical Relay using its reviewed full replacement `InitArgs`:
-
-```bash
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_relay \
-  --environment ic \
-  --mode upgrade \
-  --args-file canisters/relay/mainnet-install-args.did
-```
-
-The checked-in argument must contain `blackhole_canister_id = null`, which selects `CyclesProbePolicy::Auto`. Relay replacement semantics still apply: the full `InitArgs` is mandatory, heap configuration and ordinary operational state reset, and the first successful post-upgrade tick establishes a `BaselineOnly` cycles sample without ordinary demand-derived spend. The compact reward state and durable splitter journal retain only the state documented in the lifecycle matrix below.
-
-Verify that the live Relay module hash exactly matches the reviewed canonical `release-artifacts/jupiter_relay.wasm.gz` install-package hash, then record that live post-upgrade hash as deployment evidence. Capture its controller-removal baseline immediately before the later settings-only removal, as required for every canister in Step D.
-
-Before proceeding, verify the Relay `CONFIG` log says `cycles_probe_policy=Auto` and independently verify each Jupiter target's `status_visibility=Public` through a non-controller. After the expected baseline tick, require subsequent Relay/Historian cycles observations for every Jupiter target to succeed. Successful ordinary observations do not emit a public per-target route identity, so do not claim to distinguish `DirectCanisterStatus` from a fallback using runtime logs alone. The shared cycles-probe implementation and regression tests are the evidence that Auto attempts direct management-canister status first, reuses its controller list when available, and otherwise obtains public controller information only after cached compatibility routes fail. Fresh discovery tries only a production blackhole that controls the target, canonical NNS Root for an NNS-controlled target (or Root itself), and SNS-W-authenticated Root/Swap routes; arbitrary controllers are never probed. SNS-W framework discovery remains available if `canister_info` fails. The two community blackholes remain managed funding targets; that funding policy is independent of the retired controller relationship.
-
-### Step C — completed Faucet and Disburser bridge upgrades
-
-This step completed successfully on 2026-09-11 while rescue was unarmed. Each bridge upgrade was treated as a separate rollback-sensitive, high-risk operation because it temporarily changed stable-state decoding. The procedure is retained below as historical evidence; it does not make snapshots mandatory for routine low-risk upgrades that preserve stable-state contracts.
-
-For each canister in turn:
-
-1. Satisfy the application-level quiescence requirement first. For Faucet, recurring `STATE` logs must show `active_payout_job_present=false`. For Disburser, satisfy the applicable in-flight maturity-disbursement and payout constraints documented in its README.
-2. Stop the target canister and use controller-authorized status calls to verify that it reaches `Stopped`. Do not treat acceptance of the stop request as sufficient; reaching `Stopped` is the evidence that outstanding callbacks have drained.
-3. Create an immediately pre-upgrade canister snapshot using the high-risk procedure below. Record the target, snapshot ID, creation time, current module hash, and controller set. Preferably download the snapshot to durable offline storage as independent rollback evidence.
-4. Recheck the target's cycles balance, freezing threshold, reserved/storage usage, and snapshot inventory after snapshot creation. Require enough headroom for snapshot retention, the upgrade, restart, verification, and a possible restore; do not proceed if creating the snapshot introduced cycle or freeze risk.
-5. Perform the reviewed canonical `.wasm.gz` upgrade using the repository's existing upgrade procedure, without passing the fresh-install argument file and without arming autonomous rescue.
-6. Query controller-authorized status after the upgrade. If the canister remains stopped, explicitly start it, then require `Running` before continuing with post-upgrade verification.
-
-The live module hashes matched the reviewed bridge artifacts and both canisters emitted `post_upgrade_complete`. In each implementation that lifecycle record occurs only after stable decode, restoration, current-state persistence, timer installation, and any required resume scheduling. The legacy conversion neutralized retired controller policy as `autonomous_rescue_armed=None`, no armed-since timestamp, and `rescue_triggered=false`; no separate recurring post-upgrade `CONFIG` record was required to prove the stable boundary crossed. The current decoder now accepts only the current V1 representation. These completed bridge upgrades remain historical deployment evidence and do not authorize the separate Step D settings mutation or autonomous-rescue arming.
-
-After deployment of the bridge-free cleanup, Historian's new live hash supersedes its prior corrective/bridge hash, Faucet's new live hash supersedes `e9a9a687...37f7`, and Disburser's new live hash supersedes `3f2d4e6d...41870` for later controller-removal verification. Record the actual deployed hashes after the committed reproducible build; historical Step A/B/C hashes must never override the immediately applicable live pre-removal hash after a legitimate upgrade.
-
-Retain each pre-upgrade snapshot until that canister has passed both the post-upgrade checks above and its Step E post-controller-removal checks, and the operator has deliberately closed the rollback window. If the candidate upgrade fails verification, stop the canister, deliberately restore the recorded pre-upgrade snapshot, start the canister, and verify the restored module hash and durable state before deciding how to proceed. A snapshot restore does not rewind Ledger, NNS, or other external-canister effects, so reconcile any effects accepted after the snapshot before authorizing a restore; never use rollback as an automatic retry. Do not continue to controller removal while candidate-upgrade verification is unresolved.
-
-### Step D — remove only the Fiduciary controller, one canister at a time
-
-Immediately before each individual Fiduciary-controller removal, capture that canister's current live module hash, exact controller set, running status, and status visibility. Require `Running`, `Public` visibility, and the expected controller set including the developer controller. Treat that exact live module hash as the pre-removal baseline for that individual settings-only mutation. This rule applies to every canister, including any legitimately upgraded since the original inventory.
-
-Use the supported remove-only operation against the explicit reviewed canister principal:
-
-```bash
-icp canister settings update <canister-principal> \
-  --remove-controller 77deu-baaaa-aaaar-qb6za-cai \
-  --environment ic
-```
-
-Do not replace the complete controller vector with a hard-coded list. Do not add self, remove the developer principal, or arm Faucet/Disburser autonomous rescue in this migration. During the development stage, the intended post-removal state is the existing developer principal alone with public status.
-
-Use this low-to-high monetary-criticality order, advancing only after the per-canister checks below pass:
-
-1. frontend — `jufzc-caaaa-aaaar-qb5da-cai`
-2. historian — `j5gs6-uiaaa-aaaar-qb5cq-cai`
-3. SNS rewards — `alk7f-5aaaa-aaaar-qb4ra-cai`
-4. canonical Relay — `u2qkp-aqaaa-aaaar-qb7ea-cai`
-5. Lifeline — `afisn-gqaaa-aaaar-qb4qa-cai`
-6. Faucet — `acjuz-liaaa-aaaar-qb4qq-cai`
-7. Disburser — `uccpi-cqaaa-aaaar-qby3q-cai`
-
-### Step E — verify after every individual removal
-
-Immediately after each one-canister settings-only mutation, compare the new evidence with the live baseline captured immediately before that individual removal in Step D. Require all of the following before continuing:
-
-1. non-controller/anonymous management `canister_status` still succeeds;
-2. `status_visibility` is exactly `Public`;
-3. `77deu-baaaa-aaaar-qb6za-cai` is absent from controllers;
-4. the existing developer controller remains present;
-5. the module hash exactly matches that immediately applicable pre-removal baseline—controller removal itself must not alter the module hash;
-6. the canister is `Running`;
-7. public logs remain available where expected; and
-8. Historian and canonical Relay cycles observations continue.
-
-Stop the rollout immediately on any unexpected result. Do not batch controller removals into one opaque command.
-
-### Eventual autonomous handoff is a separate operation
-
-The intermediate posture from this migration has the developer principal as the controller and public status enabled. In the future autonomous posture, a healthy Faucet or Disburser controller set contains only self; during recovery, the controller set contains exactly self and Lifeline. Public status remains enabled in both states.
-
-Before a later governance-approved handoff, verify that the canister itself is already a controller, public status works for a non-controller, Lifeline identity/governance has been reviewed, and real health/value flow has succeeded. Only then deliberately arm autonomous rescue, acknowledging that reconciliation may narrow controllers to self only. This migration does not perform that handoff and must not remove the developer principal.
+Record installed hashes, controller vectors, public status/log visibility, account destinations, cycles and capacity before any operator action. Verify public management status through a non-controller caller, not merely a state-tree lookup. Release acceptance does not authorize settings changes or autonomous-rescue arming. Controller handoff is a separate reviewed governance operation; production rescue remains unarmed in the checked-in fresh-install configuration. Community blackholes remain funding targets independently of controller relationships.
 
 ## Readiness and recovery boundaries
 
@@ -227,25 +134,13 @@ Reinstall clears canister Wasm/stable state. It is not an ordinary upgrade path.
 
 ## Historian upgrade audit checklist
 
-### Initial pre-deployment cleanup
+### State-preserving maintenance
 
-Deploy this Historian cleanup only as an in-place upgrade, never a reinstall. It removes one dead root field while preserving the existing root cell, histories, stable-map identities, lifetime route rollups, Relay setup entries, indexing cursors, and active lease/cooldown state. It requires no separate migration command, activation argument, cursor rewind, skip-range change, historical replay, or rollup rebuild.
+Historian restores required current accounting/configuration fields or fails before persistence. It preserves lifetime totals exactly, including during pending backfill. Retained samples cannot reconstruct missing lifetime accounting. After indexing starts, accounting accounts, Ledger, Index and threshold cannot change; operational tuning remains available. Review the current-state upgrade regression and installed predecessor identity before maintenance.
 
-Because the persisted root encoding changes, retain the pre-upgrade evidence and follow the snapshot guidance below for rollback-sensitive changes; this source cleanup does not itself create or restore a snapshot. Production subsequently completed the Faucet upgrade hook with the reviewed reduced-V1-writing release, so the temporary wider-V1 reader has been retired. Strict current-V1 restoration and the active-payout quiescence guard remain permanent operational safety.
-
-Historian restoration rejects missing required accounting, recent-feed and configuration fields instead of reconstructing them. This restoration cleanup preserves the stable wire shape. It preserves existing stored lifetime values exactly; it neither certifies historical accounting nor recalculates it from capped histories. A complete historical provenance audit is not a prerequisite for removing missing-value fallbacks. Any demonstrated accounting inconsistency must be investigated separately without changing it to make restoration pass.
-
-The supported current root must contain `qualifying_commitment_count`, `total_output_e8s`, `total_rewards_e8s`, all five recent feeds, `last_index_run_ts`, and `last_completed_route_sweep_ts`. Its stored configuration must contain `output_source_account`, `output_account`, `rewards_account`, `cmc_canister_id`, `faucet_canister_id`, `xrc_canister_id`, `relay_factory_enabled`, `relay_setup_min_e8s`, `relay_initial_cycles`, `relay_cycle_safety_margin_e8s`, `relay_min_subaccount_one_seed_e8s`, `self_service_relay_interval_seconds`, `canonical_relay_canister_id` and `canonical_relay_targets`. Present empty feeds/lists and `Some(None)` canonical Relay are valid. Zero margin/seed remain valid; zero setup minimum/create cycles remain factory-blocked. Restored intervals below 60 fail explicitly; omitted install arguments retain defaults and explicit interval updates retain the minimum of 60.
-
-In reviewed source `805e15924a0ce211c3cf1ecc6190f953cbc5d3fb`, `State::new` initializes the root fields; restoration/defaulting and `apply_upgrade_args` materialize them unconditionally before `set_state_after_upgrade` persists the root. `From<Config> for StableConfig` stores every required configuration field (with an outer `Some` for canonical Relay). Normal production writers do not remove these fields. The operator supplied Historian completion at 2026-10-12 07:00 UTC (`timers_installed=true main_interval_seconds=600`), which occurs after that write. This establishes presence conditional on the installed writer identity, not historical accuracy.
-
-Saved local release evidence contains Historian raw hash `b0c6160e395917c0dcfa985e0311cf9a2a606dfecb1bd18b56ee02fd792831a6` and compressed install-package hash `fa4911b98b5e0fedccea0a57d62be0a0b1696334f3cb0fe440d41917fdfd584a`. The retained canonical artifact matches those hashes and can generate predecessor-schema fixture bytes locally. These build records and the lifecycle log alone are not an independently inspected installed-module record or a live snapshot. Before deployment, the operator must link the saved installed compressed module hash to the reviewed writer, or supply existing post-upgrade raw-state evidence for the required fields. No new snapshot is universally required. No migration command, activation flag, replay, cursor rewind, map migration or bulk-history rewrite is needed. Operational recovery, canonical tracking and scoped upgrade persistence remain.
-
-When releasing numbered raw-ICP destination support, upgrade Historian and Faucet before publishing the matching frontend or submitting `canister:number.memo` declarations. The grammar needs no activation argument, but the frontend's account-aware tracker must not be published against an older Historian that lacks the optional destination fields. Use the normal state-preserving in-place upgrade process; do not reinstall, rewind cursors, alter skip ranges, or backfill history for this syntax change.
+Faucet requires an empty active-payout journal at upgrade. Disburser requires its documented maturity/payout quiescence. SNS Rewards must restore its persisted configuration, active snapshot, staging scan and owner maps; missing state is an upgrade failure. Reserved stable-memory identifiers remain reserved.
 
 Stopping `jupiter_historian` is the executable self-service factory pause and authoritative call drain. Record public evidence, stop it, and wait for `Stopped` before an in-place upgrade. Keep it stopped while deploying a matching frontend when the two Candid declarations change together, then explicitly start Historian after both upgrades succeed. There is no runtime factory-disable update method.
-
-The developer confirmed on 2026-10-16 that the self-service factory has not been used and no self-service child exists. This is distinct from the live canonical Historian/Faucet history. The first factory-index release allocates memory 30 and initializes it only when memory 26 is empty; a missing index over a nonempty registry rejects upgrade rather than guessing or scanning a historical representation. Retain the operator's unused-factory inventory as a deployment prerequisite. Never reinstall Historian to meet it.
 
 Self-service Relay state is legitimate durable production state once the factory is used: memory-26 entries, exact active configuration mappings, `RelayTarget`/`RelayInstance` tracking and the bounded memory-30 Creating-key index are authoritative. Preserve both memories together. Before future upgrades, record representative known full configurations and their Relay mappings; production cannot enumerate every configuration hash. Verify those mappings and tracking counts afterwards.
 
@@ -273,12 +168,17 @@ Immediately after post-upgrade restore, public queries must already fail closed 
 After upgrade, verify:
 
 - The module hash matches the canonical `release-artifacts/jupiter_historian.wasm.gz` package hash and controllers are unchanged.
-- Unrelated counts, cursors, totals, recent feeds, and representative historical samples are preserved. The completed 2026-09-11 one-hop route repair described below was the sole exception: it reset only output/rewards aggregates whose persisted ordering marker was exactly `Some(false)`. Current code no longer performs that repair. `qualifying_commitment_count` must not decrease across an upgrade; an increase after restart/indexing is permitted and may represent newly indexed qualifying endowments.
+- Unrelated counts, cursors, totals, recent feeds, and representative historical samples are preserved. `qualifying_commitment_count` must not decrease across an upgrade; an increase after restart/indexing is permitted and may represent newly indexed qualifying endowments.
 - Memory-26 entries, known exact active configuration mappings, and `RelayTarget`/`RelayInstance` tracking are preserved.
 - Automatic cycles probing and normal staking indexing continue, and new samples/endowments append exactly once.
-- Any setup interrupted after an irreversible spend is `ManualRecoveryRequired`; interrupted `Reserved`/`ProbingTargets` entries are removed, while existing `Active` and `ManualRecoveryRequired` entries are preserved.
+- Interrupted `CmcTransferAccepted` and `CmcNotifySucceeded` entries retain paid evidence for explicit serialized continuation. Other post-spend interrupted phases become `ManualRecoveryRequired`; pre-spend reservations are removed. Active mappings and existing manual evidence are preserved.
 
 ### Historian index health
+
+```bash
+icp canister call jupiter_historian get_public_status '()' --environment ic --identity anonymous --query
+icp canister call jupiter_historian get_public_counts '()' --environment ic --identity anonymous --query
+```
 
 Memory 29 is ordinary authoritative Historian state and is preserved directly by normal in-place upgrades. Query route metadata anonymously before and after an upgrade; an empty route vector is sufficient:
 
@@ -292,7 +192,7 @@ icp canister call jupiter_historian get_commitment_route_summaries \
 
 Healthy production requires this query to report `complete_from_genesis = true` and `commitment_index_fault = null`, and the already-recorded `get_public_status()` response to report `route_index_fault = null`, before and after a routine upgrade. The first pair verifies staking/endowment indexing; `route_index_fault` verifies output/rewards indexing.
 
-Production on 2026-09-11 exposed persisted legacy ascending output/rewards pagination metadata after the Historian was upgraded to module `fc4c9014615b26d58b127332a25750d53ad272500dfa6f322d0bc61a7b82ee49`; the reviewed code correctly failed closed because complete historical coverage could not be proved under the real newest-first ICP Index contract. A reviewed one-hop upgrade then discarded only the affected derived route totals, latest/oldest cursors, and catch-up continuations and rebuilt both aggregates from zero using authoritative newest-first ICP Ledger/Index history. It did not reset or reconstruct staking/endowment state, histories, tracking, cycles/SNS/XRC state, Relay setup memory 26, or lifetime route rollups in memory 29. Both production backfills subsequently completed and the compatibility repair was removed. The final rebuilt totals are authoritative even where they differ from the discarded aggregates. Current code does not auto-repair `Some(false)`; any future ascending marker is anomalous and fails closed. A current newest-first backfill still keeps `route_index_fault` non-null, and its output/rewards totals may remain lower or partial, until historical coverage is complete.
+Unsupported historical pagination fails closed; it does not trigger an automatic rebuild or counter reset. Current newest-first backfills keep `route_index_fault` non-null and totals explicitly partial until complete coverage is established.
 
 Do not reinstall Historian as a recovery mechanism. After any in-place upgrade, require `complete_from_genesis = true`, `commitment_index_fault = null`, and `route_index_fault = null` before treating Historian as healthy.
 
@@ -372,7 +272,7 @@ Ordinary Relay infrastructure allocations and SNS reward distributions are perpe
 
 `jupiter_sns_rewards` discovers Governance and Ledger from its one configured SNS Root. The checked-in fresh-install argument configures OpenChat Root `3e3x2-xyaaa-aaaaq-aaalq-cai` only as a development placeholder. No Governance, CHAT Ledger, or future jUP Ledger ID is separately configured.
 
-Before enabling the canonical Relay reward path, verify that recent canonical Relay subaccount-1 history contains supported debit shapes and reconciles into completed Faucet endowments. Attribution paginates backwards on demand within one shared per-attempt allowance: 64 external calls, 16,384 retained history records, 8 MiB of encoded history and 2,000,000 charged work units, with a 120-second deadline and main-lease fencing. Nested splitter scans, owner-resolution chunks and repeated reconstruction share that allowance. Core funding runs first and records completed heap cadence before the optional reward stage's first await, while retaining the exclusive lease. This survives a later reward callback trap, not a replacement-style Relay upgrade. An exhausted attempt holds rewards without paying from incomplete attribution or consuming successful weekly cadence; it can defer indefinitely, retrying on an accepted ordinary funding tick rather than in a tight loop. Already pinned payout identities/progress remain pinned. A deadline does not cancel an already dispatched call or guarantee an exact wall-clock duration under arbitrary network delay.
+Before enabling the canonical Relay reward path, verify that recent canonical Relay subaccount-1 history contains supported debit shapes and reconciles into completed Faucet endowments. Attribution paginates backwards on demand within one shared per-attempt allowance: 64 external calls, 16,384 retained history records, 8 MiB of encoded history and 2,000,000 charged work units, with a 120-second deadline and main-lease fencing. Nested splitter scans, owner-resolution chunks and repeated reconstruction share that allowance. Core funding runs first and records completed heap cadence before the optional reward stage's first await, while retaining the exclusive lease. This survives a later reward callback trap, not a replacement-style Relay upgrade. An exhausted attempt holds rewards without paying from incomplete attribution or consuming successful weekly cadence; it can defer indefinitely, retrying on an accepted ordinary funding tick rather than in a tight loop. Pinned payout identities/progress remain pinned and receive prompt one-second timer slices under the original lease. Each further slice must advance the recipient cursor; lease expiry bounds continuation. Weekly attribution is not repeated for that plan. A deadline does not cancel an already dispatched call or guarantee an exact wall-clock duration under arbitrary network delay.
 
 Source ownership is resolved in deterministic API-sized chunks against one snapshot. Relay inverts each account's indexed transactions from the response's current balance and trusts a suffix only when it proves a zero opening balance. Genuine account genesis means that no older transactions exist, while the reconstructed opening balance must still reconcile exactly to zero. This proof includes post-cutoff account activity and applies independently to subaccount 1 and every referenced splitter. Older history is fetched only when FIFO carry or newer ineligible endowments require it, while pagination and reconstruction inconsistencies fail closed. A history that cannot establish that proof inside the attempt allowance is unsupported for that attempt, not truncated or treated as empty.
 

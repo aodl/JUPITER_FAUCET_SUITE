@@ -362,7 +362,7 @@ The faucet does **not** retry forever and does **not** buffer a retry queue in m
 - if both notify replies are typed terminal rejections → count that endowment as **failed** and continue
 - otherwise, if the retry still leaves transport / retryable uncertainty → count that endowment as **ambiguous** and continue
 - if both staking-subaccount lookup attempts fail → count that endowment as **failed** and continue
-- if the wider payout tick later aborts for some unrelated transient reason, the unfinished active job is preserved and retried on the next scheduler opportunity (weekly main tick by default, or sooner via the daily rescue tick's forced main resume)
+- if the wider payout tick later aborts for some unrelated transient reason, the unfinished active job is preserved and retried on the next scheduler opportunity (daily main tick by default, or sooner through an admitted poke/continuation)
 
 This keeps memory bounded and avoids long-lived paused payout jobs. It also means top-ups are strictly **best effort**: some eligible endowments may fail deterministically, while others may end in an ambiguous transfer/notify boundary and be reflected separately in the summary counters. Neuron `claim_or_refresh_neuron` is also best effort after a ledger-accepted neuron-stake transfer; the NNS endpoint is publicly callable, and a failed claim/refresh does not mean the transferred ICP is lost. Later natural NNS flow or a manual/public retry can refresh the neuron, so no durable claim-refresh retry queue is maintained. The faucet also proactively rejects obviously invalid memo targets such as the anonymous principal and the management canister principal.
 
@@ -516,85 +516,9 @@ Current upgrade args support these recovery/config fields:
 
 `last_processed_funding_tx_id` can only be set from `null` to a value or moved forward from an existing value. It cannot be moved backwards. Changing it clears any active funding scan, but it does not clear `forced_rescue_reason` unless `clear_forced_rescue = opt true` is also supplied.
 
-### Funding cursor recovery procedure
+### Funding cursor recovery
 
-Use this procedure only for the strict-tranche recovery where the prior consumed funding transfer must be marked as already processed so the next unprocessed tranche can be discovered.
-
-1. Confirm the previously processed funding transfer:
-
-```text
-tx index: 36514691
-tx hash: 13800deab518eee74fdf6554edc2043a3358ab4828988d81f46d48775e550660
-```
-
-2. Confirm the new funding transfer to process:
-
-```text
-tx index: 37108711
-tx hash: 5832a04dd8a0b8435600fe86ab91865f46af621c88aab131d3d9e14525938a36
-```
-
-3. Do **not** use the new funding tx ID as the recovery cursor.
-
-4. Create a temporary local upgrade args file. Do **not** commit a production tx-specific args file.
-
-```did
-(
-  opt record {
-    last_processed_funding_tx_id = opt (36514691 : nat64);
-
-    main_interval_seconds = opt (86400 : nat64);
-    rescue_interval_seconds = opt (86400 : nat64);
-    min_tx_e8s = opt (100000000 : nat64);
-    stake_recognition_delay_seconds = opt (604800 : nat64);
-
-    clear_forced_rescue = opt true;
-    autonomous_rescue_armed = null;
-  }
-)
-```
-
-5. Upgrade the production faucet canister with the temporary upgrade args:
-
-```bash
-JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_faucet \
-  --environment ic \
-  --mode upgrade \
-  --args-file /tmp/faucet-upgrade-args.did
-```
-
-6. Confirm logs show the reconciled config:
-
-```text
-CONFIG ... canonical_relay_canister_id=<embedded-relay-principal> ... funding_source_account=uccpi-cqaaa-aaaar-qby3q-cai:none ... main_interval_seconds=86400 ... rescue_interval_seconds=86400 ... min_tx_e8s=100000000 ... stake_recognition_delay_seconds=604800
-```
-
-7. Confirm logs show the recovered cursor and cleared forced rescue state:
-
-```text
-STATE:last_processed_funding_tx_id=36514691 forced_rescue_reason=none ...
-```
-
-8. On the next main tick, confirm funding discovery chooses the new funding transfer:
-
-```text
-FUNDING:result=found tx_id=37108711 ...
-```
-
-9. After payout completion, confirm the summary advances the cursor:
-
-```text
-SUMMARY:funding_tx_id=37108711 ... last_processed_funding_tx_id=37108711 ... remainder_to_relay_e8s=...
-```
-
-Warnings:
-
-- Do not reinstall the production faucet.
-- Do not pass `mainnet-install-args.did` to upgrade.
-- Do not set `last_processed_funding_tx_id` to `37108711` before processing it.
-- Set `last_processed_funding_tx_id` to `36514691` for this recovery.
-- Strict funding-tranche accounting remains required.
-- Do not restore the live-balance fallback.
+A cursor patch is an exceptional operator action requiring Ledger evidence that the named tranche was already consumed. Never move the cursor past an unpaid tranche or use a live balance as a substitute for the actual tranche amount. Use the central [deployment procedure](../../docs/operations/deployment.md) with reviewed temporary upgrade arguments and preserve pending/ambiguous spend evidence.
 
 Before upgrade:
 

@@ -245,7 +245,7 @@ The committed mainnet install args wire:
 
 - normal recipient: `jupiter-faucet` (`acjuz-liaaa-aaaar-qb4qq-cai`)
 - age bonus recipient 1: `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`)
-- age bonus recipient 2: D-QUORUM staking account `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68` (NNS Governance owner with the committed subaccount bytes)
+- age bonus recipient 2: D-QUORUM staking account owner `rrkah-fqaaa-aaaaa-aaaaq-cai`, subaccount `77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f` (the committed production destination)
 - rescue controller: `jupiter-lifeline` (`afisn-gqaaa-aaaar-qb4qa-cai`)
 - ledger canister: ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`)
 - governance canister: NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`)
@@ -338,7 +338,7 @@ JUPITER_USE_CANONICAL_ARTIFACTS=1 icp deploy jupiter_disburser \
 
 ### Production upgrades
 
-The one-hop old-controller-state bridge completed in production on 2026-09-11 and its compatibility decoder is retired. Current source decodes only the current V1 stable representation; this stable-state cleanup is separate from the future live controller/settings migration.
+Current source restores the supported current V1 stable state; malformed or unsupported state fails restoration.
 
 The committed install-args file is for fresh installs only. Do not pass fresh-install args when upgrading.
 
@@ -381,20 +381,9 @@ After upgrade, verify the runtime config from public logs:
 icp canister logs uccpi-cqaaa-aaaar-qby3q-cai -n ic
 ```
 
-### Controller handoff notes
+### Controller authority
 
-The current developer-controller cleanup is separate from final autonomous handoff. Before handing the canister off to self-management, a reviewed governance operation must verify public status, public logs, Lifeline governance, successful runtime value flow, and that the canister is already its own controller.
-
-Example:
-
-```bash
-icp canister settings update jupiter_disburser --environment ic --log-visibility public
-icp canister settings update jupiter_disburser --environment ic --add-controller uccpi-cqaaa-aaaar-qby3q-cai
-```
-
-Only after those checks should autonomous rescue be deliberately armed; its next healthy reconciliation may narrow controllers to self only. The current migration must not arm this mode or remove the developer principal as part of the Fiduciary-controller cleanup.
-
-The dedicated operational sequence is documented in [`../../docs/operations/deployment.md`](../../docs/operations/deployment.md).
+Controller handoff and autonomous-rescue arming require a separate reviewed governance operation. Follow the central [deployment procedure](../../docs/operations/deployment.md); release validation alone authorizes neither operation.
 
 ## Related docs
 
