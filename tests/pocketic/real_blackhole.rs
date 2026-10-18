@@ -45,6 +45,20 @@ pub fn real_blackhole_wasm() -> Result<Vec<u8>> {
         return Ok(bytes.clone());
     }
 
+    if let Some(path) = std::env::var_os("JUPITER_BLACKHOLE_TEST_WASM") {
+        let path = PathBuf::from(path);
+        let bytes = std::fs::read(&path)
+            .with_context(|| format!("read JUPITER_BLACKHOLE_TEST_WASM at {}", path.display()))?;
+        assert_expected_production_hash(&bytes)?;
+        eprintln!(
+            "[real-blackhole] loaded JUPITER_BLACKHOLE_TEST_WASM at {} with expected production hash {}",
+            path.display(),
+            EXPECTED_PRODUCTION_HASH
+        );
+        let _ = REAL_BLACKHOLE_WASM.set(bytes.clone());
+        return Ok(bytes);
+    }
+
     let source_dir = vendored_blackhole_dir();
     let output = Command::new("make")
         .arg("repro-build")
@@ -100,6 +114,35 @@ stderr:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "runs the real fixture loader in isolated test processes"]
+    fn blackhole_fixture_override_fails_closed_without_building() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!("blackhole-fixture-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let invalid = dir.join("invalid.wasm");
+        std::fs::write(&invalid, b"unverified blackhole fixture")?;
+        for (path, expected_error) in [
+            (invalid, "wasm hash mismatch"),
+            (dir.join("missing.wasm"), "read JUPITER_BLACKHOLE_TEST_WASM"),
+        ] {
+            let output = Command::new(std::env::current_exe()?)
+                .args([
+                    "real_blackhole::tests::vendored_blackhole_repro_build_matches_expected_hash",
+                    "--exact",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("JUPITER_BLACKHOLE_TEST_WASM", path)
+                .env("PATH", &dir) // No make/Nix: an override must never fall back.
+                .output()?;
+            assert!(!output.status.success());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains(expected_error), "{stderr}");
+        }
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
 
     #[test]
     #[ignore = "requires nix and make to build the vendored ic-blackhole canister"]

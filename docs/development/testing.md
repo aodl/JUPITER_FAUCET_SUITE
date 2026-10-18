@@ -148,6 +148,15 @@ finalizes its embedded no-debug Relay, and the canonical no-debug Faucet
 upgrades at quiescence then pays through its ordinary timers. No production
 test endpoint or mainnet operation is required.
 
+Canonical CI prepares the vendored real blackhole before these scenarios in a
+visible build step with a 30-minute command timeout (32-minute step limit).
+It verifies the existing production SHA-256 and exports the prepared path as
+`JUPITER_BLACKHOLE_TEST_WASM`. The PocketIC fixture verifies that hash again and
+loads those bytes without invoking Nix. A missing or mismatched override fails
+without falling back to a build. Without the override, ordinary PocketIC suites
+continue to reproduce the vendored blackhole through `make repro-build` and
+verify the same production hash.
+
 Workflow source cannot establish branch protection or an actual successful PR
 run. Operators must verify required-check settings and retain an ordinary-PR
 execution on the candidate. No release job deploys or authorizes deployment.
