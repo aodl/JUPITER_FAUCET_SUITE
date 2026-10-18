@@ -17,7 +17,7 @@ use super::reward_budget::WorkBudget;
 use crate::clients::governance::NnsGovernanceCanister;
 use crate::clients::GovernanceClient;
 use crate::reward_state::{self, PendingRewardPayout, PendingRewardRecipient};
-use crate::scheduler::guards::MainLeaseToken;
+use crate::scheduler::guards::{MainGuard, MainLeaseToken};
 use crate::scheduler::reward_history;
 use crate::scheduler::reward_splitter::{self, SplitterFundingCredit};
 use crate::scheduler::reward_token_history;
@@ -306,7 +306,7 @@ pub(crate) async fn process(
     now_secs: u64,
     force: bool,
     main_lease: MainLeaseToken,
-) {
+) -> bool {
     let budget = WorkBudget::new(ic_cdk::api::time(), main_lease);
     let (last_completed_sweep_secs, pending_ledger) = reward_state::scheduler_status();
     if pending_ledger.is_some() {
@@ -318,14 +318,14 @@ pub(crate) async fn process(
             ..Default::default()
         }
         .emit();
-        return;
+        return result == PendingDriveResult::Held && main_lease.is_current();
     }
     let generation = SweepGeneration {
         main_lease,
         last_completed_sweep_secs,
     };
     if !sweep_is_due(generation.last_completed_sweep_secs, now_secs, force) {
-        return;
+        return false;
     }
     let mut log = RewardLog {
         status: "held",
@@ -355,6 +355,33 @@ pub(crate) async fn process(
         used.work
     );
     log.emit();
+    main_lease.is_current() && reward_state::scheduler_status().1.is_some()
+}
+
+// Only a pinned plan continues here. Weekly attribution is never repeated.
+// Every subsequent slice must advance its cursor and the original lease bounds
+// elapsed work even when a dependency is unhealthy.
+pub(super) fn schedule_pinned_continuation(guard: MainGuard) {
+    ic_cdk_timers::set_timer(std::time::Duration::from_secs(1), async move {
+        let now = ic_cdk::api::time();
+        let seconds = now / 1_000_000_000;
+        if !guard.is_current() || seconds >= guard.lease_expires_at_ts() {
+            return;
+        }
+        let before = reward_state::get()
+            .pending_payout
+            .map(|p| p.next_recipient_index);
+        let result = drive_pending(now, &WorkBudget::new(now, guard.lease_token())).await;
+        record_pinned_payout_result(result, seconds);
+        let after = reward_state::get()
+            .pending_payout
+            .map(|p| p.next_recipient_index);
+        if result == PendingDriveResult::Held && after > before && guard.is_current() {
+            schedule_pinned_continuation(guard);
+        } else {
+            guard.release_without_finishing();
+        }
+    });
 }
 
 async fn adjudicate(
@@ -554,7 +581,6 @@ async fn adjudicate(
                 allocations,
                 now_nanos,
             )?;
-            budget.require_call_capacity()?;
             if !install_pending_if_current(generation, pending) {
                 log.status = "stale";
                 log.reason = Some("stale_reward_adjudication".to_string());

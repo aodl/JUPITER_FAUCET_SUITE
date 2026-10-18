@@ -299,7 +299,11 @@ async fn run_main_tick_with_clients_for_relay<
     #[cfg(not(test))]
     {
         let reward_now = ic_cdk::api::time();
-        super::reward_sweep::process(reward_now, reward_now / 1_000_000_000, false, lease).await;
+        if super::reward_sweep::process(reward_now, reward_now / 1_000_000_000, false, lease).await
+        {
+            super::reward_sweep::schedule_pinned_continuation(guard);
+            return MainTickOutcome::Completed;
+        }
     }
     guard.finish(now_secs);
     MainTickOutcome::Completed

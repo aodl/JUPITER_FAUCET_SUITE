@@ -107,15 +107,6 @@ impl WorkBudget {
         self.charge(0, 0, 0, units)
     }
 
-    pub(super) fn require_call_capacity(&self) -> Result<(), String> {
-        self.check()?;
-        if self.usage().calls >= MAX_CALLS {
-            Err(EXHAUSTED.into())
-        } else {
-            Ok(())
-        }
-    }
-
     pub(super) async fn call<T>(&self, future: impl Future<Output = T>) -> Result<T, String> {
         // Charge attempted calls, including failures. Checking afterwards fences
         // a late reply, but cannot cancel work already dispatched to a callee.
@@ -162,7 +153,6 @@ mod tests {
             EXHAUSTED
         );
         assert_eq!(calls.load(Ordering::SeqCst), MAX_CALLS);
-        assert_eq!(budget.require_call_capacity().unwrap_err(), EXHAUSTED);
         nested.retain(MAX_RECORDS, MAX_HISTORY_BYTES).unwrap();
         assert_eq!(budget.retain(1, 0).unwrap_err(), EXHAUSTED);
         assert_eq!(budget.retain(0, 1).unwrap_err(), EXHAUSTED);

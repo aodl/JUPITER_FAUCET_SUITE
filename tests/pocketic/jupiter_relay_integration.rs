@@ -3385,6 +3385,48 @@ impl RealSplitterRewardEnv {
 
 #[test]
 #[ignore]
+fn budget_held_rewards_continue_by_timer_before_untouched_identities_expire() -> Result<()> {
+    let mut env = RealSplitterRewardEnv::new(70)?;
+    tick_n(&env.pic, 30);
+    for owner in &env.owners {
+        env.fund_owner(*owner, 200_000_000)?;
+        env.send_to_relay(*owner, relay_subaccount_one(), 100_000_000)?;
+    }
+    env.main_tick()?;
+    wait_for_real_index_transactions(
+        &env.pic,
+        env.icp_index,
+        &account_identifier_text(env.relay, Some(relay_subaccount_one())),
+        71,
+    )?;
+    env.refresh_snapshot()?;
+    env.credit_reward_pot(1_400_000)?;
+    env.reward_sweep()?;
+    let held = env.journal()?;
+    let pending = held
+        .pending_payout
+        .context("more than one call budget must pin an unfinished payout")?;
+    assert!(pending.next_recipient_index > 0 && pending.next_recipient_index < 70);
+    assert_eq!(held.last_sweep_attempt_timestamp_seconds, 0);
+    // Only elapsed time drives continuation: no manual sweep or daily main tick.
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 200);
+    assert!(env.journal()?.pending_payout.is_none());
+    assert!(env.journal()?.last_sweep_attempt_timestamp_seconds > 0);
+    for owner in &env.owners {
+        assert_eq!(env.reward_balance(*owner)?, 19_000);
+    }
+    assert_eq!(env.reward_balance(env.relay)?, 0);
+    env.pic.advance_time(Duration::from_secs(10));
+    tick_n(&env.pic, 100);
+    for owner in &env.owners {
+        assert_eq!(env.reward_balance(*owner)?, 19_000);
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn multi_page_valid_reward_epoch_preserves_allocations_with_bounded_work() -> Result<()> {
     let mut env = RealSplitterRewardEnv::new(2)?;
     tick_n(&env.pic, 30);

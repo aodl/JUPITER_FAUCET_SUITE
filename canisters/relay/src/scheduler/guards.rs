@@ -56,7 +56,6 @@ impl MainGuard {
         });
     }
 
-    #[cfg(test)]
     pub(super) fn lease_expires_at_ts(&self) -> u64 {
         self.inner.lease_expires_at_ts()
     }

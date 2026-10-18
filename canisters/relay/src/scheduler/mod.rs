@@ -27,8 +27,11 @@ pub(crate) async fn debug_reward_sweep_impl() {
     let Some(guard) = guards::MainGuard::acquire(now_secs) else {
         return;
     };
-    reward_sweep::process(now_nanos, now_secs, true, guard.lease_token()).await;
-    guard.release_without_finishing();
+    if reward_sweep::process(now_nanos, now_secs, true, guard.lease_token()).await {
+        reward_sweep::schedule_pinned_continuation(guard);
+    } else {
+        guard.release_without_finishing();
+    }
 }
 
 #[cfg(feature = "debug_api")]
