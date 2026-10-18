@@ -3661,6 +3661,98 @@ mod tests {
     }
 
     #[test]
+    fn canonical_eleven_payment_job_survives_its_ten_transfer_cap() {
+        let args = candid_parser::parse_idl_args(include_str!("../../mainnet-install-args.did"))
+            .unwrap()
+            .to_bytes()
+            .unwrap();
+        let (args,): (crate::InitArgs,) = candid::decode_args(&args).unwrap();
+        let cfg = crate::config_from_init_args(args);
+        assert_eq!(cfg.max_transfers_per_tick, Some(10));
+        let mut job = job_with_three_topups();
+        job.canisters = logic::effective_managed_canisters(&cfg.managed_canisters, relay_self())
+            .into_iter()
+            .map(|id| sample(id, 200))
+            .collect();
+        job.summary.canisters = job.canisters.clone();
+        job.surplus_phase_planned = true;
+        job.surplus_transfers = cfg
+            .surplus_recipients
+            .iter()
+            .enumerate()
+            .map(|(i, recipient)| crate::state::SurplusTransferSample {
+                target: recipient.target.clone(),
+                account: Account {
+                    owner: cfg.governance_canister_id,
+                    subaccount: Some([i as u8 + 1; 32]),
+                },
+                gross_share_e8s: 100,
+                amount_e8s: 90,
+                memo_len: recipient.memo.as_ref().map(|memo| memo.len() as u32),
+                skipped_reason: None,
+            })
+            .collect();
+        job.surplus_memos = cfg
+            .surplus_recipients
+            .iter()
+            .map(|r| r.memo.clone())
+            .collect();
+        assert_eq!(job.canisters.len(), 9);
+        assert_eq!(job.surplus_transfers.len(), 2);
+        let mut planned = Vec::new();
+        for (seconds, expected_count) in [(100_000, 10), (186_400, 11)] {
+            let mut started = 0;
+            loop {
+                match plan_next_transfer(
+                    &mut job,
+                    cfg.max_transfers_per_tick,
+                    &mut started,
+                    seconds * 1_000_000_000,
+                ) {
+                    TransferPlanStep::Planned => {
+                        let pending = job.pending_transfer.take().unwrap();
+                        // Model the successful notification; the neighboring driver
+                        // regression verifies actual Ledger/CMC execution and balances.
+                        if let PendingTransferKind::CmcTopUp { canister_id } = &pending.kind {
+                            job.canisters
+                                .iter_mut()
+                                .find(|s| s.canister_id == *canister_id)
+                                .unwrap()
+                                .remaining_deficit_cycles = 0;
+                        }
+                        planned.push(pending);
+                    }
+                    TransferPlanStep::Paused => {
+                        assert_eq!(expected_count, 10);
+                        assert_eq!(job.surplus_transfers.len(), 2);
+                        assert_eq!(job.surplus_transfer_index, 1);
+                        break;
+                    }
+                    TransferPlanStep::Done => {
+                        assert_eq!(expected_count, 11);
+                        break;
+                    }
+                }
+            }
+            assert_eq!(planned.len(), expected_count);
+            let bytes = candid::encode_one(&job).unwrap();
+            job = candid::decode_one(&bytes).unwrap();
+        }
+        assert_eq!(job.surplus_transfer_index, 2);
+        assert_eq!(
+            planned.iter().map(|p| p.gross_share_e8s).sum::<u64>(),
+            2_090
+        );
+        assert_eq!(
+            planned
+                .iter()
+                .filter(|p| matches!(p.kind, PendingTransferKind::SurplusIcp { .. }))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
     fn max_transfers_per_tick_chunks_transfer_planning_and_preserves_cursor() {
         let mut job = job_with_three_topups();
         let mut started = 0;
