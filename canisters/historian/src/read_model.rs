@@ -466,6 +466,25 @@ async fn source_memory_status(
     None
 }
 
+fn source_memory_bytes(
+    status: Option<&clients::blackhole::BlackholeCanisterStatus>,
+) -> (Option<u64>, Option<u64>, Option<u64>) {
+    let Some(status) = status else {
+        return (None, None, None);
+    };
+    (
+        status
+            .memory_metrics
+            .as_ref()
+            .and_then(|m| nat_to_u64(&m.wasm_memory_size)),
+        status
+            .memory_metrics
+            .as_ref()
+            .and_then(|m| nat_to_u64(&m.stable_memory_size)),
+        status.memory_size.as_ref().and_then(nat_to_u64),
+    )
+}
+
 async fn load_canister_module_hashes() -> Vec<CanisterModuleHash> {
     let canister_ids = source_module_hash_canister_ids();
     let direct = clients::blackhole::BlackholeCanister::new(Principal::management_canister());
@@ -494,39 +513,18 @@ async fn load_canister_module_hashes() -> Vec<CanisterModuleHash> {
                     (None, None)
                 }
             };
+        let status = source_memory_status(
+            canister_id,
+            controllers.as_deref().unwrap_or_default(),
+            &direct,
+            &[
+                (routes[0], &compatibility[0]),
+                (routes[1], &compatibility[1]),
+            ],
+        )
+        .await;
         let (heap_memory_bytes, stable_memory_bytes, total_memory_bytes) =
-            match source_memory_status(
-                canister_id,
-                controllers.as_deref().unwrap_or_default(),
-                &direct,
-                &[
-                    (routes[0], &compatibility[0]),
-                    (routes[1], &compatibility[1]),
-                ],
-            )
-            .await
-            {
-                Some(status) => {
-                    let heap = status
-                        .memory_metrics
-                        .as_ref()
-                        .and_then(|metrics| nat_to_u64(&metrics.wasm_memory_size));
-                    let stable = status
-                        .memory_metrics
-                        .as_ref()
-                        .and_then(|metrics| nat_to_u64(&metrics.stable_memory_size));
-                    let total = status
-                        .memory_size
-                        .as_ref()
-                        .and_then(nat_to_u64)
-                        .or_else(|| {
-                            heap.zip(stable)
-                                .map(|(heap, stable)| heap.saturating_add(stable))
-                        });
-                    (heap, stable, total)
-                }
-                None => (None, None, None),
-            };
+            source_memory_bytes(status.as_ref());
         hashes.push(CanisterModuleHash {
             canister_id,
             module_hash_hex,
@@ -917,14 +915,20 @@ mod source_memory_tests {
             };
             let blackhole = jupiter_ic_clients::constants::blackhole_canister_id();
             let target = Principal::from_slice(&[1]);
-            let status = source_memory_status(target, &[], &direct, &[(blackhole, &fallback)])
+            let mut status = source_memory_status(target, &[], &direct, &[(blackhole, &fallback)])
                 .await
                 .unwrap();
-            assert_eq!(status.memory_size, Some(candid::Nat::from(123_u64)));
             assert_eq!(
-                status.memory_metrics.unwrap().stable_memory_size,
-                candid::Nat::from(60_u64)
+                source_memory_bytes(Some(&status)),
+                (Some(40), Some(60), Some(123))
             );
+            status.memory_size = None;
+            assert_eq!(
+                source_memory_bytes(Some(&status)),
+                (Some(40), Some(60), None),
+                "component sizes cannot invent native total size"
+            );
+            assert_eq!(source_memory_bytes(None), (None, None, None));
             assert_eq!(fallback.calls.load(Ordering::SeqCst), 0);
             let denied = StatusClient {
                 allowed: false,
