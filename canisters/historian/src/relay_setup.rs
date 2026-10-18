@@ -320,9 +320,10 @@ pub(crate) fn reconcile_interrupted_creating_entries_after_upgrade() {
             RelayCreationPhase::Reserved | RelayCreationPhase::ProbingTargets => {
                 remove_entry(key);
             }
+            // A paid block can be re-notified idempotently; no child creation
+            // has been dispatched in either of these phases.
+            RelayCreationPhase::CmcTransferAccepted | RelayCreationPhase::CmcNotifySucceeded => {}
             RelayCreationPhase::CmcTransferPrepared
-            | RelayCreationPhase::CmcTransferAccepted
-            | RelayCreationPhase::CmcNotifySucceeded
             | RelayCreationPhase::CreateDispatched
             | RelayCreationPhase::ChildCreated
             | RelayCreationPhase::CodeInstalled
@@ -1155,6 +1156,27 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     if let Some(entry) = get_entry(key) {
         return match entry {
             RelaySetupEntry::Creating(RelayCreationProgress {
+                phase:
+                    RelayCreationPhase::CmcTransferAccepted | RelayCreationPhase::CmcNotifySucceeded,
+                ..
+            }) => {
+                let Some(guard) = admission::Guard::acquire(key, admission::Lane::Completion)
+                else {
+                    return RelaySetupNotifyResult::Busy;
+                };
+                continue_paid_creation(
+                    key,
+                    &setup,
+                    &config,
+                    historian,
+                    ledger,
+                    cmc,
+                    management,
+                    guard.ticket(),
+                )
+                .await
+            }
+            RelaySetupEntry::Creating(RelayCreationProgress {
                 phase: RelayCreationPhase::RelayFunded | RelayCreationPhase::FinalizationAttempted,
                 ..
             }) => {
@@ -1350,22 +1372,76 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     }) {
         return result;
     }
-    let minted_cycles = creation_call(cmc.notify_top_up(historian, cmc_block)).await;
-    if let Err(result) = require_phase(key, RelayCreationPhase::CmcTransferAccepted) {
-        return result;
-    }
-    let minted_cycles = match minted_cycles {
-        Ok(cycles) => cycles,
-        Err(error) => {
+    continue_paid_creation(
+        key, &setup, &config, historian, ledger, cmc, management, ticket,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn continue_paid_creation(
+    key: RelaySetupKey,
+    setup: &CanonicalRelaySetup,
+    config: &Config,
+    historian: Principal,
+    ledger: &dyn LedgerClient,
+    cmc: &dyn CmcClient,
+    management: &dyn ManagementClient,
+    ticket: admission::Ticket,
+) -> RelaySetupNotifyResult {
+    let phase = match get_entry(key) {
+        Some(RelaySetupEntry::Creating(progress)) => progress.phase,
+        Some(entry) => return notify_for_entry(entry),
+        None => {
+            return RelaySetupNotifyResult::FailedPreSpend {
+                message: "missing paid setup".into(),
+            }
+        }
+    };
+    if phase == RelayCreationPhase::CmcTransferAccepted {
+        // Admission bounds explicit continuations; the durable phase fences the
+        // callback even if a transient lease expires while CMC is answering.
+        let progress = match require_phase(key, RelayCreationPhase::CmcTransferAccepted) {
+            Ok(progress) => progress,
+            Err(result) => return result,
+        };
+        let Some(cmc_block) = progress.cmc_transfer.and_then(|record| record.block_index) else {
             return manual_recovery(
                 key,
                 RelayCreationPhase::CmcTransferAccepted,
-                format!("CMC notification failed: {error:?}"),
+                "missing accepted CMC block",
             );
+        };
+        let minted_cycles = creation_call(cmc.notify_top_up(historian, cmc_block)).await;
+        if let Err(result) = require_phase(key, RelayCreationPhase::CmcTransferAccepted) {
+            return result;
         }
-    };
-    if minted_cycles < config.relay_initial_cycles {
-        return manual_recovery(
+        let minted_cycles = match minted_cycles {
+            Ok(cycles) => cycles,
+            Err(jupiter_ic_clients::cmc::NotifyTopUpError::Retryable(error)) => {
+                return match update_progress(
+                    key,
+                    RelayCreationPhase::CmcTransferAccepted,
+                    |progress| {
+                        progress.last_error = Some(bounded_message(format!(
+                            "CMC notification pending: {error:?}"
+                        )));
+                    },
+                ) {
+                    Ok(progress) => notify_for_entry(RelaySetupEntry::Creating(progress)),
+                    Err(result) => result,
+                };
+            }
+            Err(error) => {
+                return manual_recovery(
+                    key,
+                    RelayCreationPhase::CmcTransferAccepted,
+                    format!("CMC notification failed: {error:?}"),
+                );
+            }
+        };
+        if minted_cycles < config.relay_initial_cycles {
+            return manual_recovery(
             key,
             RelayCreationPhase::CmcTransferAccepted,
             format!(
@@ -1373,12 +1449,36 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
                 config.relay_initial_cycles
             ),
         );
+        }
+        if let Err(result) =
+            update_progress(key, RelayCreationPhase::CmcTransferAccepted, |progress| {
+                progress.phase = RelayCreationPhase::CmcNotifySucceeded;
+                progress.cycles_minted = Some(minted_cycles);
+            })
+        {
+            return result;
+        }
     }
-    if let Err(result) = update_progress(key, RelayCreationPhase::CmcTransferAccepted, |progress| {
-        progress.phase = RelayCreationPhase::CmcNotifySucceeded;
-        progress.cycles_minted = Some(minted_cycles);
-    }) {
-        return result;
+    let progress = match require_phase(key, RelayCreationPhase::CmcNotifySucceeded) {
+        Ok(progress) => progress,
+        Err(result) => return result,
+    };
+    if progress
+        .cycles_minted
+        .is_none_or(|cycles| cycles < config.relay_initial_cycles)
+        || progress
+            .cmc_transfer
+            .as_ref()
+            .and_then(|record| record.block_index)
+            .is_none()
+        || progress.create_dispatched_at_ts.is_some()
+        || progress.relay_canister_id.is_some()
+    {
+        return manual_recovery(
+            key,
+            RelayCreationPhase::CmcNotifySucceeded,
+            "inconsistent paid creation evidence",
+        );
     }
     if let Err(result) = update_progress(key, RelayCreationPhase::CmcNotifySucceeded, |progress| {
         progress.phase = RelayCreationPhase::CreateDispatched;
@@ -2816,6 +2916,125 @@ mod tests {
     }
 
     #[test]
+    fn processing_notification_resumes_same_paid_block_after_upgrade_without_repayment() {
+        struct ProcessingCmc {
+            blocks: Mutex<Vec<u64>>,
+            waiter: Mutex<Option<oneshot::Receiver<()>>>,
+        }
+        #[async_trait::async_trait]
+        impl CmcClient for ProcessingCmc {
+            async fn get_icp_xdr_conversion_rate(
+                &self,
+            ) -> Result<IcpXdrConversionRate, ClientError> {
+                Ok(IcpXdrConversionRate {
+                    timestamp_seconds: 1,
+                    xdr_permyriad_per_icp: 1_000_000,
+                })
+            }
+            async fn notify_top_up(
+                &self,
+                _: Principal,
+                block: u64,
+            ) -> Result<u128, jupiter_ic_clients::cmc::NotifyTopUpError> {
+                let first = {
+                    let mut blocks = self.blocks.lock().unwrap();
+                    blocks.push(block);
+                    blocks.len() == 1
+                };
+                if first {
+                    Err(jupiter_ic_clients::cmc::NotifyTopUpError::Retryable(
+                        jupiter_ic_clients::cmc::NotifyRetryableError::Processing,
+                    ))
+                } else {
+                    let waiter = self.waiter.lock().unwrap().take();
+                    if let Some(waiter) = waiter {
+                        waiter.await.unwrap();
+                    }
+                    Ok(2_000_000_000_000)
+                }
+            }
+        }
+        reset();
+        let args = setup_args(vec![principal(1)]);
+        let (ledger, probe, _, management) = mocks(
+            MockLedger::new(
+                [300_000_000, 297_990_000],
+                [LedgerOutcome::Accepted(11), LedgerOutcome::Accepted(12)],
+            ),
+            true,
+            None,
+        );
+        let (release, waiter) = oneshot::channel();
+        let cmc = ProcessingCmc {
+            blocks: Mutex::new(Vec::new()),
+            waiter: Mutex::new(Some(waiter)),
+        };
+        let first = block_on(notify_with_clients_for_historian(
+            args.clone(),
+            principal(42),
+            &ledger,
+            &probe,
+            &cmc,
+            &management,
+        ));
+        assert!(matches!(
+            first,
+            RelaySetupNotifyResult::InProgress {
+                phase: RelayCreationPhase::CmcTransferAccepted,
+                ..
+            }
+        ));
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
+        reconcile_interrupted_creating_entries_after_upgrade();
+        admission::reset_for_test();
+        let second = block_on(async {
+            let continuation = notify_with_clients_for_historian(
+                args.clone(),
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            );
+            futures::pin_mut!(continuation);
+            assert!(futures::poll!(continuation.as_mut()).is_pending());
+            assert!(matches!(
+                notify_with_clients_for_historian(
+                    args.clone(),
+                    principal(42),
+                    &ledger,
+                    &probe,
+                    &cmc,
+                    &management
+                )
+                .await,
+                RelaySetupNotifyResult::Busy
+            ));
+            release.send(()).unwrap();
+            continuation.await
+        });
+        assert!(
+            matches!(second, RelaySetupNotifyResult::Active { .. }),
+            "{second:?}"
+        );
+        assert!(matches!(
+            block_on(notify_with_clients_for_historian(
+                args,
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management
+            )),
+            RelaySetupNotifyResult::Active { .. }
+        ));
+        assert_eq!(*cmc.blocks.lock().unwrap(), vec![11, 11]);
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 2);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(management.installs.lock().unwrap().len(), 1);
+    }
+
+    #[test]
     fn pricing_examples_and_two_fee_live_requirement_are_exact() {
         let cfg = config();
         assert_eq!(nominal_minimum_e8s(&cfg, 1), Ok(300_000_000));
@@ -2916,8 +3135,6 @@ mod tests {
         ];
         let manual = [
             RelayCreationPhase::CmcTransferPrepared,
-            RelayCreationPhase::CmcTransferAccepted,
-            RelayCreationPhase::CmcNotifySucceeded,
             RelayCreationPhase::CreateDispatched,
             RelayCreationPhase::ChildCreated,
             RelayCreationPhase::CodeInstalled,
@@ -2925,6 +3142,18 @@ mod tests {
             RelayCreationPhase::RelayFunded,
             RelayCreationPhase::FinalizationAttempted,
         ];
+
+        for phase in [
+            RelayCreationPhase::CmcTransferAccepted,
+            RelayCreationPhase::CmcNotifySucceeded,
+        ] {
+            reset();
+            let key = key_for_targets(&[principal(1)]);
+            let entry = RelaySetupEntry::Creating(progress_for_phase(phase));
+            insert_entry(key, entry.clone());
+            reconcile_interrupted_creating_entries_after_upgrade();
+            assert_eq!(get_entry(key), Some(entry));
+        }
 
         for (index, phase) in retryable.into_iter().enumerate() {
             reset();
@@ -3480,7 +3709,7 @@ mod tests {
         let historian = principal(42);
         let target = principal(1);
         let key = key_for_targets(&[target]);
-        let mut progress = progress_for_phase(RelayCreationPhase::CmcTransferAccepted);
+        let mut progress = progress_for_phase(RelayCreationPhase::CreateDispatched);
         progress.relay_canister_id = None;
         insert_entry(key, RelaySetupEntry::Creating(progress));
         state::with_state_mut_sections(state::DIRTY_ROOT, |state| {
@@ -3492,7 +3721,7 @@ mod tests {
             view,
             RelaySetupViewResult::Ok(RelaySetupView {
                 state: RelaySetupState::InProgress {
-                    phase: RelayCreationPhase::CmcTransferAccepted,
+                    phase: RelayCreationPhase::CreateDispatched,
                     relay_canister_id: None,
                 },
                 ..
@@ -3512,7 +3741,7 @@ mod tests {
         assert_eq!(
             notify,
             RelaySetupNotifyResult::InProgress {
-                phase: RelayCreationPhase::CmcTransferAccepted,
+                phase: RelayCreationPhase::CreateDispatched,
                 relay_canister_id: None,
             }
         );
@@ -6328,8 +6557,6 @@ mod tests {
             RelayCreationPhase::Reserved,
             RelayCreationPhase::ProbingTargets,
             RelayCreationPhase::CmcTransferPrepared,
-            RelayCreationPhase::CmcTransferAccepted,
-            RelayCreationPhase::CmcNotifySucceeded,
             RelayCreationPhase::CreateDispatched,
             RelayCreationPhase::ChildCreated,
             RelayCreationPhase::CodeInstalled,

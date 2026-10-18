@@ -555,6 +555,32 @@ pub(super) fn init(args: InitArgs) {
 
 pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     if let Some(args) = args {
+        if !state::relay_creating_keys().is_empty() {
+            let cfg = &st.config;
+            assert!(
+                args.ledger_canister_id
+                    .is_none_or(|v| v == cfg.ledger_canister_id)
+                    && args
+                        .cmc_canister_id
+                        .is_none_or(|v| Some(v) == cfg.cmc_canister_id)
+                    && args
+                        .faucet_canister_id
+                        .is_none_or(|v| Some(v) == cfg.faucet_canister_id)
+                    && args
+                        .relay_initial_cycles
+                        .is_none_or(|v| v == cfg.relay_initial_cycles)
+                    && args
+                        .relay_cycle_safety_margin_e8s
+                        .is_none_or(|v| v == cfg.relay_cycle_safety_margin_e8s)
+                    && args
+                        .relay_min_subaccount_one_seed_e8s
+                        .is_none_or(|v| v == cfg.relay_min_subaccount_one_seed_e8s)
+                    && args
+                        .self_service_relay_interval_seconds
+                        .is_none_or(|v| v.max(60) == cfg.self_service_relay_interval_seconds),
+                "cannot change paid Relay creation configuration while Creating entries exist"
+            );
+        }
         if let Some(v) = args.staking_account {
             st.config.staking_account = v;
         }
