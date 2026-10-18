@@ -685,7 +685,7 @@ For the suite-wide matrix, see [`../../tools/xtask/README.md`](../../tools/xtask
 
 ### Before autonomous handoff
 
-Do not arm autonomous rescue or narrow to self-only control until the canister is already its own controller, public status has been independently verified, Lifeline governance has been reviewed, and at least one successful top-up notification has proved runtime value flow. This later handoff is separate from removing the Fiduciary controller during the current developer-controlled stage.
+Do not arm autonomous rescue or narrow to self-only control until the canister is already its own controller, public status has been independently verified, Lifeline governance has been reviewed, and at least one successful top-up notification has proved runtime value flow. Use the central [deployment procedure](../../docs/operations/deployment.md) for a separately authorized governance handoff.
 
 ### When reading payout behavior
 
