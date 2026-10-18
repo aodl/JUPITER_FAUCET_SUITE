@@ -913,6 +913,75 @@ mod tests {
     }
 
     #[test]
+    fn accounting_upgrade_rejects_dataset_changes_without_mutation() {
+        let changes = [
+            UpgradeArgs {
+                staking_account: Some(alternate_account()),
+                ..UpgradeArgs::default()
+            },
+            UpgradeArgs {
+                output_source_account: Some(alternate_account()),
+                ..UpgradeArgs::default()
+            },
+            UpgradeArgs {
+                output_account: Some(alternate_account()),
+                ..UpgradeArgs::default()
+            },
+            UpgradeArgs {
+                rewards_account: Some(alternate_account()),
+                ..UpgradeArgs::default()
+            },
+            UpgradeArgs {
+                ledger_canister_id: Some(Principal::from_slice(&[99])),
+                ..UpgradeArgs::default()
+            },
+            UpgradeArgs {
+                index_canister_id: Some(Principal::from_slice(&[99])),
+                ..UpgradeArgs::default()
+            },
+            UpgradeArgs {
+                min_tx_e8s: Some(MIN_MIN_TX_E8S),
+                ..UpgradeArgs::default()
+            },
+        ];
+        for args in changes {
+            let mut st = base_state();
+            st.last_indexed_staking_tx_id = Some(42);
+            st.qualifying_commitment_count = Some(9);
+            st.total_output_e8s = Some(123);
+            let before = candid::encode_one(&st).unwrap();
+            assert!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| apply_upgrade_args(
+                    &mut st,
+                    Some(args)
+                )))
+                .is_err()
+            );
+            assert_eq!(candid::encode_one(&st).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn accounting_upgrade_accepts_equivalent_default_accounts_and_tuning() {
+        let mut st = base_state();
+        st.last_indexed_staking_tx_id = Some(42);
+        st.qualifying_commitment_count = Some(9);
+        let mut equivalent = st.config.staking_account;
+        equivalent.subaccount = Some([0; 32]);
+        apply_upgrade_args(
+            &mut st,
+            Some(UpgradeArgs {
+                staking_account: Some(equivalent),
+                scan_interval_seconds: Some(321),
+                ..UpgradeArgs::default()
+            }),
+        );
+        assert_eq!(st.last_indexed_staking_tx_id, Some(42));
+        assert_eq!(st.qualifying_commitment_count, Some(9));
+        assert_eq!(st.config.scan_interval_seconds, 321);
+    }
+
+    #[test]
     fn apply_upgrade_args_updates_tuning_fields_and_preserves_histories() {
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let mut st = base_state();
@@ -945,7 +1014,6 @@ mod tests {
                 clear_commitment_index_fault: Some(true),
                 scan_interval_seconds: Some(123),
                 cycles_interval_seconds: Some(456),
-                min_tx_e8s: Some(MIN_MIN_TX_E8S),
                 max_cycles_entries_per_canister: Some(11),
                 max_commitment_entries_per_canister: Some(12),
                 max_index_pages_per_tick: Some(13),
@@ -961,7 +1029,7 @@ mod tests {
         assert!(st.config.enable_sns_tracking);
         assert_eq!(st.config.scan_interval_seconds, 123);
         assert_eq!(st.config.cycles_interval_seconds, 456);
-        assert_eq!(st.config.min_tx_e8s, MIN_MIN_TX_E8S);
+        assert_eq!(st.config.min_tx_e8s, 100_000_000);
         assert_eq!(st.config.max_cycles_entries_per_canister, 11);
         assert_eq!(st.config.max_commitment_entries_per_canister, 12);
         assert_eq!(st.config.max_index_pages_per_tick, 13);

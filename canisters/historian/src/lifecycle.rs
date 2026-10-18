@@ -555,6 +555,58 @@ pub(super) fn init(args: InitArgs) {
 
 pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     if let Some(args) = args {
+        let accounting_started = st.last_index_run_ts.unwrap_or(0) > 0
+            || st.last_indexed_staking_tx_id.is_some()
+            || st.oldest_indexed_staking_tx_id.is_some()
+            || st.last_indexed_output_tx_id.is_some()
+            || st.oldest_indexed_output_tx_id.is_some()
+            || st.last_indexed_rewards_tx_id.is_some()
+            || st.oldest_indexed_rewards_tx_id.is_some()
+            || st.active_staking_catch_up.is_some()
+            || st.active_output_catch_up.is_some()
+            || st.active_rewards_catch_up.is_some()
+            || st.qualifying_commitment_count.unwrap_or(0) > 0
+            || st.total_output_e8s.unwrap_or(0) > 0
+            || st.total_rewards_e8s.unwrap_or(0) > 0
+            || st.commitment_index_revision > 0
+            || !st.commitment_history.is_empty()
+            || !st.raw_icp_commitment_history.is_empty()
+            || !st.neuron_commitment_history.is_empty();
+        if accounting_started {
+            let same_account = |left: &Account, right: &Account| {
+                left.owner == right.owner
+                    && left.subaccount.unwrap_or([0; 32]) == right.subaccount.unwrap_or([0; 32])
+            };
+            let cfg = &st.config;
+            // No upgrade-time proof of a replacement Index's authoritative
+            // Ledger history is available. Reject replacement rather than
+            // retaining old cursors against unverified history.
+            assert!(
+                args.staking_account
+                    .as_ref()
+                    .is_none_or(|v| same_account(v, &cfg.staking_account))
+                    && args
+                        .output_source_account
+                        .as_ref()
+                        .is_none_or(|v| same_account(v, &cfg.output_source_account))
+                    && args
+                        .output_account
+                        .as_ref()
+                        .is_none_or(|v| same_account(v, &cfg.output_account))
+                    && args
+                        .rewards_account
+                        .as_ref()
+                        .is_none_or(|v| same_account(v, &cfg.rewards_account))
+                    && args
+                        .ledger_canister_id
+                        .is_none_or(|v| v == cfg.ledger_canister_id)
+                    && args
+                        .index_canister_id
+                        .is_none_or(|v| v == cfg.index_canister_id)
+                    && args.min_tx_e8s.is_none_or(|v| v == cfg.min_tx_e8s),
+                "cannot redefine Historian accounting identity after indexing has begun"
+            );
+        }
         if !state::relay_creating_keys().is_empty() {
             let cfg = &st.config;
             assert!(

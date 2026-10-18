@@ -267,6 +267,8 @@ That keeps sweep work bounded even when the tracked set grows.
 
 ## Install-time and upgrade-time configuration
 
+After indexing or lifetime accounting begins, upgrades preserve the accounting dataset: staking, output-source, output and rewards accounts, authoritative Ledger, Index and qualifying threshold cannot change. Omitted and all-zero default subaccounts are equivalent. Operational intervals and retention/work limits remain tunable. Index replacement requires proof of identical authoritative history; the upgrade interface has no such proof path and rejects a different Index. Rejection occurs before configuration mutation.
+
 ### Stable route-roll-up state
 
 Stable memory 29 is the authoritative lifetime commitment-route map (the public endowment-route rollup) and is preserved directly by normal in-place upgrades. The normal staking-account indexer is its only writer: a fresh Historian starts with `commitment_route_rollups_complete_from_genesis = Some(false)`, builds the map while indexing from genesis, and changes the marker to `Some(true)` only after genesis coverage is established.
