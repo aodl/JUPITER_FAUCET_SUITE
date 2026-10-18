@@ -437,7 +437,9 @@ fn cmc_conversion_e8s(config: &Config, rate: &IcpXdrConversionRate) -> Result<u6
         u128::from(rate.xdr_permyriad_per_icp),
     )
     .and_then(|value| u64::try_from(value).ok())
-    .ok_or_else(|| "CMC returned an invalid ICP/XDR conversion rate".to_string())
+    .ok_or_else(|| "CMC returned an invalid ICP/XDR conversion rate".to_string())?
+    .checked_add(config.relay_cycle_safety_margin_e8s)
+    .ok_or_else(|| "CMC conversion including safety margin overflow".to_string())
 }
 
 fn current_requirement_e8s(
@@ -1440,6 +1442,13 @@ async fn continue_paid_creation(
                 );
             }
         };
+        if let Err(result) =
+            update_progress(key, RelayCreationPhase::CmcTransferAccepted, |progress| {
+                progress.cycles_minted = Some(minted_cycles);
+            })
+        {
+            return result;
+        }
         if minted_cycles < config.relay_initial_cycles {
             return manual_recovery(
             key,
@@ -2958,7 +2967,7 @@ mod tests {
         let args = setup_args(vec![principal(1)]);
         let (ledger, probe, _, management) = mocks(
             MockLedger::new(
-                [300_000_000, 297_990_000],
+                [300_000_000, 292_990_000],
                 [LedgerOutcome::Accepted(11), LedgerOutcome::Accepted(12)],
             ),
             true,
@@ -3035,6 +3044,122 @@ mod tests {
     }
 
     #[test]
+    fn conversion_margin_and_seed_are_funded_by_the_same_deposit() {
+        use std::sync::Arc;
+        struct FundedLedger {
+            balance: Mutex<u64>,
+            transfers: Mutex<Vec<TransferArg>>,
+        }
+        #[async_trait::async_trait]
+        impl LedgerClient for Arc<FundedLedger> {
+            async fn fee_e8s(&self) -> Result<u64, ClientError> {
+                Ok(10_000)
+            }
+            async fn balance_of_e8s(&self, _: Account) -> Result<u64, ClientError> {
+                Ok(*self.balance.lock().unwrap())
+            }
+            async fn icrc1_transfer(
+                &self,
+                arg: TransferArg,
+            ) -> Result<Result<BlockIndex, TransferError>, ClientError> {
+                let debit = u64::try_from(arg.amount.0.clone()).unwrap() + 10_000;
+                let mut balance = self.balance.lock().unwrap();
+                assert!(*balance >= debit, "no pooled Historian subsidy");
+                *balance -= debit;
+                let mut transfers = self.transfers.lock().unwrap();
+                transfers.push(arg);
+                Ok(Ok(Nat::from(transfers.len() as u64)))
+            }
+        }
+        struct FundedCmc {
+            ledger: Arc<FundedLedger>,
+            actual_rate: u64,
+        }
+        #[async_trait::async_trait]
+        impl CmcClient for FundedCmc {
+            async fn get_icp_xdr_conversion_rate(
+                &self,
+            ) -> Result<IcpXdrConversionRate, ClientError> {
+                Ok(IcpXdrConversionRate {
+                    timestamp_seconds: 1,
+                    xdr_permyriad_per_icp: 50_000,
+                })
+            }
+            async fn notify_top_up(
+                &self,
+                _: Principal,
+                block: u64,
+            ) -> Result<u128, jupiter_ic_clients::cmc::NotifyTopUpError> {
+                assert_eq!(block, 1);
+                let transfers = self.ledger.transfers.lock().unwrap();
+                Ok(u128::try_from(transfers[0].amount.0.clone()).unwrap()
+                    * u128::from(self.actual_rate))
+            }
+        }
+        for (actual_rate, deposit, active) in [
+            (50_000, 150_040_000, true),
+            (49_999, 150_040_000, true),
+            (60_000, 300_000_000, true),
+            (40_000, 150_040_000, false),
+            (50_000, 150_039_999, false),
+        ] {
+            reset();
+            state::with_state_mut(|st| st.config.relay_setup_min_e8s = 1);
+            let ledger = Arc::new(FundedLedger {
+                balance: Mutex::new(deposit),
+                transfers: Mutex::new(Vec::new()),
+            });
+            let cmc = FundedCmc {
+                ledger: ledger.clone(),
+                actual_rate,
+            };
+            let (_, probe, _, management) = mocks(MockLedger::new([], []), true, None);
+            let args = setup_args(vec![principal(1)]);
+            let key = key_for_targets(&args.target_canister_ids);
+            let result = block_on(notify_with_clients_for_historian(
+                args,
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            ));
+            assert_eq!(
+                matches!(result, RelaySetupNotifyResult::Active { .. }),
+                active,
+                "{actual_rate}: {result:?}"
+            );
+            let transfers = ledger.transfers.lock().unwrap();
+            if deposit < 150_040_000 {
+                assert!(matches!(
+                    result,
+                    RelaySetupNotifyResult::BelowCurrentRequirement {
+                        required_e8s: 150_040_000,
+                        ..
+                    }
+                ));
+                assert!(transfers.is_empty());
+            } else {
+                assert_eq!(transfers[0].amount, Nat::from(45_000_000_u64));
+                if active {
+                    assert_eq!(transfers.len(), 2);
+                    assert!(transfers[1].amount >= Nat::from(105_020_000_u64));
+                    assert_eq!(*ledger.balance.lock().unwrap(), 0);
+                    assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
+                } else {
+                    let Some(RelaySetupEntry::ManualRecoveryRequired(progress)) = get_entry(key)
+                    else {
+                        panic!("{result:?}")
+                    };
+                    assert_eq!(progress.cycles_minted, Some(1_800_000_000_000));
+                    assert_eq!(transfers.len(), 1);
+                    assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn pricing_examples_and_two_fee_live_requirement_are_exact() {
         let cfg = config();
         assert_eq!(nominal_minimum_e8s(&cfg, 1), Ok(300_000_000));
@@ -3045,7 +3170,7 @@ mod tests {
             timestamp_seconds: 1,
             xdr_permyriad_per_icp: 1_000_000,
         };
-        assert_eq!(cmc_conversion_e8s(&cfg, &rate), Ok(2_000_000));
+        assert_eq!(cmc_conversion_e8s(&cfg, &rate), Ok(7_000_000));
         assert_eq!(minimum_final_relay_funding_e8s(&cfg, 1), Ok(105_020_000));
         assert_eq!(minimum_final_relay_funding_e8s(&cfg, 2), Ok(130_020_000));
         assert_eq!(minimum_final_relay_funding_e8s(&cfg, 20), Ok(580_020_000));
@@ -3863,7 +3988,7 @@ mod tests {
         state::set_state(State::new(cfg, 0));
         let args = neuron_setup_args(principal(1), 42);
         let (ledger, probe, cmc, management) =
-            mocks(MockLedger::new([107_039_999], []), true, None);
+            mocks(MockLedger::new([112_039_999], []), true, None);
         let resolver = MockNeuronResolver::readable();
 
         let result = block_on(notify_with_clients_and_neuron_resolver(
@@ -3879,8 +4004,8 @@ mod tests {
         assert_eq!(
             result,
             RelaySetupNotifyResult::BelowCurrentRequirement {
-                balance_e8s: 107_039_999,
-                required_e8s: 107_040_000,
+                balance_e8s: 112_039_999,
+                required_e8s: 112_040_000,
                 shortfall_e8s: 1,
             }
         );
@@ -3967,7 +4092,7 @@ mod tests {
         cfg.relay_setup_min_e8s = 1;
         state::set_state(State::new(cfg, 0));
         let (ledger, probe, cmc, management) =
-            mocks(MockLedger::new([107_039_999], []), true, None);
+            mocks(MockLedger::new([112_039_999], []), true, None);
         let below_current = block_on(notify_with_clients_for_historian(
             args,
             principal(42),
@@ -3979,8 +4104,8 @@ mod tests {
         assert_eq!(
             below_current,
             RelaySetupNotifyResult::BelowCurrentRequirement {
-                balance_e8s: 107_039_999,
-                required_e8s: 107_040_000,
+                balance_e8s: 112_039_999,
+                required_e8s: 112_040_000,
                 shortfall_e8s: 1,
             }
         );
@@ -4545,7 +4670,7 @@ mod tests {
             let key = key_for_targets(&args.target_canister_ids);
             let (ledger, probe, cmc, management) = mocks(
                 MockLedger::new(
-                    [300_000_000, 297_990_000],
+                    [300_000_000, 292_990_000],
                     [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
                 ),
                 true,
@@ -4840,7 +4965,7 @@ mod tests {
             admission::set_time_for_test(300);
             let (new_ledger, new_probe, new_cmc, new_management) = mocks(
                 MockLedger::new(
-                    [300_000_000, 297_990_000],
+                    [300_000_000, 292_990_000],
                     [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
                 ),
                 true,
@@ -4887,7 +5012,7 @@ mod tests {
         reset();
         let args = setup_args(vec![principal(1)]);
         let ledger = MockLedger::new(
-            [300_000_000, 297_990_000],
+            [300_000_000, 292_990_000],
             [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
         );
         let probe = YieldingCyclesProbe {
@@ -5118,7 +5243,7 @@ mod tests {
         reset();
         let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
-                [300_000_000, 297_990_000],
+                [300_000_000, 292_990_000],
                 [LedgerOutcome::Duplicate(10), LedgerOutcome::Accepted(11)],
             ),
             true,
@@ -5319,7 +5444,7 @@ mod tests {
         reset();
         let (ledger, probe, cmc, mut management) = mocks(
             MockLedger::new(
-                [300_000_000, 297_990_000],
+                [300_000_000, 292_990_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
             ),
             true,
@@ -5438,7 +5563,7 @@ mod tests {
         assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
 
         reset();
-        let ledger = MockLedger::new([300_000_000, 297_990_000], [LedgerOutcome::Accepted(10)])
+        let ledger = MockLedger::new([300_000_000, 292_990_000], [LedgerOutcome::Accepted(10)])
             .with_fee_failures([false, true]);
         let (ledger, probe, cmc, management) = mocks(ledger, true, None);
         let fee_failure = block_on(notify_with_clients_for_historian(
@@ -5461,7 +5586,7 @@ mod tests {
         reset();
         let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
-                [300_000_000, 297_990_000],
+                [300_000_000, 292_990_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Duplicate(11)],
             ),
             true,
@@ -5480,7 +5605,7 @@ mod tests {
         reset();
         let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
-                [300_000_000, 297_990_000],
+                [300_000_000, 292_990_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Rejected],
             ),
             true,
@@ -5505,7 +5630,7 @@ mod tests {
         reset();
         let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
-                [300_000_000, 297_990_000],
+                [300_000_000, 292_990_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Ambiguous],
             ),
             true,
@@ -5547,7 +5672,7 @@ mod tests {
         let mut cfg = config();
         cfg.relay_setup_min_e8s = 1;
         state::set_state(State::new(cfg, 0));
-        let ledger = MockLedger::new([107_040_000, 105_030_000], [LedgerOutcome::Accepted(10)])
+        let ledger = MockLedger::new([112_040_000, 105_030_000], [LedgerOutcome::Accepted(10)])
             .with_fees([10_000, 10_001]);
         let (ledger, probe, cmc, management) = mocks(ledger, true, None);
         let result = block_on(notify_with_clients_for_historian(
@@ -5582,7 +5707,7 @@ mod tests {
         cfg.relay_setup_min_e8s = 1;
         state::set_state(State::new(cfg, 0));
         let ledger = MockLedger::new(
-            [107_040_000, 105_030_000],
+            [112_040_000, 105_030_000],
             [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
         )
         .with_fees([10_000, 10_000]);
@@ -5650,7 +5775,7 @@ mod tests {
         assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 20);
         let transfers = ledger.transfers.lock().unwrap();
         assert_eq!(transfers.len(), 2);
-        assert_eq!(transfers[0].amount, Nat::from(2_000_000u64));
+        assert_eq!(transfers[0].amount, Nat::from(7_000_000u64));
         assert_eq!(transfers[1].to, relay_subaccount_one(principal(80)));
         assert_eq!(transfers[1].amount, Nat::from(772_980_000u64));
         assert!(
@@ -5807,7 +5932,7 @@ mod tests {
         };
         let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
-                [107_040_000, 105_030_000],
+                [112_040_000, 105_030_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
             )
             .with_fees([10_000, 10_000]),
@@ -6014,7 +6139,7 @@ mod tests {
     fn create_and_final_settings_are_explicit_public_and_controllerless() {
         reset();
         let ledger = MockLedger::new(
-            [300_000_000, 297_990_000],
+            [300_000_000, 292_990_000],
             [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
         );
         let (ledger, probe, cmc, management) = mocks(ledger, true, None);

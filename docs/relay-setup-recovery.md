@@ -58,12 +58,14 @@ max(
   configured singleton minimum,
   ICP needed to mint configured create cycles
   + configured conversion safety margin
-  + configured Relay subaccount-one seed
+  + configured Relay subaccount-one seed including its retained safety margin
   + setup-to-CMC ledger fee
   + setup-to-Relay ledger fee
 )
 + 0.25 ICP * (target count - 1)
 ```
+
+The conversion transfer includes the configured safety margin, so it buys additional cycles against a falling conversion rate. The final seed separately retains the same margin; both amounts and both Ledger fees are covered by the setup deposit. Known minted cycles are journaled even when insufficient for creation.
 
 Funding authority is the aggregate `icrc1_balance_of` value for the authoritative setup account. Historian does not attribute deposits to payers or automatically refund an incorrectly funded configuration.
 
