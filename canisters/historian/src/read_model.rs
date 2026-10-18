@@ -445,11 +445,32 @@ pub(crate) fn source_module_hash_canister_ids() -> Vec<Principal> {
     .collect()
 }
 
+async fn source_memory_status(
+    target: Principal,
+    controllers: &[Principal],
+    direct: &dyn clients::BlackholeClient,
+    compatibility: &[(Principal, &dyn clients::BlackholeClient)],
+) -> Option<clients::blackhole::BlackholeCanisterStatus> {
+    if let Ok(status) = direct.canister_status(target).await {
+        return Some(status);
+    }
+    for (route, client) in compatibility {
+        if controllers.contains(route)
+            && jupiter_ic_clients::constants::is_production_blackhole_canister_id(*route)
+        {
+            if let Ok(status) = client.canister_status(target).await {
+                return Some(status);
+            }
+        }
+    }
+    None
+}
+
 async fn load_canister_module_hashes() -> Vec<CanisterModuleHash> {
     let canister_ids = source_module_hash_canister_ids();
-    let blackhole = clients::blackhole::BlackholeCanister::new(
-        jupiter_ic_clients::constants::blackhole_canister_id(),
-    );
+    let direct = clients::blackhole::BlackholeCanister::new(Principal::management_canister());
+    let routes = jupiter_ic_clients::constants::ordered_production_blackhole_canister_ids();
+    let compatibility = routes.map(clients::blackhole::BlackholeCanister::new);
     let mut hashes = Vec::with_capacity(canister_ids.len());
     for canister_id in canister_ids {
         let request = jupiter_ic_clients::management::CanisterInfoArgs {
@@ -474,8 +495,18 @@ async fn load_canister_module_hashes() -> Vec<CanisterModuleHash> {
                 }
             };
         let (heap_memory_bytes, stable_memory_bytes, total_memory_bytes) =
-            match clients::BlackholeClient::canister_status(&blackhole, canister_id).await {
-                Ok(status) => {
+            match source_memory_status(
+                canister_id,
+                controllers.as_deref().unwrap_or_default(),
+                &direct,
+                &[
+                    (routes[0], &compatibility[0]),
+                    (routes[1], &compatibility[1]),
+                ],
+            )
+            .await
+            {
+                Some(status) => {
                     let heap = status
                         .memory_metrics
                         .as_ref()
@@ -494,14 +525,7 @@ async fn load_canister_module_hashes() -> Vec<CanisterModuleHash> {
                         });
                     (heap, stable, total)
                 }
-                Err(err) => {
-                    ic_cdk::println!(
-                        "get_canister_module_hashes status failed for {}: {}",
-                        canister_id,
-                        err
-                    );
-                    (None, None, None)
-                }
+                None => (None, None, None),
             };
         hashes.push(CanisterModuleHash {
             canister_id,
@@ -843,5 +867,91 @@ mod tests {
             ]),
             Some(Nat::from(250u64))
         );
+    }
+}
+
+#[cfg(test)]
+mod source_memory_tests {
+    use super::*;
+    use crate::clients::blackhole::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct StatusClient {
+        allowed: bool,
+        calls: AtomicUsize,
+    }
+    #[async_trait::async_trait]
+    impl clients::BlackholeClient for StatusClient {
+        async fn canister_status(
+            &self,
+            _: Principal,
+        ) -> Result<BlackholeCanisterStatus, clients::ClientError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if !self.allowed {
+                return Err(clients::ClientError::Call("denied".into()));
+            }
+            Ok(BlackholeCanisterStatus {
+                status: BlackholeCanisterStatusKind::Running,
+                module_hash: Some(vec![7; 32]),
+                cycles: candid::Nat::from(10_u64),
+                settings: BlackholeSettings {
+                    controllers: vec![],
+                },
+                memory_size: Some(candid::Nat::from(123_u64)),
+                memory_metrics: Some(BlackholeMemoryMetrics {
+                    wasm_memory_size: candid::Nat::from(40_u64),
+                    stable_memory_size: candid::Nat::from(60_u64),
+                }),
+            })
+        }
+    }
+    #[test]
+    fn public_native_status_without_blackhole_and_authenticated_denial_fallback() {
+        futures::executor::block_on(async {
+            let direct = StatusClient {
+                allowed: true,
+                calls: AtomicUsize::new(0),
+            };
+            let fallback = StatusClient {
+                allowed: true,
+                calls: AtomicUsize::new(0),
+            };
+            let blackhole = jupiter_ic_clients::constants::blackhole_canister_id();
+            let target = Principal::from_slice(&[1]);
+            let status = source_memory_status(target, &[], &direct, &[(blackhole, &fallback)])
+                .await
+                .unwrap();
+            assert_eq!(status.memory_size, Some(candid::Nat::from(123_u64)));
+            assert_eq!(
+                status.memory_metrics.unwrap().stable_memory_size,
+                candid::Nat::from(60_u64)
+            );
+            assert_eq!(fallback.calls.load(Ordering::SeqCst), 0);
+            let denied = StatusClient {
+                allowed: false,
+                calls: AtomicUsize::new(0),
+            };
+            assert!(
+                source_memory_status(target, &[], &denied, &[(blackhole, &fallback)])
+                    .await
+                    .is_none()
+            );
+            assert_eq!(fallback.calls.load(Ordering::SeqCst), 0);
+            assert!(
+                source_memory_status(target, &[blackhole], &denied, &[(blackhole, &fallback)])
+                    .await
+                    .is_some()
+            );
+            assert_eq!(fallback.calls.load(Ordering::SeqCst), 1);
+            assert!(
+                source_memory_status(target, &[blackhole], &denied, &[(blackhole, &denied)])
+                    .await
+                    .is_none()
+            );
+            assert!(
+                source_memory_status(target, &[target], &denied, &[(target, &fallback)])
+                    .await
+                    .is_none()
+            );
+        });
     }
 }
