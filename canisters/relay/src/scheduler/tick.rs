@@ -1116,6 +1116,7 @@ async fn drive_active_job<L: LedgerClient, C: CmcClient, G: GovernanceClient>(
                 job,
                 max_transfers_this_tick,
                 &mut transfers_started_this_tick,
+                staging_time_nanos(now_nanos),
             )
         });
         match plan_step {
@@ -1293,6 +1294,7 @@ fn plan_next_transfer(
     job: &mut ActiveRelayJob,
     max_transfers_this_tick: Option<u32>,
     transfers_started_this_tick: &mut u32,
+    now_nanos: u64,
 ) -> TransferPlanStep {
     // Completion is independent of this invocation's budget. In particular the
     // last accepted transfer may consume the final slot exactly.
@@ -1318,7 +1320,9 @@ fn plan_next_transfer(
         job.summary.partial_tick_count = job.summary.partial_tick_count.saturating_add(1);
         return TransferPlanStep::Paused;
     }
-    if next_topup_pending(job).is_some() || next_surplus_pending(job).is_some() {
+    if next_topup_pending(job, now_nanos).is_some()
+        || next_surplus_pending(job, now_nanos).is_some()
+    {
         *transfers_started_this_tick = transfers_started_this_tick.saturating_add(1);
         TransferPlanStep::Planned
     } else {
@@ -1326,7 +1330,7 @@ fn plan_next_transfer(
     }
 }
 
-fn next_topup_pending(job: &mut ActiveRelayJob) -> Option<()> {
+fn next_topup_pending(job: &mut ActiveRelayJob, now_nanos: u64) -> Option<()> {
     while (job.next_transfer_index as usize) < job.canisters.len() {
         let index = job.next_transfer_index as usize;
         job.next_transfer_index = job.next_transfer_index.saturating_add(1);
@@ -1337,7 +1341,7 @@ fn next_topup_pending(job: &mut ActiveRelayJob) -> Option<()> {
         let canister_id = sample.canister_id;
         let gross_share_e8s = sample.gross_share_e8s;
         let amount_e8s = sample.amount_e8s;
-        let created_at = next_created_at(job);
+        let created_at = next_created_at(job, now_nanos);
         job.pending_transfer = Some(PendingTransfer {
             kind: PendingTransferKind::CmcTopUp { canister_id },
             gross_share_e8s,
@@ -1350,7 +1354,7 @@ fn next_topup_pending(job: &mut ActiveRelayJob) -> Option<()> {
     None
 }
 
-fn next_surplus_pending(job: &mut ActiveRelayJob) -> Option<()> {
+fn next_surplus_pending(job: &mut ActiveRelayJob, now_nanos: u64) -> Option<()> {
     if job.surplus_transfers.is_empty() {
         return None;
     }
@@ -1371,7 +1375,7 @@ fn next_surplus_pending(job: &mut ActiveRelayJob) -> Option<()> {
             continue;
         }
         let memo = job.surplus_memos.get(index).cloned().unwrap_or(None);
-        let created_at = next_created_at(job);
+        let created_at = next_created_at(job, now_nanos);
         job.pending_transfer = Some(PendingTransfer {
             kind: PendingTransferKind::SurplusIcp {
                 target: plan.target,
@@ -1388,9 +1392,20 @@ fn next_surplus_pending(job: &mut ActiveRelayJob) -> Option<()> {
     None
 }
 
-fn next_created_at(job: &mut ActiveRelayJob) -> u64 {
-    let created_at = job.next_created_at_time_nanos;
-    job.next_created_at_time_nanos = job.next_created_at_time_nanos.saturating_add(1);
+fn staging_time_nanos(_invocation_time: u64) -> u64 {
+    #[cfg(not(test))]
+    {
+        ic_cdk::api::time()
+    }
+    #[cfg(test)]
+    {
+        _invocation_time
+    }
+}
+
+fn next_created_at(job: &mut ActiveRelayJob, now_nanos: u64) -> u64 {
+    let created_at = job.next_created_at_time_nanos.max(now_nanos);
+    job.next_created_at_time_nanos = created_at.saturating_add(1);
     created_at
 }
 
@@ -3548,6 +3563,37 @@ mod tests {
     }
 
     #[test]
+    fn daily_cap_stages_fresh_transfer_identities_for_untouched_recipients() {
+        let mut cfg = base_config();
+        cfg.max_transfers_per_tick = Some(1);
+        let mut st = State::new(cfg, 0);
+        let mut job = job_with_three_topups();
+        job.surplus_phase_planned = true;
+        job.next_created_at_time_nanos = 100_000 * 1_000_000_000;
+        st.active_job = Some(job);
+        state::set_state(st);
+        let ledger = MockSchedulerLedger::new(1_000, 10);
+        let cmc = MockSchedulerCmc::new(101);
+        for day in 0..3 {
+            let seconds = 100_000 + day * 86_400;
+            let now = seconds * 1_000_000_000;
+            let guard = MainGuard::acquire(seconds).unwrap();
+            assert!(block_on(drive_active_job(
+                now,
+                &ledger,
+                &cmc,
+                &MockSchedulerGovernance,
+                guard.lease_token()
+            )));
+            let transfers = ledger.transfers.lock().unwrap();
+            assert_eq!(transfers.len(), (day + 1) as usize);
+            assert!(transfers.last().unwrap().created_at_time.unwrap() >= now);
+        }
+        assert!(state::with_state(|st| st.active_job.is_none()));
+        assert_eq!(cmc.notify_calls().len(), 3);
+    }
+
+    #[test]
     fn capped_job_preserves_all_surplus_and_finishes_on_exact_cap() {
         let mut cfg = base_config();
         cfg.max_transfers_per_tick = Some(1);
@@ -3611,7 +3657,7 @@ mod tests {
         let mut started = 0;
 
         assert_eq!(
-            plan_next_transfer(&mut job, Some(1), &mut started),
+            plan_next_transfer(&mut job, Some(1), &mut started, 10),
             TransferPlanStep::Planned
         );
         assert_eq!(started, 1);
@@ -3620,7 +3666,7 @@ mod tests {
 
         job.pending_transfer = None;
         assert_eq!(
-            plan_next_transfer(&mut job, Some(1), &mut started),
+            plan_next_transfer(&mut job, Some(1), &mut started, 10),
             TransferPlanStep::Paused
         );
         assert_eq!(job.summary.partial_tick_count, 1);
@@ -3629,7 +3675,7 @@ mod tests {
 
         let mut next_tick_started = 0;
         assert_eq!(
-            plan_next_transfer(&mut job, Some(1), &mut next_tick_started),
+            plan_next_transfer(&mut job, Some(1), &mut next_tick_started, 10),
             TransferPlanStep::Planned
         );
         assert_eq!(job.next_transfer_index, 2);
@@ -3654,7 +3700,7 @@ mod tests {
             skipped_reason: None,
         }];
 
-        assert!(next_surplus_pending(&mut job).is_none());
+        assert!(next_surplus_pending(&mut job, 10).is_none());
         assert!(job.surplus_transfers.is_empty());
         assert_eq!(
             job.summary.skipped_surplus_reason.as_deref(),
@@ -3936,7 +3982,7 @@ mod tests {
         ] {
             let mut st = State::new(base_config(), 0);
             let mut job = job_with_three_topups();
-            assert_eq!(next_topup_pending(&mut job), Some(()));
+            assert_eq!(next_topup_pending(&mut job, 10), Some(()));
             st.active_job = Some(job);
             state::set_state(st);
             let (job_id, pending) = state::with_state(|st| {
@@ -4054,7 +4100,7 @@ mod tests {
         let mut started = 0;
 
         assert_eq!(
-            plan_next_transfer(&mut job, None, &mut started),
+            plan_next_transfer(&mut job, None, &mut started, 10),
             TransferPlanStep::Done
         );
         assert_eq!(
