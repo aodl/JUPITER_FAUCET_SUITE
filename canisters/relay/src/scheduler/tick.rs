@@ -1254,9 +1254,6 @@ fn surplus_allowed_after_topups(job: &ActiveRelayJob) -> Result<(), &'static str
     if job.summary.cmc_notify_ambiguous_count != 0 {
         return Err("cmc_notify_ambiguous");
     }
-    if job.summary.partial_tick_count != 0 {
-        return Err("topup_phase_incomplete");
-    }
     if job
         .canisters
         .iter()
@@ -1297,16 +1294,28 @@ fn plan_next_transfer(
     max_transfers_this_tick: Option<u32>,
     transfers_started_this_tick: &mut u32,
 ) -> TransferPlanStep {
+    // Completion is independent of this invocation's budget. In particular the
+    // last accepted transfer may consume the final slot exactly.
+    let topups_remain = job
+        .canisters
+        .iter()
+        .skip(job.next_transfer_index as usize)
+        .any(|sample| sample.amount_e8s > 0);
+    let surplus_remains = job
+        .surplus_transfers
+        .iter()
+        .skip(job.surplus_transfer_index as usize)
+        .any(|sample| sample.amount_e8s > 0);
+    if !topups_remain && !surplus_remains {
+        job.next_transfer_index = job.canisters.len() as u32;
+        job.surplus_transfer_index = job.surplus_transfers.len() as u32;
+        return TransferPlanStep::Done;
+    }
     if max_transfers_this_tick
         .map(|limit| *transfers_started_this_tick >= limit)
         .unwrap_or(false)
     {
         job.summary.partial_tick_count = job.summary.partial_tick_count.saturating_add(1);
-        job.summary.skipped_surplus_reason = Some("topup_phase_incomplete".to_string());
-        job.surplus_transfers.clear();
-        job.surplus_memos.clear();
-        job.surplus_transfer_index = 0;
-        job.surplus_phase_planned = true;
         return TransferPlanStep::Paused;
     }
     if next_topup_pending(job).is_some() || next_surplus_pending(job).is_some() {
@@ -3539,6 +3548,64 @@ mod tests {
     }
 
     #[test]
+    fn capped_job_preserves_all_surplus_and_finishes_on_exact_cap() {
+        let mut cfg = base_config();
+        cfg.max_transfers_per_tick = Some(1);
+        let mut st = State::new(cfg, 0);
+        let mut job = job_with_three_topups();
+        job.surplus_phase_planned = true;
+        job.surplus_transfers = (0..3)
+            .map(|i| crate::state::SurplusTransferSample {
+                target: SurplusTarget::Canister(Principal::from_slice(&[40 + i])),
+                account: Account {
+                    owner: Principal::from_slice(&[40 + i]),
+                    subaccount: None,
+                },
+                gross_share_e8s: 100,
+                amount_e8s: 90,
+                memo_len: None,
+                skipped_reason: None,
+            })
+            .collect();
+        job.surplus_memos = vec![None; 3];
+        st.active_job = Some(job);
+        state::set_state(st);
+        let ledger = MockSchedulerLedger::new(1_000, 10);
+        let cmc = MockSchedulerCmc::new(101);
+        for tick in 0..6 {
+            let guard = MainGuard::acquire(100 + tick).unwrap();
+            assert!(block_on(drive_active_job(
+                100_000_000_000 + tick * 1_000_000_000,
+                &ledger,
+                &cmc,
+                &MockSchedulerGovernance,
+                guard.lease_token(),
+            )));
+            assert_eq!(ledger.transfer_count(), (tick + 1) as usize);
+            if tick < 5 {
+                state::with_state(|st| {
+                    let job = st.active_job.as_ref().unwrap();
+                    assert_eq!(job.surplus_transfers.len(), 3);
+                    assert_eq!(job.surplus_transfer_index, tick.saturating_sub(2) as u32);
+                });
+            }
+        }
+        assert!(state::with_state(|st| st.active_job.is_none()));
+        let transfers = ledger.transfers.lock().unwrap();
+        assert_eq!(
+            transfers
+                .iter()
+                .map(|t| u64::try_from(t.amount.0.clone()).unwrap() + 10)
+                .sum::<u64>(),
+            930
+        );
+        for (transfer, i) in transfers.iter().skip(3).zip(0..3) {
+            assert_eq!(transfer.to.owner, Principal::from_slice(&[40 + i]));
+            assert_eq!(transfer.amount, Nat::from(90_u64));
+        }
+    }
+
+    #[test]
     fn max_transfers_per_tick_chunks_transfer_planning_and_preserves_cursor() {
         let mut job = job_with_three_topups();
         let mut started = 0;
@@ -3558,10 +3625,7 @@ mod tests {
         );
         assert_eq!(job.summary.partial_tick_count, 1);
         assert_eq!(job.next_transfer_index, 1);
-        assert_eq!(
-            job.summary.skipped_surplus_reason.as_deref(),
-            Some("topup_phase_incomplete")
-        );
+        assert!(!job.surplus_phase_planned);
 
         let mut next_tick_started = 0;
         assert_eq!(
