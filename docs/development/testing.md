@@ -102,12 +102,11 @@ credentials, bounded timeouts, and cancellation of superseded runs. Native
 debug information/incremental caches are disabled in CI to reduce disk use;
 the canonical Docker build configuration is unchanged.
 
-Provisioning pins Node 24.15.0, repository Rust, icp-cli 1.2.0, didc 0.6.2,
-Nix 2.25.3 and the launcher version in `icp.yaml`. The launcher is downloaded
-by a local network start/stop, then xtask verifies its server version. The
-vendored blackhole remains built from its checked-in Nix inputs. Browser tests
-use the existing Playwright image. Missing tools or unavailable suites fail;
-there is no release skip mode.
+Provisioning pins Node 24.15.0, repository Rust, icp-cli 1.2.0, didc 0.6.2 and
+the launcher version in `icp.yaml`. The launcher is downloaded by a local
+network start/stop, then xtask verifies its server version. Browser tests use
+the existing Playwright image. Missing tools or unavailable suites fail; there
+is no release skip mode.
 
 Both behavioral and canonical-release jobs install the official DFINITY
 `didc-v0.6.2` x86_64 Linux MUSL release archive, checking its pinned SHA-256
@@ -148,15 +147,18 @@ finalizes its embedded no-debug Relay, and the canonical no-debug Faucet
 upgrades at quiescence then pays through its ordinary timers. No production
 test endpoint or mainnet operation is required.
 
-Canonical CI and the Historian behavioral CI lane prepare the vendored real
-blackhole before their scenarios in a visible build step with a 30-minute
-command timeout (32-minute step limit).
-It verifies the existing production SHA-256 and exports the prepared path as
-`JUPITER_BLACKHOLE_TEST_WASM`. The PocketIC fixture verifies that hash again and
-loads those bytes without invoking Nix. A missing or mismatched override fails
-without falling back to a build. Without the override, ordinary PocketIC suites
-continue to reproduce the vendored blackhole through `make repro-build` and
-verify the same production hash.
+Canonical CI and the Historian behavioral CI lane download the immutable
+`ninegua/ic-blackhole` 0.0.0 release Wasm into runner-temporary storage. The
+workflow verifies the pinned production SHA-256 before exporting the path as
+`JUPITER_BLACKHOLE_TEST_WASM`; the PocketIC fixture independently verifies the
+same hash when loading it. A failed download, missing file or mismatched hash
+fails closed, and a supplied override never falls back to `make` or Nix.
+
+The checked-in [`vendor/ic-blackhole`](../../vendor/ic-blackhole) source and
+historical Nix recipe remain an independent local provenance and
+reproducibility path through `make repro-build`. They are not a hosted-runner
+prerequisite. Release and behavioral CI execute the exact official release
+binary whose pinned SHA-256 is also the production module identity.
 
 Workflow source cannot establish branch protection or an actual successful PR
 run. Operators must verify required-check settings and retain an ordinary-PR

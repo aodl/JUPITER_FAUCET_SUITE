@@ -22,6 +22,8 @@ env:
   DIDC_VERSION: 0.6.2
   # Official dfinity/candid didc-v0.6.2 x86_64 Linux MUSL archive.
   DIDC_ARCHIVE_SHA256: ced232a08d12190f7124110b6a39d8023732160838c062285e015d2c03bcc930
+  BLACKHOLE_RELEASE_URL: https://github.com/ninegua/ic-blackhole/releases/download/0.0.0/blackhole-opt.wasm
+  BLACKHOLE_WASM_SHA256: 210cf941e5ca77daac314a91517483ac171264527e3d0d713b92bb95239d7de0
 
 jobs:
   behavioral:
@@ -85,29 +87,17 @@ jobs:
           install -Dm0755 "$RUNNER_TEMP/didc-x86_64-unknown-linux-musl/didc" "$HOME/.local/bin/didc"
           test "$("$HOME/.local/bin/didc" --version)" = "didc $DIDC_VERSION"
 
-      - name: Install Nix for the vendored blackhole build
-        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
-        with:
-          install_url: https://releases.nixos.org/nix/nix-2.25.3/install
-          set_as_trusted_user: false
-          enable_kvm: false
-
       - name: Prepare verified real blackhole fixture
         if: matrix.suite == 'historian_pocketic_integration'
-        timeout-minutes: 32
         shell: bash
         run: |
           set -euo pipefail
-          build_log="$RUNNER_TEMP/blackhole-repro-build.log"
-          timeout --signal=TERM --kill-after=30s 30m \
-            make --no-print-directory -C vendor/ic-blackhole repro-build 2>&1 | tee "$build_log"
-          output="$(sed -n '\|^/nix/store/[^[:space:]]*$|p' "$build_log" | tail -n 1)"
-          test -n "$output"
           fixture="$RUNNER_TEMP/blackhole-opt.wasm"
-          cp "$output/bin/blackhole-opt.wasm" "$fixture"
-          printf '%s  %s\n' \
-            '210cf941e5ca77daac314a91517483ac171264527e3d0d713b92bb95239d7de0' \
-            "$fixture" | sha256sum --check --strict
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            "$BLACKHOLE_RELEASE_URL" -o "$fixture"
+          test -f "$fixture"
+          printf '%s  %s\n' "$BLACKHOLE_WASM_SHA256" "$fixture" \
+            | sha256sum --check --strict
           echo "JUPITER_BLACKHOLE_TEST_WASM=$fixture" >> "$GITHUB_ENV"
 
       - name: Provision the repository-pinned local launcher
@@ -173,28 +163,16 @@ jobs:
           install -m 0755 /tmp/osv-scanner_linux_amd64 "$HOME/.local/bin/osv-scanner"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Install Nix for the local factory smoke test
-        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
-        with:
-          install_url: https://releases.nixos.org/nix/nix-2.25.3/install
-          set_as_trusted_user: false
-          enable_kvm: false
-
       - name: Prepare verified real blackhole fixture
-        timeout-minutes: 32
         shell: bash
         run: |
           set -euo pipefail
-          build_log="$RUNNER_TEMP/blackhole-repro-build.log"
-          timeout --signal=TERM --kill-after=30s 30m \
-            make --no-print-directory -C vendor/ic-blackhole repro-build 2>&1 | tee "$build_log"
-          output="$(sed -n '\|^/nix/store/[^[:space:]]*$|p' "$build_log" | tail -n 1)"
-          test -n "$output"
           fixture="$RUNNER_TEMP/blackhole-opt.wasm"
-          cp "$output/bin/blackhole-opt.wasm" "$fixture"
-          printf '%s  %s\n' \
-            '210cf941e5ca77daac314a91517483ac171264527e3d0d713b92bb95239d7de0' \
-            "$fixture" | sha256sum --check --strict
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            "$BLACKHOLE_RELEASE_URL" -o "$fixture"
+          test -f "$fixture"
+          printf '%s  %s\n' "$BLACKHOLE_WASM_SHA256" "$fixture" \
+            | sha256sum --check --strict
           echo "JUPITER_BLACKHOLE_TEST_WASM=$fixture" >> "$GITHUB_ENV"
 
       - name: Provision the repository-pinned local launcher

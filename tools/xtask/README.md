@@ -48,7 +48,7 @@ Commonly useful tools for `xtask` workflows are:
 - `icp`
 - `didc` for local integration calls; `xtask` encodes canister call arguments against the target DID and submits them as hex
 - Node.js / npm for frontend unit tests and local frontend scripts
-- `make` and `nix-build` for historian and suite-level PocketIC paths that build the vendored real blackhole canister reproducibly
+- `make` and `nix-build` when locally reproducing the vendored real blackhole canister without a pre-verified `JUPITER_BLACKHOLE_TEST_WASM` override
 
 ## What `setup` does
 
@@ -267,14 +267,23 @@ cargo test -p xtask --test e2e real_cmc_manual_topup_contract_accepts_ledger_pay
 
 ## Reproducible blackhole requirement in historian / E2E suites
 
-Historian and E2E PocketIC coverage build the vendored [`vendor/ic-blackhole`](../../vendor/ic-blackhole) source through its pinned reproducible build path:
+Historian and E2E PocketIC coverage require the exact production blackhole Wasm.
+When `JUPITER_BLACKHOLE_TEST_WASM` points to a local file, the fixture verifies
+its pinned production SHA-256 before loading it and never falls back to a build.
+Release and behavioral CI download the immutable upstream 0.0.0 release asset,
+verify it in the workflow, and pass that runner-temporary path to the tests.
+
+Without the override, local runs build the vendored
+[`vendor/ic-blackhole`](../../vendor/ic-blackhole) source through its pinned
+historical reproducible build path:
 
 ```bash
 cd vendor/ic-blackhole
 make repro-build
 ```
 
-So those commands require `make` and `nix-build` to be available.
+That independent provenance path requires `make` and `nix-build`; it remains
+available without making the legacy toolchain a hosted-runner prerequisite.
 
 If you want to exercise the reproducibility / hash check directly, the historian PocketIC suite runs the ignored real-blackhole verification test via:
 
