@@ -139,8 +139,7 @@ fn decode_post_upgrade_args(raw: Vec<u8>) -> Option<UpgradeArgs> {
 
 #[ic_cdk::post_upgrade(decode_with = "decode_post_upgrade_args")]
 fn post_upgrade(args: Option<UpgradeArgs>) {
-    let mut restored =
-        state::restore().unwrap_or_else(|| state::SnsRewardsState::new(state::Config::default()));
+    let mut restored = state::restore();
     restored.scan_lock_state_ts = Some(0);
     state::set_state(restored);
     if let Some(Some(new_root)) = args.map(|value| value.reward_sns_root_canister_id) {

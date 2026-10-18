@@ -197,10 +197,12 @@ pub(crate) fn initialize(config: Config) {
     set_state(SnsRewardsState::new(config));
 }
 
-pub(crate) fn restore() -> Option<SnsRewardsState> {
+pub(crate) fn restore() -> SnsRewardsState {
     with_stable_cell(|cell| match cell.get().clone() {
-        VersionedStableState::Uninitialized => None,
-        VersionedStableState::V1(st) => Some(st),
+        VersionedStableState::Uninitialized => {
+            panic!("SNS rewards upgrade requires initialized persisted state")
+        }
+        VersionedStableState::V1(st) => st,
     })
 }
 
@@ -301,12 +303,24 @@ mod tests {
             pages_processed: 2,
             neurons_processed: 200,
         });
+        set_state(state.clone());
+        assert_eq!(restore(), state.clone());
         let bytes = candid::encode_one(VersionedStableState::V1(state.clone())).unwrap();
         let decoded: VersionedStableState = candid::decode_one(&bytes).unwrap();
         match decoded {
             VersionedStableState::V1(decoded) => assert_eq!(decoded, state),
             VersionedStableState::Uninitialized => panic!("unexpected uninitialized metadata"),
         }
+    }
+
+    #[test]
+    fn upgrade_requires_initialized_metadata() {
+        with_stable_cell(|cell| cell.set(VersionedStableState::Uninitialized));
+        assert!(std::panic::catch_unwind(restore).is_err());
+        assert!(with_stable_cell(|cell| matches!(
+            cell.get(),
+            VersionedStableState::Uninitialized
+        )));
     }
 
     #[test]
