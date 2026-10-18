@@ -1645,6 +1645,12 @@ mod tests {
         }
         state::with_state(|st| {
             assert!(
+                candid::encode_one(st.active_payout_job.as_ref().unwrap())
+                    .unwrap()
+                    .len()
+                    < 4_096
+            );
+            assert!(
                 st.active_payout_job
                     .as_ref()
                     .unwrap()
@@ -1678,6 +1684,38 @@ mod tests {
                 .unwrap()
                 .is_empty())
         });
+    }
+
+    #[test]
+    fn zero_success_finalization_checks_at_most_sixteen_witnesses() {
+        struct CountingStatus(AtomicUsize);
+        #[async_trait]
+        impl CanisterStatusClient for CountingStatus {
+            async fn canister_exists(
+                &self,
+                _: Principal,
+            ) -> Result<bool, crate::clients::ClientError> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(false)
+            }
+        }
+        let status = CountingStatus(AtomicUsize::new(0));
+        let mut job = ActivePayoutJob::new(1, 10_000, 1, 1, 1);
+        job.cmc_attempt_count = Some(1_000);
+        job.cmc_attempted_beneficiaries = Some(
+            (0..1_000_u64)
+                .map(|n| Principal::from_slice(&n.to_be_bytes()))
+                .collect(),
+        );
+        assert!(!run_ready(zero_success_run_counts_toward_rescue(
+            &status, &job
+        )));
+        assert_eq!(status.0.load(Ordering::SeqCst), 16);
+        job.cmc_success_count = Some(1);
+        assert!(!run_ready(zero_success_run_counts_toward_rescue(
+            &status, &job
+        )));
+        assert_eq!(status.0.load(Ordering::SeqCst), 16);
     }
 
     #[test]
@@ -7108,6 +7146,119 @@ mod tests {
             state::with_state(|st| st.last_processed_funding_tx_id),
             Some(10)
         );
+    }
+
+    #[test]
+    fn tranche_balance_reread_failure_and_stale_callbacks_preserve_pending_ownership() {
+        struct RecheckingLedger {
+            reads: AtomicUsize,
+            started: AtomicBool,
+            release: AtomicBool,
+            fail: bool,
+        }
+        #[async_trait]
+        impl LedgerClient for RecheckingLedger {
+            async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> {
+                Ok(10_000)
+            }
+            async fn balance_of_e8s(
+                &self,
+                account: Account,
+            ) -> Result<u64, crate::clients::ClientError> {
+                if account != payout_account() {
+                    return Ok(100_000_000);
+                }
+                if self.reads.fetch_add(1, Ordering::SeqCst) == 0 {
+                    return Ok(50_000_000);
+                }
+                self.started.store(true, Ordering::SeqCst);
+                std::future::poll_fn(|_| {
+                    if self.release.load(Ordering::SeqCst) {
+                        Poll::Ready(())
+                    } else {
+                        Poll::Pending
+                    }
+                })
+                .await;
+                if self.fail {
+                    Err(crate::clients::ClientError::Call(
+                        "reread unavailable".into(),
+                    ))
+                } else {
+                    Ok(100_000_000)
+                }
+            }
+            async fn transfer(
+                &self,
+                _: TransferArg,
+            ) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError>
+            {
+                panic!("stale or unreadable balance cannot authorize payment")
+            }
+        }
+        for changed in 0..5 {
+            let now = 4_350;
+            let cfg = test_config();
+            state::clear_skip_ranges();
+            state::set_state(state::State::new(cfg.clone(), now));
+            state::with_state_mut(|st| st.last_processed_funding_tx_id = Some(5));
+            let index = ExclusiveIndex::new(vec![funding_tx_at(
+                10,
+                &account_identifier_text_for_account(&cfg.funding_source_account),
+                &account_identifier_text_for_account(&payout_account()),
+                100_000_000,
+                20_000_000_000,
+            )]);
+            let ledger = RecheckingLedger {
+                reads: AtomicUsize::new(0),
+                started: AtomicBool::new(false),
+                release: AtomicBool::new(false),
+                fail: changed == 0,
+            };
+            let cmc = ScriptedCmc::new(vec![]);
+            let mut future = Box::pin(process_payout(
+                &ledger,
+                &index,
+                &cmc,
+                &NoopGovernance,
+                &crate::clients::canister_info::NoopCanisterStatusClient,
+                now * 1_000_000_000,
+                now,
+            ));
+            assert!(poll_once(future.as_mut()).is_pending());
+            assert!(ledger.started.load(Ordering::SeqCst));
+            state::with_state_mut(|st| match changed {
+                1 => st.last_processed_funding_tx_id = Some(99),
+                2 => st.payout_nonce += 1,
+                3 => st.active_payout_job = Some(ActivePayoutJob::new(777, 10_000, 1, 1, 1)),
+                4 => st.main_lock_state_ts = Some(9_999),
+                _ => (),
+            });
+            let expected = state::with_state(|st| {
+                (
+                    st.last_processed_funding_tx_id,
+                    st.payout_nonce,
+                    st.active_payout_job.as_ref().map(|j| j.id),
+                    st.main_lock_state_ts,
+                )
+            });
+            ledger.release.store(true, Ordering::SeqCst);
+            assert_eq!(poll_once(future.as_mut()), Poll::Ready(changed != 0));
+            assert_eq!(
+                state::with_state(|st| (
+                    st.last_processed_funding_tx_id,
+                    st.payout_nonce,
+                    st.active_payout_job.as_ref().map(|j| j.id),
+                    st.main_lock_state_ts
+                )),
+                expected
+            );
+            assert_eq!(
+                state::with_state(|st| st.forced_rescue_reason.clone()),
+                None
+            );
+            assert_eq!(cmc.call_count(), 0);
+        }
     }
 
     #[test]
