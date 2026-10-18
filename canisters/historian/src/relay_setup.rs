@@ -3350,6 +3350,34 @@ mod tests {
     }
 
     #[test]
+    fn conversion_pricing_rounds_up_and_rejects_arithmetic_overflow() {
+        let mut cfg = config();
+        let mut rate = IcpXdrConversionRate {
+            timestamp_seconds: 1,
+            xdr_permyriad_per_icp: 50_000,
+        };
+        cfg.relay_initial_cycles = 2_000_000_000_001;
+        assert_eq!(cmc_conversion_e8s(&cfg, &rate), Ok(45_000_001));
+        cfg.relay_initial_cycles = u128::from(u64::MAX) * 50_000;
+        cfg.relay_cycle_safety_margin_e8s = 0;
+        cfg.relay_min_subaccount_one_seed_e8s = 0;
+        cfg.relay_setup_min_e8s = 1;
+        assert_eq!(cmc_conversion_e8s(&cfg, &rate), Ok(u64::MAX));
+        assert_eq!(current_requirement_e8s(&cfg, 1, 0, &rate), Ok(u64::MAX));
+        assert!(current_requirement_e8s(&cfg, 2, 0, &rate).is_err());
+        assert!(current_requirement_e8s(&cfg, 1, 1, &rate).is_err());
+        cfg.relay_cycle_safety_margin_e8s = 1;
+        assert!(cmc_conversion_e8s(&cfg, &rate).is_err());
+        cfg.relay_min_subaccount_one_seed_e8s = u64::MAX;
+        assert!(minimum_final_relay_funding_e8s(&cfg, 1).is_err());
+        rate.xdr_permyriad_per_icp = 0;
+        assert!(cmc_conversion_e8s(&cfg, &rate).is_err());
+        rate.xdr_permyriad_per_icp = 1;
+        cfg.relay_initial_cycles = u128::MAX;
+        assert!(cmc_conversion_e8s(&cfg, &rate).is_err());
+    }
+
+    #[test]
     fn canonical_relay_config_uses_current_bounds_and_rejects_invalid_pairings() {
         let mut cfg = config();
         cfg.canonical_relay_canister_id = None;
