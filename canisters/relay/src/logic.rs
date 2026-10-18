@@ -518,10 +518,6 @@ pub(crate) fn build_spend_all_cycles_plan(
         recovery_deficits,
         false,
     );
-    let positive_need_count = topups
-        .iter()
-        .filter(|plan| plan.target_topup_cycles > 0)
-        .count();
     let total_positive_need = topups
         .iter()
         .filter(|plan| plan.target_topup_cycles > 0)
@@ -552,45 +548,31 @@ pub(crate) fn build_spend_all_cycles_plan(
         })
         .collect::<Vec<_>>();
     let fee_efficient_threshold = u128::from(fee_e8s).saturating_mul(2);
-    let batch_is_fee_efficient = u128::from(available_balance_e8s)
-        >= u128::from(fee_e8s).saturating_mul(positive_need_count as u128)
-        && topups
-            .iter()
-            .zip(gross_shares.iter())
-            .filter(|(plan, _)| plan.target_topup_cycles > 0)
-            .all(|(_, gross)| u128::from(*gross) >= fee_efficient_threshold);
-
-    if !batch_is_fee_efficient {
-        for (plan, gross) in topups.iter_mut().zip(gross_shares) {
-            plan.gross_share_e8s = gross;
-            plan.skipped_reason = Some(if plan.target_topup_cycles == 0 {
-                SKIP_REASON_ZERO_BURN.to_string()
-            } else {
-                ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD.to_string()
-            });
-        }
-        return AllocationPlan {
-            topups,
-            topup_phase_fully_funded: true,
-            skipped_surplus_reason: Some(
-                ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD.to_string(),
-            ),
-        };
-    }
-
     for (plan, gross) in topups.iter_mut().zip(gross_shares) {
         if plan.target_topup_cycles == 0 {
             plan.skipped_reason = Some(SKIP_REASON_ZERO_BURN.to_string());
             continue;
         }
         plan.gross_share_e8s = gross;
+        if u128::from(gross) < fee_efficient_threshold || gross <= fee_e8s {
+            plan.skipped_reason = Some(ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD.to_string());
+            continue;
+        }
         plan.amount_e8s = gross - fee_e8s;
     }
 
+    let any_payable = topups.iter().any(|plan| plan.amount_e8s > 0);
     AllocationPlan {
         topups,
         topup_phase_fully_funded: true,
-        skipped_surplus_reason: Some(SKIP_REASON_NO_RAW_ICP_RECIPIENTS.to_string()),
+        skipped_surplus_reason: Some(
+            if any_payable {
+                SKIP_REASON_NO_RAW_ICP_RECIPIENTS
+            } else {
+                ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD
+            }
+            .to_string(),
+        ),
     }
 }
 
@@ -1640,7 +1622,40 @@ mod tests {
     }
 
     #[test]
-    fn allocation_without_raw_recipients_blocks_partial_fast_burner_batch() {
+    fn independent_all_cycles_shares_fund_large_need_and_retain_small_need() {
+        let current = BTreeMap::from([(canister_a(), snapshot(0)), (canister_b(), snapshot(0))]);
+        let previous = BTreeMap::from([
+            (canister_a(), snapshot(1_000_000_000_000)),
+            (canister_b(), snapshot(100_000_000)),
+        ]);
+        let plan = build_spend_all_cycles_plan(
+            &current,
+            &previous,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            110_000_000,
+            10_000,
+        );
+        let a = plan
+            .topups
+            .iter()
+            .find(|p| p.canister_id == canister_a())
+            .unwrap();
+        let b = plan
+            .topups
+            .iter()
+            .find(|p| p.canister_id == canister_b())
+            .unwrap();
+        assert_eq!(a.gross_share_e8s, 109_989_001);
+        assert_eq!(a.amount_e8s, a.gross_share_e8s - 10_000);
+        assert_eq!(b.gross_share_e8s, 10_998);
+        assert_eq!(b.amount_e8s, 0);
+        assert_eq!(b.target_topup_cycles, 100_000_000);
+        assert_eq!(110_000_000 - a.amount_e8s - 10_000, 10_999);
+    }
+
+    #[test]
+    fn allocation_without_raw_recipients_pays_fee_efficient_share_independently() {
         let mut current = BTreeMap::new();
         let mut previous = BTreeMap::new();
         current.insert(canister_a(), snapshot(100));
@@ -1669,16 +1684,13 @@ mod tests {
 
         assert_eq!(
             plan.skipped_surplus_reason.as_deref(),
-            Some(ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD)
+            Some(SKIP_REASON_NO_RAW_ICP_RECIPIENTS)
         );
         assert_eq!(a.gross_share_e8s, 90);
         assert_eq!(b.gross_share_e8s, 10);
-        assert_eq!(a.amount_e8s, 0);
+        assert_eq!(a.amount_e8s, 80);
         assert_eq!(b.amount_e8s, 0);
-        assert_eq!(
-            a.skipped_reason.as_deref(),
-            Some(ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD)
-        );
+        assert_eq!(a.skipped_reason, None);
         assert_eq!(
             b.skipped_reason.as_deref(),
             Some(ALL_CYCLES_BATCH_BELOW_FEE_EFFICIENT_THRESHOLD)

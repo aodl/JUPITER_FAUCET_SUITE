@@ -131,7 +131,7 @@ of safely distributable ICP after managed-canister requirements and retained-bal
 
 A self-service or manually installed Relay can configure no raw-ICP recipients. This selects **all-cycles mode**: available top-up funding is divided among positive cycles needs instead of preserving a raw-ICP surplus path. No recipient is inserted automatically and no raw-surplus Ledger transfer is produced.
 
-All-cycles mode uses recent burn plus carried deficit without the 1% headroom and waits until the proportional shares are fee-efficient enough to spend. Dust and fee-unspendable balance remain in the default account for a later tick.
+All-cycles mode uses recent burn plus carried deficit without the 1% headroom and evaluates each proportional share independently for fee efficiency. A held share retains its target need and is not redistributed to other targets. Dust and fee-unspendable balance remain in the default account for a later tick.
 
 ## Funding a Relay
 
