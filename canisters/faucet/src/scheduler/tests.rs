@@ -1484,7 +1484,7 @@ mod tests {
         let old = MainGuard::acquire(now_secs).expect("old main lease");
         let lease = old.lease_token();
         let old_expiry = state::with_state(|st| st.main_lock_state_ts.unwrap());
-        let mut future = Box::pin(finalize_completed_job(&status, lease, 1));
+        let mut future = Box::pin(finalize_completed_job(&status, lease, 1, now_secs));
         assert!(poll_once(future.as_mut()).is_pending());
         assert!(status.started.load(Ordering::SeqCst));
 
@@ -1570,6 +1570,55 @@ mod tests {
         });
         set_active_job(now_nanos / 1_000_000_000, job);
         beneficiary
+    }
+
+    #[test]
+    fn immediate_and_trailing_failures_are_one_episode_but_prolonged_outage_latches() {
+        let mut st = state::State::new(test_config(), 0);
+        for now in [1_000, 1_000, 1_010] {
+            apply_latest_observation(&mut st, 200, LatestScan::Unreadable, now);
+        }
+        assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(1));
+        assert_eq!(st.last_observed_staking_balance_e8s, None);
+        assert_eq!(st.forced_rescue_reason, None);
+        apply_latest_observation(&mut st, 200, LatestScan::Unreadable, 1_060);
+        assert_eq!(
+            st.forced_rescue_reason,
+            Some(ForcedRescueReason::IndexLatestUnreadable)
+        );
+    }
+
+    #[test]
+    fn coherent_index_lag_and_catchup_do_not_expand_rescue() {
+        let now_secs = 0;
+        let mut st = state::State::new(test_config(), 0);
+        st.last_observed_staking_balance_e8s = Some(100);
+        st.last_observed_latest_tx_id = Some(10);
+        for _ in 0..3 {
+            apply_latest_observation(
+                &mut st,
+                200,
+                LatestScan::Read {
+                    balance_e8s: 100,
+                    latest_tx_id: Some(10),
+                },
+                now_secs,
+            );
+        }
+        assert_eq!(st.forced_rescue_reason, None);
+        assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
+        apply_latest_observation(
+            &mut st,
+            200,
+            LatestScan::Read {
+                balance_e8s: 200,
+                latest_tx_id: Some(11),
+            },
+            now_secs + 60,
+        );
+        assert_eq!(st.last_observed_staking_balance_e8s, Some(200));
+        assert_eq!(st.last_observed_latest_tx_id, Some(11));
+        assert_eq!(st.forced_rescue_reason, None);
     }
 
     #[test]
@@ -4878,8 +4927,8 @@ mod tests {
             &cmc,
             &NoopGovernance,
             &crate::clients::canister_info::NoopCanisterStatusClient,
-            now_secs * 1_000_000_000,
-            now_secs
+            (now_secs + 60) * 1_000_000_000,
+            now_secs + 60
         )));
         state::with_state(|st| {
             assert_eq!(st.consecutive_index_latest_invariant_failures, Some(2));
@@ -4966,6 +5015,7 @@ mod tests {
                     balance_e8s: 200,
                     latest_tx_id: Some(10),
                 },
+                now_secs,
             )
         });
         state::with_state(|st| {
@@ -4982,6 +5032,7 @@ mod tests {
                     balance_e8s: 200,
                     latest_tx_id: Some(10),
                 },
+                now_secs + 60,
             )
         });
         state::with_state(|st| {
@@ -5011,7 +5062,7 @@ mod tests {
                 .collect(),
             200,
         );
-        run_ready(probe_index_health(&index, &staking_id, 200));
+        run_ready(probe_index_health(&index, &staking_id, 200, now_secs));
         assert_eq!(
             index.starts(),
             vec![None, None],
@@ -5032,7 +5083,12 @@ mod tests {
                 .collect(),
             300,
         );
-        run_ready(probe_index_health(&next_index, &staking_id, 300));
+        run_ready(probe_index_health(
+            &next_index,
+            &staking_id,
+            300,
+            now_secs + 60,
+        ));
         state::with_state(|st| {
             assert_eq!(st.last_observed_staking_balance_e8s, Some(300));
             assert_eq!(st.last_observed_latest_tx_id, Some(5));
@@ -5060,7 +5116,7 @@ mod tests {
                 .collect(),
             300,
         );
-        run_ready(probe_index_health(&index, &staking_id, 200));
+        run_ready(probe_index_health(&index, &staking_id, 200, now_secs));
         state::with_state(|st| {
             assert_eq!(st.last_observed_staking_balance_e8s, Some(300));
             assert_eq!(st.last_observed_latest_tx_id, Some(5));
@@ -5069,7 +5125,7 @@ mod tests {
             assert_eq!(st.forced_rescue_reason, None);
         });
 
-        run_ready(probe_index_health(&index, &staking_id, 300));
+        run_ready(probe_index_health(&index, &staking_id, 300, now_secs + 60));
         assert_eq!(
             index.starts(),
             vec![None, None, None],
@@ -5101,7 +5157,7 @@ mod tests {
             200,
         );
 
-        run_ready(probe_index_health(&index, &staking_id, 200));
+        run_ready(probe_index_health(&index, &staking_id, 200, now_secs));
         state::with_state(|st| {
             assert_eq!(st.consecutive_index_latest_invariant_failures, Some(1));
             assert_eq!(st.forced_rescue_reason, None);
@@ -5109,7 +5165,7 @@ mod tests {
             assert_eq!(st.last_observed_latest_tx_id, Some(3));
         });
 
-        run_ready(probe_index_health(&index, &staking_id, 200));
+        run_ready(probe_index_health(&index, &staking_id, 200, now_secs + 60));
         state::with_state(|st| {
             assert_eq!(st.consecutive_index_latest_invariant_failures, Some(2));
             assert_eq!(
@@ -5138,7 +5194,7 @@ mod tests {
                 .collect(),
             200,
         );
-        run_ready(probe_index_health(&stale, &staking_id, 200));
+        run_ready(probe_index_health(&stale, &staking_id, 200, now_secs));
         assert_eq!(
             state::with_state(|st| st.consecutive_index_latest_invariant_failures),
             Some(1)
@@ -5151,7 +5207,7 @@ mod tests {
                 .collect(),
             200,
         );
-        run_ready(probe_index_health(&healed, &staking_id, 200));
+        run_ready(probe_index_health(&healed, &staking_id, 200, now_secs + 60));
         state::with_state(|st| {
             assert_eq!(st.last_observed_staking_balance_e8s, Some(200));
             assert_eq!(st.last_observed_latest_tx_id, Some(4));
@@ -5172,7 +5228,7 @@ mod tests {
         state::clear_skip_ranges();
         state::set_state(st);
 
-        for expected_failures in 1..=2 {
+        for _ in 1..=2 {
             state::with_state_mut(|st| {
                 apply_latest_observation(
                     st,
@@ -5181,20 +5237,18 @@ mod tests {
                         balance_e8s: 200,
                         latest_tx_id: Some(9),
                     },
+                    now_secs,
                 )
             });
             state::with_state(|st| {
-                assert_eq!(
-                    st.consecutive_index_latest_invariant_failures,
-                    Some(expected_failures)
-                );
+                assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
                 assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
                 assert_eq!(st.last_observed_latest_tx_id, Some(10));
             });
         }
         assert_eq!(
             state::with_state(|st| st.forced_rescue_reason.clone()),
-            Some(ForcedRescueReason::IndexLatestInvariantBroken)
+            None
         );
     }
 
@@ -5229,7 +5283,7 @@ mod tests {
         let job = state::with_state(|st| st.active_payout_job.clone().unwrap());
         assert_eq!(job.observed_latest_tx_id, Some(7));
 
-        state::with_state_mut(|st| apply_job_health_observations(st, &job, false));
+        state::with_state_mut(|st| apply_job_health_observations(st, &job, false, now_secs));
         state::with_state(|st| {
             assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
             assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
@@ -5270,7 +5324,7 @@ mod tests {
         let job = state::with_state(|st| st.active_payout_job.clone().unwrap());
         assert_eq!(job.observed_latest_tx_id, Some(5));
 
-        state::with_state_mut(|st| apply_job_health_observations(st, &job, false));
+        state::with_state_mut(|st| apply_job_health_observations(st, &job, false, now_secs));
         state::with_state(|st| {
             assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
             assert_eq!(st.last_observed_latest_tx_id, Some(3));
@@ -5288,8 +5342,14 @@ mod tests {
             &fresh_tip,
             &staking_id,
             200,
+            now_secs + 60,
         ));
-        run_ready(probe_index_health(&fresh_tip, &staking_id, 300));
+        run_ready(probe_index_health(
+            &fresh_tip,
+            &staking_id,
+            300,
+            now_secs + 120,
+        ));
         state::with_state(|st| {
             assert_eq!(st.last_observed_staking_balance_e8s, Some(300));
             assert_eq!(st.last_observed_latest_tx_id, Some(5));
@@ -5321,6 +5381,7 @@ mod tests {
             &stale,
             &staking_id,
             200,
+            now_secs,
         ));
         state::with_state(|st| {
             assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
@@ -5334,6 +5395,7 @@ mod tests {
             &stale,
             &staking_id,
             200,
+            now_secs + 60,
         ));
         state::with_state(|st| {
             assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
@@ -5363,6 +5425,7 @@ mod tests {
             &unreadable,
             &staking_id,
             200,
+            now_secs,
         ));
         state::with_state(|st| {
             assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
@@ -5376,6 +5439,7 @@ mod tests {
             &unreadable,
             &staking_id,
             200,
+            now_secs + 60,
         ));
         state::with_state(|st| {
             assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
@@ -5405,6 +5469,7 @@ mod tests {
             &unreadable,
             &staking_id,
             200,
+            now_secs,
         ));
         assert_eq!(
             state::with_state(|st| st.consecutive_index_latest_unreadable_failures),
@@ -5422,6 +5487,7 @@ mod tests {
             &advanced,
             &staking_id,
             200,
+            now_secs + 60,
         ));
         state::with_state(|st| {
             assert_eq!(st.last_observed_staking_balance_e8s, Some(250));
@@ -5442,7 +5508,9 @@ mod tests {
         state::clear_skip_ranges();
         state::set_state(st);
 
-        state::with_state_mut(|st| apply_latest_observation(st, 200, LatestScan::Unreadable));
+        state::with_state_mut(|st| {
+            apply_latest_observation(st, 200, LatestScan::Unreadable, now_secs)
+        });
         state::with_state(|st| {
             assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(1));
             assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));
@@ -5451,7 +5519,9 @@ mod tests {
             assert_eq!(st.last_observed_latest_tx_id, Some(10));
         });
 
-        state::with_state_mut(|st| apply_latest_observation(st, 200, LatestScan::Unreadable));
+        state::with_state_mut(|st| {
+            apply_latest_observation(st, 200, LatestScan::Unreadable, now_secs + 60)
+        });
         state::with_state(|st| {
             assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(2));
             assert_eq!(
@@ -5476,13 +5546,13 @@ mod tests {
         state::clear_skip_ranges();
         state::set_state(st);
 
-        run_ready(probe_index_health(&index, &staking_id, 200));
+        run_ready(probe_index_health(&index, &staking_id, 200, now_secs));
         state::with_state(|st| {
             assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(1));
             assert_eq!(st.forced_rescue_reason, None);
         });
 
-        run_ready(probe_index_health(&index, &staking_id, 200));
+        run_ready(probe_index_health(&index, &staking_id, 200, now_secs + 60));
         state::with_state(|st| {
             assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(2));
             assert_eq!(
@@ -5522,7 +5592,7 @@ mod tests {
         state::clear_skip_ranges();
         state::set_state(st);
 
-        run_ready(probe_index_health(&index, &staking_id, 200));
+        run_ready(probe_index_health(&index, &staking_id, 200, now_secs));
         state::with_state(|st| {
             assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(1));
             assert_eq!(st.forced_rescue_reason, None);
@@ -5530,7 +5600,7 @@ mod tests {
             assert_eq!(st.last_observed_latest_tx_id, Some(10));
         });
 
-        run_ready(probe_index_health(&index, &staking_id, 200));
+        run_ready(probe_index_health(&index, &staking_id, 200, now_secs + 60));
         state::with_state(|st| {
             assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(0));
             assert_eq!(st.consecutive_index_latest_invariant_failures, Some(0));

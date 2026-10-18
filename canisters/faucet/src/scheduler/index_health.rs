@@ -5,12 +5,14 @@ pub(super) async fn probe_index_health(
     index: &impl IndexClient,
     staking_id: &str,
     denom_balance_e8s: u64,
+    now_secs: u64,
 ) {
     probe_index_health_with_lease(
         index,
         staking_id,
         denom_balance_e8s,
         MainLeaseToken::capture_for_test(),
+        now_secs,
     )
     .await;
 }
@@ -20,6 +22,7 @@ pub(super) async fn probe_index_health_with_lease(
     staking_id: &str,
     denom_balance_e8s: u64,
     lease: MainLeaseToken,
+    now_secs: u64,
 ) {
     let prev_balance = state::with_state(|st| st.last_observed_staking_balance_e8s);
     let first_page = match index
@@ -32,14 +35,7 @@ pub(super) async fn probe_index_health_with_lease(
                 if !lease.is_current_in(st) {
                     return;
                 }
-                if prev_balance.is_none() {
-                    st.last_observed_staking_balance_e8s = Some(denom_balance_e8s);
-                    st.last_observed_latest_tx_id = None;
-                    st.consecutive_index_latest_invariant_failures = Some(0);
-                    st.consecutive_index_latest_unreadable_failures = Some(0);
-                } else if prev_balance != Some(denom_balance_e8s) {
-                    apply_latest_observation(st, denom_balance_e8s, LatestScan::Unreadable);
-                }
+                apply_latest_observation(st, denom_balance_e8s, LatestScan::Unreadable, now_secs);
             });
             return;
         }
@@ -51,7 +47,7 @@ pub(super) async fn probe_index_health_with_lease(
 
     state::with_state_mut(|st| {
         if lease.is_current_in(st) {
-            apply_anchor_observation(st, first_page.oldest_tx_id);
+            apply_anchor_observation(st, first_page.oldest_tx_id, now_secs);
         }
     });
 
@@ -59,7 +55,7 @@ pub(super) async fn probe_index_health_with_lease(
         let latest_observation = scan_latest_observation(index, staking_id.to_string(), None).await;
         state::with_state_mut(|st| {
             if lease.is_current_in(st) {
-                apply_latest_observation(st, denom_balance_e8s, latest_observation);
+                apply_latest_observation(st, denom_balance_e8s, latest_observation, now_secs);
             }
         });
         return;
@@ -72,7 +68,7 @@ pub(super) async fn probe_index_health_with_lease(
     let latest_observation = scan_latest_observation(index, staking_id.to_string(), None).await;
     state::with_state_mut(|st| {
         if lease.is_current_in(st) {
-            apply_latest_observation(st, denom_balance_e8s, latest_observation);
+            apply_latest_observation(st, denom_balance_e8s, latest_observation, now_secs);
         }
     });
 }
@@ -82,12 +78,14 @@ pub(super) async fn refresh_index_latest_health_after_payout(
     index: &impl IndexClient,
     staking_id: &str,
     denom_balance_e8s: u64,
+    now_secs: u64,
 ) {
     refresh_index_latest_health_after_payout_with_lease(
         index,
         staking_id,
         denom_balance_e8s,
         MainLeaseToken::capture_for_test(),
+        now_secs,
     )
     .await;
 }
@@ -97,6 +95,7 @@ pub(super) async fn refresh_index_latest_health_after_payout_with_lease(
     staking_id: &str,
     denom_balance_e8s: u64,
     lease: MainLeaseToken,
+    now_secs: u64,
 ) {
     let prev_balance = state::with_state(|st| st.last_observed_staking_balance_e8s);
     if prev_balance == Some(denom_balance_e8s) {
@@ -106,7 +105,7 @@ pub(super) async fn refresh_index_latest_health_after_payout_with_lease(
     let latest_observation = scan_latest_observation(index, staking_id.to_string(), None).await;
     state::with_state_mut(|st| {
         if lease.is_current_in(st) {
-            apply_latest_observation(st, denom_balance_e8s, latest_observation);
+            apply_latest_observation(st, denom_balance_e8s, latest_observation, now_secs);
         }
     });
 }
@@ -121,7 +120,52 @@ pub(super) enum LatestScan {
     InvariantBroken,
 }
 
-pub(super) fn record_latest_unreadable_failure(st: &mut state::State) {
+thread_local! {
+    static LAST_ANCHOR_FAILURE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    static LAST_LATEST_FAILURE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+// A poke and its ten-second trailing callback are one operational episode.
+// After upgrade a previously counted failure starts a fresh observation window;
+// heap reset cannot turn two adjacent observations into a sustained outage.
+fn count_sustained_failure(
+    last: &std::cell::Cell<Option<u64>>,
+    failures: u8,
+    now_secs: u64,
+) -> bool {
+    if failures == 0 {
+        last.set(Some(now_secs));
+        return true;
+    }
+    match last.get() {
+        Some(previous) if now_secs.saturating_sub(previous) >= 60 => {
+            last.set(Some(now_secs));
+            true
+        }
+        None => {
+            last.set(Some(now_secs));
+            false
+        }
+        _ => false,
+    }
+}
+
+fn count_latest_failure(st: &state::State, now_secs: u64) -> bool {
+    LAST_LATEST_FAILURE.with(|last| {
+        count_sustained_failure(
+            last,
+            st.consecutive_index_latest_invariant_failures
+                .unwrap_or(0)
+                .max(st.consecutive_index_latest_unreadable_failures.unwrap_or(0)),
+            now_secs,
+        )
+    })
+}
+
+pub(super) fn record_latest_unreadable_failure(st: &mut state::State, now_secs: u64) {
+    if !count_latest_failure(st, now_secs) {
+        return;
+    }
     st.consecutive_index_latest_invariant_failures = Some(0);
     st.consecutive_index_latest_unreadable_failures = Some(
         st.consecutive_index_latest_unreadable_failures
@@ -135,7 +179,10 @@ pub(super) fn record_latest_unreadable_failure(st: &mut state::State) {
     }
 }
 
-pub(super) fn record_latest_invariant_failure(st: &mut state::State) {
+pub(super) fn record_latest_invariant_failure(st: &mut state::State, now_secs: u64) {
+    if !count_latest_failure(st, now_secs) {
+        return;
+    }
     st.consecutive_index_latest_unreadable_failures = Some(0);
     st.consecutive_index_latest_invariant_failures = Some(
         st.consecutive_index_latest_invariant_failures
@@ -262,12 +309,26 @@ pub(super) async fn scan_latest_observation(
     }
 }
 
-pub(super) fn apply_anchor_observation(st: &mut state::State, observed_oldest: Option<u64>) {
+pub(super) fn apply_anchor_observation(
+    st: &mut state::State,
+    observed_oldest: Option<u64>,
+    now_secs: u64,
+) {
     let Some(expected_first) = st.config.expected_first_staking_tx_id else {
         return;
     };
     if observed_oldest == Some(expected_first) {
         st.consecutive_index_anchor_failures = Some(0);
+        LAST_ANCHOR_FAILURE.with(|last| last.set(None));
+        return;
+    }
+    if !LAST_ANCHOR_FAILURE.with(|last| {
+        count_sustained_failure(
+            last,
+            st.consecutive_index_anchor_failures.unwrap_or(0),
+            now_secs,
+        )
+    }) {
         return;
     }
     st.consecutive_index_anchor_failures = Some(
@@ -282,50 +343,44 @@ pub(super) fn apply_anchor_observation(st: &mut state::State, observed_oldest: O
 
 pub(super) fn apply_latest_observation(
     st: &mut state::State,
-    denom_balance_e8s: u64,
+    _denom_balance_e8s: u64,
     latest_scan: LatestScan,
+    now_secs: u64,
 ) {
-    match (
-        st.last_observed_staking_balance_e8s,
-        st.last_observed_latest_tx_id,
-    ) {
-        (None, _) => {
-            let (observed_balance_e8s, latest_tx_id) = match latest_scan {
-                LatestScan::Read {
-                    balance_e8s,
-                    latest_tx_id,
-                } => (balance_e8s, latest_tx_id),
-                LatestScan::Unreadable | LatestScan::InvariantBroken => (denom_balance_e8s, None),
-            };
-            st.last_observed_staking_balance_e8s = Some(observed_balance_e8s);
-            st.last_observed_latest_tx_id = latest_tx_id;
-            st.consecutive_index_latest_invariant_failures = Some(0);
-            st.consecutive_index_latest_unreadable_failures = Some(0);
+    let (balance_e8s, latest_tx_id) = match latest_scan {
+        LatestScan::Unreadable => {
+            record_latest_unreadable_failure(st, now_secs);
+            return;
         }
-        (Some(prev_balance), _prev_latest_tx_id) if prev_balance == denom_balance_e8s => {}
-        (Some(_), prev_latest_tx_id) => match latest_scan {
-            LatestScan::Unreadable => record_latest_unreadable_failure(st),
-            LatestScan::InvariantBroken => record_latest_invariant_failure(st),
-            LatestScan::Read {
-                balance_e8s,
-                latest_tx_id,
-            } => {
-                let latest_advanced = match (prev_latest_tx_id, latest_tx_id) {
-                    (Some(prev), Some(latest)) => latest > prev,
-                    (None, Some(_)) => true,
-                    (_, None) => false,
-                };
-                if latest_advanced {
-                    st.last_observed_staking_balance_e8s = Some(balance_e8s);
-                    st.last_observed_latest_tx_id = latest_tx_id;
-                    st.consecutive_index_latest_invariant_failures = Some(0);
-                    st.consecutive_index_latest_unreadable_failures = Some(0);
-                } else {
-                    record_latest_invariant_failure(st);
-                }
-            }
-        },
+        LatestScan::InvariantBroken => {
+            record_latest_invariant_failure(st, now_secs);
+            return;
+        }
+        LatestScan::Read {
+            balance_e8s,
+            latest_tx_id,
+        } => (balance_e8s, latest_tx_id),
+    };
+    let previous_tip = st.last_observed_latest_tx_id;
+    if st.last_observed_staking_balance_e8s.is_some() && latest_tx_id < previous_tip {
+        // A lagging replica is not proof that the saved Index history is corrupt.
+        return;
     }
+    if st
+        .last_observed_staking_balance_e8s
+        .is_some_and(|balance| balance != balance_e8s)
+        && latest_tx_id == previous_tip
+    {
+        record_latest_invariant_failure(st, now_secs);
+        return;
+    }
+    // Only an Index observation can supply this pair. Never attach an unrelated
+    // fresh Ledger balance to an old Index tip, including initial read failures.
+    st.last_observed_staking_balance_e8s = Some(balance_e8s);
+    st.last_observed_latest_tx_id = latest_tx_id;
+    st.consecutive_index_latest_invariant_failures = Some(0);
+    st.consecutive_index_latest_unreadable_failures = Some(0);
+    LAST_LATEST_FAILURE.with(|last| last.set(None));
 }
 
 pub(super) fn apply_cmc_run_result(
@@ -379,8 +434,9 @@ pub(super) fn apply_job_health_observations(
     st: &mut state::State,
     job: &ActivePayoutJob,
     zero_success_run_counts: bool,
+    now_secs: u64,
 ) {
-    apply_anchor_observation(st, job.observed_oldest_tx_id);
+    apply_anchor_observation(st, job.observed_oldest_tx_id, now_secs);
     apply_cmc_run_result(
         st,
         job.cmc_attempt_count.unwrap_or(0),

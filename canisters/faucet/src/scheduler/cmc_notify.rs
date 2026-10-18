@@ -278,6 +278,7 @@ pub(super) async fn finalize_completed_job(
     status_client: &impl CanisterStatusClient,
     lease: MainLeaseToken,
     expected_job_id: u64,
+    now_secs: u64,
 ) -> bool {
     let Some(job) = state::with_state(|st| {
         if !lease.is_current_in(st) {
@@ -301,7 +302,7 @@ pub(super) async fn finalize_completed_job(
             return None;
         }
         st.active_payout_job = None;
-        apply_job_health_observations(st, &job, zero_success_run_counts);
+        apply_job_health_observations(st, &job, zero_success_run_counts, now_secs);
         if let Some(round_end_time_nanos) = job.round_end_time_nanos {
             st.current_round_start_time_nanos = Some(round_end_time_nanos);
             st.current_round_start_latest_tx_id =

@@ -319,7 +319,7 @@ pub(super) async fn process_payout_with_lease(
         }
         if payout_balance_e8s <= fee_e8s || denom_e8s == 0 {
             assert_no_persistence_batch_for_async();
-            probe_index_health_with_lease(index, &staking_id, denom_e8s, lease).await;
+            probe_index_health_with_lease(index, &staking_id, denom_e8s, lease, now_secs).await;
             if lease.is_current() {
                 maybe_latch_bootstrap_rescue(now_secs);
             }
@@ -347,7 +347,7 @@ pub(super) async fn process_payout_with_lease(
             FundingDiscovery::Found(tranche) => tranche,
             FundingDiscovery::InProgress | FundingDiscovery::Empty => {
                 assert_no_persistence_batch_for_async();
-                probe_index_health_with_lease(index, &staking_id, denom_e8s, lease).await;
+                probe_index_health_with_lease(index, &staking_id, denom_e8s, lease, now_secs).await;
                 if lease.is_current() {
                     maybe_latch_bootstrap_rescue(now_secs);
                 }
@@ -489,7 +489,7 @@ pub(super) async fn process_payout_with_lease(
                                 && active.effective_denom_scan_complete == Some(false)
                         })
                     {
-                        apply_anchor_observation(st, oldest);
+                        apply_anchor_observation(st, oldest, now_secs);
                     }
                 });
                 // Preserve the existing rescue reconciliation while holding all funds.
@@ -640,7 +640,7 @@ pub(super) async fn process_payout_with_lease(
                 }
             }
             assert_no_persistence_batch_for_async();
-            if !finalize_completed_job(status_client, lease, job.id).await {
+            if !finalize_completed_job(status_client, lease, job.id, now_secs).await {
                 return true;
             }
             assert_no_persistence_batch_for_async();
@@ -654,6 +654,7 @@ pub(super) async fn process_payout_with_lease(
                     &staking_id,
                     post_payout_balance_e8s,
                     lease,
+                    now_secs,
                 )
                 .await;
             }
@@ -698,7 +699,7 @@ pub(super) async fn process_payout_with_lease(
                             && !active.scan_complete
                     })
                 {
-                    record_latest_invariant_failure(st);
+                    record_latest_invariant_failure(st, now_secs);
                 }
             });
             return false;
