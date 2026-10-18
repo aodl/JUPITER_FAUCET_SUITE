@@ -3459,6 +3459,74 @@ impl RealSplitterRewardEnv {
 
 #[test]
 #[ignore]
+fn rounded_zero_splitter_eligibility_does_not_hide_older_reward_commitment() -> Result<()> {
+    const SPLITTER: u8 = 50;
+    let mut env = RealSplitterRewardEnv::new(1)?;
+    tick_n(&env.pic, 30);
+    let alice = env.owners[0];
+    let unknown = Principal::self_authenticating([99; 32]);
+    env.fund_owner(alice, 500_000_000)?;
+    env.fund_owner(unknown, 500_000_000)?;
+    env.send_to_relay(alice, relay_subaccount_one(), 200_000_000)?;
+    env.main_tick()?;
+    let older = wait_for_real_index_transactions(
+        &env.pic,
+        env.icp_index,
+        &account_identifier_text(env.relay, Some(relay_subaccount_one())),
+        2,
+    )?;
+    let older_commitment = older.transactions.iter().map(|tx| tx.id).max().unwrap();
+    // FIFO rounding assigns zero of the split leg to Alice's one-e8s credit.
+    env.send_to_relay(alice, relay_numbered_subaccount(SPLITTER), 1)?;
+    env.send_to_relay(unknown, relay_numbered_subaccount(SPLITTER), 400_000_000)?;
+    // Settle the finite funding/claim stages before testing reward attribution.
+    let mut settled = false;
+    for _ in 0..3 {
+        env.main_tick()?;
+        let remaining = support::ledger::icrc1_balance(
+            &env.pic,
+            env.icp_ledger,
+            &Account {
+                owner: env.relay,
+                subaccount: Some(relay_subaccount_one()),
+            },
+        )?;
+        let splitter_remaining = support::ledger::icrc1_balance(
+            &env.pic,
+            env.icp_ledger,
+            &Account {
+                owner: env.relay,
+                subaccount: Some(relay_numbered_subaccount(SPLITTER)),
+            },
+        )?;
+        if remaining == 0 && splitter_remaining == 0 {
+            settled = true;
+            break;
+        }
+    }
+    assert!(settled, "splitter and subaccount-one funding must settle");
+    env.wait_for_histories(SPLITTER, 4)?;
+    env.refresh_snapshot()?;
+    env.credit_reward_pot(1_000_000)?;
+    env.reward_sweep()?;
+    assert_eq!(env.reward_balance(alice)?, 999_000);
+    assert_eq!(env.reward_balance(unknown)?, 0);
+    assert_eq!(env.reward_balance(env.relay)?, 0);
+    assert!(env.journal()?.pending_payout.is_none());
+    let logs = env
+        .pic
+        .fetch_canister_logs(env.relay, Principal::anonymous())
+        .map_err(|err| anyhow::anyhow!("reward logs: {err:?}"))?;
+    assert!(logs.iter().any(|entry| {
+        let line = String::from_utf8_lossy(&entry.content);
+        line.contains("RELAY_SNS_REWARD status=accepted")
+            && line.contains(&format!("attribution_commitment_tx_id={older_commitment} "))
+    }));
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn budget_held_rewards_continue_by_timer_before_untouched_identities_expire() -> Result<()> {
     let mut env = RealSplitterRewardEnv::new(70)?;
     tick_n(&env.pic, 30);
