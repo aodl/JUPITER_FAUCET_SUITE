@@ -737,6 +737,9 @@ fn classify_sources(
     let mut ineligible = initial_ineligible;
     let mut owner_mismatch_count = 0;
     for ((account, value), owner) in sources.into_iter().zip(owners) {
+        if value == 0 {
+            continue;
+        }
         match owner {
             Some(principal) if account_identifier_bytes(principal, None) == account => {
                 add_checked(eligible.entry(principal).or_default(), value)?;
@@ -1291,6 +1294,24 @@ mod tests {
             &BTreeMap::new(),
         )
         .unwrap_complete()
+    }
+
+    #[test]
+    fn zero_eligible_weight_leaves_older_positive_commitment_selectable() {
+        let owner = principal(1);
+        let source = account_identifier_bytes(owner, None);
+        let batches = [BTreeMap::from([(source, 0)]), BTreeMap::from([(source, 1)])];
+        let selected = batches
+            .into_iter()
+            .enumerate()
+            .find_map(|(index, sources)| {
+                let (eligible, ineligible, _) =
+                    classify_sources(sources, 999_999, vec![Some(owner)]).unwrap();
+                assert_eq!(ineligible, 999_999);
+                (!eligible.is_empty()).then_some((index, eligible))
+            })
+            .unwrap();
+        assert_eq!(selected, (1, BTreeMap::from([(owner, 1)])));
     }
 
     #[test]

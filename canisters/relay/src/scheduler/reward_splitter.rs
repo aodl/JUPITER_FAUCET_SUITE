@@ -169,6 +169,9 @@ fn consume_job_funding(
     )
     .map_err(|_| "splitter_allocation_failed")?;
     for (credit, allocated) in consumed.into_iter().zip(allocations) {
+        if allocated == 0 {
+            continue;
+        }
         if let Some(source) = credit.source {
             add_checked(sources.entry(source).or_default(), allocated)
                 .map_err(|_| "contribution_overflow")?;
@@ -697,6 +700,37 @@ mod tests {
                 amount_e8s: 490,
             },
         )
+    }
+
+    #[test]
+    fn rounded_zero_splitter_credit_does_not_create_provenance() {
+        let mut funding = VecDeque::from([
+            UpstreamCredit {
+                tx_id: 1,
+                source: Some([1; 32]),
+                amount_e8s: 1,
+            },
+            UpstreamCredit {
+                tx_id: 2,
+                source: None,
+                amount_e8s: 999_999,
+            },
+        ]);
+        let mut sources = BTreeMap::new();
+        let mut ineligible = 0;
+        consume_job_funding(
+            1_000_000,
+            500_000,
+            2,
+            &mut funding,
+            &mut sources,
+            &mut ineligible,
+            &WorkBudget::for_test(),
+        )
+        .unwrap();
+        assert!(sources.is_empty());
+        assert_eq!(ineligible, 500_000);
+        assert!(funding.is_empty());
     }
 
     #[test]
