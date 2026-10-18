@@ -327,7 +327,8 @@ pub(super) async fn process_payout_with_lease(
         }
         let payout_id = account_identifier_text_for_account(&payout_account());
         let funding_source_id = account_identifier_text_for_account(&cfg.funding_source_account);
-        let last_processed = state::with_state(|st| st.last_processed_funding_tx_id);
+        let (last_processed, payout_nonce) =
+            state::with_state(|st| (st.last_processed_funding_tx_id, st.payout_nonce));
         assert_no_persistence_batch_for_async();
         let Some(funding_discovery) = discover_oldest_unprocessed_funding_tranche_with_lease(
             index,
@@ -363,14 +364,37 @@ pub(super) async fn process_payout_with_lease(
             }
         };
         if payout_balance_e8s < funding_tranche.amount_e8s {
-            log_funding_balance_mismatch(funding_tranche, payout_balance_e8s, last_processed);
-            state::latch_forced_rescue_reason(ForcedRescueReason::FundingTrancheBalanceMismatch);
-            return true;
+            // Funding may have arrived after the first balance snapshot. Fence
+            // the reread against any successor job or funding-cursor change.
+            let current_balance = ledger.balance_of_e8s(payout_account()).await;
+            if !lease.is_current()
+                || !state::with_state(|st| {
+                    st.last_processed_funding_tx_id == last_processed
+                        && st.payout_nonce == payout_nonce
+                        && st.active_payout_job.is_none()
+                })
+            {
+                return true;
+            }
+            let Ok(current_balance) = current_balance else {
+                return false;
+            };
+            if current_balance < funding_tranche.amount_e8s {
+                log_funding_balance_mismatch(funding_tranche, current_balance, last_processed);
+                state::latch_forced_rescue_reason(
+                    ForcedRescueReason::FundingTrancheBalanceMismatch,
+                );
+                return true;
+            }
         }
         let pot_start_e8s = funding_tranche.amount_e8s;
         let round_end_latest_tx_id = Some(funding_tranche.tx_id);
         if !lease.is_current()
-            || state::with_state(|st| st.last_processed_funding_tx_id != last_processed)
+            || state::with_state(|st| {
+                st.last_processed_funding_tx_id != last_processed
+                    || st.payout_nonce != payout_nonce
+                    || st.active_payout_job.is_some()
+            })
         {
             return true;
         }

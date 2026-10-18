@@ -6910,6 +6910,78 @@ mod tests {
     }
 
     #[test]
+    fn funding_arriving_after_balance_snapshot_is_paid_from_its_actual_tranche() {
+        struct RacingIndex {
+            inner: NewestFirstExclusiveIndex,
+            ledger: BalanceRecordingLedger,
+        }
+        #[async_trait::async_trait]
+        impl IndexClient for RacingIndex {
+            async fn get_account_identifier_transactions(
+                &self,
+                account_identifier: String,
+                start: Option<u64>,
+                max_results: u64,
+            ) -> Result<GetAccountIdentifierTransactionsResponse, crate::clients::ClientError>
+            {
+                self.ledger.set_payout_balance_e8s(100_000_000);
+                self.inner
+                    .get_account_identifier_transactions(account_identifier, start, max_results)
+                    .await
+            }
+        }
+        let now = 4_350;
+        let mut cfg = test_config();
+        cfg.staking_account.owner = Principal::from_text("qoctq-giaaa-aaaaa-aaaea-cai").unwrap();
+        cfg.stake_recognition_delay_seconds = Some(1);
+        state::clear_skip_ranges();
+        state::set_state(state::State::new(cfg.clone(), now));
+        let beneficiary = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai").unwrap();
+        let payout_id = account_identifier_text_for_account(&payout_account());
+        let funding_id = account_identifier_text_for_account(&cfg.funding_source_account);
+        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
+        let ledger = BalanceRecordingLedger::new(10_000, 50_000_000, 100_000_000, vec![111]);
+        let index = RacingIndex {
+            ledger: ledger.clone(),
+            inner: NewestFirstExclusiveIndex::from_history(vec![
+                funding_tx_at(10, &funding_id, &payout_id, 100_000_000, 20_000_000_000),
+                commitment_tx_at(
+                    1,
+                    &staking_id,
+                    100_000_000,
+                    Some(beneficiary.to_text().into_bytes()),
+                    0,
+                ),
+            ]),
+        };
+        let cmc = ScriptedCmc::new(vec![CmcStep::Ok]);
+        assert!(run_ready(process_payout(
+            &ledger,
+            &index,
+            &cmc,
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+            now * 1_000_000_000,
+            now
+        )));
+        assert_eq!(
+            state::with_state(|st| st.forced_rescue_reason.clone()),
+            None
+        );
+        assert_eq!(ledger.transfer_amounts(), vec![99_990_000]);
+        assert_eq!(cmc.call_count(), 1);
+        let args = ledger.transfer_args.lock().unwrap();
+        assert_eq!(
+            args[0].to,
+            logic::cmc_deposit_account(cfg.cmc_canister_id, beneficiary)
+        );
+        assert_eq!(
+            state::with_state(|st| st.last_processed_funding_tx_id),
+            Some(10)
+        );
+    }
+
+    #[test]
     fn funding_tranche_balance_mismatch_latches_forced_rescue_without_creating_job() {
         let now_secs = 4_350;
         let cfg = test_config();
