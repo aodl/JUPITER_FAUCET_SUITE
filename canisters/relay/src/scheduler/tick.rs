@@ -41,6 +41,7 @@ pub(crate) enum MainTickOutcome {
     MainGuardBusy,
     SplitterGuardBusy,
     SplitterPaused,
+    NotDue { retry_after_seconds: u64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,18 +107,21 @@ async fn main_tick(force: bool, splitter_busy_retry_delay: Option<u64>) -> MainT
 }
 
 async fn scheduled_main_tick() {
-    if main_tick(false, Some(SPLITTER_MAIN_CONTINUATION_DELAY_SECONDS)).await
-        == MainTickOutcome::MainGuardBusy
-    {
-        schedule_scheduled_main_retry();
-    }
+    let delay = match main_tick(false, Some(SPLITTER_MAIN_CONTINUATION_DELAY_SECONDS)).await {
+        MainTickOutcome::MainGuardBusy => SCHEDULED_MAIN_RETRY_SECONDS,
+        MainTickOutcome::NotDue {
+            retry_after_seconds,
+        } => retry_after_seconds,
+        _ => return,
+    };
+    schedule_scheduled_main_retry(delay);
 }
 
-fn schedule_scheduled_main_retry() {
+fn schedule_scheduled_main_retry(delay_seconds: u64) {
     if !reserve_scheduled_main_retry() {
         return;
     }
-    ic_cdk_timers::set_timer(Duration::from_secs(SCHEDULED_MAIN_RETRY_SECONDS), async {
+    ic_cdk_timers::set_timer(Duration::from_secs(delay_seconds.max(1)), async {
         clear_scheduled_main_retry();
         scheduled_main_tick().await;
     });
@@ -234,11 +238,12 @@ async fn run_main_tick_with_clients_for_relay<
     let lease = guard.lease_token();
     if !force {
         let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
-        let recently_ran =
-            state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
-        if recently_ran {
-            guard.finish(now_secs);
-            return MainTickOutcome::Completed;
+        let elapsed = state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts));
+        if elapsed < min_gap {
+            guard.release_without_finishing();
+            return MainTickOutcome::NotDue {
+                retry_after_seconds: min_gap - elapsed,
+            };
         }
     }
 
@@ -4266,6 +4271,20 @@ mod tests {
         assert!(!state::with_state(|state| {
             state.splitter_main_continuation_requested
         }));
+    }
+
+    #[test]
+    fn early_daily_attempt_preserves_last_completion_and_runs_when_remaining_gap_elapses() {
+        reset_daily_cadence_state();
+        state::with_state_mut(|st| st.last_main_run_ts = 100_120);
+        let ledger = CadenceLedger::new(Vec::new());
+        block_on(run_daily_cadence_tick(false, 186_400, &ledger));
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), 100_120);
+        assert_eq!(
+            block_on(run_daily_cadence_tick(false, 186_460, &ledger)),
+            MainTickOutcome::Completed
+        );
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), 186_460);
     }
 
     #[test]
