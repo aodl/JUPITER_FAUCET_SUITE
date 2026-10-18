@@ -132,13 +132,14 @@ fn count_sustained_failure(
     last: &std::cell::Cell<Option<u64>>,
     failures: u8,
     now_secs: u64,
+    min_gap_seconds: u64,
 ) -> bool {
     if failures == 0 {
         last.set(Some(now_secs));
         return true;
     }
     match last.get() {
-        Some(previous) if now_secs.saturating_sub(previous) >= 60 => {
+        Some(previous) if now_secs.saturating_sub(previous) >= min_gap_seconds => {
             last.set(Some(now_secs));
             true
         }
@@ -158,6 +159,7 @@ fn count_latest_failure(st: &state::State, now_secs: u64) -> bool {
                 .unwrap_or(0)
                 .max(st.consecutive_index_latest_unreadable_failures.unwrap_or(0)),
             now_secs,
+            st.config.main_interval_seconds.max(60),
         )
     })
 }
@@ -327,6 +329,7 @@ pub(super) fn apply_anchor_observation(
             last,
             st.consecutive_index_anchor_failures.unwrap_or(0),
             now_secs,
+            st.config.main_interval_seconds.max(60),
         )
     }) {
         return;

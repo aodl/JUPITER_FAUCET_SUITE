@@ -400,9 +400,9 @@ Unlike the disburser, the faucet also has code-backed forced rescue latches tied
 - `IndexAnchorMissing`
   - if `expected_first_staking_tx_id` is configured and the observed oldest staking-account tx ID does not match it twice in a row
 - `IndexLatestInvariantBroken`
-  - if the staking-account balance changes and the latest staking-account tx ID is successfully read but does not change, twice in a row
+  - if two operational observations show malformed history or a changed Index balance at the same Index tip
 - `IndexLatestUnreadable`
-  - if the staking-account balance changes and the canister cannot confirm the latest staking-account tx ID, twice in a row
+  - if the canister cannot read Index history across two operational observations
 - `CmcZeroSuccessRuns`
   - if two completed payout jobs in a row make beneficiary CMC notify attempts but record zero successful beneficiary top-up notifications
 - `AccountingInvariantBroken`
@@ -414,7 +414,9 @@ Unlike the disburser, the faucet also has code-backed forced rescue latches tied
 - a persisted `skip_range_invariant_fault` latch
   - if persisted skip-range replay hints become internally inconsistent; the faucet records an explicit fail-closed rescue latch instead of trapping so controller reconciliation can react to durable fault state
 
-Strict-tranche accounting fails closed on persistent tranche invariants. If the Faucet discovers a funding tranche that cannot be safely processed, such as a funding amount exceeding the current payout-account balance or a qualifying funding transfer without a timestamp, it latches a forced-rescue reason rather than retrying silently forever. Transient ledger/index/CMC call failures continue to use the existing retry/failure-counter paths and do not immediately trigger forced rescue.
+Index health failures count at most once per configured main interval (with a 60-second minimum). Immediate and trailing pokes share that observation window. A coherent older Index balance/tip is lag, not an invariant failure; a fresh Ledger balance is never attached to an unrelated old Index tip. Existing rescue latches remain until explicitly cleared.
+
+Strict-tranche accounting fails closed on persistent tranche invariants. If the Faucet discovers a funding tranche that cannot be safely processed, such as a funding amount exceeding a fresh reread of the payout-account balance or a qualifying funding transfer without a timestamp, it latches a forced-rescue reason rather than retrying silently forever. Transient ledger/index/CMC call failures continue to use the existing retry/failure-counter paths and do not immediately trigger forced rescue.
 
 These latches are persisted and can be cleared via upgrade args when appropriate. Forced rescue reasons only lead to controller changes when autonomous rescue is deliberately armed. Funding discovery emits compact `FUNDING` logs that distinguish `found`, `empty`, `in_progress`, `unreadable`, and `balance_mismatch`, so tranche discovery and strict-accounting failures remain visible in production logs.
 

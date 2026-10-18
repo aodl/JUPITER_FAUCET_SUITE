@@ -1573,6 +1573,22 @@ mod tests {
     }
 
     #[test]
+    fn canonical_index_outage_counts_daily_episodes_instead_of_separate_pokes() {
+        let mut st = state::State::new(test_config_with_intervals(86_400, 86_400), 0);
+        for now in [1_000, 1_010, 1_060, 4_600] {
+            apply_latest_observation(&mut st, 200, LatestScan::Unreadable, now);
+        }
+        assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(1));
+        assert_eq!(st.forced_rescue_reason, None);
+        apply_latest_observation(&mut st, 200, LatestScan::Unreadable, 87_400);
+        assert_eq!(st.consecutive_index_latest_unreadable_failures, Some(2));
+        assert_eq!(
+            st.forced_rescue_reason,
+            Some(ForcedRescueReason::IndexLatestUnreadable)
+        );
+    }
+
+    #[test]
     fn immediate_and_trailing_failures_are_one_episode_but_prolonged_outage_latches() {
         let mut st = state::State::new(test_config(), 0);
         for now in [1_000, 1_000, 1_010] {
