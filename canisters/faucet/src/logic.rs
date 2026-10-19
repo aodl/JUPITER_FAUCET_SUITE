@@ -737,25 +737,46 @@ mod tests {
     }
 
     #[test]
-    fn transfer_from_transactions_are_not_treated_as_commitments() {
-        let staking = "staking-account".to_string();
-        let tx = IndexTransactionWithId {
-            id: 9,
-            transaction: IndexTransaction {
-                memo: 0,
-                icrc1_memo: Some(target_canister().to_text().into_bytes()),
-                operation: IndexOperation::TransferFrom {
-                    to: staking.clone(),
-                    fee: Tokens::new(10_000),
-                    from: "sender".to_string(),
-                    amount: Tokens::new(123),
-                    spender: "spender".to_string(),
-                },
-                created_at_time: None,
-                timestamp: None,
-            },
+    fn real_delegated_transfer_preserves_incoming_amount_and_memo_policy() {
+        let bytes = hex::decode(
+            include_str!("../../../crates/ic-clients/tests/fixtures/icp-index-delegated-transfer-response.hex")
+                .split_whitespace().collect::<String>(),
+        ).unwrap();
+        let decoded: crate::clients::index::GetAccountIdentifierTransactionsResult =
+            candid::decode_one(&bytes).expect("frozen real ICP Index response");
+        let crate::clients::index::GetAccountIdentifierTransactionsResult::Ok(page) = decoded
+        else {
+            panic!("expected real successful page");
         };
-        assert!(memo_bytes_from_index_tx(&tx, &staking).is_none());
+        let mut tx = page.transactions[0].clone();
+        let IndexOperation::Transfer {
+            from,
+            to,
+            spender: Some(spender),
+            ..
+        } = &tx.transaction.operation
+        else {
+            panic!("expected delegated Transfer");
+        };
+        let recipient = to.clone();
+        assert_ne!(from, spender);
+        assert!(memo_bytes_from_index_tx(&tx, spender).is_none());
+        let incoming = memo_bytes_from_index_tx(&tx, &recipient).unwrap();
+        assert_eq!(incoming.amount_e8s, 20_000_000);
+        assert_eq!(incoming.memo_bytes, tx.transaction.icrc1_memo);
+        assert_eq!(
+            classify_commitment(1, &incoming),
+            CommitmentValidity::IgnoreBadMemo
+        );
+        // Keep the real operation; only replace its non-Jupiter memo to exercise
+        // valid commitment recognition through the same delegated wire shape.
+        tx.transaction.icrc1_memo = Some(target_canister().to_text().into_bytes());
+        let incoming = memo_bytes_from_index_tx(&tx, &recipient).unwrap();
+        assert_eq!(incoming.amount_e8s, 20_000_000);
+        assert!(matches!(
+            classify_commitment(1, &incoming),
+            CommitmentValidity::Valid { .. }
+        ));
     }
 
     #[test]

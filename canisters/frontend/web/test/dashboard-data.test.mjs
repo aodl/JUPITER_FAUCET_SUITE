@@ -286,7 +286,7 @@ test('loadDashboardData queries the ICP index directly for recent maturity route
                 icrc1_memo: [],
                 created_at_time: [{ timestamp_nanos: 1_710_000_000_000_000_055n }],
                 timestamp: [],
-                operation: { TransferFrom: { from: sourceId, to: rewardsId, amount: { e8s: 22_000_000n }, fee: { e8s: 10_000n }, spender: sourceId } },
+                operation: { Transfer: { from: sourceId, to: rewardsId, amount: { e8s: 22_000_000n }, fee: { e8s: 10_000n }, spender: ['delegated-spender'] } },
               },
             }] } };
           }

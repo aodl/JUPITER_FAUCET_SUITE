@@ -53,7 +53,6 @@ function tokenE8s(tokens) {
 function transferOperation(operation) {
   if (!operation || Array.isArray(operation)) return null;
   if (Object.prototype.hasOwnProperty.call(operation, 'Transfer')) return operation.Transfer;
-  if (Object.prototype.hasOwnProperty.call(operation, 'TransferFrom')) return operation.TransferFrom;
   return null;
 }
 

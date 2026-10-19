@@ -130,9 +130,6 @@ pub(super) fn indexed_route_amount_from_tx(
         crate::clients::index::IndexOperation::Transfer {
             from, to, amount, ..
         } if from == expected_from && to == expected_to => Some(amount.e8s()),
-        crate::clients::index::IndexOperation::TransferFrom {
-            from, to, amount, ..
-        } if from == expected_from && to == expected_to => Some(amount.e8s()),
         _ => None,
     }
 }

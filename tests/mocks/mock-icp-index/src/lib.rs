@@ -37,13 +37,6 @@ pub enum IndexOperation {
         amount: Tokens,
         spender: Option<String>,
     },
-    TransferFrom {
-        to: String,
-        fee: Tokens,
-        from: String,
-        amount: Tokens,
-        spender: String,
-    },
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -154,24 +147,6 @@ fn account_balance_e8s(txs: &[IndexTransactionWithId], account_identifier: &str)
                     balance
                 }
             }
-            IndexOperation::TransferFrom {
-                to,
-                fee,
-                from,
-                amount,
-                ..
-            } => {
-                let balance = if from == account_identifier {
-                    balance.saturating_sub(amount.e8s.saturating_add(fee.e8s))
-                } else {
-                    balance
-                };
-                if to == account_identifier {
-                    balance.saturating_add(amount.e8s)
-                } else {
-                    balance
-                }
-            }
             _ => balance,
         })
 }
@@ -183,8 +158,7 @@ fn operation_accounts(operation: &IndexOperation, account_identifier: &str) -> b
         }
         IndexOperation::Burn { from, .. } => from == account_identifier,
         IndexOperation::Mint { to, .. } => to == account_identifier,
-        IndexOperation::Transfer { to, from, .. }
-        | IndexOperation::TransferFrom { to, from, .. } => {
+        IndexOperation::Transfer { to, from, .. } => {
             to == account_identifier || from == account_identifier
         }
     }
@@ -611,12 +585,12 @@ mod tests {
                 ),
                 transaction(
                     6,
-                    IndexOperation::TransferFrom {
+                    IndexOperation::Transfer {
                         to: other.clone(),
                         fee: Tokens { e8s: 10_000 },
                         from: target.clone(),
                         amount: Tokens { e8s: 30_000 },
-                        spender: other.clone(),
+                        spender: Some(other.clone()),
                     },
                 ),
                 transfer_tx(8, "unrelated"),

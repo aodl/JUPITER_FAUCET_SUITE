@@ -31,7 +31,7 @@ The historian scans the same ICRC-1 staking account address that [`jupiter-fauce
 
 Unlike the faucet, it keeps an incremental cursor and does not rescan old staking transfers after they have already been indexed.
 
-For each eligible incoming `Transfer` **to** the staking account (`TransferFrom` records are ignored) it can derive:
+For each eligible incoming `Transfer` **to** the staking account (including delegated transfers encoded as `Transfer` with an optional `spender`) it can derive:
 
 - transaction ID
 - timestamp (from index timestamp when available, otherwise created-at time if available)

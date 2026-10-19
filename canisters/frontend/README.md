@@ -181,6 +181,17 @@ The checked-in historian declarations under [`web/declarations/jupiter_historian
 
 [`web/declarations/icp_ledger/`](web/declarations/icp_ledger) is a checked-in declaration subset for the production ICP ledger methods the frontend uses. It is intentionally kept separate from any mock canister declarations; at runtime the actor is pointed at the ledger canister ID returned by historian status.
 
+The ICP Index browser method subset is defined in
+[`web/declarations/icp_index/icp_index.did`](web/declarations/icp_index/icp_index.did),
+using the pinned upstream interface revision recorded there. Delegated transfers
+use `Transfer` with an optional `spender`; attribution remains with `from`.
+Regenerate its JavaScript binding from the repository root with:
+
+```bash
+didc bind -t js canisters/frontend/web/declarations/icp_index/icp_index.did \
+  > canisters/frontend/web/declarations/icp_index/icp_index.did.js
+```
+
 ## Frontend-only tests
 
 These browser/data-loader checks can be driven through `xtask` as well:

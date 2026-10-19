@@ -65,7 +65,7 @@ If not, that endowment is skipped for that payout job and the unallocated value 
 
 A staking-account transaction is only included in attribution if all of the following are true:
 
-1. it is an incoming `Transfer` **to** the configured `staking_account` (`TransferFrom` records are ignored)
+1. it is an incoming `Transfer` **to** the configured `staking_account` (including delegated transfers encoded as `Transfer` with an optional `spender`)
 2. the transferred amount is at least `min_tx_e8s`
 3. the memo can be decoded as a supported ASCII target declaration
 

@@ -116,9 +116,6 @@ fn push_incoming_credit(
     match &entry.transaction.operation {
         IndexOperation::Transfer {
             to, from, amount, ..
-        }
-        | IndexOperation::TransferFrom {
-            to, from, amount, ..
         } if to == splitter_account && from != splitter_account => {
             funding.push_back(UpstreamCredit {
                 tx_id: entry.id,
@@ -272,8 +269,15 @@ fn reconstruct_splitter_history_bounded(
                 from,
                 amount,
                 fee,
-                ..
+                spender,
             } if from == &splitter_account => {
+                if spender.is_some() {
+                    return reward_history::HistoricalReconstruction::Malformed(provenance_error(
+                        splitter_number,
+                        Some(entry.id),
+                        "unsupported_delegated_debit",
+                    ));
+                }
                 if entry.transaction.memo != 0 || entry.transaction.icrc1_memo.is_some() {
                     return reward_history::HistoricalReconstruction::Malformed(provenance_error(
                         splitter_number,
@@ -399,13 +403,6 @@ fn reconstruct_splitter_history_bounded(
                         "unexpected_transfer_destination",
                     ));
                 }
-            }
-            IndexOperation::TransferFrom { from, .. } if from == &splitter_account => {
-                return reward_history::HistoricalReconstruction::Malformed(provenance_error(
-                    splitter_number,
-                    Some(entry.id),
-                    "unsupported_transfer_from_debit",
-                ));
             }
             IndexOperation::Burn { from, .. } if from == &splitter_account => {
                 return reward_history::HistoricalReconstruction::Malformed(provenance_error(
@@ -598,16 +595,21 @@ mod tests {
         }
     }
 
-    fn transfer_from(id: u64, from: String, to: String, amount: u64) -> IndexTransactionWithId {
+    fn delegated_transfer(
+        id: u64,
+        from: String,
+        to: String,
+        amount: u64,
+    ) -> IndexTransactionWithId {
         IndexTransactionWithId {
             id,
             transaction: IndexTransaction {
                 memo: 0,
                 icrc1_memo: None,
-                operation: IndexOperation::TransferFrom {
+                operation: IndexOperation::Transfer {
                     from,
                     to,
-                    spender: "spender".to_string(),
+                    spender: Some("spender".to_string()),
                     amount: Tokens::new(amount),
                     fee: Tokens::new(10),
                 },
@@ -700,6 +702,30 @@ mod tests {
                 amount_e8s: 490,
             },
         )
+    }
+
+    #[test]
+    fn delegated_outgoing_splitter_leg_is_rejected_on_supported_wire_shape() {
+        let (mut history, anchor) = one_source_job(50, [1; 32], 1_000, 10, 10, 1);
+        assert!(matches!(
+            reconstruct_splitter_history(
+                relay(),
+                50,
+                &history,
+                std::slice::from_ref(&anchor),
+                true
+            ),
+            reward_history::HistoricalReconstruction::Complete(_)
+        ));
+        let IndexOperation::Transfer { spender, .. } = &mut history[1].transaction.operation else {
+            panic!("expected default leg");
+        };
+        *spender = Some(hex::encode([2; 32]));
+        assert!(
+            reconstruct_splitter_history(relay(), 50, &history, &[anchor], true)
+                .unwrap_malformed()
+                .contains("unsupported_delegated_debit")
+        );
     }
 
     #[test]
@@ -803,11 +829,11 @@ mod tests {
     }
 
     #[test]
-    fn repeated_transfer_from_and_mint_sources_aggregate_without_eligible_dilution() {
+    fn repeated_delegated_transfers_and_mint_sources_aggregate_without_eligible_dilution() {
         let (splitter, default, subaccount_one) = split_accounts(50);
         let history = vec![
             transfer(1, hex::encode([1; 32]), splitter.clone(), 400, 10),
-            transfer_from(2, hex::encode([1; 32]), splitter.clone(), 300),
+            delegated_transfer(2, hex::encode([1; 32]), splitter.clone(), 300),
             mint(3, splitter.clone(), 300),
             transfer(4, splitter.clone(), default, 490, 10),
             transfer(5, splitter, subaccount_one, 490, 10),
@@ -924,8 +950,8 @@ mod tests {
         let (splitter, default, subaccount_one) = split_accounts(50);
         let mut cases = Vec::new();
         cases.push((
-            vec![transfer_from(1, splitter.clone(), default.clone(), 1)],
-            "unsupported_transfer_from_debit",
+            vec![delegated_transfer(1, splitter.clone(), default.clone(), 1)],
+            "unsupported_delegated_debit",
         ));
         cases.push((
             vec![IndexTransactionWithId {

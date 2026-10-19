@@ -265,7 +265,7 @@ mod tests {
         }
     }
 
-    fn transfer_from_between_accounts_tx(
+    fn delegated_transfer_between_accounts_tx(
         id: u64,
         from: &str,
         to: &str,
@@ -277,12 +277,12 @@ mod tests {
             transaction: IndexTransaction {
                 memo: 0,
                 icrc1_memo: None,
-                operation: IndexOperation::TransferFrom {
+                operation: IndexOperation::Transfer {
                     to: to.to_string(),
                     fee: Tokens::new(10_000),
                     from: from.to_string(),
                     amount: Tokens::new(amount_e8s),
-                    spender: "spender".into(),
+                    spender: Some("spender".into()),
                 },
                 created_at_time: None,
                 timestamp: Some(IndexTimeStamp { timestamp_nanos }),
@@ -4689,7 +4689,8 @@ mod tests {
     }
 
     #[test]
-    fn route_indexing_counts_transfer_from_and_skips_repeated_cursor_without_double_counting() {
+    fn route_indexing_counts_delegated_transfer_and_skips_repeated_cursor_without_double_counting()
+    {
         let _staking_id = configure_state(1);
         let (source, output, rewards) = state::with_state(|st| {
             (
@@ -4704,7 +4705,7 @@ mod tests {
         let mock = MockIndexClient::new(vec![
             GetAccountIdentifierTransactionsResponse {
                 balance: 0,
-                transactions: vec![transfer_from_between_accounts_tx(
+                transactions: vec![delegated_transfer_between_accounts_tx(
                     10,
                     &source_id,
                     &output_id,
@@ -4729,7 +4730,13 @@ mod tests {
                 transactions: vec![
                     transfer_between_accounts_tx(12, "third-party", &output_id, 333_000_000, 22),
                     transfer_between_accounts_tx(11, &source_id, &output_id, 22_000_000, 21),
-                    transfer_from_between_accounts_tx(10, &source_id, &output_id, 999_000_000, 20),
+                    delegated_transfer_between_accounts_tx(
+                        10,
+                        &source_id,
+                        &output_id,
+                        999_000_000,
+                        20,
+                    ),
                 ],
                 oldest_tx_id: Some(10),
             },

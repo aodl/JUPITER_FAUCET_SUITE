@@ -251,13 +251,6 @@ fn invert_account_transaction(
             amount,
             fee,
             ..
-        }
-        | IndexOperation::TransferFrom {
-            from,
-            to,
-            amount,
-            fee,
-            ..
         } => match (from == account, to == account) {
             (true, true) => add(fee.e8s()),
             (true, false) => add(amount
@@ -340,6 +333,30 @@ mod tests {
             .build()
             .unwrap()
             .block_on(future)
+    }
+
+    #[test]
+    fn real_delegated_transfer_debits_owner_and_credits_recipient_not_spender() {
+        let bytes = hex::decode(include_str!("../../../../crates/ic-clients/tests/fixtures/icp-index-delegated-transfer-response.hex").split_whitespace().collect::<String>()).unwrap();
+        let decoded: jupiter_ic_clients::index::GetAccountIdentifierTransactionsResult =
+            candid::decode_one(&bytes).unwrap();
+        let jupiter_ic_clients::index::GetAccountIdentifierTransactionsResult::Ok(page) = decoded
+        else {
+            panic!("expected successful real Index page");
+        };
+        let tx = &page.transactions[0];
+        let IndexOperation::Transfer {
+            from,
+            to,
+            spender: Some(spender),
+            ..
+        } = &tx.transaction.operation
+        else {
+            panic!("expected real delegated Transfer");
+        };
+        assert_eq!(invert_account_transaction(from, 0, tx).unwrap(), 20_010_000);
+        assert_eq!(invert_account_transaction(to, 20_000_000, tx).unwrap(), 0);
+        assert_eq!(invert_account_transaction(spender, 0, tx).unwrap(), 0);
     }
 
     #[test]

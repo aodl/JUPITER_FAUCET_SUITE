@@ -746,28 +746,47 @@ mod tests {
         assert!(merged.contains(&CanisterTrackingReason::SnsDiscovery));
     }
     #[test]
-    fn transfer_from_transactions_do_not_count_as_staking_commitments() {
-        let tx = IndexTransactionWithId {
-            id: 42,
-            transaction: IndexTransaction {
-                memo: 0,
-                icrc1_memo: Some(target_canister().to_text().into_bytes()),
-                operation: IndexOperation::TransferFrom {
-                    to: "staking-account".to_string(),
-                    fee: Tokens::new(10_000),
-                    from: "from-account".to_string(),
-                    amount: Tokens::new(1_000_000),
-                    spender: "spender-account".to_string(),
-                },
-                created_at_time: Some(IndexTimeStamp {
-                    timestamp_nanos: 123,
-                }),
-                timestamp: Some(IndexTimeStamp {
-                    timestamp_nanos: 456,
-                }),
-            },
+    fn real_delegated_transfer_preserves_incoming_amount_and_memo_policy() {
+        let bytes = hex::decode(
+            include_str!("../../../crates/ic-clients/tests/fixtures/icp-index-delegated-transfer-response.hex")
+                .split_whitespace().collect::<String>(),
+        ).unwrap();
+        let decoded: crate::clients::index::GetAccountIdentifierTransactionsResult =
+            candid::decode_one(&bytes).expect("frozen real ICP Index response");
+        let crate::clients::index::GetAccountIdentifierTransactionsResult::Ok(page) = decoded
+        else {
+            panic!("expected real successful page");
         };
-        assert!(memo_bytes_from_index_tx(&tx, "staking-account").is_none());
-        assert!(indexed_commitment_from_tx(&tx, "staking-account", 1).is_none());
+        let mut tx = page.transactions[0].clone();
+        let IndexOperation::Transfer {
+            from,
+            to,
+            spender: Some(spender),
+            ..
+        } = &tx.transaction.operation
+        else {
+            panic!("expected delegated Transfer");
+        };
+        let recipient = to.clone();
+        assert_ne!(from, spender);
+        assert!(memo_bytes_from_index_tx(&tx, spender).is_none());
+        let (id, memo, amount, _) = memo_bytes_from_index_tx(&tx, &recipient).unwrap();
+        assert_eq!(id, 4);
+        assert_eq!(amount, 20_000_000);
+        assert_eq!(memo, tx.transaction.icrc1_memo);
+        assert!(matches!(
+            indexed_commitment_from_tx(&tx, &recipient, 1),
+            Some(IndexedCommitmentEntry::Invalid(_))
+        ));
+        // Keep the real operation; replace only its non-Jupiter memo.
+        tx.transaction.icrc1_memo = Some(target_canister().to_text().into_bytes());
+        let Some(IndexedCommitmentEntry::Valid(commitment)) =
+            indexed_commitment_from_tx(&tx, &recipient, 1)
+        else {
+            panic!("delegated incoming commitment must count");
+        };
+        assert_eq!(commitment.tx_id, 4);
+        assert_eq!(commitment.amount_e8s, 20_000_000);
+        assert!(commitment.counts_toward_faucet);
     }
 }

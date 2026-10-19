@@ -845,10 +845,11 @@ fn reconstruct_batches_bounded(
                 from,
                 amount,
                 fee,
-                ..
+                spender,
             } => {
                 if from == relay_account_identifier {
-                    let expected = to == faucet_account_identifier
+                    let expected = spender.is_none()
+                        && to == faucet_account_identifier
                         && entry.transaction.icrc1_memo.as_deref() == Some(commitment_memo)
                         && amount.e8s() >= logic::MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S;
                     if !expected {
@@ -915,30 +916,6 @@ fn reconstruct_batches_bounded(
                         splitter_credits,
                         ineligible_e8s,
                     });
-                } else if to == relay_account_identifier {
-                    funding.push_back(FundingCredit {
-                        tx_id: entry.id,
-                        origin: decode_account_identifier(from).map_or(
-                            FundingOrigin::MintOrInvalid,
-                            |source| {
-                                intrinsic_splitters
-                                    .get(&source)
-                                    .copied()
-                                    .map(FundingOrigin::Splitter)
-                                    .unwrap_or(FundingOrigin::External(source))
-                            },
-                        ),
-                        amount_e8s: amount.e8s(),
-                    });
-                }
-            }
-            IndexOperation::TransferFrom {
-                to, from, amount, ..
-            } => {
-                if from == relay_account_identifier {
-                    return reward_history::HistoricalReconstruction::Malformed(
-                        "unexpected_subaccount_debit".to_string(),
-                    );
                 } else if to == relay_account_identifier {
                     funding.push_back(FundingCredit {
                         tx_id: entry.id,
@@ -1295,14 +1272,19 @@ mod tests {
         transaction
     }
 
-    fn transfer_from(id: u64, from: String, to: String, amount: u64) -> IndexTransactionWithId {
+    fn delegated_transfer(
+        id: u64,
+        from: String,
+        to: String,
+        amount: u64,
+    ) -> IndexTransactionWithId {
         tx(
             id,
             id,
-            IndexOperation::TransferFrom {
+            IndexOperation::Transfer {
                 from,
                 to,
-                spender: "spender".to_string(),
+                spender: Some("spender".to_string()),
                 amount: Tokens::new(amount),
                 fee: Tokens::new(10_000),
             },
@@ -1320,6 +1302,49 @@ mod tests {
             &BTreeMap::new(),
         )
         .unwrap_complete()
+    }
+
+    #[test]
+    fn delegated_outgoing_commitment_is_rejected_on_supported_wire_shape() {
+        let mut history = vec![
+            transfer(
+                1,
+                hex::encode([1; 32]),
+                "relay".to_string(),
+                100_010_000,
+                10_000,
+                None,
+            ),
+            transfer(
+                2,
+                "relay".to_string(),
+                "faucet".to_string(),
+                100_000_000,
+                10_000,
+                Some(b"commit".to_vec()),
+            ),
+        ];
+        assert_eq!(
+            reconstruct(&history)[0].sources.get(&[1; 32]),
+            Some(&100_010_000)
+        );
+        let IndexOperation::Transfer { spender, .. } = &mut history[1].transaction.operation else {
+            panic!("expected commitment");
+        };
+        *spender = Some(hex::encode([2; 32]));
+        assert_eq!(
+            reconstruct_batches_with_splitters(
+                &history,
+                true,
+                100,
+                "relay",
+                "faucet",
+                b"commit",
+                &BTreeMap::new()
+            )
+            .unwrap_malformed(),
+            "unexpected_subaccount_debit"
+        );
     }
 
     #[test]
@@ -1452,10 +1477,10 @@ mod tests {
     }
 
     #[test]
-    fn transfer_from_mint_exact_fee_and_trailing_deposits_are_classified_exactly() {
+    fn delegated_transfer_mint_exact_fee_and_trailing_deposits_are_classified_exactly() {
         let source = hex::encode([3; 32]);
         let batches = reconstruct(&[
-            transfer_from(1, source, "relay".to_string(), 60_000_000),
+            delegated_transfer(1, source, "relay".to_string(), 60_000_000),
             tx(
                 2,
                 2,
