@@ -28,10 +28,12 @@ Unless otherwise noted, command examples in this README are run from the reposit
 3. splitting staged ICP into the configured recipients
 4. reconciling healthy vs recovery controller sets when autonomous rescue is armed
 
-It also performs two best-effort NNS maintenance calls that are useful but intentionally non-blocking:
+It also performs two best-effort NNS maintenance calls before the full-neuron read and payout/maturity decision:
 
-- `RefreshVotingPower` after a successful maturity-disbursement initiation
-- `ClaimOrRefresh` on every successful main tick
+- `ClaimOrRefresh` updates the configured neuron’s stake
+- `RefreshVotingPower` refreshes its voting power
+
+These calls do not depend on a successful full-neuron read or a maturity initiation. A maintenance failure does not prevent the later stages while the invocation still owns its lease.
 
 ## External dependencies
 
@@ -63,23 +65,23 @@ After verifying that the deployed Wasm matches the source build, users can verif
 
 ### Main tick sequence
 
-On each successful main tick, the canister does the following:
+An eligible scheduled main tick proceeds in this order:
 
-1. acquires a 15-minute main-tick lease so overlapping timer runs do not race
-2. reads the configured neuron from NNS Governance
-3. checks whether NNS already reports a maturity disbursement in progress
-4. if **no** disbursement is in flight:
+1. acquires a 15-minute main-tick lease and applies the cadence check
+2. best-effort calls `ClaimOrRefresh`
+3. best-effort calls `RefreshVotingPower`
+4. reads the configured full neuron from NNS Governance
+5. checks whether NNS already reports a maturity disbursement in progress
+6. if **no** disbursement is in flight:
    - processes any staged ICP already sitting in the canister’s default ledger account
+   - after payout completion, persists the neuron age for the *next* payout split
    - initiates `DisburseMaturity` for **100%** of available maturity to the canister’s default account
-   - records the neuron age that will be used for the *next* payout split
-   - best-effort calls `RefreshVotingPower`
-5. if a maturity disbursement **is** already in flight, the canister intentionally skips payout processing and does not initiate another disbursement
-6. best-effort calls `ClaimOrRefresh` on every successful tick, regardless of whether a maturity disbursement was already in flight
-7. logs only errors plus a single `Cycles: ...` line per run, and logs `CONFIG ...` only when the tick reaches the payout / maturity-disbursement path
+7. if a maturity disbursement **is** already in flight, skips payout processing and does not initiate another disbursement
+8. logs errors plus a single `Cycles: ...` line per completed run, and logs `CONFIG ...` only when the tick reaches the payout / maturity-disbursement path
 
 The skip while in flight is intentional. The implementation stores exactly one captured age snapshot (`prev_age_seconds`) and later uses that snapshot when staged ICP is split. By refusing to overlap payout work with an already in-flight maturity disbursement, the canister avoids applying the wrong captured age to staged ICP from a different disbursement cycle.
 
-That ordering also matters for the faucet's round-accounting fairness model. Newly added stake may become visible in the neuron's live stake before its proportional base maturity has fully reached the faucet payout account. The faucet addresses that directly with a round-effective denominator: it carries a round-start staking snapshot forward, clamps the completed round by tx id, and applies a conservative stake-recognition delay before weighting valid in-round endowments into the denominator. That delay is faucet-side accounting only; it does not alter NNS maturity accrual, maturity spawning, or disburser timing. The disburser-side [PocketIC suite](../../tests/pocketic) exercises the full stake -> maturity -> disburser -> faucet path, while [faucet logic](../faucet/src/logic.rs) mitigates the unfair first-round dilution condition.
+That ordering also matters for the faucet's round-accounting fairness model. Newly added stake may become visible in the neuron's live stake before its proportional base maturity has fully reached the faucet payout account. The faucet addresses that directly with a round-effective denominator: it pins the funding tranche and transaction/time boundary, reconstructs the round-effective weighted denominator from qualifying historical commitments, and applies a conservative stake-recognition delay before weighting valid in-round endowments. The live staking balance is an operational observation, not the authoritative payout denominator. That delay is faucet-side accounting only; it does not alter NNS maturity accrual, maturity spawning, or disburser timing. The disburser-side [PocketIC suite](../../tests/pocketic) exercises the full stake -> maturity -> disburser -> faucet path, while [faucet logic](../faucet/src/logic.rs) mitigates the unfair first-round dilution condition.
 
 ## PocketIC test note on maturity variability
 
@@ -105,7 +107,7 @@ The canister receives disbursed maturity into its **default ledger account**:
 
 The code always treats that default account as the staging area for pending ICP.
 
-If the staged balance is zero on a payout pass, any stale persisted payout plan is cleared and the payout stage succeeds immediately.
+With no persisted plan, a zero staged balance completes the payout stage immediately. An existing plan still reconciles each pending transfer by its exact Ledger identity, even when the balance is zero; an empty balance cannot prove acceptance of a transfer whose reply was lost.
 
 ### Age multiplier
 

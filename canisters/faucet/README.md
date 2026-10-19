@@ -44,7 +44,7 @@ Each payout job works from the funding tranche and staking-account state bounded
 - `denom_staking_balance_e8s` = current ICP balance of the configured staking account, retained as an operational/live snapshot
 - `effective_denom_staking_balance_e8s` = denominator actually used for tranche allocation after applying the funding boundary, stake-recognition delay, and time weighting
 
-The faucet then scans the staking account’s indexed transfer history from the beginning in a streaming, page-by-page pass and evaluates each eligible incoming transfer independently.
+The faucet reconstructs the weighted historical denominator, then traverses the staking account’s indexed transfer history newest-first in bounded pages and evaluates each eligible incoming transfer independently.
 
 For each eligible endowment it computes:
 
@@ -119,12 +119,14 @@ Other projects may propose an alias when they have a compelling interoperability
 A participant declares a faucet target by sending ICP to the configured staking account and placing a supported ASCII declaration in `icrc1_memo`:
 
 - staking account address (ICRC-1 text): `rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68`
-- primary cycles top-up form: the declared canister ID, for example `aaaaa-aa`
+- primary cycles top-up form: the declared canister ID, for example `22255-zqaaa-aaaas-qf6uq-cai`
 - raw ICP default-account form: `canister_id.memo`
 - raw ICP numbered-subaccount form: `canister_id:number.memo`
 - neuron top-up form: decimal NNS neuron ID, optionally `neuron_id.memo`
 
 When using the [NNS dapp](https://nns.ic0.app/wallet/?u=), send to the long-form ICRC-1 staking account address so the text memo path is available. If the memo field is hidden, use the command menu to enable transaction memos before submitting the transfer. The faucet ignores the legacy numeric memo field; neuron IDs are supported only as ASCII text in `icrc1_memo`.
+
+The example is covered by the [shared memo-policy fixtures](../../crates/memo-policy/fixtures/memo-policy-cases.json). The management principal `aaaaa-aa` and anonymous principal `2vxsx-fae` are rejected.
 
 The patron does not need to control the declared canister. Endowments are declarations about the desired beneficiary target, not ownership proofs.
 
@@ -303,7 +305,7 @@ On each successful main tick, the canister:
 
 1. acquires a 15-minute main-tick lease
 2. enforces a minimum gap between automatic runs
-3. if no active payout job exists, snapshots:
+3. if no active payout job exists, reads these operational inputs:
    - current ledger fee
    - payout-account balance
    - staking-account balance
@@ -326,7 +328,7 @@ The faucet performs top-ups on a **best-effort** basis. A payout job attempts to
 
 An active payout job persists:
 
-- the pot and denominator snapshots
+- the fixed funding-tranche pot and the reconstructed weighted historical denominator
 - the scan cursor (`next_start`)
 - aggregate counters used for the eventual summary
 - CMC attempt / success counters used by rescue heuristics
@@ -691,7 +693,7 @@ Do not arm autonomous rescue or narrow to self-only control until the canister i
 
 ### When reading payout behavior
 
-The most important thing to remember is that the faucet is **job-snapshot based**, not streaming-accounting based. New jobs recompute from the full history and a fresh pot snapshot.
+Each job pins one funding tranche and its transaction/time boundaries, reconstructs its round-effective weighted historical denominator, and streams beneficiaries over validated Index pages. The initial live staking balance does not define that denominator.
 
 ### When documenting or operating beneficiaries
 
