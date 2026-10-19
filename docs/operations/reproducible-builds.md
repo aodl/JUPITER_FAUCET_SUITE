@@ -27,6 +27,20 @@ rehearsal. A source-only validator skip does not count as artifact approval.
 
 This runs [`Dockerfile.repro`](../../Dockerfile.repro), copies artifacts into `release-artifacts/`, writes `release-artifacts/release-artifacts.sha256`, and prints the main verification hashes.
 
+The builder pins the Debian 12.13 base image by digest and uses only the dated
+`20260223T000000Z` Debian and Debian-security snapshots, aligned with the origins
+recorded in that base image. It removes inherited `.list` and `.sources` files
+before writing the snapshot sources. Build logs print every active source file
+and APT package policy, including the installed native tool versions. Review
+that origin evidence as well as the artifact comparisons: two matching builds
+alone do not prove that package inputs came from immutable sources. The Rust
+toolchain, verified rustup binary, `ic-wasm` version and package locks remain
+separate pinned inputs.
+
+The reproducibility verifier prints both clean builds' complete file hashes and
+each candidate comparison, so the retained log binds the comparisons to the
+actual candidate bytes, including build metadata.
+
 The `Mainnet module-hash comparison targets (*.wasm.gz)` section contains the hashes to compare with the live canister module hashes.
 
 The decompressed `.wasm` hashes remain available in the sidecar files and full manifest as supporting release evidence, but the normal mainnet comparison uses the `.wasm.gz` installed package hashes.

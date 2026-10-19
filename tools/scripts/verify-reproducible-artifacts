@@ -78,6 +78,11 @@ extract_artifacts "run-b" "$workdir/run-b"
   find . -type f -print0 | sort -z | xargs -0 sha256sum
 ) > "$workdir/run-b.sha256"
 
+echo "Clean build A file hashes:"
+cat "$workdir/run-a.sha256"
+echo "Clean build B file hashes:"
+cat "$workdir/run-b.sha256"
+
 if ! diff -u "$workdir/run-a.sha256" "$workdir/run-b.sha256"; then
   echo "release artifacts differ between clean same-environment rebuilds" >&2
   exit 1
@@ -94,5 +99,6 @@ while IFS= read -r -d '' artifact; do
     echo "clean rebuild does not match canonical candidate: $relative" >&2
     exit 1
   fi
+  printf 'candidate matches: %s\n' "$relative"
 done < <(find "$workdir/run-a" -type f -print0 | sort -z)
 echo "clean rebuilds also match the canonical candidate, including build metadata"

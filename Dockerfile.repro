@@ -1,6 +1,7 @@
 FROM debian:bookworm-slim@sha256:74d56e3931e0d5a1dd51f8c8a2466d21de84a271cd3b5a733b803aa91abf4421 AS builder
 
-ARG DEBIAN_SNAPSHOT=20250331T000000Z
+# Match the dated origins recorded in this pinned Debian 12.13 base image.
+ARG DEBIAN_SNAPSHOT=20260223T000000Z
 ARG RUST_TOOLCHAIN=1.94.1
 ARG RUSTUP_VERSION=1.28.1
 ARG RUSTUP_INIT_SHA256=a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f
@@ -13,10 +14,13 @@ ENV NPM_CONFIG_AUDIT=false
 ENV CARGO_TERM_COLOR=never
 ENV JUPITER_CANONICAL_NODE_DEPENDENCIES=production
 
-RUN printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s bookworm main\n' "$DEBIAN_SNAPSHOT" > /etc/apt/sources.list \
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources \
+    && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s bookworm main\n' "$DEBIAN_SNAPSHOT" > /etc/apt/sources.list \
     && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s bookworm-security main\n' "$DEBIAN_SNAPSHOT" >> /etc/apt/sources.list \
     && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s bookworm-updates main\n' "$DEBIAN_SNAPSHOT" >> /etc/apt/sources.list \
+    && find /etc/apt -maxdepth 2 -type f \( -name '*.list' -o -name '*.sources' \) -print -exec cat {} \; \
     && apt-get -o Acquire::Check-Valid-Until=false update \
+    && apt-cache policy \
     && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
@@ -27,6 +31,7 @@ RUN printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian
         npm \
         python3 \
         xz-utils \
+    && apt-cache policy build-essential ca-certificates curl git gzip nodejs npm python3 xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl --proto '=https' --tlsv1.2 -fsSLo /tmp/rustup-init \
