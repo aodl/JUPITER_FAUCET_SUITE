@@ -8,7 +8,11 @@ pub(super) async fn process_payout<L: LedgerClient>(
     cfg: &state::Config,
     now_nanos: u64,
     now_secs: u64,
+    guard: &MainGuard,
 ) -> bool {
+    if !guard.is_current() {
+        return false;
+    }
     debug_reset_successful_transfer_counter();
 
     let staging = Account {
@@ -22,17 +26,13 @@ pub(super) async fn process_payout<L: LedgerClient>(
         Ok(b) => b,
         Err(_) => return false,
     };
-    if !payout_generation_matches(expected_nonce, expected_plan.as_ref()) {
+    if !guard.is_current() || !payout_generation_matches(expected_nonce, expected_plan.as_ref()) {
         return false;
     }
 
-    // If empty, clear any stale plan and succeed.
-    if balance == 0 {
-        state::with_state_mut(|st| {
-            if st.payout_nonce == expected_nonce && st.payout_plan == expected_plan {
-                st.payout_plan = None;
-            }
-        });
+    // An empty balance cannot confirm a pending transfer whose reply was lost.
+    // Existing plans still reconcile their exact identities with the Ledger.
+    if balance == 0 && expected_plan.is_none() {
         return true;
     }
 
@@ -43,7 +43,7 @@ pub(super) async fn process_payout<L: LedgerClient>(
             Ok(f) => f,
             Err(_) => return false,
         };
-        if !payout_generation_matches(expected_nonce, None) {
+        if !guard.is_current() || !payout_generation_matches(expected_nonce, None) {
             return false;
         }
 
@@ -99,6 +99,9 @@ pub(super) async fn process_payout<L: LedgerClient>(
 
     // Execute the plan until done or a transient error occurs.
     loop {
+        if !guard.is_current() {
+            return false;
+        }
         let plan_opt = state::with_state(|st| st.payout_plan.clone());
         let Some(plan) = plan_opt else { return true };
 
@@ -134,6 +137,8 @@ pub(super) async fn process_payout<L: LedgerClient>(
             return false;
         }
 
+        // Reconcile an already dispatched transfer even after lease expiry.
+        // The next loop iteration fences any subsequent financial effect.
         match res {
             Ok(block) => {
                 #[cfg(feature = "debug_api")]
@@ -180,7 +185,7 @@ pub(super) async fn process_payout<L: LedgerClient>(
                 });
             }
             Err(err) => {
-                if should_clear_payout_plan_on_transfer_error(&err) {
+                if guard.is_current() && should_clear_payout_plan_on_transfer_error(&err) {
                     state::with_state_mut(|st| {
                         if st.payout_plan.as_ref() == Some(&plan) {
                             st.payout_plan = None;
@@ -193,7 +198,7 @@ pub(super) async fn process_payout<L: LedgerClient>(
     }
 }
 
-fn payout_generation_matches(
+pub(super) fn payout_generation_matches(
     expected_nonce: u64,
     expected_plan: Option<&state::PayoutPlan>,
 ) -> bool {

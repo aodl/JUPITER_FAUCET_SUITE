@@ -13,15 +13,23 @@ pub async fn debug_rescue_tick_impl() {
 pub async fn debug_execute_payout_plan_impl() -> bool {
     let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
+    let Some(guard) = MainGuard::acquire(now_secs) else {
+        return false;
+    };
     let cfg = state::with_state(|st| st.config.clone());
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
-    process_payout(&ledger, &cfg, now_nanos, now_secs).await
+    process_payout(&ledger, &cfg, now_nanos, now_secs, &guard).await
 }
 
 pub async fn debug_build_payout_plan_impl() -> bool {
     let now_nanos = ic_cdk::api::time();
+    let Some(guard) = MainGuard::acquire(now_nanos / 1_000_000_000) else {
+        return false;
+    };
     let cfg = state::with_state(|st| st.config.clone());
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
+    let (expected_nonce, expected_plan) =
+        state::with_state(|st| (st.payout_nonce, st.payout_plan.clone()));
 
     let staging = Account {
         owner: self_canister_principal(),
@@ -32,9 +40,11 @@ pub async fn debug_build_payout_plan_impl() -> bool {
         Ok(b) => b,
         Err(_) => return false,
     };
+    if !guard.is_current() || !payout_generation_matches(expected_nonce, expected_plan.as_ref()) {
+        return false;
+    }
 
-    if balance == 0 {
-        state::with_state_mut(|st| st.payout_plan = None);
+    if balance == 0 && expected_plan.is_none() {
         return true;
     }
 
@@ -47,6 +57,9 @@ pub async fn debug_build_payout_plan_impl() -> bool {
         Ok(f) => f,
         Err(_) => return false,
     };
+    if !guard.is_current() || !payout_generation_matches(expected_nonce, None) {
+        return false;
+    }
 
     let (payout_id, prev_age) = state::with_state_mut(|st| {
         let id = st.payout_nonce;

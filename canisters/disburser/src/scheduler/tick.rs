@@ -5,6 +5,8 @@ pub(super) const SCHEDULED_MAIN_RETRY_SECONDS: u64 = 60;
 
 thread_local! {
     static SCHEDULED_MAIN_RETRY_PENDING: Cell<bool> = const { Cell::new(false) };
+    #[cfg(test)]
+    pub(super) static TEST_NOW_SECONDS: Cell<u64> = const { Cell::new(0) };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,14 +19,21 @@ pub(super) struct MainGuard {
 }
 
 impl MainGuard {
-    fn is_current(&self) -> bool {
+    pub(super) fn is_current(&self) -> bool {
+        #[cfg(test)]
+        let now_secs = TEST_NOW_SECONDS.with(Cell::get);
+        #[cfg(not(test))]
+        let now_secs = ic_cdk::api::time() / 1_000_000_000;
         state::with_state(|st| {
             self.inner.is_active()
+                && now_secs < self.inner.lease_expires_at_ts()
                 && st.main_lock_state_ts == Some(self.inner.lease_expires_at_ts())
         })
     }
 
     pub(super) fn acquire(now_secs: u64) -> Option<Self> {
+        #[cfg(test)]
+        TEST_NOW_SECONDS.with(|clock| clock.set(now_secs));
         state::with_state_mut(|st| {
             let inner =
                 TimerLeaseGuard::acquire(now_secs, MAIN_TICK_LEASE_SECONDS, st.main_lock_state_ts)?;
@@ -46,6 +55,9 @@ impl MainGuard {
     }
 
     fn finish(mut self, now_secs: u64, err: Option<u32>, log_config: bool) {
+        if !self.is_current() {
+            return;
+        }
         state::with_state_mut(|st| {
             if self.inner.release(st.main_lock_state_ts) == LeaseFinish::Released {
                 st.last_main_run_ts = now_secs;
@@ -78,18 +90,21 @@ pub(super) async fn run_poke_with_clients<L: LedgerClient, G: GovernanceClient>(
     ledger: &L,
     gov: &G,
 ) {
-    let Some(_guard) = MainGuard::acquire(now_secs) else {
+    let Some(guard) = MainGuard::acquire(now_secs) else {
         return;
     };
     let Ok(neuron) = gov.get_full_neuron(cfg.neuron_id).await else {
         return;
     };
+    if !guard.is_current() {
+        return;
+    }
     let in_flight = neuron
         .maturity_disbursements_in_progress
         .as_ref()
         .is_some_and(|items| !items.is_empty());
     if !in_flight {
-        let _ = process_payout(ledger, cfg, now_nanos, now_secs).await;
+        let _ = process_payout(ledger, cfg, now_nanos, now_secs, &guard).await;
     }
 }
 
@@ -205,7 +220,7 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
         // Debug-only isolation for persisted-plan recovery tests: build and persist the
         // payout plan, then stop before transfers, maturity initiation, or unrelated
         // governance maintenance. Production builds never take this branch.
-        let payout_ok = process_payout(ledger, cfg, now_nanos, now_secs).await;
+        let payout_ok = process_payout(ledger, cfg, now_nanos, now_secs, &guard).await;
         guard.finish(now_secs, if payout_ok { None } else { Some(1002) }, true);
         return MainTickOutcome::Completed;
     }
@@ -213,11 +228,19 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
     // Best-effort maintenance runs independently of the payout / maturity path. These
     // governance calls only need the configured neuron id, so a temporary failure to read
     // the full neuron must not prevent stake or voting-power refresh.
-    if gov.claim_or_refresh_neuron(cfg.neuron_id).await.is_err() {
+    let claim_result = gov.claim_or_refresh_neuron(cfg.neuron_id).await;
+    if !guard.is_current() {
+        return MainTickOutcome::Completed;
+    }
+    if claim_result.is_err() {
         log_error(1006);
     }
 
-    if gov.refresh_voting_power(cfg.neuron_id).await.is_err() {
+    let refresh_result = gov.refresh_voting_power(cfg.neuron_id).await;
+    if !guard.is_current() {
+        return MainTickOutcome::Completed;
+    }
+    if refresh_result.is_err() {
         log_error(1005);
     }
 
@@ -246,7 +269,7 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
     let log_config = !in_flight;
     if !in_flight {
         // 1) payout stage
-        let payout_ok = process_payout(ledger, cfg, now_nanos, now_secs).await;
+        let payout_ok = process_payout(ledger, cfg, now_nanos, now_secs, &guard).await;
         if !payout_ok {
             err = Some(1002);
         } else {

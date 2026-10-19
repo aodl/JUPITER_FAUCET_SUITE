@@ -290,6 +290,401 @@ mod tests {
         }
     }
 
+    async fn process_test_payout<L: LedgerClient>(
+        ledger: &L,
+        cfg: &state::Config,
+        now_nanos: u64,
+        now_secs: u64,
+    ) -> bool {
+        let guard = MainGuard::acquire(now_secs).expect("test payout lease");
+        process_payout(ledger, cfg, now_nanos, now_secs, &guard).await
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum HeldRead {
+        Neuron,
+        Balance,
+        Fee,
+    }
+
+    struct TakeoverClients {
+        held: HeldRead,
+        release: AtomicBool,
+        transfers: AtomicUsize,
+    }
+
+    impl TakeoverClients {
+        async fn wait_at(&self, point: HeldRead) {
+            std::future::poll_fn(|_| {
+                if self.held != point || self.release.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await
+        }
+    }
+
+    #[async_trait]
+    impl LedgerClient for TakeoverClients {
+        async fn balance_of_e8s(&self, _: Account) -> Result<u64, crate::clients::ClientError> {
+            self.wait_at(HeldRead::Balance).await;
+            Ok(10_000_000_000)
+        }
+
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> {
+            self.wait_at(HeldRead::Fee).await;
+            Ok(10_000)
+        }
+
+        async fn transfer(
+            &self,
+            _: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+            self.transfers.fetch_add(1, Ordering::SeqCst);
+            Err(crate::clients::ClientError::Call(
+                "reply unavailable".into(),
+            ))
+        }
+    }
+
+    #[async_trait]
+    impl GovernanceClient for TakeoverClients {
+        async fn get_full_neuron(&self, _: u64) -> Result<Neuron, GovernanceError> {
+            self.wait_at(HeldRead::Neuron).await;
+            Ok(Neuron::default())
+        }
+
+        async fn disburse_maturity_to_account(
+            &self,
+            _: u64,
+            _: u32,
+            _: Principal,
+            _: Option<Vec<u8>>,
+        ) -> Result<Option<u64>, GovernanceError> {
+            panic!("stale worker must not initiate maturity")
+        }
+
+        async fn refresh_voting_power(&self, _: u64) -> Result<(), GovernanceError> {
+            Ok(())
+        }
+
+        async fn claim_or_refresh_neuron(&self, _: u64) -> Result<(), GovernanceError> {
+            Ok(())
+        }
+    }
+
+    fn successor_observes_maturity(now_secs: u64, cfg: &state::Config) -> Vec<u8> {
+        #[cfg(feature = "debug_api")]
+        let paused = debug_pause_after_planning();
+        #[cfg(feature = "debug_api")]
+        debug_set_pause_after_planning(false);
+        let successor_gov = ScriptedGovernance::new(
+            vec![Ok(Neuron {
+                maturity_disbursements_in_progress: Some(vec![MaturityDisbursement {
+                    amount_e8s: Some(10_000_000_000),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })],
+            vec![],
+        );
+        assert_eq!(
+            run_ready(run_main_tick_with_clients(
+                true,
+                now_secs * 1_000_000_000,
+                now_secs,
+                cfg,
+                &UnexpectedLedger,
+                &successor_gov,
+            )),
+            MainTickOutcome::Completed
+        );
+        #[cfg(feature = "debug_api")]
+        debug_set_pause_after_planning(paused);
+        assert_eq!(successor_gov.get_full_neuron_calls(), 1);
+        assert_eq!(successor_gov.disburse_calls(), 0);
+        state::with_state(|st| candid::encode_one(st.clone()).unwrap())
+    }
+
+    fn assert_stale_read_cannot_pay(poke: bool, held: HeldRead) {
+        let now = 5 * 365 * 24 * 60 * 60;
+        let cfg = test_config();
+        let mut st = state::State::new(cfg.clone(), now);
+        st.prev_age_seconds = 4 * 365 * 24 * 60 * 60;
+        state::set_state(st);
+        let clients = TakeoverClients {
+            held,
+            release: AtomicBool::new(false),
+            transfers: AtomicUsize::new(0),
+        };
+        let mut old_worker = Box::pin(async {
+            if poke {
+                run_poke_with_clients(now * 1_000_000_000, now, &cfg, &clients, &clients).await;
+            } else {
+                run_main_tick_with_clients(
+                    true,
+                    now * 1_000_000_000,
+                    now,
+                    &cfg,
+                    &clients,
+                    &clients,
+                )
+                .await;
+            }
+        });
+        assert!(poll_once(old_worker.as_mut()).is_pending());
+        let successor_state = successor_observes_maturity(now + MAIN_TICK_LEASE_SECONDS + 1, &cfg);
+        clients.release.store(true, Ordering::SeqCst);
+        assert!(poll_once(old_worker.as_mut()).is_ready());
+        drop(old_worker);
+        assert_eq!(clients.transfers.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            state::with_state(|st| candid::encode_one(st.clone()).unwrap()),
+            successor_state,
+            "obsolete callback must preserve every successor-owned state field"
+        );
+    }
+
+    #[test]
+    fn stale_poke_neuron_read_cannot_pay() {
+        assert_stale_read_cannot_pay(true, HeldRead::Neuron);
+    }
+
+    #[test]
+    fn stale_main_balance_read_cannot_pay() {
+        assert_stale_read_cannot_pay(false, HeldRead::Balance);
+    }
+
+    #[test]
+    fn stale_main_fee_read_cannot_pay() {
+        assert_stale_read_cannot_pay(false, HeldRead::Fee);
+    }
+
+    #[test]
+    fn stale_poke_balance_read_cannot_pay() {
+        assert_stale_read_cannot_pay(true, HeldRead::Balance);
+    }
+
+    #[test]
+    fn stale_poke_fee_read_cannot_pay() {
+        assert_stale_read_cannot_pay(true, HeldRead::Fee);
+    }
+
+    struct FundedLateReplyLedger {
+        balance: Mutex<u64>,
+        accepted: Mutex<Vec<TransferArg>>,
+        calls: Mutex<Vec<TransferArg>>,
+        release: AtomicBool,
+    }
+
+    #[async_trait]
+    impl LedgerClient for FundedLateReplyLedger {
+        async fn balance_of_e8s(&self, _: Account) -> Result<u64, crate::clients::ClientError> {
+            Ok(*self.balance.lock().unwrap())
+        }
+
+        async fn fee_e8s(&self) -> Result<u64, crate::clients::ClientError> {
+            Ok(10_000)
+        }
+
+        async fn transfer(
+            &self,
+            arg: TransferArg,
+        ) -> Result<Result<BlockIndex, TransferError>, crate::clients::ClientError> {
+            self.calls.lock().unwrap().push(arg.clone());
+            let block = {
+                let mut accepted = self.accepted.lock().unwrap();
+                if let Some(block) = accepted.iter().position(|previous| previous == &arg) {
+                    return Ok(Err(TransferError::Duplicate {
+                        duplicate_of: Nat::from(block as u64),
+                    }));
+                }
+                let debit = u64::try_from(&arg.amount.0).unwrap() + 10_000;
+                let mut balance = self.balance.lock().unwrap();
+                assert!(
+                    *balance >= debit,
+                    "fixture must actually fund every accepted payment"
+                );
+                *balance -= debit;
+                let block = accepted.len() as u64;
+                accepted.push(arg);
+                block
+            };
+            if block == 0 {
+                std::future::poll_fn(|_| {
+                    if self.release.load(Ordering::SeqCst) {
+                        Poll::Ready(())
+                    } else {
+                        Poll::Pending
+                    }
+                })
+                .await;
+            }
+            Ok(Ok(Nat::from(block)))
+        }
+    }
+
+    fn assert_late_transfer_recovery(lose_reply: bool) {
+        let now = 5 * 365 * 24 * 60 * 60;
+        let cfg = test_config();
+        let mut st = state::State::new(cfg.clone(), now);
+        st.prev_age_seconds = 4 * 365 * 24 * 60 * 60;
+        state::set_state(st);
+        let ledger = FundedLateReplyLedger {
+            balance: Mutex::new(10_000_000_000),
+            accepted: Mutex::new(vec![]),
+            calls: Mutex::new(vec![]),
+            release: AtomicBool::new(false),
+        };
+        let gov = ScriptedGovernance::new(vec![Ok(Neuron::default())], vec![Ok(None)]);
+        let mut old = Box::pin(run_main_tick_with_clients(
+            true,
+            now * 1_000_000_000,
+            now,
+            &cfg,
+            &ledger,
+            &gov,
+        ));
+        assert!(poll_once(old.as_mut()).is_pending());
+        assert_eq!(ledger.accepted.lock().unwrap().len(), 1);
+        let original_plan = state::with_state(|st| st.payout_plan.clone().unwrap());
+        assert_eq!(original_plan.transfers.len(), 3);
+        let successor_time = now + MAIN_TICK_LEASE_SECONDS + 1;
+        successor_observes_maturity(successor_time, &cfg);
+        if !lose_reply {
+            ledger.release.store(true, Ordering::SeqCst);
+            assert!(poll_once(old.as_mut()).is_ready());
+        }
+        drop(old);
+        assert_eq!(
+            ledger.calls.lock().unwrap().len(),
+            1,
+            "late reply cannot dispatch a second leg"
+        );
+        assert_eq!(gov.disburse_calls(), 0);
+        state::with_state(|st| {
+            assert_eq!(st.prev_age_seconds, 4 * 365 * 24 * 60 * 60);
+            assert_eq!(st.last_main_run_ts, successor_time);
+            let plan = st
+                .payout_plan
+                .as_ref()
+                .expect("unfinished obligations remain recoverable");
+            assert_eq!(plan.id, original_plan.id);
+            assert_eq!(plan.transfers[1..], original_plan.transfers[1..]);
+            assert_eq!(
+                matches!(plan.transfers[0].status, state::TransferStatus::Pending),
+                lose_reply
+            );
+        });
+        let recovery_gov = ScriptedGovernance::new(vec![Ok(Neuron::default())], vec![]);
+        run_ready(run_poke_with_clients(
+            (successor_time + 1) * 1_000_000_000,
+            successor_time + 1,
+            &cfg,
+            &ledger,
+            &recovery_gov,
+        ));
+        assert!(state::with_state(|st| st.payout_plan.is_none()));
+        assert_eq!(*ledger.balance.lock().unwrap(), 0);
+        let accepted = ledger.accepted.lock().unwrap();
+        assert_eq!(accepted.len(), 3);
+        for (arg, planned) in accepted.iter().zip(&original_plan.transfers) {
+            assert_eq!(arg.to, planned.to);
+            assert_eq!(arg.amount, Nat::from(planned.amount_e8s));
+            assert_eq!(arg.memo, Some(Memo::from(planned.memo.clone())));
+            assert_eq!(arg.created_at_time, Some(planned.created_at_time_nanos));
+            assert_eq!(arg.fee, Some(Nat::from(original_plan.fee_e8s)));
+        }
+        let calls = ledger.calls.lock().unwrap();
+        assert_eq!(calls.len(), if lose_reply { 4 } else { 3 });
+        if lose_reply {
+            assert_eq!(
+                calls[0], calls[1],
+                "accepted-but-lost reply retries the exact identity"
+            );
+        }
+    }
+
+    #[test]
+    fn late_accepted_transfer_is_reconciled_without_authorizing_another_leg() {
+        assert_late_transfer_recovery(false);
+    }
+
+    #[test]
+    fn accepted_transfer_with_lost_reply_recovers_by_exact_duplicate_without_double_debit() {
+        assert_late_transfer_recovery(true);
+    }
+
+    #[test]
+    fn lost_final_reply_requires_duplicate_confirmation_even_with_empty_staging() {
+        let now = 1_000;
+        let cfg = test_config();
+        state::set_state(state::State::new(cfg.clone(), now));
+        let ledger = FundedLateReplyLedger {
+            balance: Mutex::new(10_000_000_000),
+            accepted: Mutex::new(vec![]),
+            calls: Mutex::new(vec![]),
+            release: AtomicBool::new(false),
+        };
+        let mut old = Box::pin(process_test_payout(&ledger, &cfg, now * 1_000_000_000, now));
+        assert!(poll_once(old.as_mut()).is_pending());
+        assert_eq!(*ledger.balance.lock().unwrap(), 0);
+        drop(old);
+        assert!(run_ready(process_test_payout(
+            &ledger,
+            &cfg,
+            (now + 1) * 1_000_000_000,
+            now + 1,
+        )));
+        let calls = ledger.calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            2,
+            "empty balance does not prove the pending identity was accepted"
+        );
+        assert_eq!(calls[0], calls[1]);
+        assert_eq!(ledger.accepted.lock().unwrap().len(), 1);
+        assert!(state::with_state(|st| st.payout_plan.is_none()));
+    }
+
+    #[test]
+    fn expired_lease_without_takeover_cannot_dispatch_after_fee_read() {
+        let now = 1_000;
+        let cfg = test_config();
+        state::set_state(state::State::new(cfg.clone(), now));
+        let initial_nonce = state::with_state(|st| st.payout_nonce);
+        let clients = TakeoverClients {
+            held: HeldRead::Fee,
+            release: AtomicBool::new(false),
+            transfers: AtomicUsize::new(0),
+        };
+        let mut old = Box::pin(run_poke_with_clients(
+            now * 1_000_000_000,
+            now,
+            &cfg,
+            &clients,
+            &clients,
+        ));
+        assert!(poll_once(old.as_mut()).is_pending());
+        tick::TEST_NOW_SECONDS.with(|clock| clock.set(now + MAIN_TICK_LEASE_SECONDS));
+        clients.release.store(true, Ordering::SeqCst);
+        assert!(poll_once(old.as_mut()).is_ready());
+        drop(old);
+        assert_eq!(clients.transfers.load(Ordering::SeqCst), 0);
+        assert!(state::with_state(|st| st.payout_plan.is_none()));
+        assert_eq!(state::with_state(|st| st.payout_nonce), initial_nonce);
+    }
+
+    #[cfg(feature = "debug_api")]
+    #[test]
+    fn debug_pause_planner_is_fenced_after_takeover() {
+        debug_set_pause_after_planning(true);
+        assert_stale_read_cannot_pay(false, HeldRead::Balance);
+        debug_set_pause_after_planning(false);
+    }
+
     #[test]
     fn stale_main_lease_can_be_reclaimed_without_old_guard_clearing_the_new_lease() {
         let now_secs = 1_000_u64;
@@ -1010,7 +1405,7 @@ mod tests {
             ],
         );
 
-        assert!(!run_ready(process_payout(
+        assert!(!run_ready(process_test_payout(
             &ledger,
             &cfg,
             now_secs * 1_000_000_000,
@@ -1025,7 +1420,7 @@ mod tests {
             "fee should be read only when the plan is first created"
         );
 
-        assert!(run_ready(process_payout(
+        assert!(run_ready(process_test_payout(
             &ledger,
             &cfg,
             (now_secs + 1) * 1_000_000_000,
@@ -1052,7 +1447,7 @@ mod tests {
             started: AtomicBool::new(false),
             release: AtomicBool::new(false),
         };
-        let mut future = Box::pin(process_payout(
+        let mut future = Box::pin(process_test_payout(
             &ledger,
             &cfg,
             now_secs * 1_000_000_000,
@@ -1090,7 +1485,7 @@ mod tests {
             ],
         );
 
-        assert!(!run_ready(process_payout(
+        assert!(!run_ready(process_test_payout(
             &ledger,
             &cfg,
             now_secs * 1_000_000_000,
@@ -1101,7 +1496,7 @@ mod tests {
             "TooOld should clear the stale plan immediately"
         );
 
-        assert!(!run_ready(process_payout(
+        assert!(!run_ready(process_test_payout(
             &ledger,
             &cfg,
             (now_secs + 1) * 1_000_000_000,
@@ -1319,7 +1714,7 @@ mod tests {
                 .map(|block| TransferScriptStep::Ok(Nat::from(block as u64)))
                 .collect(),
         );
-        assert!(run_ready(process_payout(
+        assert!(run_ready(process_test_payout(
             &ledger,
             &cfg,
             (now + 1) * 1_000_000_000,
@@ -1339,7 +1734,7 @@ mod tests {
         drop(transfers);
         assert_eq!(gov.disburse_calls(), 1);
         assert_eq!(ledger.balance(), 0);
-        assert!(run_ready(process_payout(
+        assert!(run_ready(process_test_payout(
             &ledger,
             &cfg,
             (now + 2) * 1_000_000_000,
