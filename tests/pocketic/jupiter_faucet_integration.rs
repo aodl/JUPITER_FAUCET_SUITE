@@ -3353,6 +3353,8 @@ fn faucet_unarmed_rescue_forced_reason_does_not_change_controllers() -> Result<(
     let before = env.controllers();
 
     env.main_tick()?;
+    // A sustained failure must span a configured observation window.
+    env.advance_time_and_tick(61, 20);
     env.main_tick()?;
 
     let st_after_latch = env.state()?;
@@ -3499,6 +3501,16 @@ fn faucet_wrong_first_tx_anchor_latches_rescue_before_any_payment() -> Result<()
     }
 
     env.main_tick()?;
+    let immediate = env.state()?;
+    assert_eq!(immediate.consecutive_index_anchor_failures, 1);
+    assert!(immediate.forced_rescue_reason.is_none());
+    env.advance_time_and_tick(10, 20);
+    env.main_tick()?;
+    let trailing = env.state()?;
+    assert_eq!(trailing.consecutive_index_anchor_failures, 1);
+    assert!(trailing.forced_rescue_reason.is_none());
+    env.advance_time_and_tick(51, 20);
+    env.main_tick()?;
     let st2 = env.state()?;
     if st2.forced_rescue_reason != Some(ForcedRescueReason::IndexAnchorMissing) {
         bail!("expected wrong first tx anchor to latch forced rescue after the second observation, got {:?}", st2);
@@ -3577,6 +3589,16 @@ fn faucet_missing_anchor_twice_latches_forced_rescue() -> Result<()> {
         );
     }
 
+    env.main_tick()?;
+    let immediate = env.state()?;
+    assert_eq!(immediate.consecutive_index_anchor_failures, 1);
+    assert!(immediate.forced_rescue_reason.is_none());
+    env.advance_time_and_tick(10, 20);
+    env.main_tick()?;
+    let trailing = env.state()?;
+    assert_eq!(trailing.consecutive_index_anchor_failures, 1);
+    assert!(trailing.forced_rescue_reason.is_none());
+    env.advance_time_and_tick(51, 20);
     env.main_tick()?;
     let st2 = env.state()?;
     if st2.forced_rescue_reason != Some(ForcedRescueReason::IndexAnchorMissing) {
@@ -3706,35 +3728,83 @@ fn faucet_real_icp_ledger_and_index_preserve_numbered_raw_destinations() -> Resu
 
 #[test]
 #[ignore]
-fn faucet_balance_change_without_new_latest_tx_twice_latches_forced_rescue() -> Result<()> {
+fn faucet_coherent_index_lag_catches_up_without_expanding_controllers() -> Result<()> {
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
-
     env.set_self_only_controllers()?;
     env.set_autonomous_rescue_armed(Some(true))?;
     env.credit_staking(100_000_000)?;
-    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    let baseline_tip = env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     env.main_tick()?;
 
+    // The Ledger sees funding before the Index. Its older pair is coherent,
+    // even over multiple observation windows, and must not expand controllers.
     env.credit_staking(50_000_000)?;
-    env.main_tick()?;
-    let st1 = env.state()?;
-    if st1.consecutive_index_latest_invariant_failures != 1 || st1.forced_rescue_reason.is_some() {
-        bail!(
-            "expected first latest-invariant failure to count once, got {:?}",
-            st1
-        );
+    for delay in [0, 10, 121] {
+        env.advance_time_and_tick(delay, 20);
+        env.main_tick()?;
+        let st = env.state()?;
+        assert_eq!(st.last_observed_staking_balance_e8s, Some(100_000_000));
+        assert_eq!(st.last_observed_latest_tx_id, Some(baseline_tip));
+        assert_eq!(st.consecutive_index_latest_invariant_failures, 0);
+        assert_eq!(st.consecutive_index_latest_unreadable_failures, 0);
+        assert!(st.forced_rescue_reason.is_none());
+        assert_eq!(env.controllers(), vec![env.faucet]);
     }
-
+    let caught_up_tip = env.append_transfer(50_000_000, Some(target.to_text().into_bytes()))?;
     env.main_tick()?;
-    let st2 = env.state()?;
-    if st2.forced_rescue_reason != Some(ForcedRescueReason::IndexLatestInvariantBroken) {
-        bail!(
-            "expected second latest-invariant failure to latch forced rescue, got {:?}",
-            st2
-        );
-    }
+    let caught_up = env.state()?;
+    assert_eq!(
+        caught_up.last_observed_staking_balance_e8s,
+        Some(150_000_000)
+    );
+    assert_eq!(caught_up.last_observed_latest_tx_id, Some(caught_up_tip));
+    assert!(caught_up.forced_rescue_reason.is_none());
+    assert_eq!(env.controllers(), vec![env.faucet]);
+    Ok(())
+}
 
+#[test]
+#[ignore]
+fn faucet_contradictory_index_pair_latches_only_after_sustained_observation() -> Result<()> {
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    env.set_self_only_controllers()?;
+    env.set_autonomous_rescue_armed(Some(true))?;
+    env.credit_staking(100_000_000)?;
+    let original_tip = env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    env.main_tick()?;
+    env.credit_staking(50_000_000)?;
+    // Reuse the mock's existing reset to rewrite the SAME transaction ID with
+    // a different amount. This is contradictory Index history, not Ledger lag.
+    update_noargs::<()>(&env.pic, env.index, Principal::anonymous(), "debug_reset")?;
+    let rewritten_tip = env.append_transfer(150_000_000, Some(target.to_text().into_bytes()))?;
+    assert_eq!(rewritten_tip, original_tip);
+    env.main_tick()?;
+    let first = env.state()?;
+    assert_eq!(first.consecutive_index_latest_invariant_failures, 1);
+    assert!(first.forced_rescue_reason.is_none());
+    for delay in [0, 10] {
+        env.advance_time_and_tick(delay, 20);
+        env.main_tick()?;
+        let trailing = env.state()?;
+        assert_eq!(trailing.consecutive_index_latest_invariant_failures, 1);
+        assert!(trailing.forced_rescue_reason.is_none());
+        assert_eq!(env.controllers(), vec![env.faucet]);
+    }
+    env.advance_time_and_tick(51, 20);
+    env.main_tick()?;
+    let sustained = env.state()?;
+    assert_eq!(
+        sustained.forced_rescue_reason,
+        Some(ForcedRescueReason::IndexLatestInvariantBroken)
+    );
+    let mut controllers = env.controllers();
+    controllers.sort();
+    let mut expected = vec![env.faucet, env.lifeline];
+    expected.sort();
+    assert_eq!(controllers, expected);
+    assert!(env.ledger_transfers()?.is_empty());
     Ok(())
 }
 
@@ -4005,6 +4075,8 @@ fn faucet_forced_rescue_survives_upgrade_and_can_be_cleared() -> Result<()> {
     env.set_autonomous_rescue_armed(Some(true))?;
     env.set_expected_first_staking_tx_id(Some(1))?;
     env.main_tick()?;
+    // A sustained failure must span a configured observation window.
+    env.advance_time_and_tick(61, 20);
     env.main_tick()?;
     let st1 = env.state()?;
     if st1.forced_rescue_reason != Some(ForcedRescueReason::IndexAnchorMissing) {
