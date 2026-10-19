@@ -198,13 +198,6 @@ pub(super) fn record_latest_invariant_failure(st: &mut state::State, now_secs: u
     }
 }
 
-pub(super) fn index_page_descending(txs: &[IndexTransactionWithId]) -> bool {
-    txs.first()
-        .zip(txs.last())
-        .map(|(first, last)| first.id > last.id)
-        .unwrap_or(false)
-}
-
 /// Validate the entire newest-first, exclusive page before applying any of it.
 /// Some(true) proves exhaustion; a short page alone never does. A cursor at the
 /// known oldest record also proves traversal after its pending payment settles.
@@ -236,15 +229,7 @@ pub(super) fn validate_history_page(
 }
 
 pub(super) fn index_page_latest_tx_id(txs: &[IndexTransactionWithId]) -> Option<u64> {
-    if index_page_descending(txs) {
-        txs.first().map(|tx| tx.id)
-    } else {
-        txs.last().map(|tx| tx.id)
-    }
-}
-
-pub(super) fn index_page_next_cursor(txs: &[IndexTransactionWithId]) -> Option<u64> {
-    txs.last().map(|tx| tx.id)
+    txs.first().map(|tx| tx.id)
 }
 
 pub(super) async fn scan_latest_observation(
@@ -252,62 +237,29 @@ pub(super) async fn scan_latest_observation(
     staking_id: String,
     start: Option<u64>,
 ) -> LatestScan {
-    let mut cursor = start;
-    let mut latest = start;
-    let mut latest_balance_e8s = None;
-    let mut pages_scanned = 0u64;
-    loop {
-        if pages_scanned >= MAX_INDEX_PAGES_PER_LATEST_SCAN {
-            return latest_balance_e8s
-                .map(|balance_e8s| LatestScan::Read {
-                    balance_e8s,
-                    latest_tx_id: latest,
-                })
-                .unwrap_or(LatestScan::InvariantBroken);
-        }
-        pages_scanned = pages_scanned.saturating_add(1);
-        let resp = match index
-            .get_account_identifier_transactions(staking_id.clone(), cursor, PAGE_SIZE)
-            .await
-        {
-            Ok(resp) => resp,
-            Err(_) => return LatestScan::Unreadable,
-        };
-        latest_balance_e8s = Some(resp.balance);
-        let page_latest = index_page_latest_tx_id(&resp.transactions);
-        if page_latest.is_none() {
-            return LatestScan::Read {
-                balance_e8s: resp.balance,
-                latest_tx_id: latest,
-            };
-        }
-        let descending = index_page_descending(&resp.transactions);
-        if descending {
-            latest = match (latest, page_latest) {
-                (Some(prev), Some(next)) => Some(prev.max(next)),
-                (None, next) => next,
-                (prev, None) => prev,
-            };
-            return LatestScan::Read {
-                balance_e8s: resp.balance,
-                latest_tx_id: latest,
-            };
-        }
-        if cursor
-            .zip(page_latest)
-            .map(|(prev, next)| next <= prev)
-            .unwrap_or(false)
-        {
-            return LatestScan::InvariantBroken;
-        }
-        latest = page_latest;
-        cursor = index_page_next_cursor(&resp.transactions);
-        if resp.transactions.len() < PAGE_SIZE as usize {
-            return LatestScan::Read {
-                balance_e8s: resp.balance,
-                latest_tx_id: latest,
-            };
-        }
+    let resp = match index
+        .get_account_identifier_transactions(staking_id, start, PAGE_SIZE)
+        .await
+    {
+        Ok(resp) => resp,
+        Err(_) => return LatestScan::Unreadable,
+    };
+    // The newest row is already on the first descending, exclusive page. An
+    // empty page is valid only for an empty account or a cursor at/below oldest.
+    let valid = if resp.transactions.is_empty() {
+        resp.oldest_tx_id.is_none()
+            || start
+                .zip(resp.oldest_tx_id)
+                .is_some_and(|(cursor, oldest)| cursor <= oldest)
+    } else {
+        validate_history_page(&resp, start, None).is_some()
+    };
+    if !valid {
+        return LatestScan::InvariantBroken;
+    }
+    LatestScan::Read {
+        balance_e8s: resp.balance,
+        latest_tx_id: index_page_latest_tx_id(&resp.transactions),
     }
 }
 

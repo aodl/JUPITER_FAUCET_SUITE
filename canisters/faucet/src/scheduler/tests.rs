@@ -4653,6 +4653,127 @@ mod tests {
         );
     }
 
+    fn latest_page(
+        staking: &str,
+        ids: &[u64],
+        oldest: Option<u64>,
+        balance: u64,
+    ) -> GetAccountIdentifierTransactionsResponse {
+        let source = account_identifier_text_for_account(&Account {
+            owner: Principal::anonymous(),
+            subaccount: None,
+        });
+        GetAccountIdentifierTransactionsResponse {
+            balance,
+            oldest_tx_id: oldest,
+            transactions: ids
+                .iter()
+                .map(|id| {
+                    let mut tx = commitment_tx(*id, staking, 1, None);
+                    if let IndexOperation::Transfer { from, .. } = &mut tx.transaction.operation {
+                        *from = source.clone();
+                    }
+                    tx
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn latest_observation_handles_empty_singleton_descending_and_exclusive_cursor() {
+        let staking = account_identifier_text_for_account(&test_config().staking_account);
+        for (ids, oldest, cursor, expected_tip) in [
+            (vec![], None, None, None),
+            (vec![], None, Some(7), None),
+            (vec![0], Some(0), None, Some(0)),
+            (vec![8], Some(8), None, Some(8)),
+            (vec![8, 5, 2], Some(2), None, Some(8)),
+            (vec![8, 5, 2], Some(2), Some(10), Some(8)),
+            (vec![], Some(8), Some(8), None),
+            (vec![], Some(8), Some(7), None),
+        ] {
+            let balance = if oldest.is_none() {
+                0
+            } else {
+                ids.len().max(1) as u64
+            };
+            let index = ScriptedIndex::new(vec![IndexResponseStep::Ok(latest_page(
+                &staking, &ids, oldest, balance,
+            ))]);
+            assert_eq!(
+                run_ready(scan_latest_observation(&index, staking.clone(), cursor)),
+                LatestScan::Read {
+                    balance_e8s: balance,
+                    latest_tx_id: expected_tip
+                },
+                "ids={ids:?}, oldest={oldest:?}, cursor={cursor:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn latest_observation_rejects_malformed_order_cursor_and_oldest_evidence() {
+        let staking = account_identifier_text_for_account(&test_config().staking_account);
+        for (ids, oldest, cursor) in [
+            (vec![8, 2, 5], Some(2), None),
+            (vec![8, 8, 2], Some(2), None),
+            (vec![8, 5], Some(5), Some(8)),
+            (vec![9, 5], Some(5), Some(8)),
+            (vec![8, 5, 2], Some(4), None),
+            (vec![8], None, None),
+            (vec![], Some(1), None),
+            (vec![], Some(1), Some(8)),
+        ] {
+            let index = ScriptedIndex::new(vec![IndexResponseStep::Ok(latest_page(
+                &staking,
+                &ids,
+                oldest,
+                ids.len().max(1) as u64,
+            ))]);
+            assert_eq!(
+                run_ready(scan_latest_observation(&index, staking.clone(), cursor)),
+                LatestScan::InvariantBroken,
+                "ids={ids:?}, oldest={oldest:?}, cursor={cursor:?}",
+            );
+        }
+        let unreadable = ScriptedIndex::new(vec![IndexResponseStep::Err]);
+        assert_eq!(
+            run_ready(scan_latest_observation(&unreadable, staking, None)),
+            LatestScan::Unreadable,
+        );
+    }
+
+    #[test]
+    fn malformed_latest_page_does_not_clear_sustained_health_failures() {
+        let now = 1_000;
+        let cfg = test_config();
+        let staking = account_identifier_text_for_account(&cfg.staking_account);
+        let mut st = state::State::new(cfg.clone(), now);
+        st.last_observed_staking_balance_e8s = Some(100);
+        st.last_observed_latest_tx_id = Some(8);
+        state::set_state(st);
+        state::with_state_mut(|st| record_latest_invariant_failure(st, now));
+        let index = ScriptedIndex::new(vec![
+            IndexResponseStep::Ok(latest_page(&staking, &[8], Some(2), 100)),
+            IndexResponseStep::Ok(latest_page(&staking, &[8, 2, 5], Some(2), 100)),
+        ]);
+        run_ready(probe_index_health(
+            &index,
+            &staking,
+            101,
+            now + cfg.main_interval_seconds,
+        ));
+        state::with_state(|st| {
+            assert_eq!(st.consecutive_index_latest_invariant_failures, Some(2));
+            assert_eq!(
+                st.forced_rescue_reason,
+                Some(ForcedRescueReason::IndexLatestInvariantBroken)
+            );
+            assert_eq!(st.last_observed_staking_balance_e8s, Some(100));
+            assert_eq!(st.last_observed_latest_tx_id, Some(8));
+        });
+    }
+
     #[test]
     fn scan_latest_tx_id_accepts_real_index_descending_order() {
         let cfg = test_config();
@@ -4672,6 +4793,7 @@ mod tests {
             },
             "latest scan should treat the first tx on a real-index newest-first page as the latest tx id"
         );
+        assert_eq!(index.starts(), vec![None]);
     }
 
     #[test]
@@ -4890,30 +5012,18 @@ mod tests {
     }
 
     #[test]
-    fn scan_latest_tx_id_detects_non_advancing_full_page() {
-        let index = ScriptedIndex::new(vec![
-            IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
-                balance: 0,
-                oldest_tx_id: Some(1),
-                transactions: (11..=(10 + PAGE_SIZE))
-                    .map(|id| commitment_tx(id, "staking", 1, None))
-                    .collect(),
-            }),
-            IndexResponseStep::Ok(GetAccountIdentifierTransactionsResponse {
-                balance: 0,
-                oldest_tx_id: Some(1),
-                transactions: (11..=(10 + PAGE_SIZE))
-                    .map(|id| commitment_tx(id, "staking", 1, None))
-                    .collect(),
-            }),
-        ]);
-
-        let latest = run_ready(scan_latest_observation(
-            &index,
-            "staking".to_string(),
-            Some(10),
-        ));
-        assert_eq!(latest, LatestScan::InvariantBroken);
+    fn scan_latest_tx_id_rejects_a_nonexclusive_descending_page() {
+        let staking = account_identifier_text_for_account(&test_config().staking_account);
+        let index = ScriptedIndex::new(vec![IndexResponseStep::Ok(latest_page(
+            &staking,
+            &[10, 9, 8],
+            Some(8),
+            3,
+        ))]);
+        assert_eq!(
+            run_ready(scan_latest_observation(&index, staking, Some(10))),
+            LatestScan::InvariantBroken
+        );
     }
 
     #[test]
@@ -5031,24 +5141,18 @@ mod tests {
     }
 
     #[test]
-    fn scan_latest_observation_supports_synthetic_ascending_exclusive_cursor() {
-        let cfg = test_config();
-        let staking_id = account_identifier_text_for_account(&cfg.staking_account);
-        let index = ExclusiveIndex::new(vec![
-            commitment_tx(10, &staking_id, 1, None),
-            commitment_tx(11, &staking_id, 1, None),
-            commitment_tx(12, &staking_id, 1, None),
-        ]);
-
-        let latest = run_ready(scan_latest_observation(&index, staking_id, Some(10)));
+    fn scan_latest_observation_rejects_ascending_pages() {
+        let staking = account_identifier_text_for_account(&test_config().staking_account);
+        let index = ScriptedIndex::new(vec![IndexResponseStep::Ok(latest_page(
+            &staking,
+            &[10, 11, 12],
+            Some(10),
+            3,
+        ))]);
         assert_eq!(
-            latest,
-            LatestScan::Read {
-                balance_e8s: 0,
-                latest_tx_id: Some(12),
-            }
+            run_ready(scan_latest_observation(&index, staking, None)),
+            LatestScan::InvariantBroken
         );
-        assert_eq!(index.starts(), vec![Some(10)]);
     }
 
     #[test]
@@ -6681,8 +6785,8 @@ mod tests {
         let payout_id = "payout-account".to_string();
         let funding_source_id = "funding-source".to_string();
         let mut steps = Vec::new();
-        let mut next_id = MAX_INDEX_PAGES_PER_LATEST_SCAN * PAGE_SIZE + 1_000;
-        for page_idx in 0..MAX_INDEX_PAGES_PER_LATEST_SCAN {
+        let mut next_id = MAX_FUNDING_SCAN_PAGES_PER_TICK * PAGE_SIZE + 1_000;
+        for page_idx in 0..MAX_FUNDING_SCAN_PAGES_PER_TICK {
             let mut transactions = Vec::new();
             for _ in 0..PAGE_SIZE {
                 transactions.push(if page_idx == 0 && transactions.is_empty() {
