@@ -3439,7 +3439,8 @@ fn partial_transfer_execution_retry_accepts_duplicates_without_double_payment() 
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
         autonomous_rescue_armed: None,
-        main_interval_seconds: Some(60),
+        // Keep periodic work outside the eight-day wait; this fixture builds its plan manually.
+        main_interval_seconds: Some(365 * DAY_SECS),
         rescue_interval_seconds: Some(365 * 24 * 60 * 60),
     };
 
@@ -3626,7 +3627,8 @@ fn disburser_upgrade_clears_stale_lock_and_auto_resumes_persisted_plan() -> Resu
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
         autonomous_rescue_armed: None,
-        main_interval_seconds: Some(7 * DAY_SECS),
+        // Keep periodic work outside the eight-day wait; this fixture builds its plan manually.
+        main_interval_seconds: Some(365 * DAY_SECS),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
 
@@ -3796,7 +3798,8 @@ fn upgrade_with_persisted_plan_real_trap_auto_resumes_without_duplicate_transfer
         governance_canister_id: Some(gov),
         rescue_controller: fixture_principal(),
         autonomous_rescue_armed: None,
-        main_interval_seconds: Some(7 * DAY_SECS),
+        // Keep periodic work outside the eight-day wait; this fixture builds its plan manually.
+        main_interval_seconds: Some(365 * DAY_SECS),
         rescue_interval_seconds: Some(365 * DAY_SECS),
     };
 
