@@ -255,7 +255,7 @@ test('loadDashboardData queries the ICP index directly for recent maturity route
         async get_account_identifier_transactions(args) {
           indexCalls.push(args);
           if (args.account_identifier === outputId) {
-            return { Ok: { balance: 0n, oldest_tx_id: [40n], transactions: [
+            return { Ok: { balance: 0n, oldest_tx_id: [43n], transactions: [
               {
                 id: 44n,
                 transaction: {
@@ -279,7 +279,7 @@ test('loadDashboardData queries the ICP index directly for recent maturity route
             ] } };
           }
           if (args.account_identifier === rewardsId) {
-            return { Ok: { balance: 0n, oldest_tx_id: [50n], transactions: [{
+            return { Ok: { balance: 0n, oldest_tx_id: [55n], transactions: [{
               id: 55n,
               transaction: {
                 memo: 0n,
@@ -290,7 +290,7 @@ test('loadDashboardData queries the ICP index directly for recent maturity route
               },
             }] } };
           }
-          return { Ok: { balance: 0n, oldest_tx_id: [60n], transactions: [{
+          return { Ok: { balance: 0n, oldest_tx_id: [66n], transactions: [{
             id: 66n,
             transaction: {
               memo: 0n,
@@ -388,14 +388,16 @@ test('loadRecentRouteTransfersFromIndex de-duplicates rows before applying the l
     index: {
       async get_account_identifier_transactions(args) {
         calls.push(args);
-        return { Ok: { balance: 0n, oldest_tx_id: [], transactions: pages[calls.length - 1] || [] } };
+        const transactions = pages[calls.length - 1] || [];
+        assert.ok(transactions.every((tx) => args.start.length === 0 || tx.id < args.start[0]));
+        return { Ok: { balance: 0n, oldest_tx_id: [8n], transactions } };
       },
     },
   });
 
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0].start, []);
-  assert.deepEqual(calls[1].start, [9n]);
+  assert.deepEqual(calls[1].start, [10n]);
   assert.deepEqual(data.items.map((item) => item.tx_id), [10n, 9n]);
   assert.deepEqual(data.items.map((item) => item.amount_e8s), [100_000_000n, 200_000_000n]);
 });

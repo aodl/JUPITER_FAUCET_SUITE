@@ -110,7 +110,51 @@ function normalizeRouteTransferItems(items, limit) {
   return unique.slice(0, limit);
 }
 
+function indexPageLimit(maxPages) {
+  const count = Math.max(1, maxPages);
+  if (!Number.isSafeInteger(count)) throw new Error('ICP index page count must be finite');
+  return count;
+}
+
+function nextIndexPageStart(response, start, pageSize) {
+  const transactions = response?.transactions;
+  if (!Array.isArray(transactions) || transactions.length > pageSize) {
+    throw new Error('ICP index returned a malformed page');
+  }
+  const blockId = (value) => {
+    if (!(typeof value === 'bigint'
+      || (typeof value === 'number' && Number.isSafeInteger(value))
+      || (typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value)))) {
+      throw new Error('ICP index returned a malformed page ID');
+    }
+    const id = BigInt(value);
+    if (id < 0n || id > 18_446_744_073_709_551_615n) throw new Error('ICP index returned a malformed page ID');
+    return id;
+  };
+  let previous = start;
+  for (const [position, tx] of transactions.entries()) {
+    const id = blockId(tx?.id);
+    if (previous !== null && (id > previous || (position === 0 && id === previous))) {
+      throw new Error('ICP index page did not advance in descending exclusive order');
+    }
+    previous = id;
+  }
+  const oldestValue = readOptional(response.oldest_tx_id);
+  const oldest = oldestValue === null || oldestValue === undefined ? null : blockId(oldestValue);
+  if (transactions.length === 0) {
+    if (oldest !== null && (start === null || start > oldest)) {
+      throw new Error('ICP index returned an incomplete empty page');
+    }
+    return null;
+  }
+  if (oldest !== null && previous < oldest) throw new Error('ICP index page precedes its oldest transaction');
+  if (previous === 0n || previous === oldest || (oldest === null && transactions.length < pageSize)) return null;
+  // The Index start is exclusive: subtracting one would skip an adjacent block.
+  return previous;
+}
+
 async function getAccountIdentifierTransactions(index, accountIdentifier, start, maxResults) {
+  if (!Number.isSafeInteger(maxResults) || maxResults <= 0) throw new Error('ICP index page size must be positive');
   const result = await index.get_account_identifier_transactions({
     account_identifier: accountIdentifier,
     start: start === null || start === undefined ? [] : [typeof start === 'bigint' ? start : BigInt(start)],
@@ -143,10 +187,12 @@ export async function loadRecentRouteTransfersFromIndex({
   const items = [];
   const seen = new Set();
   let start = null;
+  const pageLimit = indexPageLimit(maxPages);
 
-  for (let page = 0; page < Math.max(1, maxPages) && items.length < limit; page += 1) {
+  for (let page = 0; page < pageLimit && items.length < limit; page += 1) {
     const response = await getAccountIdentifierTransactions(index, routeAccountIdentifier, start, pageSize);
-    const transactions = response?.transactions || [];
+    const nextStart = nextIndexPageStart(response, start, pageSize);
+    const transactions = response.transactions;
     for (const tx of transactions) {
       const item = routeTransferFromIndexTransaction(tx, sourceAccountIdentifier, routeAccountIdentifier);
       if (item) {
@@ -159,15 +205,7 @@ export async function loadRecentRouteTransfersFromIndex({
       if (items.length >= limit) break;
     }
 
-    if (transactions.length < pageSize) break;
-    const lastId = transactions[transactions.length - 1]?.id;
-    if (lastId === undefined || lastId === null) break;
-
-    const lastIdBigInt = typeof lastId === 'bigint' ? lastId : BigInt(lastId);
-    if (lastIdBigInt === 0n) break;
-
-    const nextStart = lastIdBigInt - 1n;
-    if (start !== null && nextStart >= BigInt(start)) break;
+    if (nextStart === null) break;
     start = nextStart;
   }
 
@@ -258,10 +296,12 @@ export async function loadCmcTopUpTransfersFromIndex({
   const items = [];
   const seen = new Set();
   let start = null;
+  const pageLimit = indexPageLimit(maxPages);
 
-  for (let page = 0; page < Math.max(1, maxPages) && items.length < limit; page += 1) {
+  for (let page = 0; page < pageLimit && items.length < limit; page += 1) {
     const response = await getAccountIdentifierTransactions(index, depositAccountIdentifier, start, pageSize);
-    const transactions = response?.transactions || [];
+    const nextStart = nextIndexPageStart(response, start, pageSize);
+    const transactions = response.transactions;
     for (const tx of transactions) {
       const item = cmcTopUpTransferFromIndexTransaction(tx, depositAccountIdentifier);
       if (item && isAtOrAfterTimestamp(item, minTimestampNanos)) {
@@ -275,15 +315,7 @@ export async function loadCmcTopUpTransfersFromIndex({
     }
 
     if (pageCrossedTimestampCutoff(transactions, minTimestampNanos)) break;
-    if (transactions.length < pageSize) break;
-    const lastId = transactions[transactions.length - 1]?.id;
-    if (lastId === undefined || lastId === null) break;
-
-    const lastIdBigInt = typeof lastId === 'bigint' ? lastId : BigInt(lastId);
-    if (lastIdBigInt === 0n) break;
-
-    const nextStart = lastIdBigInt - 1n;
-    if (start !== null && nextStart >= BigInt(start)) break;
+    if (nextStart === null) break;
     start = nextStart;
   }
 
@@ -312,6 +344,7 @@ export async function loadIncomingIcpTransfersFromIndex({
   const items = [];
   const seen = new Set();
   let start = null;
+  const pageLimit = indexPageLimit(maxPages);
   let truncated = false;
   const notifyProgress = async ({ loading, pagesLoaded }) => {
     if (typeof onProgress !== 'function') return;
@@ -325,41 +358,30 @@ export async function loadIncomingIcpTransfersFromIndex({
     });
   };
 
-  for (let page = 0; page < Math.max(1, maxPages) && items.length < limit; page += 1) {
+  for (let page = 0; page < pageLimit && items.length < limit; page += 1) {
     const response = await getAccountIdentifierTransactions(index, accountIdentifier, start, pageSize);
-    const transactions = response?.transactions || [];
+    const nextStart = nextIndexPageStart(response, start, pageSize);
+    const transactions = response.transactions;
     const reachedTimeWindowEnd = pageCrossedTimestampCutoff(transactions, minTimestampNanos);
+    let additionalMatches = false;
     for (const tx of transactions) {
       const item = incomingIcpTransferFromIndexTransaction(tx, accountIdentifier, sourceIds, exactMemo);
       if (item && isAtOrAfterTimestamp(item, minTimestampNanos)) {
         const key = String(item.tx_id);
         if (!seen.has(key)) {
           seen.add(key);
-          items.push(item);
+          if (items.length < limit) items.push(item);
+          else additionalMatches = true;
         }
       }
-      if (items.length >= limit) {
-        truncated = true;
-        break;
-      }
     }
 
-    if (!truncated && page + 1 >= Math.max(1, maxPages) && transactions.length >= pageSize) {
-      truncated = true;
-    }
-    await notifyProgress({ loading: !truncated && !reachedTimeWindowEnd, pagesLoaded: page + 1 });
-
-    if (reachedTimeWindowEnd) break;
-    if (transactions.length < pageSize) break;
-    const lastId = transactions[transactions.length - 1]?.id;
-    if (lastId === undefined || lastId === null) break;
-    const lastIdBigInt = typeof lastId === 'bigint' ? lastId : BigInt(lastId);
-    if (lastIdBigInt === 0n) break;
-    const nextStart = lastIdBigInt - 1n;
-    if (start !== null && nextStart >= BigInt(start)) break;
+    const moreHistory = nextStart !== null && !reachedTimeWindowEnd;
+    truncated = additionalMatches || (moreHistory && (items.length >= limit || page + 1 >= pageLimit));
+    const loading = moreHistory && !truncated;
+    await notifyProgress({ loading, pagesLoaded: page + 1 });
+    if (!loading) break;
     start = nextStart;
-
-    if (page + 1 >= Math.max(1, maxPages)) break;
   }
 
   return { items: normalizeRouteTransferItems(items, limit), truncated, limit, page_size: pageSize, loading: false };
