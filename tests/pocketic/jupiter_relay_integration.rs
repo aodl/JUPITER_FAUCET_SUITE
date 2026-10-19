@@ -2014,7 +2014,7 @@ fn no_raw_recipients_routes_all_spendable_icp_as_cycles() -> Result<()> {
 
 #[test]
 #[ignore]
-fn no_raw_recipients_waits_until_every_positive_burner_is_fee_efficient() -> Result<()> {
+fn no_raw_recipients_funds_efficient_targets_and_retains_other_shares() -> Result<()> {
     let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| {
         (vec![ledger, cmc], None, Vec::new())
     })?;
@@ -2030,30 +2030,54 @@ fn no_raw_recipients_waits_until_every_positive_burner_is_fee_efficient() -> Res
     env.set_canister_cycles(env.cmc, 1_000_000_000_000)?;
     env.set_canister_cycles(env.ledger, 9_900_000_000_000)?;
     let retained = env.tick_relay()?;
-    if retained.mode != RelayMode::TopUpThenSurplus
-        || retained.ledger_transfer_count != 0
-        || retained.cmc_notify_success_count != 0
-        || retained.planned_retained_e8s != 30_000
-        || retained.skipped_surplus_reason.as_deref()
-            != Some("all_cycles_batch_below_fee_efficient_threshold")
-    {
-        bail!("expected all-cycles batch gate to retain insufficient balance, got {retained:?}");
-    }
-    if retained
+    assert_eq!(retained.mode, RelayMode::TopUpThenSurplus);
+    assert_eq!(retained.ledger_transfer_count, 1);
+    assert_eq!(retained.cmc_notify_success_count, 1);
+    assert!(retained.surplus_transfers.is_empty());
+    assert_eq!(
+        retained.skipped_surplus_reason.as_deref(),
+        Some("no_raw_icp_recipients")
+    );
+    let small = retained
         .canisters
         .iter()
-        .filter(|sample| sample.burn_cycles > 0)
-        .any(|sample| {
-            sample.amount_e8s != 0
-                || sample.skipped_reason.as_deref()
-                    != Some("all_cycles_batch_below_fee_efficient_threshold")
-        })
-    {
-        bail!("expected no partial fast-burner top-up below threshold, got {retained:?}");
-    }
-    if !env.transfers()?.is_empty() || env.relay_balance()? != 30_000 {
-        bail!("expected retained ICP to remain in relay default ledger account");
-    }
+        .find(|s| s.canister_id == env.ledger)
+        .context("missing small-need allocation")?;
+    let large = retained
+        .canisters
+        .iter()
+        .find(|s| s.canister_id == env.cmc)
+        .context("missing large-need allocation")?;
+    assert!(small.gross_share_e8s > 0 && small.gross_share_e8s < 20_000);
+    assert_eq!(small.amount_e8s, 0);
+    assert_eq!(small.remaining_deficit_cycles, small.target_topup_cycles);
+    assert!(large.amount_e8s > 0);
+    assert_eq!(large.sent_topup_e8s, large.amount_e8s);
+    // Excluding the tiny target must not redistribute its proportional share.
+    assert_eq!(
+        large.gross_share_e8s as u128,
+        30_000 * large.target_topup_cycles / retained.total_target_topup_cycles
+    );
+    let excluded_shares = retained
+        .canisters
+        .iter()
+        .filter(|s| s.amount_e8s == 0)
+        .map(|s| s.gross_share_e8s)
+        .sum::<u64>();
+    assert!(retained.planned_retained_e8s >= excluded_shares);
+    assert_eq!(env.relay_balance()?, retained.planned_retained_e8s);
+    let first_transfers = env.transfers()?;
+    assert_eq!(first_transfers.len(), 1);
+    assert_eq!(
+        first_transfers[0].to,
+        Account {
+            owner: env.cmc,
+            subaccount: Some(principal_to_subaccount(env.cmc)),
+        }
+    );
+    assert_eq!(nat_to_u64(&first_transfers[0].amount), large.amount_e8s);
+    assert_eq!(nat_to_u64(&first_transfers[0].fee), 10_000);
+    assert_eq!(30_000, large.amount_e8s + 10_000 + env.relay_balance()?);
 
     env.credit_relay(10_000_000_000)?;
     env.set_canister_cycles(env.cmc, 100_000_000_000)?;
@@ -2081,6 +2105,16 @@ fn no_raw_recipients_waits_until_every_positive_burner_is_fee_efficient() -> Res
         );
     }
 
+    let later_small = funded
+        .canisters
+        .iter()
+        .find(|s| s.canister_id == env.ledger)
+        .context("missing continued small-need allocation")?;
+    assert_eq!(
+        later_small.carried_deficit_cycles,
+        small.remaining_deficit_cycles
+    );
+    assert!(later_small.sent_topup_e8s > 0);
     let transfers = env.transfers()?;
     let cmc_topup_accounts = [
         Account {
@@ -2101,6 +2135,14 @@ fn no_raw_recipients_waits_until_every_positive_burner_is_fee_efficient() -> Res
     {
         bail!("expected CMC top-up transfers for positive burners and no raw surplus, got {transfers:?}");
     }
+    let total_outflow = transfers
+        .iter()
+        .map(|t| nat_to_u64(&t.amount) + nat_to_u64(&t.fee))
+        .sum::<u64>();
+    assert_eq!(
+        30_000 + 10_000_000_000,
+        total_outflow + env.relay_balance()?
+    );
     Ok(())
 }
 
