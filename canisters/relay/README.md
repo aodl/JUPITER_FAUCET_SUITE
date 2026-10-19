@@ -188,6 +188,11 @@ Incoming deposits aggregate and their memos are not forwarded as individual dono
 
 That creates a normal Faucet endowment targeting the Relay; future payouts return to the Relay's default account. Subaccount 1 is useful when the original sender cannot attach the Faucet memo or when many small deposits need to accumulate before they qualify.
 
+A conclusive Ledger acceptance, including an exact `Duplicate`, completes and
+logs that funding transfer before a bounded best-effort neuron refresh. A failed
+or delayed refresh cannot hold the funding slot, repeat the accepted payment,
+or prevent a later independent deposit from being forwarded.
+
 Self-service creation deliberately sends the eligible remainder of setup funding here, so a new Relay starts by building its long-term funding base rather than merely holding deployment residue.
 
 ### Splitter subaccounts 10–90

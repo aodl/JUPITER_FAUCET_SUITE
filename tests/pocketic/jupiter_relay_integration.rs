@@ -1711,12 +1711,11 @@ fn subaccount_one_commitment_forwards_without_default_account_funds() -> Result<
     if transfer.memo.as_deref() != Some(expected_memo.as_slice()) {
         bail!("expected compact Relay Faucet memo, got {transfer:?}");
     }
-    if env.claim_or_refresh_calls()? != 0 {
-        bail!("expected claim_or_refresh to be deferred until the accepted transfer is retried");
-    }
+    // Capture acceptance before later verbose summaries evict the bounded log.
+    let logs = env.logs_text()?;
     let _ = env.tick_relay()?;
     if env.claim_or_refresh_calls()? != 1 {
-        bail!("expected one deferred Jupiter Faucet neuron claim_or_refresh call");
+        bail!("expected one best-effort Jupiter Faucet neuron claim_or_refresh call");
     }
     if env.transfers()?.len() != 1 {
         bail!("expected deferred refresh not to duplicate the ledger transfer");
@@ -1728,7 +1727,6 @@ fn subaccount_one_commitment_forwards_without_default_account_funds() -> Result<
             env.relay_subaccount_one_balance()?
         );
     }
-    let logs = env.logs_text()?;
     if !logs.contains("RELAY_FAUCET_COMMITMENT ")
         || !logs.contains("amount_e8s=100000000")
         || !logs.contains("memo_len=")
@@ -1842,24 +1840,33 @@ fn subaccount_one_commitment_treats_ledger_duplicate_as_accepted() -> Result<()>
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay_subaccount_one(100_010_000)?;
-    env.set_ledger_error_script(vec![DebugNextTransferError::Duplicate { duplicate_of: 77 }])?;
+    env.abort_after_successful_transfer()?;
 
-    let summary = env.tick_relay()?;
-    if summary.ledger_transfer_count != 0 || summary.cmc_notify_success_count != 0 {
-        bail!("expected default-account job to stay idle, got {summary:?}");
-    }
+    env.trigger_relay()?;
     if env.claim_or_refresh_calls()? != 0 {
-        bail!("expected duplicate response refresh to be deferred until the accepted transfer is retried");
+        bail!("interrupted acceptance must not start neuron refresh");
     }
-    if !env.transfers()?.is_empty() {
-        bail!("mock duplicate response should not create a second ledger transfer record");
+    let accepted = env.transfers()?;
+    if accepted.len() != 1 || env.relay_subaccount_one_balance()? != 0 {
+        bail!("fixture must debit the accepted transfer before losing its reply: {accepted:?}");
     }
     let _ = env.tick_relay()?;
     if env.claim_or_refresh_calls()? != 1 {
-        bail!("expected accepted duplicate response to be followed by deferred claim_or_refresh");
+        bail!("expected recovered duplicate response to trigger one best-effort claim_or_refresh");
     }
-    if !env.transfers()?.is_empty() {
-        bail!("mock duplicate response should not create a ledger transfer record after deferred refresh");
+    if env.transfers()? != accepted {
+        bail!("exact duplicate recovery must not debit the accepted transfer again");
+    }
+    let attempts = env.transfer_attempts()?;
+    if attempts.len() != 2 || attempts[1].result != "Duplicate" {
+        bail!(
+            "expected an actual Ledger duplicate response for the persisted identity: {attempts:?}"
+        );
+    }
+    let mut retry = attempts[1].clone();
+    retry.result = attempts[0].result.clone();
+    if retry != attempts[0] {
+        bail!("duplicate recovery changed the pinned Ledger request: {attempts:?}");
     }
     let logs = env.logs_text()?;
     if !logs.contains("RELAY_FAUCET_COMMITMENT ")
@@ -1873,7 +1880,7 @@ fn subaccount_one_commitment_treats_ledger_duplicate_as_accepted() -> Result<()>
 
 #[test]
 #[ignore]
-fn subaccount_one_commitment_refresh_failure_does_not_duplicate_transfer() -> Result<()> {
+fn subaccount_one_refresh_failure_does_not_block_an_independent_deposit() -> Result<()> {
     let env = RelayEnv::new(None)?;
     env.set_managed_cycles(10_000_000_000_000)?;
     env.credit_relay_subaccount_one(100_010_000)?;
@@ -1888,12 +1895,41 @@ fn subaccount_one_commitment_refresh_failure_does_not_duplicate_transfer() -> Re
         bail!("expected exactly one ledger transfer despite refresh failure, got {transfers:?}");
     }
 
+    let mut logs = env.logs_text()?;
+    env.pic.advance_time(Duration::from_secs(1));
+    env.credit_relay_subaccount_one(100_010_000)?;
     let _ = env.tick_relay()?;
     let transfers_after = env.transfers()?;
-    if transfers_after.len() != 1 {
-        bail!("expected no duplicate transfer on later tick after refresh failure, got {transfers_after:?}");
+    if transfers_after.len() != 2 || transfers_after[0] != transfers[0] {
+        bail!("expected one payment per independent deposit despite refresh failures, got {transfers_after:?}");
     }
-    let logs = env.logs_text()?;
+    if transfers_after[1].from != transfers_after[0].from
+        || transfers_after[1].to != transfers_after[0].to
+        || transfers_after[1].amount != transfers_after[0].amount
+        || transfers_after[1].fee != transfers_after[0].fee
+        || transfers_after[1].memo != transfers_after[0].memo
+        || transfers_after[1].created_at_time == transfers_after[0].created_at_time
+        || env.relay_subaccount_one_balance()? != 0
+        || env.debug_state()?.active_faucet_commitment_transfer_present
+    {
+        bail!(
+            "independent commitment must complete under a new pinned identity: {transfers_after:?}"
+        );
+    }
+    logs.push_str(&env.logs_text()?);
+    let _ = env.tick_relay()?;
+    // The existing claim counter counts successes only. Manage calls count
+    // both failed refresh attempts in this no-surplus fixture.
+    let refresh_attempts: u64 = query_one(
+        &env.pic,
+        env.governance,
+        Principal::anonymous(),
+        "debug_get_manage_calls",
+        (),
+    )?;
+    if env.transfers()? != transfers_after || refresh_attempts != 2 {
+        bail!("completed deposits must not be replayed or create durable refresh retries");
+    }
     if !logs.contains("RELAY_FAUCET_COMMITMENT ")
         || !logs.contains("skipped_reason=null")
         || !logs.contains("relay ERR message=faucet%20commitment%20neuron%20refresh%20failed")
@@ -3852,9 +3888,9 @@ fn reward_callback_trap_cannot_erase_completed_funding_cadence() -> Result<()> {
         (),
     )?;
     assert!(after.last_main_run_ts > before.last_main_run_ts);
-    // Ledger acceptance is committed; the existing later refresh phase remains
-    // pinned rather than being discarded by the reward callback interruption.
-    assert!(after.active_faucet_commitment_transfer_present);
+    // Ledger acceptance completes the funding record before ancillary work.
+    // The reward callback interruption must not restore that record.
+    assert!(!after.active_faucet_commitment_transfer_present);
     assert_eq!(
         support::ledger::icrc1_balance(
             &env.pic,

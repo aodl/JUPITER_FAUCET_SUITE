@@ -371,7 +371,6 @@ pub(super) async fn drive_pending_faucet_commitment_transfer<
         return true;
     };
 
-    let mut accepted_this_tick = false;
     let accepted = match staged.transfer.phase {
         PendingTransferPhase::AwaitingTransfer => {
             if !created_at_time_is_valid(staged.transfer.created_at_time_nanos, now_nanos) {
@@ -459,35 +458,30 @@ pub(super) async fn drive_pending_faucet_commitment_transfer<
             else {
                 return false;
             };
-            accepted_this_tick = true;
             accepted
         }
         PendingTransferPhase::TransferAccepted { .. } => staged,
     };
-    if accepted_this_tick {
-        return true;
-    }
-
     let neuron_id = match &accepted.transfer.kind {
         PendingTransferKind::FaucetCommitment { neuron_id, .. } => *neuron_id,
         _ => return true,
     };
+    // Acceptance settles the funding transfer. Neuron maintenance must not
+    // retain its slot or let a late callback modify an independent deposit.
+    mark_faucet_commitment_completed(&accepted);
 
     #[cfg(target_arch = "wasm32")]
     {
         ic_cdk_timers::set_timer(std::time::Duration::from_secs(0), async move {
             let governance_id = state::with_state(|st| st.config.governance_canister_id);
             let governance = crate::clients::governance::NnsGovernanceCanister::new(governance_id);
-            match crate::clients::GovernanceClient::claim_or_refresh_neuron(&governance, neuron_id)
-                .await
+            if let Err(err) =
+                crate::clients::GovernanceClient::claim_or_refresh_neuron(&governance, neuron_id)
+                    .await
             {
-                Ok(()) => mark_faucet_commitment_completed(&accepted),
-                Err(err) => {
-                    log_expected_faucet_commitment(&accepted, None);
-                    log_error(&format!(
-                        "faucet commitment neuron refresh failed neuron_id={neuron_id} error={err}"
-                    ));
-                }
+                log_error(&format!(
+                    "faucet commitment neuron refresh failed neuron_id={neuron_id} error={err}"
+                ));
             }
         });
         true
@@ -496,19 +490,10 @@ pub(super) async fn drive_pending_faucet_commitment_transfer<
     #[cfg(not(target_arch = "wasm32"))]
     {
         if let Err(err) = governance.claim_or_refresh_neuron(neuron_id).await {
-            if !faucet_commitment_matches(&accepted) {
-                return false;
-            }
-            log_expected_faucet_commitment(&accepted, None);
             log_error(&format!(
                 "faucet commitment neuron refresh failed neuron_id={neuron_id} error={err}"
             ));
-            return true;
         }
-        if !faucet_commitment_matches(&accepted) {
-            return false;
-        }
-        mark_faucet_commitment_completed(&accepted);
         true
     }
 }
@@ -617,17 +602,6 @@ fn mark_faucet_commitment_completed(expected: &PendingFaucetCommitmentTransfer) 
                 .take()
                 .expect("matched faucet commitment");
             log_faucet_commitment(&active, None);
-        }
-    });
-}
-
-fn log_expected_faucet_commitment(
-    expected: &PendingFaucetCommitmentTransfer,
-    skipped_reason: Option<&str>,
-) {
-    state::with_state(|st| {
-        if st.active_faucet_commitment_transfer.as_ref() == Some(expected) {
-            log_faucet_commitment(expected, skipped_reason);
         }
     });
 }
@@ -1689,10 +1663,15 @@ mod tests {
     }
 
     #[test]
-    fn stale_commitment_refresh_cannot_clear_replacement_commitment() {
+    fn accepted_commitment_refresh_releases_slot_before_waiting_and_cannot_clear_successor() {
+        install_pending_job(PendingTransferPhase::TransferAccepted { block_index: 8 });
+        let cycles_job = state::with_state(|st| st.active_job.clone());
         install_pending_faucet_commitment(PendingTransferPhase::TransferAccepted {
             block_index: 7,
         });
+        state::with_state_mut(|st| st.active_job = cycles_job);
+        let accepted =
+            state::with_state(|st| st.active_faucet_commitment_transfer.clone().unwrap());
         let governance = HeldGovernance {
             started: AtomicBool::new(false),
             release: AtomicBool::new(false),
@@ -1704,14 +1683,29 @@ mod tests {
         ));
         assert!(poll_once(future.as_mut()).is_pending());
         assert!(governance.started.load(Ordering::SeqCst));
+        state::with_state(|st| assert!(st.active_faucet_commitment_transfer.is_none()));
+        // A held ancillary refresh cannot keep independent accepted cycles work pending.
+        assert!(block_on(drive_pending_transfer(
+            &AcceptingLedger,
+            &MintingCmc { minted_cycles: 321 },
+            principal("rkp4c-7iaaa-aaaaa-aaaca-cai"),
+            2,
+        )));
+        state::with_state(|st| {
+            let job = st.active_job.as_ref().unwrap();
+            assert!(job.pending_transfer.is_none());
+            assert_eq!(job.summary.cmc_notify_success_count, 1);
+        });
         let replacement = state::with_state_mut(|st| {
-            let mut replacement = st.active_faucet_commitment_transfer.clone().unwrap();
+            let mut replacement = accepted.clone();
             replacement.transfer.amount_e8s = 777;
+            replacement.transfer.created_at_time_nanos = 3;
+            replacement.transfer.phase = PendingTransferPhase::AwaitingTransfer;
             st.active_faucet_commitment_transfer = Some(replacement.clone());
             replacement
         });
         governance.release.store(true, Ordering::SeqCst);
-        assert!(!block_on(future));
+        assert!(block_on(future));
         state::with_state(|st| {
             assert_eq!(
                 st.active_faucet_commitment_transfer.as_ref(),
@@ -1738,8 +1732,10 @@ mod tests {
     }
 
     #[test]
-    fn subaccount_one_commitment_refresh_failure_does_not_duplicate_transfer() {
+    fn accepted_commitments_complete_despite_refresh_failure_and_allow_independent_deposit() {
         install_pending_faucet_commitment(PendingTransferPhase::AwaitingTransfer);
+        let original =
+            state::with_state(|st| st.active_faucet_commitment_transfer.clone().unwrap());
         let ledger = CountingLedger::new();
         let governance = RefreshGovernance::fail_times(2);
 
@@ -1750,31 +1746,55 @@ mod tests {
         )));
         assert_eq!(ledger.transfer_count(), 1);
         state::with_state(|st| {
-            let active = st
-                .active_faucet_commitment_transfer
-                .as_ref()
-                .expect("accepted transfer remains staged after refresh failure");
-            assert!(matches!(
-                active.transfer.phase,
-                PendingTransferPhase::TransferAccepted { block_index: 1 }
-            ));
+            assert!(st.active_faucet_commitment_transfer.is_none());
         });
-
+        // A later, independently funded commitment has a different pinned identity.
+        state::with_state_mut(|st| {
+            let mut next = original;
+            next.transfer.created_at_time_nanos = 3;
+            st.active_faucet_commitment_transfer = Some(next);
+        });
         assert!(block_on(drive_pending_faucet_commitment_transfer(
             &ledger,
             &governance,
             3,
         )));
-        assert_eq!(ledger.transfer_count(), 1);
+        assert_eq!(ledger.transfer_count(), 2);
         state::with_state(|st| {
-            let active = st
-                .active_faucet_commitment_transfer
-                .as_ref()
-                .expect("accepted transfer remains staged while refresh keeps failing");
-            assert!(matches!(
-                active.transfer.phase,
-                PendingTransferPhase::TransferAccepted { block_index: 1 }
-            ));
+            assert!(st.active_faucet_commitment_transfer.is_none());
+        });
+        // No durable refresh obligation or payment replay survives either failure.
+        assert!(block_on(drive_pending_faucet_commitment_transfer(
+            &ledger,
+            &governance,
+            4,
+        )));
+        assert_eq!(ledger.transfer_count(), 2);
+        assert_eq!(governance.failures_before_success.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn ambiguous_commitment_does_not_start_refresh_or_log_success() {
+        install_pending_faucet_commitment(PendingTransferPhase::AwaitingTransfer);
+        crate::scheduler::logging::TEST_LOG_LINES.with(|lines| lines.borrow_mut().clear());
+        let ledger = ScriptedLedger::new(vec![
+            ScriptedTransferOutcome::CallFailure,
+            ScriptedTransferOutcome::CallFailure,
+        ]);
+        let governance = RefreshGovernance::fail_times(1);
+        assert!(block_on(drive_pending_faucet_commitment_transfer(
+            &ledger,
+            &governance,
+            2
+        )));
+        assert_eq!(ledger.transfer_count(), 2);
+        let attempts = ledger.transfers.lock().unwrap();
+        assert_eq!(attempts[0], attempts[1]);
+        assert_eq!(governance.failures_before_success.load(Ordering::SeqCst), 1);
+        crate::scheduler::logging::TEST_LOG_LINES.with(|lines| {
+            let text = lines.borrow().join("\n");
+            assert!(text.contains("skipped_reason=subaccount_1_transfer_ambiguous"));
+            assert!(!text.contains("skipped_reason=null"));
         });
     }
 }
