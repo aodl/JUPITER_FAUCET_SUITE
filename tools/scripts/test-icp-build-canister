@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Offline fixtures for the real canonical artifact handoff helper."""
+import gzip
+import hashlib
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+
+class CanonicalPayloadContract(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="jupiter-canonical-fixture-", dir=Path.home())
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        scripts = self.root / "tools/scripts"
+        scripts.mkdir(parents=True)
+        self.helper = scripts / "icp-build-canister"
+        shutil.copy2(Path(__file__).with_name("icp-build-canister"), self.helper)
+        self.artifacts = self.root / "release-artifacts"
+        self.artifacts.mkdir()
+        self.payload = self.artifacts / "jupiter_faucet.wasm.gz"
+        self.payload.write_bytes(gzip.compress(b"\x00asm\x01\x00\x00\x00", mtime=0))
+        self.sidecar = self.artifacts / "jupiter_faucet.wasm.gz.sha256"
+        self.sidecar.write_text(self.entry(self.payload))
+        self.metadata = self.artifacts / "build-info.json"
+        self.metadata.write_text('{"toolchain":"fixture"}\n')
+        self.manifest = self.artifacts / "release-artifacts.sha256"
+        self.manifest.write_text(self.entry(self.payload) + self.entry(self.sidecar) + self.entry(self.metadata))
+        self.output = self.root / "output.wasm.gz"
+
+    def entry(self, path):
+        return f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(self.root)}\n"
+
+    def run_helper(self, accepted=False):
+        result = subprocess.run(
+            [str(self.helper), "jupiter-faucet", "jupiter_faucet"], cwd=self.root,
+            env={**os.environ, "JUPITER_USE_CANONICAL_ARTIFACTS": "1", "ICP_WASM_OUTPUT_PATH": str(self.output)},
+            capture_output=True, text=True,
+        )
+        if accepted:
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.output.read_bytes(), self.payload.read_bytes())
+        else:
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(self.output.exists(), "a rejected fixture must never reach the handoff path")
+
+    def test_complete_manifest_accepts_exact_payload(self):
+        self.run_helper(accepted=True)
+
+    def test_altered_payload_rejected(self):
+        self.payload.write_bytes(b"altered")
+        self.run_helper()
+
+    def test_sidecar_only_manifest_cannot_authenticate_altered_payload(self):
+        self.manifest.write_text(self.entry(self.sidecar))
+        self.payload.write_bytes(b"altered and unchecked")
+        self.run_helper()
+
+    def test_missing_payload_entry_rejected(self):
+        self.manifest.write_text(self.entry(self.metadata))
+        self.run_helper()
+
+    def test_malformed_digest_rejected(self):
+        self.manifest.write_text("g" * 64 + "  release-artifacts/jupiter_faucet.wasm.gz\n")
+        self.run_helper()
+
+    def test_duplicate_payload_entry_rejected(self):
+        self.manifest.write_text(self.manifest.read_text() + self.entry(self.payload))
+        self.run_helper()
+
+    def test_similarly_prefixed_entry_rejected(self):
+        other = self.artifacts / "jupiter_faucet.wasm.gz.not-the-payload"
+        other.write_bytes(b"different file")
+        self.manifest.write_text(self.entry(other))
+        self.run_helper()
+
+    def test_missing_payload_file_rejected(self):
+        self.payload.unlink()
+        self.run_helper()
+
+    def test_unrelated_manifest_failure_still_rejected(self):
+        self.metadata.write_text("altered metadata")
+        self.run_helper()
+
+    def test_malformed_requested_entry_with_valid_sidecar_rejected(self):
+        self.manifest.write_text(self.entry(self.sidecar) + "not-a-digest  release-artifacts/jupiter_faucet.wasm.gz\n")
+        self.run_helper()
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

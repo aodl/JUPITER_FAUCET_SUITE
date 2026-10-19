@@ -28,11 +28,25 @@ if [ "${JUPITER_USE_CANONICAL_ARTIFACTS:-0}" = "1" ]; then
     echo "run ./tools/scripts/docker-build first" >&2
     exit 1
   fi
-  if ! grep -F "  ${manifest_entry}" "$manifest" >/dev/null; then
-    echo "canonical manifest does not include ${manifest_entry}" >&2
-    exit 1
-  fi
-  if ! sha256sum -c release-artifacts/release-artifacts.sha256 --status; then
+  python3 - "$manifest" "$manifest_entry" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+manifest, requested = sys.argv[1:]
+entries = set()
+for line in Path(manifest).read_text().splitlines():
+    entry = re.fullmatch(r"[0-9a-fA-F]{64}  (release-artifacts/[^\r\n]+)", line)
+    if entry is None:
+        sys.exit("canonical manifest contains a malformed entry")
+    path = entry.group(1)
+    if path in entries:
+        sys.exit(f"canonical manifest contains duplicate entry: {path}")
+    entries.add(path)
+if requested not in entries:
+    sys.exit(f"canonical manifest does not include exact payload: {requested}")
+PY
+  if ! sha256sum --check --strict --status "$manifest"; then
     echo "canonical artifact manifest verification failed: ${manifest}" >&2
     echo "run ./tools/scripts/docker-build first, then retry with JUPITER_USE_CANONICAL_ARTIFACTS=1" >&2
     exit 1

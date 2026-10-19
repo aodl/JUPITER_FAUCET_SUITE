@@ -9,3 +9,16 @@ pub(crate) fn repo_root() -> String {
         .to_string_lossy()
         .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn canonical_payload_handoff_requires_exact_verified_manifest_membership() {
+        let status = std::process::Command::new("python3")
+            .arg("tools/scripts/test-icp-build-canister")
+            .current_dir(super::repo_root())
+            .status()
+            .expect("run offline canonical payload fixtures");
+        assert!(status.success(), "canonical payload fixtures failed");
+    }
+}
