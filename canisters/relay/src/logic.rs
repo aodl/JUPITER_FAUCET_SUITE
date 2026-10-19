@@ -1792,14 +1792,40 @@ mod tests {
 
     #[test]
     fn surplus_plan_requires_usable_conversion() {
-        let (surplus, e8s, reason) = build_surplus_plan(&[], 1_000, 10, None, 1);
-
-        assert!(surplus.is_empty());
-        assert_eq!(e8s, 0);
-        assert_eq!(
-            reason.as_deref(),
-            Some(SKIP_REASON_MISSING_CONVERSION_ESTIMATE)
-        );
+        let recipient = ResolvedSurplusRecipient {
+            target: SurplusTarget::Canister(canister_a()),
+            account: Account {
+                owner: canister_a(),
+                subaccount: None,
+            },
+            memo: None,
+        };
+        let now = CONVERSION_ESTIMATE_MAX_AGE_NANOS + 2;
+        for estimate in [
+            None,
+            Some(ConversionEstimate {
+                cycles_per_e8: 0,
+                timestamp_nanos: now,
+            }),
+            Some(ConversionEstimate {
+                cycles_per_e8: 10_000,
+                timestamp_nanos: 1,
+            }),
+        ] {
+            let (surplus, e8s, reason) = build_surplus_plan(
+                std::slice::from_ref(&recipient),
+                200_010_000,
+                10_000,
+                estimate.as_ref(),
+                now,
+            );
+            assert!(surplus.is_empty());
+            assert_eq!(e8s, 0);
+            assert_eq!(
+                reason.as_deref(),
+                Some(SKIP_REASON_MISSING_CONVERSION_ESTIMATE)
+            );
+        }
     }
 
     #[test]

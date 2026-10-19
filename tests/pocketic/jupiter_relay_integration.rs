@@ -2323,6 +2323,98 @@ fn relay_splits_equally_when_no_canister_burned_cycles() -> Result<()> {
 
 #[test]
 #[ignore]
+fn zero_need_topups_distribute_eligible_surplus_after_external_cycles_subsidy() -> Result<()> {
+    let env = RelayEnv::new_with_config(None, |ledger, cmc, _, _| {
+        (
+            vec![cmc],
+            Some(vec![
+                SurplusCanisterRecipient {
+                    canister_id: ledger,
+                    memo: vec![0x11],
+                },
+                SurplusCanisterRecipient {
+                    canister_id: cmc,
+                    memo: vec![0x22],
+                },
+            ]),
+            Vec::new(),
+        )
+    })?;
+    env.set_managed_cycles(10_000_000_000_000)?;
+    env.credit_relay(400_020_000)?;
+    assert_eq!(env.tick_relay()?.mode, RelayMode::BaselineOnly);
+    assert!(env.transfers()?.is_empty());
+    assert_eq!(env.relay_balance()?, 400_020_000);
+    env.set_managed_cycles(12_000_000_000_000)?;
+    env.add_relay_cycles(1_000_000_000_000);
+    let balance = |owner| -> Result<Nat> {
+        query_one(
+            &env.pic,
+            env.ledger,
+            Principal::anonymous(),
+            "icrc1_balance_of",
+            Account {
+                owner,
+                subaccount: None,
+            },
+        )
+    };
+    let before = [balance(env.ledger)?, balance(env.cmc)?];
+    let rate = jupiter_ic_clients::cmc::IcpXdrConversionRate {
+        timestamp_seconds: (env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64,
+        xdr_permyriad_per_icp: 100_000,
+    };
+    update_one::<_, ()>(
+        &env.pic,
+        env.cmc,
+        Principal::anonymous(),
+        "debug_set_conversion_rate",
+        rate.clone(),
+    )?;
+    let summary = env.tick_relay()?;
+    assert_eq!(summary.mode, RelayMode::TopUpThenSurplus);
+    assert!(summary
+        .canisters
+        .iter()
+        .all(|sample| sample.burn_cycles == 0 && sample.target_topup_cycles == 0));
+    assert!(env.notifications()?.is_empty());
+    assert_eq!(
+        summary
+            .conversion_estimate_used
+            .as_ref()
+            .unwrap()
+            .timestamp_nanos,
+        rate.timestamp_seconds * 1_000_000_000
+    );
+    let transfers = env.transfers()?;
+    assert_eq!(transfers.len(), 2);
+    for (index, recipient) in [env.ledger, env.cmc].into_iter().enumerate() {
+        assert_eq!(
+            balance(recipient)?,
+            Nat::from(before[index].0.clone() + 200_000_000_u64)
+        );
+        assert_eq!(
+            transfers[index].to,
+            Account {
+                owner: recipient,
+                subaccount: None
+            }
+        );
+        assert_eq!(transfers[index].amount, Nat::from(200_000_000_u64));
+        assert_eq!(transfers[index].fee, Nat::from(10_000_u64));
+        assert_eq!(transfers[index].memo, Some(vec![0x11 + index as u8 * 0x11]));
+    }
+    assert_eq!(
+        summary.ledger_sent_e8s + summary.ledger_fees_e8s,
+        400_020_000
+    );
+    assert_eq!(env.relay_balance()?, 0);
+    assert!(!env.debug_state()?.active_job_present);
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn surplus_canister_transfer_uses_configured_memo_without_cmc_notify() -> Result<()> {
     let external_memo = vec![0xA1, 0xB2];
     let env = RelayEnv::new_with_config(None, |_, cmc, _, _relay| {

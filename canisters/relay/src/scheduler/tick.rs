@@ -1136,7 +1136,7 @@ async fn drive_active_job<L: LedgerClient, C: CmcClient, G: GovernanceClient>(
             }
             TransferPlanStep::Done => {}
         }
-        if topup_phase_done_and_surplus_unplanned() && topup_phase_had_activity() {
+        if topup_phase_done_and_surplus_unplanned() {
             continue;
         }
         if !lease.is_current() {
@@ -1154,22 +1154,6 @@ fn topup_phase_done_and_surplus_unplanned() -> bool {
             .map(|job| {
                 (job.next_transfer_index as usize) >= job.canisters.len()
                     && !job.surplus_phase_planned
-            })
-            .unwrap_or(false)
-    })
-}
-
-fn topup_phase_had_activity() -> bool {
-    state::with_state(|st| {
-        st.active_job
-            .as_ref()
-            .map(|job| {
-                job.summary.ledger_transfer_count > 0
-                    || job.summary.failed_transfers > 0
-                    || job.summary.ambiguous_transfers > 0
-                    || job.summary.cmc_notify_success_count > 0
-                    || job.summary.cmc_notify_failed_count > 0
-                    || job.summary.cmc_notify_ambiguous_count > 0
             })
             .unwrap_or(false)
     })
@@ -2451,6 +2435,68 @@ mod tests {
             surplus_transfer_index: 0,
             next_created_at_time_nanos: 10,
             summary,
+        }
+    }
+
+    #[test]
+    fn zero_need_topups_reach_funded_surplus_with_finite_capped_continuation() {
+        let target = principal("22255-zqaaa-aaaas-qf6uq-cai");
+        for cap in [None, Some(1)] {
+            let mut cfg = config_with_managed(vec![target]);
+            cfg.max_transfers_per_tick = cap;
+            cfg.surplus_recipients.push(crate::state::SurplusRecipient {
+                target: SurplusTarget::Canister(target),
+                memo: Some(vec![0x22]),
+            });
+            let mut st = State::new(cfg, 0);
+            st.last_completed_cycles.insert(target, snapshot(9_000_000));
+            st.last_completed_cycles
+                .insert(relay_self(), snapshot(9_000_000));
+            state::set_state(st);
+            let ledger = MockSchedulerLedger::new(400_020_000, 10_000);
+            let cmc = MockSchedulerCmc::new(0);
+            run_start_job_for_balances(
+                BTreeMap::from([(target, 9_000_000)]),
+                Vec::new(),
+                &ledger,
+                &cmc,
+            );
+            assert_eq!(ledger.transfer_count(), if cap.is_some() { 1 } else { 2 });
+            if cap.is_some() {
+                let guard = MainGuard::acquire(11).unwrap();
+                assert!(block_on(drive_active_job(
+                    11_000_000_000,
+                    &ledger,
+                    &cmc,
+                    &MockSchedulerGovernance,
+                    guard.lease_token()
+                )));
+                guard.finish(11);
+            }
+            assert!(cmc.notify_calls().is_empty());
+            let transfers = ledger.transfers.lock().unwrap();
+            assert_eq!(transfers.len(), 2);
+            for transfer in transfers.iter() {
+                assert_eq!(transfer.amount, Nat::from(200_000_000_u64));
+                assert_eq!(transfer.fee, Some(Nat::from(10_000_u64)));
+            }
+            assert_ne!(transfers[0].to, transfers[1].to);
+            assert_eq!(transfers[1].memo, Some(vec![0x22].into()));
+            state::with_state(|st| {
+                assert!(st.active_job.is_none());
+                let summary = st.last_summary.as_ref().unwrap();
+                assert!(summary
+                    .canisters
+                    .iter()
+                    .all(|sample| sample.target_topup_cycles == 0));
+                assert_eq!(summary.ledger_transfer_count, 2);
+                assert_eq!(
+                    summary.ledger_sent_e8s + summary.ledger_fees_e8s,
+                    400_020_000
+                );
+                assert_eq!(summary.known_unspent_e8s, 0);
+                assert_eq!(summary.skipped_surplus_reason, None);
+            });
         }
     }
 
