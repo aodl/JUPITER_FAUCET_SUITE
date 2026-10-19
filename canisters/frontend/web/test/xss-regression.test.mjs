@@ -191,13 +191,14 @@ test('principal and controller renderers escape untrusted labels and links', () 
 test('source pane cached localStorage data cannot inject controller HTML', async () => {
   for (const payload of XSS_PAYLOADS) {
     const controllers = makeSourceNode('data-source-controllers', 'aaaaa-aa');
-    const cacheKey = 'jupiter-faucet:source-pane-canister-info:v4:hist-aa';
+    const cacheKey = 'jupiter-faucet:source-pane-canister-info:v5:hist-aa';
     const cached = {
       cachedAt: Date.now(),
       infoByCanisterId: {
         'aaaaa-aa': {
           moduleHash: payload,
           controllers: [payload],
+          totalMemoryBytes: null,
         },
       },
     };
@@ -216,6 +217,7 @@ test('source pane cached localStorage data cannot inject controller HTML', async
       await controller.ensureLoaded();
     });
 
+    assert.match(controllers.innerHTML, /data-tracker-principal=/);
     assertNoExecutableHtml(controllers.innerHTML);
   }
 });

@@ -22,15 +22,27 @@ function sourcePaneCanisterInfoNodes() {
 }
 
 function normalizeSourcePaneInfo(infoByCanisterId, canisterId) {
-  const entry = infoByCanisterId?.[canisterId];
-  if (!entry) return { moduleHash: null, controllers: null, totalMemoryBytes: null };
-  if (typeof entry === 'string') return { moduleHash: entry || null, controllers: null, totalMemoryBytes: null };
-  if (typeof entry !== 'object' || Array.isArray(entry)) return { moduleHash: null, controllers: null, totalMemoryBytes: null };
-  return {
-    moduleHash: entry.moduleHash || entry.module_hash_hex || null,
-    controllers: Array.isArray(entry.controllers) ? entry.controllers : null,
-    totalMemoryBytes: entry.totalMemoryBytes ?? entry.total_memory_bytes ?? null,
-  };
+  return infoByCanisterId?.[canisterId] ?? { moduleHash: null, controllers: null, totalMemoryBytes: null };
+}
+
+function isNat64Text(value) {
+  return typeof value === 'string' && value.length <= 20
+    && /^(0|[1-9][0-9]*)$/.test(value) && BigInt(value) <= 18_446_744_073_709_551_615n;
+}
+
+function memoryCacheText(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'bigint' || !isNat64Text(value.toString())) throw new Error('Invalid Nat64 memory metadata');
+  return value.toString();
+}
+
+function isSourcePaneCacheInfo(entry) {
+  return entry !== null && typeof entry === 'object' && !Array.isArray(entry)
+    && Object.keys(entry).length === 3
+    && (entry.moduleHash === null || typeof entry.moduleHash === 'string')
+    && (entry.controllers === null || (Array.isArray(entry.controllers)
+      && entry.controllers.every((controller) => typeof controller === 'string')))
+    && (entry.totalMemoryBytes === null || isNat64Text(entry.totalMemoryBytes));
 }
 
 function renderSourceControllers(controllers) {
@@ -56,7 +68,7 @@ export function createSourcePaneController({
 
   const sourcePaneModuleHashCacheKey = () => {
     if (!frontendConfig?.historianCanisterId) return null;
-    return `jupiter-faucet:source-pane-canister-info:v4:${frontendConfig.historianCanisterId}`;
+    return `jupiter-faucet:source-pane-canister-info:v5:${frontendConfig.historianCanisterId}`;
   };
 
   const sourcePaneExpectedCanisterIds = () => Array.from(new Set(sourcePaneCanisterInfoNodes()
@@ -104,12 +116,14 @@ export function createSourcePaneController({
       const raw = window.localStorage.getItem(cacheKey);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object') return null;
-      const cachedAt = Number(parsed.cachedAt || 0);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).length !== 2) return null;
+      const cachedAt = parsed.cachedAt;
       if (!Number.isFinite(cachedAt) || cachedAt <= 0) return null;
-      if ((now() - cachedAt) > SOURCE_PANE_CACHE_TTL_MS) return null;
-      const infoByCanisterId = parsed.infoByCanisterId || parsed.hashByCanisterId;
-      if (!infoByCanisterId || typeof infoByCanisterId !== 'object') return null;
+      if (cachedAt > now() || (now() - cachedAt) > SOURCE_PANE_CACHE_TTL_MS) return null;
+      const infoByCanisterId = parsed.infoByCanisterId;
+      if (!infoByCanisterId || typeof infoByCanisterId !== 'object' || Array.isArray(infoByCanisterId)
+        || !Object.values(infoByCanisterId).every(isSourcePaneCacheInfo)
+        || !sourcePaneInfoHasCompleteControllerData(infoByCanisterId)) return null;
       return { cachedAt, infoByCanisterId };
     } catch { return null; }
   };
@@ -117,7 +131,9 @@ export function createSourcePaneController({
   const writeSourcePaneModuleHashCache = (infoByCanisterId) => {
     const cacheKey = sourcePaneModuleHashCacheKey();
     if (!cacheKey || !sourcePaneInfoHasCompleteControllerData(infoByCanisterId)) return;
-    try { window.localStorage.setItem(cacheKey, JSON.stringify({ cachedAt: now(), infoByCanisterId })); }
+    const cachedAt = now();
+    if (!Number.isFinite(cachedAt) || cachedAt <= 0) return;
+    try { window.localStorage.setItem(cacheKey, JSON.stringify({ cachedAt, infoByCanisterId })); }
     catch { /* Ignore storage failures. */ }
   };
 
@@ -151,7 +167,7 @@ export function createSourcePaneController({
           infos.map((item) => [formatPrincipal(item.canister_id), {
             moduleHash: readOpt(item.module_hash_hex) || null,
             controllers: readOpt(item.controllers)?.map(formatPrincipal) || null,
-            totalMemoryBytes: readOpt(item.total_memory_bytes),
+            totalMemoryBytes: memoryCacheText(readOpt(item.total_memory_bytes)),
           }]),
         );
         applySourcePaneModuleHashes(infoByCanisterId);
