@@ -89,8 +89,8 @@ Allowed RustSec ignores must be classified as one of:
 - `production-proc-macro-only`: non-runtime proc-macro support only, tracked
   separately from runtime vulnerabilities and accepted only with
   package-specific automated proof.
-- `frontend-informational-only`: frontend display/certification code without
-  authentication or value-moving control authority.
+- `frontend-production-certification`: production frontend HTTP/asset certification;
+  integrity matters for donor-facing destinations and source-verification evidence.
 - `dev-test-only`: local tooling, mocks, tests, or PocketIC-only paths.
 
 Global advisory ignores are allowed only when paired with automated
@@ -118,18 +118,25 @@ The current allowed RustSec findings are classified as:
 | `RUSTSEC-2025-0012` | `backoff 0.4.0` | `dev-test-only` | Must be absent from covered production value-moving and privileged operational wasm trees. |
 | `RUSTSEC-2024-0384` | `instant 0.1.13` | `dev-test-only` | Must be absent from covered production value-moving and privileged operational wasm trees. |
 | `RUSTSEC-2024-0436` | `paste 1.0.15` | `production-proc-macro-only` | May appear only as proc-macro support, not runtime logic or broader build-only support. |
-| `RUSTSEC-2021-0127` | `serde_cbor 0.11.2` | `frontend-informational-only`, with additional `dev-test-only` PocketIC paths | Must be absent from covered production value-moving and privileged operational wasm trees. |
+| `RUSTSEC-2021-0127` | `serde_cbor 0.11.2` | `frontend-production-certification`, with additional `dev-test-only` PocketIC paths | Must be absent from covered production value-moving and privileged operational wasm trees. |
 
 The exception evidence was last revalidated against current upstream releases:
 PocketIC 15.0.0 still requires `backoff 0.4` and `serde_cbor 0.11.2`, and
 `backoff 0.4` still requires `instant 0.1`; Candid 0.10.35 still requires
-`paste 1.0`; and `ic-http-certification`/`ic-asset-certification` 3.2.0 remain
-the latest releases in their respective lines, with the certification path
-still requiring `serde_cbor 0.11`.
+`paste 1.0`; the locked `ic-http-certification`/`ic-asset-certification` 3.2.0
+certification path requires `serde_cbor 0.11`.
 
-`serde_cbor` is acceptable only while limited to frontend informational
-certification/display paths and/or dev/test tooling. It must not enter
-production value-moving canister runtime paths.
+`serde_cbor 0.11.2` reaches production through the locked frontend
+`ic-asset-certification` / `ic-http-certification` stack, and separately through
+PocketIC dev/test tooling. Its unmaintained status is an accepted, scoped
+maintenance risk, not evidence that this path is harmless: certified frontend
+assets present payment destinations and the certificate-verification UI, so
+frontend integrity can affect users even without backend transfer authority.
+Protocol maintainers retain the pinned certification stack and this existing
+exception until a supported upstream path permits removal. This exception does
+not assert an active exploit or prove exploit absence. Reachability checks must
+continue to exclude the package from covered production value-moving and
+privileged operational canister runtimes.
 
 Do not broaden ignores or silence a new advisory without adding a classification,
 owner, mitigation path, and automated proof that the finding is outside the
@@ -190,6 +197,6 @@ release-artifacts/sbom/SHA256SUMS
 
 Keep advisory and license exceptions narrow. Any exception in [`deny.toml`](../../deny.toml) must
 explain why it is acceptable for production and whether the dependency is
-runtime, build-time, test-only, dev-only, or frontend-informational-only. OSV
+runtime, build-time, test-only, dev-only, or frontend-production-certification. OSV
 exceptions live in [`osv-scanner.toml`](../../osv-scanner.toml) because OSV Scanner does not read
 [`deny.toml`](../../deny.toml); keep the two files aligned for shared RustSec findings.

@@ -605,7 +605,7 @@ Every upgrade also clears the persisted skip-range cache before the faucet resum
 - the latched forced-rescue reason
 - the related consecutive-failure counters
 
-When `clear_forced_rescue = true` is used while autonomous rescue remains armed, the faucet also schedules an immediate one-shot controller reconciliation after `post_upgrade` so a stale widened controller set does not linger until the next periodic rescue timer. If autonomous rescue is unarmed, no automatic controller target is imposed.
+When `clear_forced_rescue = true` is used while autonomous rescue remains armed, the faucet schedules an immediate one-shot controller reconciliation after `post_upgrade`. This re-evaluates current health; it does not unconditionally narrow controllers or establish a healthy notification path. Clearing alone does not restart the bootstrap window. In a never-successfully-notified armed Faucet whose bootstrap deadline has elapsed, reconciliation may immediately relatch `BootstrapNoSuccess` and retain Lifeline authority. An explicit re-arm records a new arming time, but clear-plus-rearm still need not narrow an already widened controller set when no successful CMC notification supplies the required health evidence. Canonical healthy handoff requires a successful CMC `notify_top_up`, not merely a cleared latch, a raw transfer or a new arming time. If autonomous rescue is unarmed, no automatic controller target is imposed.
 
 ### Production wiring recorded in this repo
 
