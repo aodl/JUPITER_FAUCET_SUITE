@@ -2871,9 +2871,21 @@ fn relay_retains_funds_when_cycles_are_unchanged_and_conversion_is_missing() -> 
             Vec::new(),
         )
     })?;
+    update_one::<_, ()>(
+        &env.pic,
+        env.cmc,
+        Principal::anonymous(),
+        "debug_set_conversion_rate",
+        jupiter_ic_clients::cmc::IcpXdrConversionRate {
+            timestamp_seconds: (env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000)
+                as u64,
+            xdr_permyriad_per_icp: 0,
+        },
+    )?;
     env.set_managed_cycles(5_000_000_000_000)?;
     env.credit_relay(5_000_000_000)?;
-    let _ = env.tick_relay()?;
+    assert_eq!(env.tick_relay()?.mode, RelayMode::BaselineOnly);
+    assert!(!env.debug_state()?.conversion_estimate_present);
 
     env.add_relay_cycles(1_000_000_000_000);
     env.set_managed_cycles(5_000_000_000_000)?;
@@ -2881,6 +2893,12 @@ fn relay_retains_funds_when_cycles_are_unchanged_and_conversion_is_missing() -> 
     if summary.mode != RelayMode::TopUpThenSurplus || summary.ledger_transfer_count != 0 {
         bail!("expected unchanged cycles and missing conversion to retain funds, got {summary:?}");
     }
+    assert!(summary.conversion_estimate_used.is_none());
+    assert_eq!(summary.total_target_topup_cycles, 0);
+    assert!(env.transfers()?.is_empty());
+    assert!(env.notifications()?.is_empty());
+    assert_eq!(env.relay_balance()?, 5_000_000_000);
+    assert!(!env.debug_state()?.active_job_present);
     Ok(())
 }
 
