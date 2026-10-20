@@ -344,7 +344,7 @@
               The build hashes produced should match the Wasm module hashes currently deployed on mainnet.
             </p>
             <p class="nav-panel-content">
-              The Wasm module hashes and controllers below are retrieved on-chain from the IC management canister (`aaaaa-aa`) via `canister_info`.
+              The Wasm module hashes and controllers below are certificate-verified from IC read_state paths for each displayed canister ID, using the IC root key. Hover for the certificate observation time; refresh this pane for a new read. Memory is an informational Historian observation, not certificate-verified.
             </p>
             <p class="nav-panel-content">
               Once Jupiter Faucet is governed by an

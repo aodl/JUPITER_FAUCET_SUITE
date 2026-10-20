@@ -3,6 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { accountIdentifierHex, loadDashboardData } from '../src/dashboard-data.js';
+import { Cbor, HttpAgent } from '@icp-sdk/core/agent';
+import { loadCertifiedCanisterStatus } from '../src/data/dashboard-loaders.js';
 
 const host = process.env.FRONTEND_DASHBOARD_TEST_HOST;
 const historianCanisterId = process.env.FRONTEND_DASHBOARD_TEST_HISTORIAN_CANISTER_ID;
@@ -34,6 +36,48 @@ function variantLabel(value) {
 }
 
 const maybeTest = host && historianCanisterId && expected ? test : test.skip;
+
+maybeTest('Source Code read_state verifies real local certificates and rejects tampering, stale time and wrong paths', async (t) => {
+  const agent = await HttpAgent.create({ host });
+  await agent.fetchRootKey(); // Explicitly local fixture, never a mainnet key source.
+  const responses = new Map();
+  const capture = {
+    rootKey: agent.rootKey,
+    async readState(id, args) {
+      const response = await agent.readState(id, args);
+      responses.set(new TextDecoder().decode(args.paths[0].at(-1)), response);
+      return response;
+    },
+  };
+  const read = (reader, id = historianCanisterId) => loadCertifiedCanisterStatus({ canisterIds: [id], host, local: true, agent: reader }).then(([item]) => item);
+  const good = await read(capture);
+  assert.match(good.moduleHash, /^[0-9a-f]{64}$/);
+  assert.ok(good.controllers.length > 0);
+  assert.ok(good.certifiedAt);
+
+  const replay = { rootKey: agent.rootKey, async readState(_id, args) { return responses.get(new TextDecoder().decode(args.paths[0].at(-1))); } };
+  const wrong = await read(replay, 'aaaaa-aa');
+  assert.equal(wrong.moduleHash, null);
+  assert.equal(wrong.controllers, null);
+
+  const tampered = await read({ rootKey: agent.rootKey, async readState(id, args) {
+    const response = await replay.readState(id, args);
+    const certificate = Cbor.decode(response.certificate);
+    certificate.signature[0] ^= 1;
+    return { certificate: Cbor.encode(certificate) };
+  } });
+  assert.equal(tampered.moduleHash, null);
+  assert.equal(tampered.controllers, null);
+  assert.match(tampered.error, /signature|verif/i);
+
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10 * 60 * 1000 });
+  try {
+    const stale = await read(replay);
+    assert.equal(stale.moduleHash, null);
+    assert.equal(stale.controllers, null);
+    assert.match(stale.error, /time|past|old/i);
+  } finally { t.mock.timers.reset(); }
+});
 
 maybeTest('loadDashboardData matches the expected local replica fixture', async () => {
   const data = await loadDashboardData({

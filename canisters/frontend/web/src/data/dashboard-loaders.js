@@ -1,9 +1,10 @@
 import { Principal } from '@icp-sdk/core/principal';
+import { CanisterStatus } from '@icp-sdk/core/agent';
 import { ICP_LEDGER_CANISTER_ID, JUPITER_STAKING_ACCOUNT } from '../app/config.js';
 import { createActor as createLedgerActor } from '../../declarations/icp_ledger/index.js';
 import { createActor as createIndexActor } from '../../declarations/icp_index/index.js';
 import { createActor as createHistorianActor } from '../../declarations/jupiter_historian/index.js';
-import { createHistorianClient, isMethodMissingError, normalizeError } from '../app/agent.js';
+import { createHistorianClient, getOrCreateAgent, isMethodMissingError, normalizeError } from '../app/agent.js';
 import { loadRecentRouteTransfersFromIndex } from './index-transactions.js';
 import {
   RECENT_COMMITMENT_LIMIT,
@@ -56,6 +57,33 @@ export async function loadCanisterModuleHashes({
     historianActorFactory,
   });
   return historian.get_canister_module_hashes();
+}
+
+// Only this certified read supplies Source Code hashes/controllers. Historian
+// observations remain useful for memory, but cannot authorize these values.
+export async function loadCertifiedCanisterStatus({ canisterIds, host, local = false, agent = null }) {
+  if (local && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(host).hostname)) {
+    throw new Error('Local certificate verification requires a loopback endpoint');
+  }
+  const resolvedAgent = await getOrCreateAgent({ host: local ? host : 'https://icp-api.io', local, agent });
+  return Promise.all([...new Set(canisterIds)].map(async (id) => {
+    const canisterId = Principal.fromText(id);
+    try {
+      const status = await CanisterStatus.request({
+        agent: resolvedAgent, canisterId, paths: ['module_hash', 'controllers', 'time'],
+      });
+      const moduleHash = status.get('module_hash');
+      const controllers = status.get('controllers');
+      const time = status.get('time');
+      if (!/^[0-9a-f]{64}$/.test(moduleHash) || !Array.isArray(controllers)
+        || !(time instanceof Date) || !Number.isFinite(time.getTime())) {
+        throw new Error('Certified canister paths unavailable');
+      }
+      return { canisterId: id, moduleHash, controllers: controllers.map((p) => p.toText()), certifiedAt: time.toISOString() };
+    } catch (error) {
+      return { canisterId: id, moduleHash: null, controllers: null, error: normalizeError(error) };
+    }
+  }));
 }
 
 async function loadRouteTransferTables({ status, agent, indexActorFactory }) {

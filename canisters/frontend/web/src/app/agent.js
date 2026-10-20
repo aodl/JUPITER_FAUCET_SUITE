@@ -18,7 +18,7 @@ export function resetAgentCacheForTests() {
   agentPromises.clear();
 }
 
-async function getOrCreateAgent({ host, local, agent }) {
+export async function getOrCreateAgent({ host, local, agent }) {
   if (agent) return agent;
   const key = `${host}::${local ? 'local' : 'remote'}`;
   if (!agentPromises.has(key)) {

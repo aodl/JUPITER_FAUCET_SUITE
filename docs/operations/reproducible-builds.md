@@ -55,7 +55,9 @@ The public Source Code pane is the easiest suite-level view:
 
 - [Jupiter Faucet Source Code pane](https://jupiter-faucet.com/#source)
 
-The Source Code pane loads module hashes, controllers, and memory information from mainnet canister metadata through the historian/frontend read surface.
+The Source Code pane obtains module hashes and controllers directly through the pinned `@icp-sdk/core` `CanisterStatus.request` helper against `https://icp-api.io`. The SDK verifies the IC certificate, canister-specific paths, subnet delegation and certificate freshness against its built-in mainnet root key. Missing or failed certified reads are unavailable; there is no Historian-query fallback. A verified empty controller set is displayed as `none`; unavailable controllers are not evidence of immutability. Hover for the certificate observation time and reopen the pane for fresh evidence. No verifier result is persisted in localStorage. Memory information remains an explicitly informational, unverified Historian observation.
+
+These reads establish state at the certificate time, not future immutability, runtime configuration, or independent proof that the frontend itself is trustworthy. Compare the exact compressed install-package hash with your independently built canonical artifact; keep frontend trust and reproducible-build evidence separate.
 
 You can also compare against IC dashboard canister metadata or an authenticated CLI metadata read when you have the appropriate toolchain access.
 
