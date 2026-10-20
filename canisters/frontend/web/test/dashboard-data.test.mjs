@@ -27,6 +27,36 @@ import {
 } from '../src/dashboard-data.js';
 import { classifyTransferItem, defaultCanisterAccountIdentifier, relayInstanceSourceMap } from '../src/data/transfer-source-classification.js';
 import { loadRelayInstances } from '../src/data/tracker-history.js';
+import { ICP_LEDGER_CANISTER_ID, JUPITER_STAKING_ACCOUNT } from '../src/app/config.js';
+
+for (const statusAvailable of [true, false]) {
+  test(`mainnet stake balance stays canonical with ${statusAvailable ? 'conflicting' : 'unavailable'} status`, async () => {
+    let queriedLedger;
+    let queriedAccount;
+    const data = await loadDashboardData({
+      agent: { test: true },
+      // Even an explicit local override cannot replace mainnet configuration.
+      localStakeConfig: { ledgerCanisterId: 'aaaaa-aa', account: stakingAccount() },
+      historianActor: {
+        async get_public_counts() { return historianCounts(); },
+        async get_public_status() {
+          if (!statusAvailable) throw new Error('status unavailable');
+          return historianStatus({ ledger_canister_id: principal('aaaaa-aa') });
+        },
+        async list_memo_registered_canister_summaries() { return registeredResponse(); },
+        async list_recent_commitments() { return recentResponse(); },
+      },
+      ledgerActorFactory: (id) => {
+        queriedLedger = id;
+        return { async account_balance({ account }) { queriedAccount = bytesToHex(account); return { e8s: 123n }; } };
+      },
+    });
+    assert.equal(queriedLedger, ICP_LEDGER_CANISTER_ID);
+    assert.equal(queriedAccount, JUPITER_STAKING_ACCOUNT.explorerAccountHex);
+    assert.equal(data.stakeE8s, 123n);
+    assert.equal(data.counts.total_output_e8s, 400_000_000n);
+  });
+}
 
 const FetchCanisterLogsArgs = IDL.Record({ canister_id: IDL.Principal });
 const RELAY_TEST_ID = 'br5f7-7uaaa-aaaaa-qaaca-cai';
@@ -153,7 +183,7 @@ test('loadDashboardData uses historian counts and status plus the native ledger 
   assert.deepEqual(calls[1], ['status']);
   assert.deepEqual(calls[2], ['registered', { page: [0], page_size: [REGISTERED_SUMMARY_PAGE_SIZE] }]);
   assert.deepEqual(calls[3], ['recent', { limit: [RECENT_COMMITMENT_LIMIT], qualifying_only: [false] }]);
-  assert.equal(Buffer.from(accountBalanceArg.account).toString('hex'), '4ac9d3098789752b0809a290b67ae21892c5bc83e686e701882aac9809398bb3');
+  assert.equal(Buffer.from(accountBalanceArg.account).toString('hex'), JUPITER_STAKING_ACCOUNT.explorerAccountHex);
   assert.equal(data.stakeE8s, 123_456_789n);
   assert.equal(data.counts.total_output_e8s, 400_000_000n);
   assert.equal(data.counts.total_rewards_e8s, 50_000_000n);
@@ -468,8 +498,8 @@ test('loadDashboardData falls back to icrc1_balance_of when native ledger accoun
     }),
   });
 
-  assert.equal(fallbackArg.owner.toText(), stakingAccount().owner.toText());
-  assert.deepEqual(fallbackArg.subaccount, stakingAccount().subaccount);
+  assert.equal(fallbackArg.owner.toText(), JUPITER_STAKING_ACCOUNT.owner);
+  assert.equal(bytesToHex(fallbackArg.subaccount[0]), JUPITER_STAKING_ACCOUNT.subaccountHex);
   assert.equal(data.stakeE8s, 88_000_000n);
   assert.equal(data.errors.stake, null);
 });
@@ -735,18 +765,18 @@ test('loadDashboardData preserves partial dashboard data when get_public_status 
     },
     ledgerActorFactory: () => {
       ledgerCreated = true;
-      throw new Error('ledger actor should not be created when status failed');
+      return { async account_balance() { return { e8s: 77n }; } };
     },
   });
 
-  assert.equal(ledgerCreated, false);
+  assert.equal(ledgerCreated, true);
   assert.deepEqual(data.counts, historianCounts());
   assert.deepEqual(data.registered, registeredResponse());
   assert.deepEqual(data.recent, recentResponse());
   assert.equal(data.status, null);
-  assert.equal(data.stakeE8s, null);
+  assert.equal(data.stakeE8s, 77n);
   assert.equal(data.errors.status, 'status temporarily unavailable');
-  assert.equal(data.errors.stake, 'Stake unavailable');
+  assert.equal(data.errors.stake, null);
 });
 
 test('loadDashboardData surfaces both native and icrc stake failures in one normalized message', async () => {

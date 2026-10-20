@@ -1,3 +1,5 @@
+import { Principal } from '@icp-sdk/core/principal';
+import { ICP_LEDGER_CANISTER_ID, JUPITER_STAKING_ACCOUNT } from '../app/config.js';
 import { createActor as createLedgerActor } from '../../declarations/icp_ledger/index.js';
 import { createActor as createIndexActor } from '../../declarations/icp_index/index.js';
 import { createActor as createHistorianActor } from '../../declarations/jupiter_historian/index.js';
@@ -9,6 +11,7 @@ import {
   accountIdentifierBytes,
   buildRegisteredCanisterSummariesRequest,
   dquorumStakingAccount,
+  hexToBytes,
   principalToText,
   readOptional,
 } from './dashboard-transforms.js';
@@ -101,6 +104,7 @@ export async function loadDashboardData({
   historianActorFactory = createHistorianActor,
   ledgerActorFactory = createLedgerActor,
   indexActorFactory = createIndexActor,
+  localStakeConfig = null,
   registeredPage = 0,
   registeredPageSize = REGISTERED_SUMMARY_PAGE_SIZE,
 } = {}) {
@@ -162,35 +166,42 @@ export async function loadDashboardData({
   let rewardsTransfersResult = { status: 'fulfilled', value: { items: [] } };
   let dquorumTransfersResult = { status: 'fulfilled', value: { items: [] } };
 
-  if (statusResult.status === 'fulfilled') {
-    let ledger;
-    try {
-      ledger = ledgerActorFactory(statusResult.value.ledger_canister_id.toText(), {
-        agent: resolvedAgent,
+  // Payment destination and its observed balance share trusted configuration.
+  // A local fixture must provide its configuration explicitly, never via status.
+  const stakingAccount = (local && localStakeConfig?.account) || {
+    owner: Principal.fromText(JUPITER_STAKING_ACCOUNT.owner),
+    subaccount: [Array.from(hexToBytes(JUPITER_STAKING_ACCOUNT.subaccountHex))],
+  };
+  const ledgerCanisterId = local ? localStakeConfig?.ledgerCanisterId : ICP_LEDGER_CANISTER_ID;
+  let ledger;
+  try {
+    if (!ledgerCanisterId) throw new Error('Local stake Ledger is not configured');
+    ledger = ledgerActorFactory(ledgerCanisterId, {
+      agent: resolvedAgent,
+    });
+  } catch (error) {
+    ledger = null;
+    stakeResult = { status: 'rejected', reason: error };
+  }
+  if (ledger) {
+    const stakeAccountId = accountIdentifierBytes(stakingAccount);
+    stakeResult = await ledger
+      .account_balance({ account: stakeAccountId })
+      .then((value) => ({ status: 'fulfilled', value: value.e8s }))
+      .catch(async (nativeReason) => {
+        try {
+          const fallbackValue = await ledger.icrc1_balance_of(stakingAccount);
+          return { status: 'fulfilled', value: fallbackValue };
+        } catch (icrcReason) {
+          return {
+            status: 'rejected',
+            reason: new Error(`Stake unavailable via native ledger account_balance (${normalizeError(nativeReason)}) and icrc1_balance_of (${normalizeError(icrcReason)})`),
+          };
+        }
       });
-    } catch (error) {
-      ledger = null;
-      stakeResult = { status: 'rejected', reason: error };
-    }
-    if (ledger) {
-      const stakingAccount = statusResult.value.staking_account;
-      const stakeAccountId = accountIdentifierBytes(stakingAccount);
-      stakeResult = await ledger
-        .account_balance({ account: stakeAccountId })
-        .then((value) => ({ status: 'fulfilled', value: value.e8s }))
-        .catch(async (nativeReason) => {
-          try {
-            const fallbackValue = await ledger.icrc1_balance_of(stakingAccount);
-            return { status: 'fulfilled', value: fallbackValue };
-          } catch (icrcReason) {
-            return {
-              status: 'rejected',
-              reason: new Error(`Stake unavailable via native ledger account_balance (${normalizeError(nativeReason)}) and icrc1_balance_of (${normalizeError(icrcReason)})`),
-            };
-          }
-        });
-    }
+  }
 
+  if (statusResult.status === 'fulfilled') {
     try {
       ({ outputTransfersResult, rewardsTransfersResult, dquorumTransfersResult } = await loadRouteTransferTables({
         status: statusResult.value,

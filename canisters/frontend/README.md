@@ -127,11 +127,11 @@ The browser does not call Historian's permissioned `poke(vec PokeMatch)` method.
 
 The browser data loader is intentionally defensive:
 
-- it fetches historian counts, status, registered-canister summaries, and recent endowments together, then uses historian status to discover the ledger canister id for stake
+- it fetches historian counts, status, registered-canister summaries, and recent endowments together; the staking destination and observed stake balance use the configured canonical account and mainnet ICP Ledger, independently of status
 - the displayed historian history tables are intentionally bounded views and also show the historian canister's current allocated memory footprint; the tracked target-canister registry is not pruned, and full transfer history still lives on the ICP ledger and its archive canisters
 - the source/governance verification view includes relay source/module metadata even though `jupiter-relay` has no public production app API
 - invalid memo text is not echoed back in the dashboard tables; invalid entries render as a generic placeholder instead
-- it only instantiates the ledger actor after historian status reveals the staking account and ledger canister ID
+- local stake-balance fixtures provide their trusted Ledger/account configuration explicitly; mainnet ignores local overrides
 - it preserves partial success, so one failed dashboard query does not blank the whole page
 - it explicitly detects the "all requested historian methods are missing" shape and flags that as a likely outdated historian deployment
 

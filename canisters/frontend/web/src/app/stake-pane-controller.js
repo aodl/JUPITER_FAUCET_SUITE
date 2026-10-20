@@ -1,8 +1,3 @@
-import {
-  accountIdentifierHex,
-  bytesToHex,
-  uint8ArrayFromOptBytes,
-} from '../dashboard-data.js';
 import { setLink, setPaneValueText, setPaneValueTrustedHtml, setText } from '../dom-helpers.js';
 import { formatFolloweeLinks } from '../followee-links.js';
 import { formatMaturityDisbursementLandingText, formatMaturityDisbursementStatus } from '../maturity-disbursement.js';
@@ -14,23 +9,6 @@ import {
   formatIcpE8s,
   formatTimestampSeconds,
 } from './view-formatters.js';
-
-function isJupiterStakingAccount(account) {
-  if (!account) return true;
-  const owner = String(account.owner?.toText ? account.owner.toText() : account.owner);
-  const subaccountHex = bytesToHex(uint8ArrayFromOptBytes(account.subaccount));
-  return owner === JUPITER_STAKING_ACCOUNT.owner && subaccountHex === JUPITER_STAKING_ACCOUNT.subaccountHex;
-}
-
-function stakingAccountDisplayAddress(account) {
-  if (isJupiterStakingAccount(account)) return JUPITER_STAKING_ACCOUNT.address;
-  return accountIdentifierHex(account);
-}
-
-function stakingAccountExplorerAddress(account) {
-  if (isJupiterStakingAccount(account)) return JUPITER_STAKING_ACCOUNT.explorerAccountHex;
-  return accountIdentifierHex(account);
-}
 
 function updateLandingDisbursementStatus(text) {
   const node = document.getElementById('orbit-disbursement-status');
@@ -80,9 +58,8 @@ export function createStakePaneController({
   };
 
   const renderStakePane = (data, neuron, { neuronLoading = false, neuronError = null, dataLoading = false } = {}) => {
-    const stakingAccount = data?.status?.staking_account;
-    const stakingAddress = stakingAccountDisplayAddress(stakingAccount);
-    const stakingExplorerAddress = stakingAccountExplorerAddress(stakingAccount);
+    const stakingAddress = JUPITER_STAKING_ACCOUNT.address;
+    const stakingExplorerAddress = JUPITER_STAKING_ACCOUNT.explorerAccountHex;
     setLink('stake-pane-account-link', {
       href: stakingExplorerAddress ? `https://dashboard.internetcomputer.org/account/${stakingExplorerAddress}` : '',
       text: stakingAddress,

@@ -437,6 +437,8 @@ async function initLandingPage() {
       historianCanisterId: FRONTEND_CONFIG?.historianCanisterId,
       host: window.location.origin,
       local: isLocalHost(),
+      localStakeConfig: FRONTEND_CONFIG?.network === 'local'
+        ? { ledgerCanisterId: FRONTEND_CONFIG.ledgerCanisterId } : null,
       registeredPageSize: dashboardTablesController.currentTablePageSize(),
     });
     if (data.historianLikelyOutdated) {

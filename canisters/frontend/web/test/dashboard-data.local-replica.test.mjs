@@ -1,3 +1,4 @@
+import { Principal } from '@icp-sdk/core/principal';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -39,6 +40,10 @@ maybeTest('loadDashboardData matches the expected local replica fixture', async 
     historianCanisterId,
     host,
     local: true,
+    localStakeConfig: {
+      ledgerCanisterId: expected.status.ledgerCanisterId,
+      account: { owner: Principal.fromUint8Array(Uint8Array.of(1)), subaccount: [Array(32).fill(9)] },
+    },
   });
 
   assert.equal(asString(data.stakeE8s), expected.stakeE8s);
