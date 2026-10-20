@@ -263,7 +263,7 @@ impl BackwardRewardHistory {
         Ok(())
     }
 
-    fn cutoff(&self) -> Result<u64, String> {
+    fn cutoffs(&self) -> Result<Vec<u64>, String> {
         if !self.boundary_found && !self.exhausted {
             return Err("reward_history_not_caught_up".to_string());
         }
@@ -306,10 +306,21 @@ impl BackwardRewardHistory {
         if reconstructed != self.live_balance.0 {
             return Err("reward_history_not_caught_up".to_string());
         }
-        credits
-            .front()
+        let mut cutoffs = credits
+            .into_iter()
             .map(|credit| credit.ledger_block_timestamp_nanos)
-            .ok_or_else(|| "reward_history_not_caught_up".to_string())
+            .collect::<Vec<_>>();
+        if cutoffs.is_empty() {
+            return Err("reward_history_not_caught_up".to_string());
+        }
+        self.budget.work(
+            cutoffs
+                .len()
+                .saturating_mul(1 + cutoffs.len().ilog2() as usize),
+        )?;
+        cutoffs.sort_unstable();
+        cutoffs.dedup();
+        Ok(cutoffs)
     }
 }
 
@@ -322,17 +333,27 @@ async fn reward_pot_cutoff<I: RewardTokenHistoryClient>(
     reward_pot_cutoff_bounded(index, account, live_balance, WorkBudget::for_test()).await
 }
 
-pub(super) async fn reward_pot_cutoff_bounded<I: RewardTokenHistoryClient>(
+#[cfg(test)]
+async fn reward_pot_cutoff_bounded<I: RewardTokenHistoryClient>(
     index: &I,
     account: Account,
     live_balance: Nat,
     budget: WorkBudget,
 ) -> Result<u64, String> {
+    Ok(reward_pot_cutoffs_bounded(index, account, live_balance, budget).await?[0])
+}
+
+pub(super) async fn reward_pot_cutoffs_bounded<I: RewardTokenHistoryClient>(
+    index: &I,
+    account: Account,
+    live_balance: Nat,
+    budget: WorkBudget,
+) -> Result<Vec<u64>, String> {
     let mut history = BackwardRewardHistory::new(account, live_balance, budget);
     while !history.boundary_found && !history.exhausted {
         history.extend(index).await?;
     }
-    history.cutoff()
+    history.cutoffs()
 }
 
 #[cfg(test)]
@@ -464,6 +485,30 @@ mod tests {
             }
             assert_eq!(index.starts.lock().unwrap().len(), 2);
         }
+    }
+
+    #[test]
+    fn all_unspent_credit_times_reuse_one_bounded_token_history_replay() {
+        let relay = account(1);
+        let index = MockIndex {
+            pages: Mutex::new(VecDeque::from([page(
+                1_000,
+                (1..=1_000).rev().map(|id| mint(id, relay, 1, id)).collect(),
+                Some(1),
+            )])),
+            starts: Mutex::new(Vec::new()),
+        };
+        let budget = WorkBudget::for_test();
+        let cutoffs = block_on(reward_pot_cutoffs_bounded(
+            &index,
+            relay,
+            Nat::from(1_000_u64),
+            budget.clone(),
+        ))
+        .unwrap();
+        assert_eq!(cutoffs, (1..=1_000).collect::<Vec<_>>());
+        assert_eq!(budget.usage().calls, 1);
+        assert!(budget.usage().work < super::super::reward_budget::MAX_WORK);
     }
 
     #[test]

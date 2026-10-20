@@ -431,19 +431,20 @@ async fn adjudicate(
     }
 
     let reward_index = resolve_reward_index(&context, budget).await?;
-    let reward_pot_cutoff = reward_token_history::reward_pot_cutoff_bounded(
+    let reward_pot_cutoffs = reward_token_history::reward_pot_cutoffs_bounded(
         &reward_index,
         reward_account,
         balance.clone(),
         budget.clone(),
     )
     .await?;
-    // This is a conservative ledger-time recency heuristic across two independent ledgers, not
-    // a cryptographic causal ordering. A Faucet commitment must be recorded strictly before both
-    // the owner-snapshot scan and the oldest unspent reward credit in the current pot.
-    let attribution_cutoff =
-        effective_attribution_cutoff(context.scan_started_at_timestamp_nanos, reward_pot_cutoff);
-    log.cutoff = Some(attribution_cutoff);
+    // Keep the cross-ledger heuristic and exclusive owner-snapshot boundary.
+    let mut cutoffs = reward_pot_cutoffs
+        .into_iter()
+        .map(|cutoff| effective_attribution_cutoff(context.scan_started_at_timestamp_nanos, cutoff))
+        .collect::<Vec<_>>();
+    cutoffs.dedup();
+    log.cutoff = cutoffs.first().copied();
 
     // Observe the authoritative Ledger tip first, then require the Index to contain that entire
     // prefix. Blocks created after this Ledger read cannot carry a pre-existing attribution-cutoff
@@ -461,11 +462,6 @@ async fn adjudicate(
         .num_blocks_synced;
     validate_icp_index_tip(ledger_chain_length, index_blocks_synced)?;
 
-    let relay = ic_cdk::api::canister_self();
-    let relay_account_identifier =
-        account_identifier_text(relay, Some(logic::relay_subaccount_one()));
-    let mut history =
-        reward_history::BackwardHistory::with_budget(relay_account_identifier, budget.clone());
     let staking_subaccount = budget
         .call(
             NnsGovernanceCanister::new(cfg.governance_canister_id)
@@ -475,11 +471,93 @@ async fn adjudicate(
         .map_err(|_| "faucet_staking_account_unavailable".to_string())?;
     let faucet_account_identifier =
         account_identifier_text(cfg.governance_canister_id, Some(staking_subaccount));
-    let intrinsic_splitters = reward_splitter::intrinsic_splitter_accounts(relay);
+    let relay = ic_cdk::api::canister_self();
     let commitment_memo = logic::relay_faucet_commitment_memo(relay)
         .map_err(|_| "commitment_memo_invalid".to_string())?;
+    let Some(candidate) = find_eligible_batch(
+        &index,
+        &cfg.sns_rewards_canister_id,
+        context.snapshot_id,
+        relay,
+        &faucet_account_identifier,
+        &commitment_memo,
+        &cutoffs,
+        log,
+        budget,
+    )
+    .await?
+    else {
+        log.reason = Some("no_eligible_historical_commitment".to_string());
+        return Ok(SweepDisposition::Completed);
+    };
+    log.cutoff = Some(candidate.cutoff);
+    log.attribution_commitment = Some(candidate.commitment_tx_id);
+    log.eligible_principals = candidate.eligible.len();
+    log.eligible_e8s = Some(sum_eligible_weight(&candidate.eligible)?);
+    log.ineligible_e8s = Some(candidate.ineligible_e8s);
+    log.owner_mismatch_count = candidate.owner_mismatch_count;
+    log.distinct_sources = candidate.distinct_sources;
+    let allocations = match proportional_reward_allocations(&balance, &fee, &candidate.eligible) {
+        Ok(allocations) => allocations,
+        Err(reason) => {
+            log.reason = Some(reason.to_string());
+            return Ok(SweepDisposition::Completed);
+        }
+    };
+    log.recipient_count = allocations.len();
+    let pending = build_pending_payout(
+        &context,
+        candidate.commitment_tx_id,
+        fee,
+        allocations,
+        now_nanos,
+    )?;
+    if !install_pending_if_current(generation, pending) {
+        log.status = "stale";
+        log.reason = Some("stale_reward_adjudication".to_string());
+        return Ok(SweepDisposition::RetryNextDailyTick);
+    }
+    log.status = "pending";
+    let result = drive_pending(now_nanos, budget).await;
+    record_pinned_payout_result(result, now_secs);
+    log.status = result.status();
+    log.reason = result.reason().map(str::to_string);
+    Ok(result.sweep_disposition())
+}
+
+#[derive(Debug)]
+struct EligibleBatch {
+    commitment_tx_id: u64,
+    cutoff: u64,
+    eligible: BTreeMap<Principal, u64>,
+    ineligible_e8s: u64,
+    owner_mismatch_count: usize,
+    distinct_sources: usize,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn find_eligible_batch<I: reward_history::RewardHistoryClient, R: OwnerResolverClient>(
+    index: &I,
+    resolver: &R,
+    snapshot_id: u64,
+    relay: Principal,
+    faucet_account_identifier: &str,
+    commitment_memo: &[u8],
+    cutoffs: &[u64],
+    log: &mut RewardLog,
+    budget: &WorkBudget,
+) -> Result<Option<EligibleBatch>, String> {
+    let first_cutoff = *cutoffs.first().ok_or("reward_history_not_caught_up")?;
+    let last_cutoff = *cutoffs.last().ok_or("reward_history_not_caught_up")?;
     let relay_account_identifier =
         account_identifier_text(relay, Some(logic::relay_subaccount_one()));
+    let mut history = reward_history::BackwardHistory::with_budget(
+        relay_account_identifier.clone(),
+        budget.clone(),
+    );
+    let intrinsic_splitters = reward_splitter::intrinsic_splitter_accounts(relay);
+    let mut orphan_search = false;
+    let mut best = None;
     let mut examined_commitments = BTreeSet::new();
     let mut splitter_cache = reward_splitter::SplitterHistoryCache::with_budget(budget.clone());
     let mut splitter_transactions_scanned = 0_usize;
@@ -487,16 +565,20 @@ async fn adjudicate(
     loop {
         budget.work(1)?;
         if history.transactions().is_empty() && !history.exhausted() {
-            history.extend(&index).await?;
+            history.extend(index).await?;
             log.scanned_transactions = history.transactions().len();
         }
         let batches = match reconstruct_batches_bounded(
             history.authoritative_transactions(),
             history.authoritative(),
-            attribution_cutoff,
+            if orphan_search {
+                last_cutoff
+            } else {
+                first_cutoff
+            },
             &relay_account_identifier,
-            &faucet_account_identifier,
-            &commitment_memo,
+            faucet_account_identifier,
+            commitment_memo,
             &intrinsic_splitters,
             budget,
         ) {
@@ -505,7 +587,7 @@ async fn adjudicate(
                 if history.exhausted() {
                     return Err("commitment_reconciliation_failed".to_string());
                 }
-                history.extend(&index).await?;
+                history.extend(index).await?;
                 log.scanned_transactions = history
                     .transactions()
                     .len()
@@ -521,8 +603,19 @@ async fn adjudicate(
             if !examined_commitments.insert(batch.commitment_tx_id) {
                 continue;
             }
+            budget.work(1 + cutoffs.len().ilog2() as usize)?;
+            let position = cutoffs.partition_point(|cutoff| *cutoff <= batch.timestamp_nanos);
+            let Some(&candidate_cutoff) = cutoffs.get(position) else {
+                continue;
+            };
+            if best
+                .as_ref()
+                .is_some_and(|candidate: &EligibleBatch| candidate.cutoff <= candidate_cutoff)
+            {
+                continue;
+            }
             let expanded = splitter_cache
-                .expand(&index, relay, &batch.splitter_credits)
+                .expand(index, relay, &batch.splitter_credits)
                 .await?;
             splitter_transactions_scanned = splitter_transactions_scanned
                 .checked_add(expanded.scanned_transactions)
@@ -545,13 +638,8 @@ async fn adjudicate(
             let (final_sources, final_ineligible) =
                 merge_attribution(batch.sources, batch.ineligible_e8s, &expanded)?;
             log.distinct_sources = final_sources.len();
-            let owners = resolve_accounts_bounded(
-                &cfg.sns_rewards_canister_id,
-                context.snapshot_id,
-                &final_sources,
-                budget,
-            )
-            .await?;
+            let owners =
+                resolve_accounts_bounded(resolver, snapshot_id, &final_sources, budget).await?;
             let (eligible, ineligible, owner_mismatch_count) =
                 classify_sources(final_sources, final_ineligible, owners)?;
             log.ineligible_e8s = Some(ineligible);
@@ -560,45 +648,30 @@ async fn adjudicate(
                 continue;
             }
 
-            let allocations = match proportional_reward_allocations(&balance, &fee, &eligible) {
-                Ok(allocations) => allocations,
-                Err(reason) => {
-                    log.attribution_commitment = Some(batch.commitment_tx_id);
-                    log.eligible_principals = eligible.len();
-                    log.eligible_e8s = Some(sum_eligible_weight(&eligible)?);
-                    log.reason = Some(reason.to_string());
-                    return Ok(SweepDisposition::Completed);
-                }
+            let candidate = EligibleBatch {
+                commitment_tx_id: batch.commitment_tx_id,
+                cutoff: candidate_cutoff,
+                eligible,
+                ineligible_e8s: ineligible,
+                owner_mismatch_count,
+                distinct_sources: log.distinct_sources,
             };
-            log.attribution_commitment = Some(batch.commitment_tx_id);
-            log.eligible_principals = eligible.len();
-            log.eligible_e8s = Some(sum_eligible_weight(&eligible)?);
-            log.recipient_count = allocations.len();
-            let pending = build_pending_payout(
-                &context,
-                batch.commitment_tx_id,
-                fee,
-                allocations,
-                now_nanos,
-            )?;
-            if !install_pending_if_current(generation, pending) {
-                log.status = "stale";
-                log.reason = Some("stale_reward_adjudication".to_string());
-                return Ok(SweepDisposition::RetryNextDailyTick);
+            if candidate_cutoff == first_cutoff {
+                return Ok(Some(candidate));
             }
-            log.status = "pending";
-            let result = drive_pending(now_nanos, budget).await;
-            record_pinned_payout_result(result, now_secs);
-            log.status = result.status();
-            log.reason = result.reason().map(str::to_string);
-            return Ok(result.sweep_disposition());
+            best = Some(candidate);
         }
 
         if history.exhausted() {
-            log.reason = Some("no_eligible_historical_commitment".to_string());
-            return Ok(SweepDisposition::Completed);
+            if !orphan_search && last_cutoff > first_cutoff {
+                // Only complete, successfully resolved history proves the old prefix unassigned.
+                // Replay once at the latest boundary, not once for every token credit.
+                orphan_search = true;
+                continue;
+            }
+            return Ok(best);
         }
-        history.extend(&index).await?;
+        history.extend(index).await?;
         // Main-account reads replace the prior main count; splitter reads are accumulated above.
         log.scanned_transactions = history
             .transactions()
@@ -611,6 +684,7 @@ async fn adjudicate(
 #[derive(Debug, PartialEq, Eq)]
 struct ContributionBatch {
     commitment_tx_id: u64,
+    timestamp_nanos: u64,
     sources: BTreeMap<[u8; 32], u64>,
     splitter_credits: Vec<SplitterFundingCredit>,
     ineligible_e8s: u64,
@@ -912,6 +986,7 @@ fn reconstruct_batches_bounded(
                     }
                     batches.push(ContributionBatch {
                         commitment_tx_id: entry.id,
+                        timestamp_nanos: timestamp,
                         sources,
                         splitter_credits,
                         ineligible_e8s,
@@ -1363,6 +1438,287 @@ mod tests {
             })
             .unwrap();
         assert_eq!(selected, (1, BTreeMap::from([(owner, 1)])));
+    }
+
+    fn reward_commitments(owners: &[(Principal, u64)]) -> Vec<IndexTransactionWithId> {
+        let relay = account_identifier_text(principal(2), Some(logic::relay_subaccount_one()));
+        owners
+            .iter()
+            .enumerate()
+            .flat_map(|(i, (owner, timestamp))| {
+                let mut funding = transfer(
+                    2 * i as u64 + 1,
+                    account_identifier_text(*owner, None),
+                    relay.clone(),
+                    100_010_000,
+                    0,
+                    None,
+                );
+                funding
+                    .transaction
+                    .timestamp
+                    .as_mut()
+                    .unwrap()
+                    .timestamp_nanos = timestamp - 1;
+                let mut commitment = transfer(
+                    2 * i as u64 + 2,
+                    relay.clone(),
+                    "faucet".into(),
+                    100_000_000,
+                    10_000,
+                    Some(b"commit".to_vec()),
+                );
+                commitment
+                    .transaction
+                    .timestamp
+                    .as_mut()
+                    .unwrap()
+                    .timestamp_nanos = *timestamp;
+                [funding, commitment]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn orphan_reward_prefix_does_not_starve_later_eligible_credits() {
+        use icrc_ledger_types::icrc3::transactions::{Mint, Transaction};
+        use jupiter_ic_clients::icrc_index::{GetAccountTransactionsResponse, TransactionWithId};
+
+        struct TokenIndex(Vec<TransactionWithId>);
+        #[async_trait]
+        impl reward_token_history::RewardTokenHistoryClient for TokenIndex {
+            async fn get_transactions(
+                &self,
+                _: Account,
+                _: Option<Nat>,
+                _: Nat,
+            ) -> Result<GetAccountTransactionsResponse, String> {
+                Ok(GetAccountTransactionsResponse {
+                    balance: Nat::from(1 + (self.0.len() as u64 - 1) * 101_000),
+                    transactions: self.0.iter().rev().cloned().collect(),
+                    oldest_tx_id: Some(Nat::from(0_u8)),
+                })
+            }
+        }
+        let alice = principal(1);
+        let relay = Account {
+            owner: principal(2),
+            subaccount: None,
+        };
+        let history = reward_commitments(&[(alice, 200)]);
+        let mut credits = Vec::new();
+        let mut selected = Vec::new();
+        for (id, timestamp) in [100, 300, 500, 700].into_iter().enumerate() {
+            credits.push(TransactionWithId {
+                id: Nat::from(id),
+                transaction: Transaction::mint(
+                    Mint {
+                        amount: Nat::from(if id == 0 { 1_u64 } else { 101_000 }),
+                        to: relay,
+                        memo: None,
+                        created_at_time: None,
+                        fee: None,
+                    },
+                    timestamp,
+                ),
+            });
+            if id == 0 {
+                continue;
+            }
+            let balance = Nat::from(1 + id as u64 * 101_000);
+            let budget = WorkBudget::for_test();
+            let cutoffs = block_on(reward_token_history::reward_pot_cutoffs_bounded(
+                &TokenIndex(credits.clone()),
+                relay,
+                balance.clone(),
+                budget.clone(),
+            ))
+            .unwrap();
+            let index = MockHistory {
+                pages: Mutex::new(
+                    pages_from_history(history.clone())
+                        .into_iter()
+                        .map(Ok)
+                        .collect(),
+                ),
+                starts: Mutex::new(Vec::new()),
+            };
+            let resolver = MockResolver {
+                responses: Mutex::new(VecDeque::from([Ok(ResolveDefaultIcpAccountsResult::Ok(
+                    vec![Some(alice)],
+                ))])),
+                requests: Mutex::new(Vec::new()),
+            };
+            let candidate = block_on(find_eligible_batch(
+                &index,
+                &resolver,
+                7,
+                relay.owner,
+                "faucet",
+                b"commit",
+                &cutoffs,
+                &mut RewardLog::default(),
+                &budget,
+            ))
+            .unwrap();
+            let allocation = candidate.map(|candidate| {
+                assert_eq!(candidate.cutoff, 300);
+                proportional_reward_allocations(
+                    &balance,
+                    &Nat::from(1_000_u64),
+                    &candidate.eligible,
+                )
+                .unwrap()
+            });
+            assert!(budget.usage().calls <= 3, "one token page, one ICP page and one owner lookup, independent of candidate credit count");
+            selected.push(allocation.is_some());
+        }
+        assert_eq!(
+            selected,
+            [true, true, true],
+            "healthy histories and an eligible owner must progress on all three sweeps"
+        );
+    }
+
+    #[test]
+    fn orphan_anchor_preserves_attributable_credits_and_the_normal_cohort() {
+        let alice = principal(1);
+        let bob = principal(3);
+        let older = principal(4);
+        for (owners, cutoffs, resolved, expected, anchor) in [
+            (
+                vec![(alice, 200), (bob, 400)],
+                vec![100, 300, 500],
+                vec![bob, alice],
+                alice,
+                300,
+            ),
+            (
+                vec![(alice, 200), (bob, 400)],
+                vec![300, 500],
+                vec![alice],
+                alice,
+                300,
+            ),
+            (
+                vec![(older, 50), (alice, 200), (bob, 400)],
+                vec![100, 300, 500],
+                vec![older],
+                older,
+                100,
+            ),
+        ] {
+            let index = MockHistory {
+                pages: Mutex::new(
+                    pages_from_history(reward_commitments(&owners))
+                        .into_iter()
+                        .map(Ok)
+                        .collect(),
+                ),
+                starts: Mutex::new(Vec::new()),
+            };
+            let resolver = MockResolver {
+                responses: Mutex::new(
+                    resolved
+                        .into_iter()
+                        .map(|owner| Ok(ResolveDefaultIcpAccountsResult::Ok(vec![Some(owner)])))
+                        .collect(),
+                ),
+                requests: Mutex::new(Vec::new()),
+            };
+            let candidate = block_on(find_eligible_batch(
+                &index,
+                &resolver,
+                7,
+                principal(2),
+                "faucet",
+                b"commit",
+                &cutoffs,
+                &mut RewardLog::default(),
+                &WorkBudget::for_test(),
+            ))
+            .unwrap()
+            .unwrap();
+            assert_eq!(candidate.cutoff, anchor);
+            assert_eq!(
+                candidate.eligible,
+                BTreeMap::from([(expected, 100_010_000)])
+            );
+            assert_eq!(
+                proportional_reward_allocations(
+                    &Nat::from(101_001_u64),
+                    &Nat::from(1_000_u64),
+                    &candidate.eligible
+                )
+                .unwrap(),
+                vec![(expected, Nat::from(100_001_u64))]
+            );
+            assert_eq!(
+                index.starts.lock().unwrap().len(),
+                1,
+                "reuse the fetched history across all candidate credit times"
+            );
+        }
+    }
+
+    #[test]
+    fn orphan_prefix_requires_complete_history_successful_owners_and_remaining_budget() {
+        use super::super::reward_budget::{EXHAUSTED, MAX_WORK};
+        for fault in ["partial", "malformed", "owner", "snapshot", "budget"] {
+            let mut pages = pages_from_history(reward_commitments(&[(principal(1), 200)]));
+            if fault == "partial" {
+                pages[0].oldest_tx_id = None;
+            }
+            if fault == "malformed" {
+                pages[0].transactions[0].transaction.timestamp = None;
+            }
+            let index = MockHistory {
+                pages: Mutex::new(
+                    pages
+                        .into_iter()
+                        .map(Ok)
+                        .chain([Err("history unavailable".into())])
+                        .collect(),
+                ),
+                starts: Mutex::new(Vec::new()),
+            };
+            let resolver = MockResolver {
+                responses: Mutex::new(VecDeque::from([if fault == "snapshot" {
+                    Ok(ResolveDefaultIcpAccountsResult::SnapshotChanged)
+                } else {
+                    Err("owner lookup unavailable".into())
+                }])),
+                requests: Mutex::new(Vec::new()),
+            };
+            let budget = WorkBudget::for_test();
+            if fault == "budget" {
+                budget.work(MAX_WORK).unwrap();
+            }
+            let error = block_on(find_eligible_batch(
+                &index,
+                &resolver,
+                7,
+                principal(2),
+                "faucet",
+                b"commit",
+                &[100, 300],
+                &mut RewardLog::default(),
+                &budget,
+            ))
+            .unwrap_err();
+            assert_eq!(
+                error,
+                match fault {
+                    "partial" => "history_read_failed",
+                    "malformed" => "history_timestamp_missing",
+                    "owner" => "owner_lookup_failed",
+                    "snapshot" => "reward_context_changed",
+                    "budget" => EXHAUSTED,
+                    _ => unreachable!(),
+                },
+                "{fault}"
+            );
+        }
     }
 
     #[test]

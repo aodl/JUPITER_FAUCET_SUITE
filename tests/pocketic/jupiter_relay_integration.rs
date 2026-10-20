@@ -4221,6 +4221,41 @@ fn stateless_reward_lookback_is_pro_rata_reusable_and_skips_newer_ineligible_com
 
 #[test]
 #[ignore]
+fn orphan_reward_prefix_carries_forward_without_stealing_an_attributable_credit() -> Result<()> {
+    let mut env = RealSplitterRewardEnv::new(2)?;
+    tick_n(&env.pic, 30);
+    let alice = env.owners[0];
+    let bob = env.owners[1];
+    for owner in [alice, bob] {
+        env.fund_owner(owner, 300_000_000)?;
+    }
+    env.credit_reward_pot(1)?;
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 5);
+    env.send_to_relay(alice, relay_subaccount_one(), 110_000_000)?;
+    env.main_tick()?;
+    let history = account_identifier_text(env.relay, Some(relay_subaccount_one()));
+    wait_for_real_index_transactions(&env.pic, env.icp_index, &history, 2)?;
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 5);
+    env.credit_reward_pot(101_000)?;
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 5);
+    env.send_to_relay(bob, relay_subaccount_one(), 110_000_000)?;
+    env.main_tick()?;
+    tick_n(&env.pic, 5);
+    env.main_tick()?;
+    wait_for_real_index_transactions(&env.pic, env.icp_index, &history, 4)?;
+    env.refresh_snapshot()?;
+    env.reward_sweep()?;
+    assert_eq!(env.reward_balance(alice)?, 100_001);
+    assert_eq!(env.reward_balance(bob)?, 0);
+    assert_eq!(env.reward_balance(env.relay)?, 0);
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn reward_arrival_before_newer_commitment_fences_that_funder_out() -> Result<()> {
     let mut env = RealSplitterRewardEnv::new(2)?;
     tick_n(&env.pic, 30);
