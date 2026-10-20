@@ -13,7 +13,7 @@ const repoRoot = resolve(publicRoot, '../../..');
 // build is deterministic and all non-asset requests are blocked below.
 execFileSync('npm', ['run', 'build:frontend'], {
   cwd: repoRoot,
-  env: { ...process.env, JUPITER_FRONTEND_NETWORK: 'local', CANISTER_ID_JUPITER_HISTORIAN: 'aaaaa-aa' },
+  env: { ...process.env, JUPITER_FRONTEND_NETWORK: 'local', CANISTER_ID_JUPITER_HISTORIAN: 'aaaaa-aa', CANISTER_ID_MOCK_ICRC_LEDGER: 'aaaaa-aa' },
   stdio: 'pipe',
 });
 const manifest = JSON.parse(await readFile(resolve(publicRoot, 'generated/frontend-bundle.json'), 'utf8'));
@@ -26,10 +26,26 @@ const contentTypes = new Map([
   ['.js', 'text/javascript'],
   ['.svg', 'image/svg+xml'],
 ]);
-// The fixture has no local replica. Its fixed anonymous local agent may probe
-// status and this one configured canister; neither is an application asset.
+// The fixture has no replica. Failed local status/query probes and certified
+// reads for the displayed Source IDs are API unavailability, not missing assets.
+// Keep other canister queries and all external requests forbidden.
+const sourceCanisterIds = new Set([...(
+  await readFile(resolve(publicRoot, 'index.html'), 'utf8')
+).matchAll(/data-source-(?:module-hash|controllers)="([^"]+)"/g)].map((match) => match[1]));
 const expectedLocalProbe = (pathname) => pathname === '/api/v2/status'
-  || /^\/api\/v3\/canister\/aaaaa-aa\/(query|read_state)$/.test(pathname);
+  || /^\/api\/v3\/canister\/aaaaa-aa\/(query|read_state)$/.test(pathname)
+  || sourceCanisterIds.has(/^\/api\/v3\/canister\/([^/]+)\/read_state$/.exec(pathname)?.[1]);
+
+test('browser fixture permits only configured probes and displayed certified paths', () => {
+  assert.ok(sourceCanisterIds.size > 0);
+  for (const id of sourceCanisterIds) {
+    assert.equal(expectedLocalProbe(`/api/v3/canister/${id}/read_state`), true);
+    assert.equal(expectedLocalProbe(`/api/v3/canister/${id}/query`), false);
+  }
+  assert.equal(expectedLocalProbe('/api/v3/canister/ryjl3-tyaaa-aaaaa-aaaba-cai/read_state'), false);
+  assert.equal(expectedLocalProbe('/api/v3/canister/aaaaa-aa/call'), false);
+  assert.equal(expectedLocalProbe('/generated/missing.js'), false);
+});
 
 async function serveFrontend() {
   const server = createServer(async (request, response) => {
@@ -244,6 +260,12 @@ test('rendered simulator updates from user inputs and corner controls stay hitta
       const box = await page.locator(selector).boundingBox();
       await page.mouse.click(box.x + box.width * xRatio, box.y + box.height * 0.85);
       assert.equal(await page.locator(panelSelector).isVisible(), true);
+      if (panelSelector === '#nav-panel-source') {
+        await page.waitForFunction(() => {
+          const fields = [...document.querySelectorAll('[data-source-module-hash], [data-source-controllers]')];
+          return fields.length > 0 && fields.every((field) => field.textContent === 'Unavailable');
+        });
+      }
       checkFailures();
     }
   });
