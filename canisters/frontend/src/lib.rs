@@ -904,8 +904,7 @@ mod tests {
         }
 
         assert!(!csp.contains("'unsafe-inline'"));
-        assert!(csp.contains(
-            "connect-src 'self' https://icp0.io https://*.icp0.io https://icp-api.io;"
-        ));
+        assert!(csp
+            .contains("connect-src 'self' https://icp0.io https://*.icp0.io https://icp-api.io;"));
     }
 }
