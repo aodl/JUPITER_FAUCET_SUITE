@@ -4364,6 +4364,56 @@ fn faucet_current_state_upgrade_reconstructs_without_replaying_funding() -> Resu
 
 #[test]
 #[ignore]
+fn empty_funding_history_scan_cost_is_measured_without_value_movement() -> Result<()> {
+    let env = FaucetEnv::new()?;
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    env.credit_staking(100_000_000)?;
+    env.credit_payout(100_000_000)?;
+    env.main_tick()?;
+    assert!(!env.state()?.active_payout_job_present);
+    let settled = env.ledger_transfers()?.len();
+    let payout_id = support::account_identifier::account_id_for(&env.accounts.payout);
+    update_bytes::<u64>(
+        &env.pic,
+        env.index,
+        Principal::anonymous(),
+        "debug_append_repeated_transfer",
+        encode_args((payout_id.clone(), 10_000_u64, 1_u64, None::<Vec<u8>>))?,
+    )?;
+    // An unrelated balance makes discovery run; no new authorized funding tranche.
+    env.credit_payout_balance_only(1_000_000)?;
+    for pass in 0..4 {
+        if pass >= 2 {
+            env.append_index_transfer_from_to_account_id(
+                "unrelated-source".into(),
+                payout_id.clone(),
+                1,
+                None,
+            )?;
+        }
+        let first = env.index_get_calls()?.len();
+        let faucet_before = env.pic.cycle_balance(env.faucet);
+        let index_before = env.pic.cycle_balance(env.index);
+        env.main_tick()?;
+        let faucet_cycles = faucet_before.saturating_sub(env.pic.cycle_balance(env.faucet));
+        let index_cycles = index_before.saturating_sub(env.pic.cycle_balance(env.index));
+        let calls = env.index_get_calls()?;
+        let funding: Vec<_> = calls[first..]
+            .iter()
+            .filter(|call| call.account_identifier == payout_id)
+            .collect();
+        let records: u64 = funding.iter().map(|call| call.returned_count).sum();
+        assert!(funding.len() <= 128);
+        assert_eq!(env.ledger_transfers()?.len(), settled);
+        assert!(!env.state()?.active_payout_job_present);
+        println!("O1_EMPTY_WASM pass={pass} funding_pages={} returned_records={records} faucet_cycles={faucet_cycles} index_cycles={index_cycles}", funding.len());
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn faucet_skip_cache_cold_warm_and_upgrade_relearn_preserve_allocations() -> Result<()> {
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;

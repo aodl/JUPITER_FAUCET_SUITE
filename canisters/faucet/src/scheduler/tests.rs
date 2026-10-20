@@ -6780,6 +6780,52 @@ mod tests {
     }
 
     #[test]
+    fn empty_funding_history_cost_stays_bounded_without_selecting_unrelated_receipts() {
+        state::set_state(state::State::new(test_config(), 0));
+        state::with_state_mut(|st| st.last_processed_funding_tx_id = Some(1));
+        let payout = "payout-account";
+        let source = "funding-source";
+        let mut index = NewestFirstExclusiveIndex::from_history(
+            (1..=10_001)
+                .map(|id| {
+                    funding_tx_at(
+                        id,
+                        if id == 1 { source } else { "unrelated-source" },
+                        payout,
+                        if id == 1 { 100_000_000 } else { 1 },
+                        id,
+                    )
+                })
+                .collect(),
+        );
+        for pass in 0..4 {
+            if pass >= 2 {
+                index.txs.insert(
+                    0,
+                    funding_tx_at(10_000 + pass, "unrelated-source", payout, 1, 20_000),
+                );
+            }
+            let before = index.starts().len();
+            assert_eq!(
+                run_ready(discover_oldest_unprocessed_funding_tranche(
+                    &index,
+                    payout.into(),
+                    source.into(),
+                    Some(1),
+                    10_000
+                )),
+                FundingDiscovery::Empty
+            );
+            let calls = index.starts().len() - before;
+            assert!(calls <= MAX_FUNDING_SCAN_PAGES_PER_TICK as usize);
+            assert!(state::with_state(|st| st.active_payout_job.is_none()
+                && st.active_funding_scan.is_none()
+                && st.last_processed_funding_tx_id == Some(1)));
+            println!("O1_EMPTY_UNIT pass={pass} unrelated_receipts={} pages={calls} page_cap={MAX_FUNDING_SCAN_PAGES_PER_TICK}", index.txs.len() - 1);
+        }
+    }
+
+    #[test]
     fn funding_tranche_scan_does_not_process_newer_candidate_when_page_cap_hides_older_unprocessed_transfer(
     ) {
         let payout_id = "payout-account".to_string();
