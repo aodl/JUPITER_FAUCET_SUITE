@@ -30,7 +30,7 @@ test('certified mainnet status uses the trusted API, binds paths to the requeste
     assert.equal(result.moduleHash, null);
     assert.equal(result.controllers, null);
     assert.ok(result.error);
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 2);
   } finally {
     HttpAgent.create = originalCreate;
     resetAgentCacheForTests();

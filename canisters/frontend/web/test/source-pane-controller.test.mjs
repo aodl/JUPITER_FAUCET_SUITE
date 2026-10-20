@@ -93,7 +93,7 @@ test('source pane ignores the old cache and renders certified metadata separatel
       loadCertifiedStatus: async ({ canisterIds, local }) => {
         assert.deepEqual(canisterIds, ['aaaaa-aa']);
         assert.equal(local, false);
-        return [{ canisterId: 'aaaaa-aa', moduleHash: actualHash, controllers: ['rrkah-fqaaa-aaaaa-aaaaq-cai'], certifiedAt: '2026-10-20T00:00:00.000Z' }];
+        return [{ canisterId: 'aaaaa-aa', moduleHash: actualHash, controllers: ['rrkah-fqaaa-aaaaa-aaaaq-cai'], checkedAt: '2026-10-20T00:00:00.000Z' }];
       },
     });
     await controller.ensureLoaded();
@@ -113,7 +113,7 @@ for (const value of [[], null]) {
       await createSourcePaneController({
         frontendConfig: { historianCanisterId: 'hist-aa' }, isLocalHost: () => false,
         loadCanisterInfo: async () => [],
-        loadCertifiedStatus: async () => [{ canisterId: 'aaaaa-aa', controllers: value, certifiedAt: '2026-10-20T00:00:00Z' }],
+        loadCertifiedStatus: async () => [{ canisterId: 'aaaaa-aa', controllers: value, checkedAt: '2026-10-20T00:00:00Z' }],
       }).ensureLoaded();
     });
     assert.equal(controllers.innerHTML, value === null ? 'Unavailable' : 'none');

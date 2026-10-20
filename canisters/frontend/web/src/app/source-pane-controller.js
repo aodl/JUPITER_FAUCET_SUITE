@@ -45,13 +45,13 @@ export function createSourcePaneController({
         const item = info.get(node.getAttribute('data-source-module-hash'));
         const value = item?.moduleHash;
         node.textContent = value || 'Unavailable';
-        node.setAttribute('title', value ? `Certificate checked at ${item.certifiedAt}: ${value}` : item?.error || fallback);
+        node.setAttribute('title', value ? `Certificate checked at ${item.checkedAt}: ${value}` : item?.error || fallback);
       }
       for (const node of controllerNodes) {
         const item = info.get(node.getAttribute('data-source-controllers'));
         const controllers = item?.controllers;
         node.innerHTML = renderSourceControllers(controllers);
-        node.setAttribute('title', Array.isArray(controllers) ? `Certificate checked at ${item.certifiedAt}` : item?.error || fallback);
+        node.setAttribute('title', Array.isArray(controllers) ? `Certificate checked at ${item.checkedAt}` : item?.error || fallback);
       }
       const memoryById = new Map(observed.status === 'fulfilled'
         ? observed.value.map((item) => [formatPrincipal(item.canister_id), readOpt(item.total_memory_bytes)]) : []);

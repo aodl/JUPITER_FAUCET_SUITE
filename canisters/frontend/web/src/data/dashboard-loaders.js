@@ -70,16 +70,14 @@ export async function loadCertifiedCanisterStatus({ canisterIds, host, local = f
     const canisterId = Principal.fromText(id);
     try {
       const status = await CanisterStatus.request({
-        agent: resolvedAgent, canisterId, paths: ['module_hash', 'controllers', 'time'],
+        agent: resolvedAgent, canisterId, paths: ['module_hash', 'controllers'],
       });
       const moduleHash = status.get('module_hash');
       const controllers = status.get('controllers');
-      const time = status.get('time');
-      if (!/^[0-9a-f]{64}$/.test(moduleHash) || !Array.isArray(controllers)
-        || !(time instanceof Date) || !Number.isFinite(time.getTime())) {
+      if (!/^[0-9a-f]{64}$/.test(moduleHash) || !Array.isArray(controllers)) {
         throw new Error('Certified canister paths unavailable');
       }
-      return { canisterId: id, moduleHash, controllers: controllers.map((p) => p.toText()), certifiedAt: time.toISOString() };
+      return { canisterId: id, moduleHash, controllers: controllers.map((p) => p.toText()), checkedAt: new Date().toISOString() };
     } catch (error) {
       return { canisterId: id, moduleHash: null, controllers: null, error: normalizeError(error) };
     }

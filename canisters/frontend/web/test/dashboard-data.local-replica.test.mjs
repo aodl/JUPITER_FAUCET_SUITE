@@ -53,7 +53,7 @@ maybeTest('Source Code read_state verifies real local certificates and rejects t
   const good = await read(capture);
   assert.match(good.moduleHash, /^[0-9a-f]{64}$/);
   assert.ok(good.controllers.length > 0);
-  assert.ok(good.certifiedAt);
+  assert.ok(good.checkedAt);
 
   const replay = { rootKey: agent.rootKey, async readState(_id, args) { return responses.get(new TextDecoder().decode(args.paths[0].at(-1))); } };
   const wrong = await read(replay, 'aaaaa-aa');
