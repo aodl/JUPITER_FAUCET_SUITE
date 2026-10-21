@@ -1414,6 +1414,84 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
 
 #[test]
 #[ignore]
+fn event_horizon_small_hints_do_no_work_and_daily_poll_finds_small_funding() -> Result<()> {
+    let env = FaucetEnv::new_with_init_overrides(|init| {
+        init.rescue_interval_seconds = Some(31_536_000);
+    })?;
+    let proxy = event_horizon_proxy();
+    env.pic
+        .create_canister_with_id(None, None, proxy)
+        .map_err(anyhow::Error::msg)?;
+    env.pic.add_cycles(proxy, 5_000_000_000_000);
+    env.pic
+        .install_canister(proxy, status_proxy_wasm()?, vec![], None);
+    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    env.credit_staking(100_000_000)?;
+    env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
+    // A genuine sub-1-ICP Disburser tranche remains eligible for the daily poll.
+    env.credit_payout(50_000_000)?;
+    env.append_pending_funding_tranches()?;
+    let before = env.state()?;
+    let reads = env.index_get_calls()?.len();
+    for amount in [0_u64, 1, 99_999_999] {
+        let accepted: Result<(), String> = update_one(
+            &env.pic,
+            proxy,
+            Principal::anonymous(),
+            "debug_poke",
+            PokeProxyArgs {
+                canister_id: env.faucet,
+                matches: vec![
+                    EventHorizonPokeMatch {
+                        target: EventHorizonPokeTarget::Subaccount(7),
+                        max_amount: Nat::from(u64::MAX),
+                    },
+                    EventHorizonPokeMatch {
+                        target: EventHorizonPokeTarget::Subaccount(0),
+                        max_amount: Nat::from(amount),
+                    },
+                ],
+            },
+        )?;
+        accepted.map_err(anyhow::Error::msg)?;
+    }
+    env.pic.advance_time(Duration::from_secs(12));
+    tick_n(&env.pic, 15);
+    assert_eq!(
+        env.index_get_calls()?.len(),
+        reads,
+        "rejected hints must not read Index, even after the deferred interval"
+    );
+    assert!(env.ledger_transfers()?.is_empty());
+    assert!(env.notifications()?.is_empty());
+    let after = env.state()?;
+    assert_eq!(after.last_main_run_ts, before.last_main_run_ts);
+    assert_eq!(after.last_summary_present, before.last_summary_present);
+    assert_eq!(after.last_rescue_check_ts, before.last_rescue_check_ts);
+    assert!(!after.active_payout_job_present);
+
+    env.pic.advance_time(Duration::from_secs(60));
+    tick_n(&env.pic, 30);
+    let transfers = env.ledger_transfers()?;
+    assert_eq!(
+        transfers.len(),
+        1,
+        "daily poll still processes small authorized funding"
+    );
+    assert_eq!(
+        transfers[0].to,
+        Account {
+            owner: env.cmc,
+            subaccount: Some(principal_to_subaccount(target))
+        }
+    );
+    assert_eq!(env.notifications()?.len(), 1);
+    assert!(env.state()?.last_main_run_ts > before.last_main_run_ts);
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn faucet_retries_persisted_notification_after_cmc_failure() -> Result<()> {
     let env = FaucetEnv::new()?;
     let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;

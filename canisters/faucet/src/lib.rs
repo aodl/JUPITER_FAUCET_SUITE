@@ -429,10 +429,14 @@ fn guard_event_horizon_caller() -> Result<(), String> {
         .ok_or_else(|| "caller is not Event Horizon".to_string())
 }
 
+// Wake-up economics are independent of staking commitment eligibility (min_tx_e8s).
+const EVENT_HORIZON_POKE_MIN_AMOUNT_E8S: u64 = 100_000_000;
+
 fn has_relevant_event_horizon_match(matches: &[EventHorizonPokeMatch]) -> bool {
-    matches
-        .iter()
-        .any(|item| matches!(item.target, EventHorizonPokeTarget::Subaccount(0)))
+    let minimum = candid::Nat::from(EVENT_HORIZON_POKE_MIN_AMOUNT_E8S);
+    matches.iter().any(|item| {
+        matches!(item.target, EventHorizonPokeTarget::Subaccount(0)) && item.max_amount >= minimum
+    })
 }
 
 #[ic_cdk::update(guard = "guard_event_horizon_caller")]
@@ -1452,7 +1456,7 @@ fn debug_event_horizon_policy_accepts_only_exact_fixture() {
     assert!(!event_horizon_caller_is_whitelisted(near));
     let item = |target| EventHorizonPokeMatch {
         target,
-        max_amount: candid::Nat::from(1u64),
+        max_amount: candid::Nat::from(100_000_000u64),
     };
     assert!(!has_relevant_event_horizon_match(&[]));
     assert!(!has_relevant_event_horizon_match(&[item(
@@ -1465,4 +1469,48 @@ fn debug_event_horizon_policy_accepts_only_exact_fixture() {
         EventHorizonPokeTarget::Subaccount(0)
     )]));
     assert_committed_did_matches_rust_service("jupiter_faucet_debug.did");
+}
+
+#[test]
+fn event_horizon_amount_policy_is_local_to_the_approved_target() {
+    let item = |target, max_amount| EventHorizonPokeMatch { target, max_amount };
+    for amount in [0_u64, 1, 99_999_999, 100_000_000, 100_000_001] {
+        assert_eq!(
+            has_relevant_event_horizon_match(&[item(
+                EventHorizonPokeTarget::Subaccount(0),
+                candid::Nat::from(amount),
+            )]),
+            amount >= 100_000_000,
+            "local wake-up policy for {amount} e8s"
+        );
+    }
+    let huge: candid::Nat = "184467440737095516160000000000000000000".parse().unwrap();
+    assert!(has_relevant_event_horizon_match(&[item(
+        EventHorizonPokeTarget::Subaccount(0),
+        huge.clone()
+    )]));
+    assert!(!has_relevant_event_horizon_match(&[]));
+    for target in [
+        EventHorizonPokeTarget::Subaccount(7),
+        EventHorizonPokeTarget::NeuronNonce(0),
+    ] {
+        assert!(!has_relevant_event_horizon_match(&[item(
+            target,
+            huge.clone()
+        )]));
+    }
+    let mut mixed = vec![
+        item(EventHorizonPokeTarget::Subaccount(7), huge.clone()),
+        item(EventHorizonPokeTarget::NeuronNonce(0), huge),
+        item(
+            EventHorizonPokeTarget::Subaccount(0),
+            candid::Nat::from(99_999_999_u64),
+        ),
+    ];
+    assert!(!has_relevant_event_horizon_match(&mixed));
+    mixed.push(item(
+        EventHorizonPokeTarget::Subaccount(0),
+        candid::Nat::from(100_000_000_u64),
+    ));
+    assert!(has_relevant_event_horizon_match(&mixed));
 }
