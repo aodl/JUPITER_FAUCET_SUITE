@@ -1192,6 +1192,29 @@ mod tests {
     }
 
     #[test]
+    fn poke_opportunity_does_no_reads_while_the_main_worker_owns_the_lease() {
+        let now_secs = 1_000;
+        state::set_state(state::State::new(test_config(), now_secs));
+        let guard = MainGuard::acquire(now_secs).expect("active payout owns the lease");
+        let expiry = state::with_state(|st| st.main_lock_state_ts);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 100_000_000, vec![]);
+        let index = RecordingIndex::new(vec![]);
+        run_ready(super::super::poke::run_worker_with_clients(
+            now_secs * 1_000_000_000,
+            now_secs,
+            &ledger,
+            &index,
+            &ScriptedCmc::new(vec![]),
+            &NoopGovernance,
+            &crate::clients::canister_info::NoopCanisterStatusClient,
+        ));
+        assert_eq!(ledger.read_calls.load(Ordering::SeqCst), 0);
+        assert!(index.starts().is_empty());
+        assert_eq!(state::with_state(|st| st.main_lock_state_ts), expiry);
+        drop(guard);
+    }
+
+    #[test]
     fn busy_scheduled_main_attempt_can_retry_after_poke_lease_releases() {
         let now_secs = 1_000;
         let mut st = state::State::new(test_config(), 0);

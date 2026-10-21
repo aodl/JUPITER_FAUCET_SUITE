@@ -27,14 +27,16 @@ enum DeferredTimerAction {
 fn record_hint(now_ns: u64) -> bool {
     POKE_RUNTIME.with(|cell| {
         let mut runtime = cell.get();
+        if runtime.timer_pending {
+            return false;
+        }
         runtime.due_at_ns =
             Some(now_ns.saturating_add(
                 EVENT_HORIZON_POKE_INTERVAL_SECONDS.saturating_mul(NANOS_PER_SECOND),
             ));
-        let should_schedule = !runtime.timer_pending;
         runtime.timer_pending = true;
         cell.set(runtime);
-        should_schedule
+        true
     })
 }
 
@@ -146,13 +148,15 @@ fn schedule_deferred(delay: Duration) {
     });
 }
 
-pub(crate) async fn handle_event_horizon_poke() {
+pub(crate) fn handle_event_horizon_poke() {
     let now_ns = ic_cdk::api::time();
     if record_hint(now_ns) {
         schedule_deferred(Duration::from_secs(EVENT_HORIZON_POKE_INTERVAL_SECONDS));
     }
     if admit_attempt(now_ns) {
-        run_worker().await;
+        // Admit before scheduling so concurrent notifications share the gate.
+        // The worker acquires the existing main lease when its timer runs.
+        ic_cdk_timers::set_timer(Duration::ZERO, async { run_worker().await });
     }
 }
 
@@ -165,19 +169,32 @@ mod tests {
     }
 
     #[test]
-    fn trailing_edge_moves_without_a_second_timer_and_clears_before_work() {
+    fn repeated_hints_keep_the_first_deadline_and_share_one_timer() {
         reset();
         assert!(record_hint(0));
-        assert!(!record_hint(9_900_000_000));
+        assert!(admit_attempt(0));
+        for now in [0, 0, 9_900_000_000, 9_900_000_000] {
+            assert!(!record_hint(now));
+            assert!(!admit_attempt(now));
+        }
         assert_eq!(
             deferred_timer_action(10_000_000_000),
-            DeferredTimerAction::Reschedule(Duration::from_millis(9_900))
+            DeferredTimerAction::Attempt,
+            "later hints must not postpone the pending catch-up opportunity"
         );
+        assert!(admit_attempt(10_000_000_000));
         assert_eq!(
-            deferred_timer_action(19_900_000_000),
-            DeferredTimerAction::Attempt
+            deferred_timer_action(10_000_000_000),
+            DeferredTimerAction::Stop
         );
         assert!(record_hint(19_900_000_000));
+        assert!(!admit_attempt(19_900_000_000));
+        assert!(!record_hint(29_800_000_000));
+        assert_eq!(
+            deferred_timer_action(29_900_000_000),
+            DeferredTimerAction::Attempt
+        );
+        assert!(admit_attempt(29_900_000_000));
     }
 
     #[test]
@@ -189,6 +206,38 @@ mod tests {
         assert_eq!(
             deferred_timer_action(10_000_000_001),
             DeferredTimerAction::Stop
+        );
+    }
+
+    #[test]
+    fn rejected_callbacks_leave_the_pending_deadline_and_admission_unchanged() {
+        reset();
+        assert!(record_hint(0));
+        assert!(admit_attempt(0));
+        let before = POKE_RUNTIME.with(Cell::get);
+        for matches in [
+            vec![],
+            vec![crate::EventHorizonPokeMatch {
+                target: crate::EventHorizonPokeTarget::Subaccount(0),
+                max_amount: candid::Nat::from(99_999_999_u64),
+            }],
+            vec![crate::EventHorizonPokeMatch {
+                target: crate::EventHorizonPokeTarget::Subaccount(7),
+                max_amount: candid::Nat::from(u64::MAX),
+            }],
+            vec![crate::EventHorizonPokeMatch {
+                target: crate::EventHorizonPokeTarget::NeuronNonce(0),
+                max_amount: candid::Nat::from(u64::MAX),
+            }],
+        ] {
+            // Exercise the actual callback. Reaching an IC API on this native
+            // path would also fail the test, rather than scheduling hidden work.
+            crate::poke(matches);
+            assert_eq!(POKE_RUNTIME.with(Cell::get), before);
+        }
+        assert_eq!(
+            deferred_timer_action(10_000_000_000),
+            DeferredTimerAction::Attempt
         );
     }
 }

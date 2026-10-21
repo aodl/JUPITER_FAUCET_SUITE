@@ -440,9 +440,9 @@ fn has_relevant_event_horizon_match(matches: &[EventHorizonPokeMatch]) -> bool {
 }
 
 #[ic_cdk::update(guard = "guard_event_horizon_caller")]
-async fn poke(matches: Vec<EventHorizonPokeMatch>) {
+fn poke(matches: Vec<EventHorizonPokeMatch>) {
     if has_relevant_event_horizon_match(&matches) {
-        scheduler::handle_event_horizon_poke().await;
+        scheduler::handle_event_horizon_poke();
     }
 }
 

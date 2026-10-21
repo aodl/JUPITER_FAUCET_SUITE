@@ -1388,6 +1388,7 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
     env.credit_staking(100_000_000)?;
     env.append_transfer(100_000_000, Some(target.to_text().into_bytes()))?;
     env.credit_payout(100_000_000)?;
+    let hint_clock = env.pic.get_time().as_nanos_since_unix_epoch();
     let accepted: Result<(), String> = update_one(
         &env.pic,
         proxy,
@@ -1403,12 +1404,63 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         },
     )?;
     accepted.map_err(anyhow::Error::msg)?;
+    // Finish the initial opportunity while the funding transfer is still absent
+    // from Index. The pending Ledger balance alone cannot establish a tranche.
+    tick_n(&env.pic, 20);
+    assert!(!env.index_get_calls()?.is_empty());
     assert!(!env.state()?.last_summary_present);
+    assert!(env.ledger_transfers()?.is_empty());
     env.append_pending_funding_tranches()?;
-    env.pic.advance_time(Duration::from_secs(10));
-    tick_n(&env.pic, 10);
+    // Calls/rounds can advance PocketIC time. Place the repeated hints inside
+    // the first window relative to the original hint, not the last query.
+    let repeated_at = hint_clock + 9_000_000_000;
+    let now = env.pic.get_time().as_nanos_since_unix_epoch();
+    assert!(
+        now < repeated_at,
+        "fixture initial pass finishes before catch-up"
+    );
+    env.pic
+        .advance_time(Duration::from_nanos(repeated_at - now));
+    for _ in 0..3 {
+        let accepted: Result<(), String> = update_one(
+            &env.pic,
+            proxy,
+            Principal::anonymous(),
+            "debug_poke",
+            PokeProxyArgs {
+                canister_id: env.faucet,
+                matches: vec![subaccount_match(0)],
+            },
+        )?;
+        accepted.map_err(anyhow::Error::msg)?;
+    }
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 25);
+    let transfers = env.ledger_transfers()?;
+    assert_eq!(
+        transfers.len(),
+        1,
+        "later hints cannot postpone Index catch-up"
+    );
+    assert_eq!(
+        transfers[0].to,
+        Account {
+            owner: env.cmc,
+            subaccount: Some(principal_to_subaccount(target))
+        }
+    );
+    assert_eq!(env.notifications()?.len(), 1);
     assert!(env.state()?.last_summary_present);
     assert_eq!(env.state()?.last_main_run_ts, before.last_main_run_ts);
+    let reads = env.index_get_calls()?.len();
+    env.pic.advance_time(Duration::from_secs(30));
+    tick_n(&env.pic, 15);
+    assert_eq!(
+        env.index_get_calls()?.len(),
+        reads,
+        "coalesced hints do not leave extra timers or retries"
+    );
+    assert_eq!(env.ledger_transfers()?.len(), 1);
     Ok(())
 }
 
@@ -1487,6 +1539,40 @@ fn event_horizon_small_hints_do_no_work_and_daily_poll_finds_small_funding() -> 
     );
     assert_eq!(env.notifications()?.len(), 1);
     assert!(env.state()?.last_main_run_ts > before.last_main_run_ts);
+
+    // Both poke opportunities can fail without disabling the independent poll.
+    env.credit_payout(50_000_000)?;
+    env.append_pending_funding_tranches()?;
+    env.pic
+        .stop_canister(env.index, None)
+        .map_err(|e| anyhow!("{e:?}"))?;
+    let accepted: Result<(), String> = update_one(
+        &env.pic,
+        proxy,
+        Principal::anonymous(),
+        "debug_poke",
+        PokeProxyArgs {
+            canister_id: env.faucet,
+            matches: vec![subaccount_match(0)],
+        },
+    )?;
+    accepted.map_err(anyhow::Error::msg)?;
+    env.pic.advance_time(Duration::from_secs(12));
+    tick_n(&env.pic, 25);
+    assert_eq!(env.ledger_transfers()?.len(), 1);
+    env.pic
+        .start_canister(env.index, None)
+        .map_err(|e| anyhow!("{e:?}"))?;
+    env.pic.advance_time(Duration::from_secs(60));
+    tick_n(&env.pic, 30);
+    let transfers = env.ledger_transfers()?;
+    assert_eq!(
+        transfers.len(),
+        2,
+        "daily fallback needs no further notification after failed follow-ups"
+    );
+    assert_eq!(transfers[1].to, transfers[0].to);
+    assert_eq!(env.notifications()?.len(), 2);
     Ok(())
 }
 
