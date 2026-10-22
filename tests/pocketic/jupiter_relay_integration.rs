@@ -2475,6 +2475,151 @@ fn surplus_canister_transfer_uses_configured_memo_without_cmc_notify() -> Result
 
 #[test]
 #[ignore]
+fn nine_topups_then_two_neuron_surpluses_preserve_second_memo_across_cap() -> Result<()> {
+    const FUNDING_E8S: u64 = 1_000_000_000;
+    const FEE_E8S: u64 = 10_000;
+    let neuron_ids = [10_292_412_127_977_304_661, 11_614_578_985_374_291_210];
+    let second_memo = b"10292412127977304661".to_vec();
+    let targets: Vec<_> = (70..78).map(|n| Principal::from_slice(&[n])).collect();
+
+    // The uncapped control exercises the same second recipient and memo. The
+    // ten-transfer case must retain its eleventh payment for a later main tick.
+    for cap in [11, 10] {
+        let env = RelayEnv::new_with_config(Some(cap), |_, _, _, _| {
+            (
+                targets.clone(),
+                None,
+                vec![
+                    SurplusNeuronRecipient {
+                        neuron_id: neuron_ids[0],
+                        memo: Vec::new(),
+                    },
+                    SurplusNeuronRecipient {
+                        neuron_id: neuron_ids[1],
+                        memo: second_memo.clone(),
+                    },
+                ],
+            )
+        })?;
+        for target in &targets {
+            env.set_canister_cycles(*target, 10_000_000_000_000)?;
+        }
+        env.credit_relay(FUNDING_E8S)?;
+        assert_eq!(env.tick_relay()?.mode, RelayMode::BaselineOnly);
+        assert!(env.transfers()?.is_empty());
+        for target in &targets {
+            env.set_canister_cycles(*target, 5_000_000_000_000)?;
+        }
+
+        let first = env.tick_relay()?;
+        let transfers = env.transfers()?;
+        assert_eq!(transfers.len(), cap as usize, "cap={cap}: {first:?}");
+        for target in targets.iter().copied().chain([env.relay]) {
+            assert_eq!(
+                transfers[..9]
+                    .iter()
+                    .filter(|t| t.to
+                        == (Account {
+                            owner: env.cmc,
+                            subaccount: Some(principal_to_subaccount(target)),
+                        }))
+                    .count(),
+                1
+            );
+        }
+        let first_surplus = &transfers[9];
+        assert_eq!(
+            first_surplus.to,
+            Account {
+                owner: env.governance,
+                subaccount: Some(neuron_subaccount(neuron_ids[0])),
+            }
+        );
+        assert_eq!(first_surplus.memo, None);
+
+        let completed = if cap == 10 {
+            let paused = env.debug_state()?;
+            assert!(paused.active_job_present);
+            let spent: u64 = transfers
+                .iter()
+                .map(|t| nat_to_u64(&t.amount) + nat_to_u64(&t.fee))
+                .sum();
+            assert_eq!(env.relay_balance()?, FUNDING_E8S - spent);
+            assert!(env.relay_balance()? >= 100_010_000);
+            // Use the existing local debug tick to resume the pinned job one day
+            // later. This does not assert an exact production timer deadline.
+            env.advance_time_and_tick(86_400, 5);
+            let resumed = env.tick_relay()?;
+            assert_eq!(env.debug_state()?.next_job_id, paused.next_job_id);
+            assert!(resumed.partial_tick_count > 0);
+            resumed
+        } else {
+            first
+        };
+
+        assert!(!env.debug_state()?.active_job_present);
+        assert_eq!(
+            completed.canisters.len(),
+            9,
+            "Relay self is the ninth target"
+        );
+        assert!(completed.probe_failures.is_empty(), "{completed:?}");
+        assert!(completed.canisters.iter().all(|s| s.sent_topup_e8s > 0));
+        assert_eq!(completed.total_remaining_deficit_cycles, 0);
+        assert_eq!(completed.surplus_transfers.len(), 2);
+        assert_eq!(completed.surplus_transfers[1].memo_len, Some(20));
+        assert_eq!(completed.ledger_transfer_count, 11);
+        assert_eq!(completed.cmc_notify_success_count, 9);
+        let transfers = env.transfers()?;
+        assert_eq!(transfers.len(), 11);
+        assert_eq!(env.transfer_attempts()?.len(), 11);
+        assert_eq!(env.notifications()?.len(), 9, "surplus must not notify CMC");
+        let topup_cost: u64 = transfers[..9]
+            .iter()
+            .map(|t| nat_to_u64(&t.amount) + nat_to_u64(&t.fee))
+            .sum();
+        let gross_share = (FUNDING_E8S - topup_cost) / 2;
+        assert!(gross_share - FEE_E8S >= 100_000_000);
+        for (i, neuron_id) in neuron_ids.into_iter().enumerate() {
+            let transfer = &transfers[9 + i];
+            let account = Account {
+                owner: env.governance,
+                subaccount: Some(neuron_subaccount(neuron_id)),
+            };
+            assert_eq!(transfer.to, account);
+            assert_eq!(nat_to_u64(&transfer.amount), gross_share - FEE_E8S);
+            assert_eq!(nat_to_u64(&transfer.fee), FEE_E8S);
+            assert_eq!(
+                transfer.memo,
+                if i == 0 {
+                    None
+                } else {
+                    Some(second_memo.clone())
+                }
+            );
+            let balance: Nat = query_one(
+                &env.pic,
+                env.ledger,
+                Principal::anonymous(),
+                "icrc1_balance_of",
+                account,
+            )?;
+            assert_eq!(nat_to_u64(&balance), gross_share - FEE_E8S);
+        }
+        assert_eq!(env.relay_balance()?, (FUNDING_E8S - topup_cost) % 2);
+        let _ = env.tick_relay()?;
+        assert_eq!(
+            env.transfers()?,
+            transfers,
+            "completed payments must not replay"
+        );
+        assert_eq!(env.notifications()?.len(), 9);
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn surplus_recipient_memos_preserve_absent_and_binary_icrc1_forms() -> Result<()> {
     let empty_neuron_id = 42_u64;
     let binary_neuron_id = 43_u64;
