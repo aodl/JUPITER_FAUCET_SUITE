@@ -5,7 +5,7 @@ mod scheduler;
 mod state;
 
 use candid::types::value::{IDLArgs, IDLValue};
-use candid::{CandidType, Deserialize, Nat, Principal};
+use candid::{CandidType, Deserialize, Principal};
 use ic_cdk::call::Call;
 use icrc_ledger_types::icrc1::account::Account;
 use jupiter_canister_logging::{
@@ -305,7 +305,7 @@ fn guard_event_horizon_caller() -> Result<(), String> {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct RelevantEventHorizonMatches {
     staging_account: bool,
-    staking_max_amount: Option<Nat>,
+    staking_match: Option<EventHorizonPokeMatch>,
 }
 
 fn classify_event_horizon_matches(
@@ -316,13 +316,9 @@ fn classify_event_horizon_matches(
         match item.target {
             EventHorizonPokeTarget::Subaccount(0) => relevant.staging_account = true,
             EventHorizonPokeTarget::NeuronNonce(0) => {
-                if relevant
-                    .staking_max_amount
-                    .as_ref()
-                    .is_none_or(|current| item.max_amount > *current)
-                {
-                    relevant.staking_max_amount = Some(item.max_amount.clone());
-                }
+                let staking = relevant.staking_match.get_or_insert_with(|| item.clone());
+                staking.first_block_index = staking.first_block_index.min(item.first_block_index);
+                staking.max_amount = staking.max_amount.clone().max(item.max_amount.clone());
             }
             EventHorizonPokeTarget::Subaccount(_) | EventHorizonPokeTarget::NeuronNonce(_) => {}
         }
@@ -330,11 +326,8 @@ fn classify_event_horizon_matches(
     relevant
 }
 
-fn notify_historian_staking_best_effort(max_amount: Nat) {
-    let matches = vec![EventHorizonPokeMatch {
-        target: EventHorizonPokeTarget::NeuronNonce(0),
-        max_amount,
-    }];
+fn notify_historian_staking_best_effort(staking_match: EventHorizonPokeMatch) {
+    let matches = vec![staking_match];
     let _ = Call::bounded_wait(constants::jupiter_historian_id(), "poke")
         .with_arg(&matches)
         .oneway();
@@ -343,8 +336,8 @@ fn notify_historian_staking_best_effort(max_amount: Nat) {
 #[ic_cdk::update(guard = "guard_event_horizon_caller")]
 async fn poke(matches: Vec<EventHorizonPokeMatch>) {
     let relevant = classify_event_horizon_matches(&matches);
-    if let Some(max_amount) = relevant.staking_max_amount {
-        notify_historian_staking_best_effort(max_amount);
+    if let Some(staking_match) = relevant.staking_match {
+        notify_historian_staking_best_effort(staking_match);
     }
     if relevant.staging_account {
         scheduler::handle_event_horizon_poke().await;
@@ -856,8 +849,9 @@ fn debug_event_horizon_policy_accepts_only_exact_fixture() {
     assert!(event_horizon_caller_is_whitelisted(exact));
     assert!(!event_horizon_caller_is_whitelisted(near));
     let item = |target, amount: u64| EventHorizonPokeMatch {
+        first_block_index: 17,
         target,
-        max_amount: Nat::from(amount),
+        max_amount: candid::Nat::from(amount),
     };
     assert_eq!(classify_event_horizon_matches(&[]), Default::default());
     let relevant = classify_event_horizon_matches(&[
@@ -867,6 +861,49 @@ fn debug_event_horizon_policy_accepts_only_exact_fixture() {
         item(EventHorizonPokeTarget::NeuronNonce(1), 9),
     ]);
     assert!(relevant.staging_account);
-    assert_eq!(relevant.staking_max_amount, Some(Nat::from(3u64)));
+    assert_eq!(
+        relevant.staking_match,
+        Some(item(EventHorizonPokeTarget::NeuronNonce(0), 3))
+    );
     assert_committed_did_matches_rust_service("jupiter_disburser_debug.did");
+}
+
+#[test]
+fn staking_forwarding_aggregates_index_and_amount_independently() {
+    let item = |target, first_block_index, max_amount| EventHorizonPokeMatch {
+        target,
+        first_block_index,
+        max_amount,
+    };
+    let relevant = classify_event_horizon_matches(&[
+        item(
+            EventHorizonPokeTarget::NeuronNonce(0),
+            (1_u64 << 53) + 1,
+            candid::Nat::from(2_u64),
+        ),
+        item(
+            EventHorizonPokeTarget::NeuronNonce(0),
+            u64::MAX,
+            candid::Nat::from(u128::MAX),
+        ),
+        item(
+            EventHorizonPokeTarget::NeuronNonce(1),
+            0,
+            candid::Nat::from(u128::MAX),
+        ),
+        item(
+            EventHorizonPokeTarget::Subaccount(0),
+            0,
+            candid::Nat::from(u128::MAX),
+        ),
+    ]);
+    assert!(relevant.staging_account);
+    assert_eq!(
+        relevant.staking_match,
+        Some(item(
+            EventHorizonPokeTarget::NeuronNonce(0),
+            (1_u64 << 53) + 1,
+            candid::Nat::from(u128::MAX),
+        ))
+    );
 }

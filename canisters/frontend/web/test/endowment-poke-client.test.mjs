@@ -41,6 +41,7 @@ test('browser Candid keeps queries and omits permissioned Historian poke', () =>
   const browserDid = readFileSync(new URL('../declarations/jupiter_historian/jupiter_historian.did.js', import.meta.url), 'utf8');
   for (const source of [productionDid, debugDid]) {
     assert.match(source, /poke\s*:\s*\(vec EventHorizonPokeMatch\)\s*->\s*\(\)/);
+    assert.match(source, /first_block_index\s*:\s*nat64/);
     assert.match(source, /get_endowment_transaction_status/);
     assert.doesNotMatch(source, /refresh_endowments|RefreshEndowments|EndowmentIndexProgress/);
   }

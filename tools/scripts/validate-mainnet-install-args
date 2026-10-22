@@ -418,6 +418,7 @@ def validate_relay_prod_did(path: Path) -> None:
         fail(f"{path} relay poke must have signature (vec EventHorizonPokeMatch) -> ()")
     require_contains(text, "subaccount : nat64", str(path))
     require_contains(text, "neuron_nonce : nat64", str(path))
+    require_contains(text, "first_block_index : nat64", str(path))
     require_contains(text, "max_amount : nat", str(path))
     forbidden = [
         "Relay" + "Status",

@@ -256,13 +256,15 @@ static STATUS_PROXY_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn subaccount_match(id: u64) -> EventHorizonPokeMatch {
     EventHorizonPokeMatch {
+        first_block_index: 17,
         target: EventHorizonPokeTarget::Subaccount(id),
         max_amount: Nat::from(100_000_000u64),
     }
 }
 
-fn neuron_match(nonce: u64, max_amount: u64) -> EventHorizonPokeMatch {
+fn neuron_match(nonce: u64, first_block_index: u64, max_amount: u64) -> EventHorizonPokeMatch {
     EventHorizonPokeMatch {
+        first_block_index,
         target: EventHorizonPokeTarget::NeuronNonce(nonce),
         max_amount: Nat::from(max_amount),
     }
@@ -1584,9 +1586,9 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         PokeProxyArgs {
             canister_id: disburser,
             matches: vec![
-                neuron_match(0, 250_000_000),
-                neuron_match(0, 300_000_000),
-                neuron_match(1, 900_000_000),
+                neuron_match(0, (1_u64 << 53) + 1, 250_000_000),
+                neuron_match(0, u64::MAX, 300_000_000),
+                neuron_match(1, 0, 900_000_000),
             ],
         },
     )?;
@@ -1603,7 +1605,7 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
     assert_eq!(received_pokes[0].caller, disburser);
     assert_eq!(
         received_pokes[0].matches,
-        vec![neuron_match(0, 300_000_000)]
+        vec![neuron_match(0, (1_u64 << 53) + 1, 300_000_000)]
     );
     let after: DebugState = query_call(&pic, disburser, Principal::anonymous(), "debug_state", ())?;
     assert_eq!(after.last_main_run_ts, before.last_main_run_ts);

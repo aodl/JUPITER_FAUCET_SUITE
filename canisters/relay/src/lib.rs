@@ -593,6 +593,7 @@ mod tests {
         assert!(event_horizon_caller_is_whitelisted(exact));
         assert!(!event_horizon_caller_is_whitelisted(near));
         let item = |target| EventHorizonPokeMatch {
+            first_block_index: 17,
             target,
             max_amount: candid::Nat::from(1u64),
         };

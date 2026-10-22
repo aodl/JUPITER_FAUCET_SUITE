@@ -46,6 +46,7 @@ static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn subaccount_match(id: u64) -> EventHorizonPokeMatch {
     EventHorizonPokeMatch {
+        first_block_index: 17,
         target: EventHorizonPokeTarget::Subaccount(id),
         max_amount: Nat::from(100_000_000u64),
     }
@@ -1495,10 +1496,12 @@ fn event_horizon_small_hints_do_no_work_and_daily_poll_finds_small_funding() -> 
                 canister_id: env.faucet,
                 matches: vec![
                     EventHorizonPokeMatch {
+                        first_block_index: 17,
                         target: EventHorizonPokeTarget::Subaccount(7),
                         max_amount: Nat::from(u64::MAX),
                     },
                     EventHorizonPokeMatch {
+                        first_block_index: 17,
                         target: EventHorizonPokeTarget::Subaccount(0),
                         max_amount: Nat::from(amount),
                     },

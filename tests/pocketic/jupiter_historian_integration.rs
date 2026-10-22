@@ -398,6 +398,7 @@ fn staking_poke_via_proxy(
         proxy,
         historian,
         vec![EventHorizonPokeMatch {
+            first_block_index: 17,
             target: EventHorizonPokeTarget::NeuronNonce(0),
             max_amount: Nat::from(max_amount),
         }],
@@ -3509,6 +3510,7 @@ fn staking_poke_prefilters_amount_and_checks_one_bounded_page() -> Result<()> {
         h.proxy,
         h.historian,
         vec![EventHorizonPokeMatch {
+            first_block_index: 17,
             target: EventHorizonPokeTarget::Subaccount(0),
             max_amount: Nat::from(500_000_000u64),
         }],
@@ -3518,6 +3520,7 @@ fn staking_poke_prefilters_amount_and_checks_one_bounded_page() -> Result<()> {
         h.proxy,
         h.historian,
         vec![EventHorizonPokeMatch {
+            first_block_index: 17,
             target: EventHorizonPokeTarget::NeuronNonce(1),
             max_amount: Nat::from(500_000_000u64),
         }],
@@ -3539,10 +3542,12 @@ fn staking_poke_prefilters_amount_and_checks_one_bounded_page() -> Result<()> {
         h.historian,
         vec![
             EventHorizonPokeMatch {
+                first_block_index: 17,
                 target: EventHorizonPokeTarget::NeuronNonce(0),
                 max_amount: Nat::from(100_000_000u64),
             },
             EventHorizonPokeMatch {
+                first_block_index: 17,
                 target: EventHorizonPokeTarget::NeuronNonce(0),
                 max_amount: Nat::from(250_000_000u64),
             },
@@ -3591,6 +3596,7 @@ fn historian_poke_rejects_ingress_and_untrusted_canisters() -> Result<()> {
                 caller,
                 "poke",
                 encode_args((vec![EventHorizonPokeMatch {
+                    first_block_index: 17,
                     target: EventHorizonPokeTarget::NeuronNonce(0),
                     max_amount: Nat::from(100_000_000u64),
                 }],))?
@@ -3605,6 +3611,7 @@ fn historian_poke_rejects_ingress_and_untrusted_canisters() -> Result<()> {
         PokeProxyArgs {
             canister_id: h.historian,
             matches: vec![EventHorizonPokeMatch {
+                first_block_index: 17,
                 target: EventHorizonPokeTarget::NeuronNonce(0),
                 max_amount: Nat::from(100_000_000u64),
             }],

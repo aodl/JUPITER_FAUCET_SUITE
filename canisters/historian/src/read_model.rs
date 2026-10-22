@@ -846,6 +846,7 @@ mod tests {
     #[test]
     fn staking_target_classification_uses_only_neuron_nonce_zero_maximum() {
         let item = |target, amount: u64| EventHorizonPokeMatch {
+            first_block_index: 17,
             target,
             max_amount: Nat::from(amount),
         };

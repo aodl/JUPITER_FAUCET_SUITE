@@ -1455,6 +1455,7 @@ fn debug_event_horizon_policy_accepts_only_exact_fixture() {
     assert!(event_horizon_caller_is_whitelisted(exact));
     assert!(!event_horizon_caller_is_whitelisted(near));
     let item = |target| EventHorizonPokeMatch {
+        first_block_index: 17,
         target,
         max_amount: candid::Nat::from(100_000_000u64),
     };
@@ -1473,7 +1474,11 @@ fn debug_event_horizon_policy_accepts_only_exact_fixture() {
 
 #[test]
 fn event_horizon_amount_policy_is_local_to_the_approved_target() {
-    let item = |target, max_amount| EventHorizonPokeMatch { target, max_amount };
+    let item = |target, max_amount| EventHorizonPokeMatch {
+        target,
+        first_block_index: 17,
+        max_amount,
+    };
     for amount in [0_u64, 1, 99_999_999, 100_000_000, 100_000_001] {
         assert_eq!(
             has_relevant_event_horizon_match(&[item(

@@ -49,6 +49,7 @@ static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
 fn subaccount_match(id: u64) -> EventHorizonPokeMatch {
     EventHorizonPokeMatch {
+        first_block_index: 17,
         target: EventHorizonPokeTarget::Subaccount(id),
         max_amount: Nat::from(1u64),
     }

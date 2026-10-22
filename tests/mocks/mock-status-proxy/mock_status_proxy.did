@@ -36,7 +36,7 @@ type ProxyCanisterStatusResult = record {
 };
 type DebugCall = record { canister_id : principal; caller : principal };
 type EventHorizonPokeTarget = variant { subaccount : nat64; neuron_nonce : nat64 };
-type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; max_amount : nat };
+type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; first_block_index : nat64; max_amount : nat };
 type DebugReceivedPoke = record { caller : principal; matches : vec EventHorizonPokeMatch };
 service : {
   canister_status : (record { canister_id : principal }) -> (ProxyCanisterStatusResult);

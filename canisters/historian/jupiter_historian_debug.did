@@ -1,6 +1,6 @@
 type Account = record { owner : principal; subaccount : opt vec nat8 };
 type EventHorizonPokeTarget = variant { subaccount : nat64; neuron_nonce : nat64 };
-type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; max_amount : nat };
+type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; first_block_index : nat64; max_amount : nat };
 type CanisterTrackingReason = variant { MemoCommitment; SnsDiscovery; RelayTarget; RelayInstance };
 type CommitmentSample = record {
   tx_id : nat64;

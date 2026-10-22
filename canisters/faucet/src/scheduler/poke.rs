@@ -218,14 +218,17 @@ mod tests {
         for matches in [
             vec![],
             vec![crate::EventHorizonPokeMatch {
+                first_block_index: 17,
                 target: crate::EventHorizonPokeTarget::Subaccount(0),
                 max_amount: candid::Nat::from(99_999_999_u64),
             }],
             vec![crate::EventHorizonPokeMatch {
+                first_block_index: 17,
                 target: crate::EventHorizonPokeTarget::Subaccount(7),
                 max_amount: candid::Nat::from(u64::MAX),
             }],
             vec![crate::EventHorizonPokeMatch {
+                first_block_index: 17,
                 target: crate::EventHorizonPokeTarget::NeuronNonce(0),
                 max_amount: candid::Nat::from(u64::MAX),
             }],
