@@ -780,8 +780,8 @@ test('Advanced Usage documents the reviewed Event Horizon memo alias and contrib
 
   assert.match(advancedUsage, /reviewed memo aliases/);
   assert.match(advancedUsage, /<p class="nav-panel-content memo-builder-safety-notice">\s*<strong>Aliases:<\/strong>/);
-  assert.match(advancedUsage, /<code>'X'<\/code> is\s*currently reserved/);
-  assert.match(advancedUsage, /<code>X\.&lt;Event Horizon declaration&gt;<\/code>/);
+  assert.match(advancedUsage, /<code>'E'<\/code> is\s*reserved/);
+  assert.match(advancedUsage, /<code>E\.&lt;Event Horizon declaration&gt;<\/code>/);
   assert.match(advancedUsage, /Event Horizon/);
   assert.match(advancedUsage, /href="#about"[^>]*>social channels<\/a>/);
   assert.match(advancedUsage, /href="https:\/\/github\.com\/aodl\/JUPITER_FAUCET_SUITE\/pulls"[^>]*>raise a pull request<\/a>/);

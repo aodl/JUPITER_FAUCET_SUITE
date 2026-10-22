@@ -132,7 +132,7 @@ export function parseJupiterMemo(input) {
   const trimmed = memoText.trim();
   if (!trimmed) return { kind: 'invalid', reason: 'Paste a non-empty memo first.' };
 
-  if (memoText.startsWith('X.')) {
+  if (memoText.startsWith('E.')) {
     const suffix = memoText.slice(2);
     if (!suffix) return { kind: 'invalid', reason: 'Event Horizon alias suffix is empty.' };
     const canisterId = Principal.fromText(EVENT_HORIZON_CANISTER_TEXT);

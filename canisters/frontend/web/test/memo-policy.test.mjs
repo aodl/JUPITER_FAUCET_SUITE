@@ -3,11 +3,29 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
+  EVENT_HORIZON_CANISTER_TEXT,
   normalizeDestinationSubaccount,
   numberedSubaccountNumberText,
   parseJupiterMemo,
   parseNumberedSubaccountText,
 } from '../src/memo-policy.js';
+
+test('only E routes to the published Event Horizon identity with an exact bounded suffix', () => {
+  const published = JSON.parse(readFileSync(
+    new URL('../../../../crates/memo-policy/fixtures/published-canister-aliases.json', import.meta.url), 'utf8',
+  ));
+  assert.deepEqual(published, [['E', EVENT_HORIZON_CANISTER_TEXT]]);
+  for (const suffix of ['foo.bar', 'suffix:1', 'a'.repeat(30)]) {
+    const parsed = parseJupiterMemo(`E.${suffix}`);
+    assert.equal(parsed.kind, 'rawIcpCanister');
+    assert.equal(parsed.canisterId.toText(), EVENT_HORIZON_CANISTER_TEXT);
+    assert.equal(parsed.destinationSubaccount, null);
+    assert.equal(parsed.outgoingMemoText, suffix);
+  }
+  for (const memo of ['X.foo', 'e.foo', 'E.', 'E', 'E:1.foo', 'E:.foo', 'E:0', 'F.foo', `E.${'a'.repeat(31)}`]) {
+    assert.equal(parseJupiterMemo(memo).kind, 'invalid', memo);
+  }
+});
 
 const CANISTER = '22255-zqaaa-aaaas-qf6uq-cai';
 const COMPACT = CANISTER.replaceAll('-', '');
@@ -121,16 +139,16 @@ test('parseJupiterMemo preserves right-side raw memo text exactly', () => {
   assert.equal(parsed.outgoingMemoText, ' abc ');
 });
 
-test('parseJupiterMemo resolves the exact Event Horizon X alias without expanding display text', () => {
-  const memo = 'X.uccpicqaaaaaaarqby3qcai.n0:1';
+test('parseJupiterMemo resolves the exact Event Horizon E alias without expanding display text', () => {
+  const memo = 'E.uccpicqaaaaaaarqby3qcai.n0:1';
   const parsed = parseJupiterMemo(memo);
   assert.equal(parsed.kind, 'rawIcpCanister');
   assert.equal(parsed.canisterId.toText(), 'eo6ei-gaaaa-aaaar-qchra-cai');
   assert.equal(parsed.outgoingMemoText, 'uccpicqaaaaaaarqby3qcai.n0:1');
   assert.equal(parsed.normalizedMemoText, memo);
   assert.equal(Object.hasOwn(parsed, 'declarationText'), false);
-  assert.equal(parseJupiterMemo('X.').kind, 'invalid');
-  assert.equal(parseJupiterMemo('x.foo').kind, 'invalid');
+  assert.equal(parseJupiterMemo('E.').kind, 'invalid');
+  assert.equal(parseJupiterMemo('e.foo').kind, 'invalid');
 });
 
 test('parseJupiterMemo preserves the exact reported numbered-route matrix', () => {

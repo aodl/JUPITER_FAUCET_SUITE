@@ -463,7 +463,7 @@ mod tests {
             id: 40,
             transaction: IndexTransaction {
                 memo: 0,
-                icrc1_memo: Some(b"X.uccpicqaaaaaaarqby3qcai.n0:1".to_vec()),
+                icrc1_memo: Some(b"E.uccpicqaaaaaaarqby3qcai.n0:1".to_vec()),
                 operation: IndexOperation::Transfer {
                     to: staking.clone(),
                     fee: Tokens::new(10_000),

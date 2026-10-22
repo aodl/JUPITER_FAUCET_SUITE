@@ -7,7 +7,7 @@ import {
 import { setPaneValueText, setText } from '../dom-helpers.js';
 import { escapeHtml } from '../followee-links.js';
 import { mergeRegisteredLandingData } from '../registered-page-state.js';
-import { numberedSubaccountNumberText, parseJupiterMemo } from '../memo-policy.js';
+import { EVENT_HORIZON_CANISTER_TEXT, numberedSubaccountNumberText, parseJupiterMemo } from '../memo-policy.js';
 import { COMMITMENT_TABLE_PAGE_SIZE_ADJUSTMENT, calculateResponsiveTablePageSize } from './responsive-tables.js';
 import {
   DASH,
@@ -73,8 +73,8 @@ function rawIcpDeclaredMemo(item) {
   } catch {
     return { memo: '', error: 'Unsupported raw ICP destination' };
   }
-  const declaration = subaccountNumberText === null && left === 'eo6ei-gaaaa-aaaar-qchra-cai' && memoText.length > 0
-    ? `X.${memoText}`
+  const declaration = subaccountNumberText === null && left === EVENT_HORIZON_CANISTER_TEXT && memoText.length > 0
+    ? `E.${memoText}`
     : `${left.split('-').join('')}${subaccountNumberText === null ? '' : `:${subaccountNumberText}`}.${memoText}`;
   const parsed = parseJupiterMemo(declaration);
   if (parsed.kind !== 'rawIcpCanister'

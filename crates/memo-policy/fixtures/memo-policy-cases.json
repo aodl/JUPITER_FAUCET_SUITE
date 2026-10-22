@@ -1,7 +1,77 @@
 [
   {
-    "name": "Event Horizon X alias preserves exact suffix",
-    "memo_text": "X.uccpicqaaaaaaarqby3qcai.n0:1",
+    "name": "reject unsupported or oversized alias X.foo",
+    "memo_text": "X.foo",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "reject unsupported or oversized alias e.foo",
+    "memo_text": "e.foo",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "reject unsupported or oversized alias E",
+    "memo_text": "E",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "reject unsupported or oversized alias F.foo",
+    "memo_text": "F.foo",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "reject unsupported or oversized alias E:0",
+    "memo_text": "E:0",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "reject unsupported or oversized alias E:.foo",
+    "memo_text": "E:.foo",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "reject unsupported or oversized alias E:1:2.foo",
+    "memo_text": "E:1:2.foo",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "reject unsupported or oversized alias E.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "memo_text": "E.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
+    "name": "E exact suffix foo.bar",
+    "memo_text": "E.foo.bar",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "eo6ei-gaaaa-aaaar-qchra-cai",
+      "memo_text": "foo.bar",
+      "destination_subaccount_hex": null
+    },
+    "builder": null
+  },
+  {
+    "name": "E exact suffix aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "memo_text": "E.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "eo6ei-gaaaa-aaaar-qchra-cai",
+      "memo_text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "destination_subaccount_hex": null
+    },
+    "builder": null
+  },
+  {
+    "name": "Event Horizon E alias preserves exact suffix",
+    "memo_text": "E.uccpicqaaaaaaarqby3qcai.n0:1",
     "expected_directive": {
       "kind": "raw_icp",
       "canister_id": "eo6ei-gaaaa-aaaar-qchra-cai",
@@ -238,8 +308,8 @@
     "builder": null
   },
   {
-    "name": "X alias colon remains suffix data",
-    "memo_text": "X.suffix:1",
+    "name": "E alias colon remains suffix data",
+    "memo_text": "E.suffix:1",
     "expected_directive": {
       "kind": "raw_icp",
       "canister_id": "eo6ei-gaaaa-aaaar-qchra-cai",
@@ -249,14 +319,14 @@
     "builder": null
   },
   {
-    "name": "X selector syntax is not supported",
-    "memo_text": "X:1.suffix",
+    "name": "E selector syntax is not supported",
+    "memo_text": "E:1.suffix",
     "expected_directive": null,
     "builder": null
   },
   {
-    "name": "X alias still rejects an empty suffix",
-    "memo_text": "X.",
+    "name": "E alias still rejects an empty suffix",
+    "memo_text": "E.",
     "expected_directive": null,
     "builder": null
   },

@@ -132,12 +132,12 @@ test('raw and neuron endowment rows link full declared memos to tracker', () => 
   assert.match(rawHtml, new RegExp(`data-tracker-memo="${compactCanister}:50\\.d"`));
   assert.doesNotMatch(rawHtml, new RegExp(`${canister}\\.vault`));
   assert.doesNotMatch(rawHtml, />vault<\/td>/);
-  assert.match(rawHtml, /data-tracker-memo="X\.uccpicqaaaaaaarqby3qcai\.n0:1"/);
+  assert.match(rawHtml, /data-tracker-memo="E\.uccpicqaaaaaaarqby3qcai\.n0:1"/);
   assert.doesNotMatch(rawHtml, /eo6eigaaaaaaaarqchracai\.uccpic/);
   assert.match(rawHtml, /data-tracker-memo="eo6eigaaaaaaaarqchracai\."/);
-  assert.doesNotMatch(rawHtml, /data-tracker-memo="X\."/);
+  assert.doesNotMatch(rawHtml, /data-tracker-memo="E\."/);
   assert.match(rawHtml, /data-tracker-memo="eo6eigaaaaaaaarqchracai:1\.a"/);
-  assert.doesNotMatch(rawHtml, /data-tracker-memo="X\.a"/);
+  assert.doesNotMatch(rawHtml, /data-tracker-memo="E\.a"/);
   assert.match(rawHtml, /Unsupported raw ICP destination/);
 
   const neuronHtml = nodes.get('commitments-neurons-pane-body').innerHTML;

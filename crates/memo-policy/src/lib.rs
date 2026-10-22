@@ -4,7 +4,8 @@ pub const MAX_TARGET_CANISTER_MEMO_BYTES: usize = 32;
 pub const MAX_NEURON_ID_MEMO_BYTES: usize = 20;
 /// Maximum exact-byte memo carried by an immutable Relay surplus recipient.
 pub const MAX_RELAY_SURPLUS_MEMO_BYTES: usize = 32;
-pub const EVENT_HORIZON_CANISTER_ID: &str = "eo6ei-gaaaa-aaaar-qchra-cai";
+mod aliases;
+pub use aliases::{CANISTER_ALIASES, EVENT_HORIZON_CANISTER_ID};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemoDirective {
@@ -108,7 +109,7 @@ pub fn parse_memo_directive(memo: &[u8]) -> Option<MemoDirective> {
         return None;
     }
     let memo_text = std::str::from_utf8(memo).ok()?;
-    if let Some(suffix) = memo_text.strip_prefix("X.") {
+    if let Some(suffix) = memo_text.strip_prefix("E.") {
         if suffix.is_empty() {
             return None;
         }
@@ -354,13 +355,14 @@ mod tests {
     fn event_horizon_alias_is_exact_bounded_and_preserves_suffix() {
         let event_horizon = principal(EVENT_HORIZON_CANISTER_ID);
         for memo in [
-            "X.acjuzliaaaaaaarqb4qqcai.0",
-            "X.uccpicqaaaaaaarqby3qcai.0",
-            "X.uccpicqaaaaaaarqby3qcai.n0:1",
-            "X.u2qkpaqaaaaaaarqb7eacai.0-90",
-            "X.foo.bar",
+            "E.acjuzliaaaaaaarqb4qqcai.0:1",
+            "E.uccpicqaaaaaaarqby3qcai.0",
+            "E.uccpicqaaaaaaarqby3qcai.n0:1",
+            "E.u2qkpaqaaaaaaarqb7eacai.0-90",
+            "E.foo.bar",
+            "E.suffix:1",
         ] {
-            let suffix = memo.strip_prefix("X.").unwrap();
+            let suffix = memo.strip_prefix("E.").unwrap();
             assert_eq!(
                 parse_memo_directive(memo.as_bytes()),
                 Some(MemoDirective::RawIcp {
@@ -374,11 +376,22 @@ mod tests {
                 Some(event_horizon)
             );
         }
-        assert!(parse_memo_directive(b"X.").is_none());
-        assert!(parse_memo_directive(b"x.foo").is_none());
-        assert!(parse_memo_directive(b"X").is_none());
-        assert!(parse_memo_directive(b"X.123456789012345678901234567890").is_some());
-        assert!(parse_memo_directive(b"X.1234567890123456789012345678901").is_none());
+        for invalid in [
+            b"X.foo".as_slice(),
+            b"E.",
+            b"e.foo",
+            b"E",
+            b"E:1.foo",
+            b"E:.foo",
+            b"E:0",
+            b"F.foo",
+        ] {
+            assert!(parse_memo_directive(invalid).is_none());
+        }
+        assert!(parse_memo_directive(b"e.foo").is_none());
+        assert!(parse_memo_directive(b"E").is_none());
+        assert!(parse_memo_directive(b"E.123456789012345678901234567890").is_some());
+        assert!(parse_memo_directive(b"E.1234567890123456789012345678901").is_none());
     }
 
     #[test]

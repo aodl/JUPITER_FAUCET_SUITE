@@ -654,7 +654,7 @@ mod tests {
     #[test]
     fn event_horizon_alias_uses_shared_policy_for_exact_raw_route() {
         assert_eq!(
-            parse_payout_target_from_memo(b"X.uccpicqaaaaaaarqby3qcai.n0:1"),
+            parse_payout_target_from_memo(b"E.uccpicqaaaaaaarqby3qcai.n0:1"),
             Some(PayoutTarget::RawIcp {
                 canister_id: Principal::from_text("eo6ei-gaaaa-aaaar-qchra-cai").unwrap(),
                 destination_subaccount: None,

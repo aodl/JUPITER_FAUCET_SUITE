@@ -1612,60 +1612,66 @@ fn faucet_retries_persisted_notification_after_cmc_failure() -> Result<()> {
 #[test]
 #[ignore]
 fn faucet_raw_icp_memo_directive_sends_to_default_account_without_cmc_notify() -> Result<()> {
-    let env = FaucetEnv::new()?;
-    let target = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
-    let compact_target = target.to_text().replace('-', "");
+    let regular = Principal::from_text("22255-zqaaa-aaaas-qf6uq-cai")?;
+    let event_horizon = Principal::from_text(jupiter_memo_policy::EVENT_HORIZON_CANISTER_ID)?;
+    for (target, declaration, suffix) in [
+        (
+            regular,
+            format!("{}.vault42", regular.to_text().replace('-', "")),
+            "vault42",
+        ),
+        (event_horizon, "E.foo.bar".to_string(), "foo.bar"),
+        (event_horizon, "E.suffix:1".to_string(), "suffix:1"),
+    ] {
+        let env = FaucetEnv::new()?;
 
-    env.credit_payout(100_000_000)?;
-    env.credit_staking(100_000_000)?;
-    env.append_transfer(
-        100_000_000,
-        Some(format!("{compact_target}.vault42").into_bytes()),
-    )?;
-    env.main_tick()?;
+        env.credit_payout(100_000_000)?;
+        env.credit_staking(100_000_000)?;
+        env.append_transfer(100_000_000, Some(declaration.into_bytes()))?;
+        env.main_tick()?;
 
-    let transfers = env.ledger_transfers()?;
-    if transfers.len() != 1 {
-        bail!(
-            "expected exactly one raw ICP transfer and no remainder, got {}",
-            transfers.len()
-        );
+        let transfers = env.ledger_transfers()?;
+        if transfers.len() != 1 {
+            bail!(
+                "expected exactly one raw ICP transfer and no remainder, got {}",
+                transfers.len()
+            );
+        }
+        let transfer = &transfers[0];
+        if transfer.to
+            != (Account {
+                owner: target,
+                subaccount: None,
+            })
+        {
+            bail!(
+                "expected raw ICP transfer to target default account, got {:?}",
+                transfer.to
+            );
+        }
+        if transfer.memo.as_deref() != Some(suffix.as_bytes()) {
+            bail!(
+                "expected raw ICP transfer memo {suffix}, got {:?}",
+                transfer.memo
+            );
+        }
+        if nat_to_u64(&transfer.amount) != 99_990_000 {
+            bail!(
+                "expected raw ICP net amount 99990000 e8s, got {}",
+                nat_to_u64(&transfer.amount)
+            );
+        }
+        if !env.notifications()?.is_empty() {
+            bail!("expected raw ICP directive not to call notify_top_up");
+        }
+        let summary = env.summary()?;
+        if summary.topped_up_count != 1
+            || summary.topped_up_sum_e8s != 99_990_000
+            || summary.remainder_to_relay_e8s != 0
+        {
+            bail!("unexpected raw ICP summary: {summary:?}");
+        }
     }
-    let transfer = &transfers[0];
-    if transfer.to
-        != (Account {
-            owner: target,
-            subaccount: None,
-        })
-    {
-        bail!(
-            "expected raw ICP transfer to target default account, got {:?}",
-            transfer.to
-        );
-    }
-    if transfer.memo.as_deref() != Some(b"vault42".as_slice()) {
-        bail!(
-            "expected raw ICP transfer memo vault42, got {:?}",
-            transfer.memo
-        );
-    }
-    if nat_to_u64(&transfer.amount) != 99_990_000 {
-        bail!(
-            "expected raw ICP net amount 99990000 e8s, got {}",
-            nat_to_u64(&transfer.amount)
-        );
-    }
-    if !env.notifications()?.is_empty() {
-        bail!("expected raw ICP directive not to call notify_top_up");
-    }
-    let summary = env.summary()?;
-    if summary.topped_up_count != 1
-        || summary.topped_up_sum_e8s != 99_990_000
-        || summary.remainder_to_relay_e8s != 0
-    {
-        bail!("unexpected raw ICP summary: {summary:?}");
-    }
-
     Ok(())
 }
 
