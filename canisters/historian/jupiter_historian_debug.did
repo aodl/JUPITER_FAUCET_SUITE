@@ -1,3 +1,10 @@
+type CanisterAlias = record { alias : text; canister_id : principal };
+type ListCanisterAliasesArgs = record { start_after : opt text; limit : opt nat32 };
+type ListCanisterAliasesResponse = record {
+  revision : blob;
+  items : vec CanisterAlias;
+  next_start_after : opt text;
+};
 type Account = record { owner : principal; subaccount : opt vec nat8 };
 type EventHorizonPokeTarget = variant { subaccount : nat64; neuron_nonce : nat64 };
 type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; first_block_index : nat64; max_amount : nat };
@@ -400,6 +407,7 @@ type DebugConfig = record {
   max_canisters_per_cycles_tick : nat32;
 };
 service : (InitArgs) -> {
+  list_canister_aliases : (ListCanisterAliasesArgs) -> (ListCanisterAliasesResponse) query;
   get_canister_module_hashes : () -> (vec CanisterModuleHash) query;
   list_canisters : (ListCanistersArgs) -> (ListCanistersResponse) query;
   get_cycles_history : (GetCyclesHistoryArgs) -> (CyclesHistoryPage) query;

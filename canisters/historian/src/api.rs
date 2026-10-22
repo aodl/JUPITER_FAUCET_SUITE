@@ -1,4 +1,24 @@
 use super::*;
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct CanisterAlias {
+    pub alias: String,
+    pub canister_id: Principal,
+}
+
+#[derive(CandidType, Deserialize, Clone, Default)]
+pub struct ListCanisterAliasesArgs {
+    pub start_after: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ListCanisterAliasesResponse {
+    pub revision: Vec<u8>,
+    pub items: Vec<CanisterAlias>,
+    pub next_start_after: Option<String>,
+}
+
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
     pub staking_account: Account,

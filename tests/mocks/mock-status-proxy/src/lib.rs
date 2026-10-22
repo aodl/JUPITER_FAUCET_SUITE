@@ -49,6 +49,25 @@ struct DebugReceivedPoke {
     matches: Vec<EventHorizonPokeMatch>,
 }
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct CanisterAlias {
+    alias: String,
+    canister_id: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct ListCanisterAliasesArgs {
+    start_after: Option<String>,
+    limit: Option<u32>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct ListCanisterAliasesResponse {
+    revision: Vec<u8>,
+    items: Vec<CanisterAlias>,
+    next_start_after: Option<String>,
+}
+
 thread_local! {
     static CALLS: RefCell<Vec<DebugCall>> = const { RefCell::new(Vec::new()) };
     static RECEIVED_POKES: RefCell<Vec<DebugReceivedPoke>> = const { RefCell::new(Vec::new()) };
@@ -99,6 +118,19 @@ async fn debug_poke(args: PokeArgs) -> Result<(), String> {
     response
         .candid()
         .map_err(|err| format!("poke decode failed: {err:?}"))
+}
+
+#[ic_cdk::update]
+async fn debug_list_canister_aliases(
+    canister_id: Principal,
+    args: ListCanisterAliasesArgs,
+) -> Result<ListCanisterAliasesResponse, String> {
+    Call::bounded_wait(canister_id, "list_canister_aliases")
+        .with_arg(&args)
+        .await
+        .map_err(|err| format!("alias query failed: {err:?}"))?
+        .candid()
+        .map_err(|err| format!("alias response decode failed: {err:?}"))
 }
 
 #[ic_cdk::update]

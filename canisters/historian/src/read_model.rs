@@ -3,6 +3,158 @@ use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeT
 use std::ops::Bound::{Excluded, Unbounded};
 
 #[ic_cdk::query]
+pub(super) fn list_canister_aliases(args: ListCanisterAliasesArgs) -> ListCanisterAliasesResponse {
+    canister_aliases_page(jupiter_memo_policy::CANISTER_ALIASES, args)
+}
+
+fn canister_aliases_page(
+    bindings: &[(&str, &str)],
+    args: ListCanisterAliasesArgs,
+) -> ListCanisterAliasesResponse {
+    use sha2::{Digest, Sha256};
+    let mut table: Vec<_> = bindings
+        .iter()
+        .map(|&(alias, principal)| CanisterAlias {
+            alias: alias.to_string(),
+            canister_id: Principal::from_text(principal)
+                .expect("invalid reviewed identity principal"),
+        })
+        .collect();
+    table.sort_by(|a, b| a.alias.cmp(&b.alias));
+
+    // Protocol fingerprint of the complete sorted table, independent of paging.
+    let mut hash = Sha256::new();
+    hash.update(b"JUPITER_CANISTER_ALIASES_V1\0");
+    hash.update((table.len() as u32).to_be_bytes());
+    for item in &table {
+        hash.update([item.alias.len() as u8]);
+        hash.update(item.alias.as_bytes());
+        hash.update([item.canister_id.as_slice().len() as u8]);
+        hash.update(item.canister_id.as_slice());
+    }
+    let revision = hash.finalize().to_vec();
+    let limit = args.limit.unwrap_or(128).clamp(1, 128) as usize;
+    let mut remaining = table.into_iter().filter(|item| {
+        args.start_after
+            .as_ref()
+            .is_none_or(|cursor| item.alias > *cursor)
+    });
+    let items: Vec<_> = remaining.by_ref().take(limit).collect();
+    let next_start_after = remaining
+        .next()
+        .and_then(|_| items.last().map(|item| item.alias.clone()));
+    ListCanisterAliasesResponse {
+        revision,
+        items,
+        next_start_after,
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+
+    #[test]
+    fn alias_pages_are_sorted_exclusive_bounded_and_complete() {
+        for count in [0, 1, 128, 129, 300] {
+            let names: Vec<_> = (0..count).map(|n| format!("S{n:07}")).collect();
+            let bindings: Vec<_> = names
+                .iter()
+                .rev()
+                .map(|name| {
+                    (
+                        name.as_str(),
+                        jupiter_memo_policy::EVENT_HORIZON_CANISTER_ID,
+                    )
+                })
+                .collect();
+            for limit in [None, Some(0), Some(1), Some(128), Some(129), Some(u32::MAX)] {
+                for initial in [
+                    None,
+                    Some("A"),
+                    Some("S0000127"),
+                    Some("S0000127Z"),
+                    Some("Z"),
+                ] {
+                    let mut cursor = initial.map(str::to_string);
+                    let expected: Vec<_> = names
+                        .iter()
+                        .filter(|name| initial.is_none_or(|start| name.as_str() > start))
+                        .cloned()
+                        .collect();
+                    let mut assembled = Vec::new();
+                    let revision = canister_aliases_page(&bindings, Default::default()).revision;
+                    loop {
+                        let page = canister_aliases_page(
+                            &bindings,
+                            ListCanisterAliasesArgs {
+                                start_after: cursor.clone(),
+                                limit,
+                            },
+                        );
+                        assert_eq!(page.revision, revision);
+                        assert_eq!(page.revision.len(), 32);
+                        let remaining = expected.len() - assembled.len();
+                        assert_eq!(
+                            page.items.len(),
+                            remaining.min(limit.unwrap_or(128).clamp(1, 128) as usize)
+                        );
+                        let page_names: Vec<_> =
+                            page.items.into_iter().map(|item| item.alias).collect();
+                        assembled.extend(page_names.clone());
+                        if assembled.len() < expected.len() {
+                            assert_eq!(page.next_start_after.as_ref(), page_names.last());
+                            assert_ne!(page.next_start_after, cursor);
+                            cursor = page.next_start_after;
+                        } else {
+                            assert_eq!(page.next_start_after, None);
+                            break;
+                        }
+                    }
+                    assert_eq!(
+                        assembled, expected,
+                        "count={count}, limit={limit:?}, cursor={initial:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn alias_revision_has_the_independent_golden_digest_and_covers_the_whole_table() {
+        let initial = list_canister_aliases(Default::default());
+        assert_eq!(
+            hex::encode(&initial.revision),
+            "89d9f25601962fb394ad9ebf34aaceccf46b833b9cfd3ed2dc7eb942e9d63625"
+        );
+        let destination = jupiter_memo_policy::EVENT_HORIZON_CANISTER_ID;
+        let bindings = [("F", destination), ("E", destination)];
+        let added = canister_aliases_page(&bindings, Default::default());
+        assert_ne!(added.revision, initial.revision);
+        assert_eq!(
+            added
+                .items
+                .iter()
+                .map(|item| item.alias.as_str())
+                .collect::<Vec<_>>(),
+            ["E", "F"]
+        );
+        let reversed = [("E", destination), ("F", destination)];
+        assert_eq!(canister_aliases_page(&reversed, Default::default()), added);
+        for start_after in [None, Some("E".into()), Some("Z".into())] {
+            let page = canister_aliases_page(
+                &bindings,
+                ListCanisterAliasesArgs {
+                    start_after,
+                    limit: Some(1),
+                },
+            );
+            assert_eq!(page.revision, added.revision);
+        }
+    }
+}
+
+#[ic_cdk::query]
 pub(super) fn list_canisters(args: ListCanistersArgs) -> ListCanistersResponse {
     state::with_state(|st| {
         let limit = clamp_public_limit(args.limit, 50);

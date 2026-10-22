@@ -22,6 +22,72 @@ use jupiter_ic_clients::index::{
 use pocket_ic::PocketIc;
 use sha2::{Digest, Sha256};
 
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct CanisterAlias {
+    alias: String,
+    canister_id: Principal,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Default)]
+struct ListCanisterAliasesArgs {
+    start_after: Option<String>,
+    limit: Option<u32>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct ListCanisterAliasesResponse {
+    revision: Vec<u8>,
+    items: Vec<CanisterAlias>,
+    next_start_after: Option<String>,
+}
+
+#[test]
+#[ignore]
+fn production_alias_query_is_consumed_by_a_canister_without_an_index() -> Result<()> {
+    // Prepare Wasm before starting the shared PocketIC server.
+    let wasm = relay_enabled_historian_wasm()?;
+    let proxy_wasm = status_proxy_wasm()?;
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
+    let historian = pic.create_canister();
+    let proxy = pic.create_canister();
+    for id in [historian, proxy] {
+        pic.add_cycles(id, 40_000_000_000_000);
+    }
+    // No Ledger or Index is installed. The publication must need neither.
+    let mut init = self_service_historian_init(
+        real_icp_ledger_principal(),
+        real_icp_index_principal(),
+        support::principals::cycles_minting_canister(),
+        jupiter_ic_clients::constants::fiduciary_blackhole_canister_id(),
+    );
+    init.relay_factory_enabled = Some(false);
+    pic.install_canister(historian, wasm, encode_one(init)?, None);
+    pic.install_canister(proxy, proxy_wasm, vec![], None);
+    let response: Result<ListCanisterAliasesResponse, String> = update_bytes(
+        &pic,
+        proxy,
+        Principal::anonymous(),
+        "debug_list_canister_aliases",
+        encode_args((historian, ListCanisterAliasesArgs::default()))?,
+    )?;
+    let response = response.map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        response.items,
+        vec![CanisterAlias {
+            alias: "E".into(),
+            canister_id: Principal::from_text(jupiter_memo_policy::EVENT_HORIZON_CANISTER_ID)?,
+        }]
+    );
+    assert_eq!(
+        hex::encode(&response.revision),
+        "89d9f25601962fb394ad9ebf34aaceccf46b833b9cfd3ed2dc7eb942e9d63625"
+    );
+    assert_eq!(response.next_start_after, None);
+    Ok(())
+}
+
 #[path = "real_blackhole.rs"]
 mod real_blackhole;
 #[path = "support/mod.rs"]
@@ -4186,6 +4252,13 @@ fn pending_genesis_backfill_survives_an_actual_historian_upgrade() -> Result<()>
     )?;
     assert_eq!(first.qualifying_commitment_count, 500);
 
+    let aliases_before: ListCanisterAliasesResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_canister_aliases",
+        ListCanisterAliasesArgs::default(),
+    )?;
     support::governance::stop_canister_as(&h.pic, h.historian, historian_controller)?;
     let mut root_before = IDLArgs::from_bytes(&copied_root_bytes(&h.pic, h.historian))?;
     // Present empty feeds must remain empty even with 500 indexed contributions
@@ -4224,6 +4297,17 @@ fn pending_genesis_backfill_survives_an_actual_historian_upgrade() -> Result<()>
         "pending-backfill upgrade changed accounting, feeds or cursors"
     );
     support::governance::start_canister_as(&h.pic, h.historian, historian_controller)?;
+    let aliases_after: ListCanisterAliasesResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_canister_aliases",
+        ListCanisterAliasesArgs::default(),
+    )?;
+    assert_eq!(
+        aliases_after, aliases_before,
+        "normal upgrade changed static identity publication"
+    );
     let mut previous_count = 500;
     let mut counts: PublicCounts = query_one(
         &h.pic,

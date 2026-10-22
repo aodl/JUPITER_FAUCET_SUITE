@@ -67,6 +67,44 @@ mod tests {
     }
 
     #[test]
+    fn identity_alias_publication_is_an_ordinary_public_query() {
+        use candid_parser::utils::CandidSource;
+        let service = __export_service();
+        let (env, actor) = CandidSource::Text(&service).load().unwrap();
+        let actor = actor.unwrap();
+        let method = env
+            .get_method(&actor, "list_canister_aliases")
+            .expect("Historian must publish its permanent identity aliases");
+        assert_eq!(method.modes, vec![candid::types::FuncMode::Query]);
+    }
+
+    #[test]
+    fn identity_aliases_ignore_incomplete_faulted_and_unrelated_historian_state() {
+        let expected = list_canister_aliases(Default::default());
+        for faulted in [false, true] {
+            let mut st = base_state();
+            st.staking_backfill_complete = Some(false);
+            st.commitment_route_rollups_complete_from_genesis = Some(false);
+            st.last_indexed_staking_tx_id = Some(987);
+            st.qualifying_commitment_count = Some(123);
+            st.total_output_e8s = Some(456);
+            st.commitment_index_fault = faulted.then(|| CommitmentIndexFault {
+                observed_at_ts: 1,
+                last_cursor_tx_id: Some(987),
+                offending_tx_id: 988,
+                message: "synthetic unavailable commitment index".into(),
+            });
+            let before = candid::encode_one(&st).unwrap();
+            state::set_state(st);
+            assert_eq!(list_canister_aliases(Default::default()), expected);
+            assert_eq!(
+                state::with_state(|st| candid::encode_one(st).unwrap()),
+                before
+            );
+        }
+    }
+
+    #[test]
     fn target_aware_poke_candid_matches_disburser_notification() {
         for (label, service) in [
             ("Rust export", __export_service()),
@@ -87,6 +125,7 @@ mod tests {
                 service.contains("subaccount : nat64")
                     && service.contains("neuron_nonce : nat64")
                     && service.contains("target : EventHorizonPokeTarget")
+                    && service.contains("first_block_index : nat64")
                     && service.contains("max_amount : nat"),
                 "{label} target-aware poke types diverged"
             );

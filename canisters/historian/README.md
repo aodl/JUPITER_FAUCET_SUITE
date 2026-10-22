@@ -1,5 +1,73 @@
 # Jupiter Historian
 
+## Permanent canister identity aliases
+
+The ordinary public `list_canister_aliases` query publishes the shared, reviewed
+identity table independently of commitment indexing, including during an incomplete
+or faulted reconciliation. It makes no external calls and reads no mutable state.
+The initial and only production binding is `E` → `eo6ei-gaaaa-aaaar-qchra-cai`
+(Event Horizon). The unused `X` binding is not published or supported.
+
+Released names and principals are permanent. Future releases may add bindings, but
+must never remove or reassign them. Entries use `[A-Z][A-Z0-9]{0,7}`, reject direct
+principal-spelling collisions, and are ordered by ASCII alias bytes. The shared
+`crates/memo-policy/fixtures/published-canister-aliases.json` fixture records
+published bindings as add-only release evidence; additions require explicit review
+and an appended fixture entry. It is not another runtime registry.
+
+Identity publication abbreviates principals for consumers. It grants no Faucet
+payment-routing permission: only `E.<nonempty suffix>` is the special raw-ICP route.
+Its unprefixed suffix belongs to Event Horizon's parser; Jupiter does not interpret
+that declaration grammar. Another identity binding must not become a payment route
+implicitly. The frontend keeps its trusted destination constant with parity tests,
+rather than fetching payment destinations from this ordinary query.
+
+```candid
+type CanisterAlias = record { alias : text; canister_id : principal };
+type ListCanisterAliasesArgs = record { start_after : opt text; limit : opt nat32 };
+type ListCanisterAliasesResponse = record {
+  revision : blob;
+  items : vec CanisterAlias;
+  next_start_after : opt text;
+};
+// Ordinary query; replicated when called from another canister.
+list_canister_aliases : (ListCanisterAliasesArgs) -> (ListCanisterAliasesResponse) query;
+```
+
+`start_after` is an exclusive lexical cursor, even for an unknown alias. The default
+limit is 128; zero becomes one and larger values clamp to 128. A continuation cursor
+is returned only when another item exists and equals the last returned alias. Empty
+and final pages have no cursor. Every page carries the entire table's 32-byte SHA-256
+revision, never a page-specific digest.
+
+The canonical revision encoding begins with ASCII `JUPITER_CANISTER_ALIASES_V1`
+and a NUL byte, followed by the entry count as unsigned 32-bit big-endian. For each
+entry in ascending ASCII order, append a one-byte alias length, the raw ASCII alias,
+a one-byte principal length, and `Principal::as_slice()` bytes. SHA-256 of that
+sequence is returned as raw bytes. For the E-only table the principal bytes are
+`00000000023011e20101` and the revision is
+`89d9f25601962fb394ad9ebf34aaceccf46b833b9cfd3ed2dc7eb942e9d63625`.
+This encoding remains stable across releases.
+
+Event Horizon consumers must follow exclusive continuation cursors, require the
+same 32-byte revision on every page, and assemble the complete replacement before
+activating it. Discard an incomplete refresh if its revision changes; retain the
+previous mapping during outages and retry later. Historian maintains no server-side
+pagination snapshots. The revision is a content fingerprint, not an authentication
+signature. Consumers should use the normal replicated inter-canister response from
+the trusted Historian principal. Event Horizon polling, caching and subscription
+admission belong to the Event Horizon repository.
+
+Before a Jupiter deployment, verify that the running Event Horizon sender uses the
+required three-field callback (`target`, `first_block_index : nat64`, `max_amount : nat`).
+The index and maximum may refer to different transactions; neither authorizes a
+cursor advance or payment. A GitHub revision does not prove installed compatibility.
+Current operational examples in Event Horizon should use Jupiter's `E.` payment
+prefix; its backend receives only the unprefixed declaration. Documentation changes
+do not create or alter live subscriptions, and an admitted less restrictive threshold
+can remain effective permanently. Faucet's independent local 1 ICP filter remains
+authoritative for wake-up admission.
+
 `jupiter-historian` is the indexing and observability canister for the Jupiter Faucet Suite.
 
 It keeps a durable set of declared canisters discovered from faucet staking-account transfer memos, records bounded endowment history for tracked canisters, records protocol-routed ICP output and rewards totals for the dashboard, and records bounded periodic cycles observations when those balances are observable on-chain.
