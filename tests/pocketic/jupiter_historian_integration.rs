@@ -4001,7 +4001,7 @@ fn real_icp_index_lag_is_resolved_by_trailing_check_before_normal_scan() -> Resu
 
 #[test]
 #[ignore]
-fn staking_trailing_check_follows_the_most_recent_rapid_poke() -> Result<()> {
+fn staking_trailing_check_is_not_postponed_by_rapid_pokes() -> Result<()> {
     let h = Harness::new_with_scan_interval(false, 3_600)?;
     h.skip_install_main_tick()?;
     let baseline = debug_index_calls(&h)?.len();
@@ -4011,10 +4011,32 @@ fn staking_trailing_check_follows_the_most_recent_rapid_poke() -> Result<()> {
     for _ in 0..4 {
         staking_poke_via_proxy(&h.pic, h.proxy, h.historian, RELEVANT_STAKING_MAX_AMOUNT)?;
     }
+    // Rejected global-only and cross-subject/low-value hints must not touch
+    // admission or the already pending deadline.
+    poke_historian_via_proxy(&h.pic, h.proxy, h.historian, vec![])?;
+    poke_historian_via_proxy(
+        &h.pic,
+        h.proxy,
+        h.historian,
+        vec![
+            EventHorizonPokeMatch {
+                subject: h.historian,
+                target: EventHorizonPokeTarget::NeuronNonce(0),
+                first_block_index: u64::MAX,
+                max_amount: format!("1{}", "0".repeat(100)).parse()?,
+            },
+            EventHorizonPokeMatch {
+                subject: Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID)?,
+                target: EventHorizonPokeTarget::NeuronNonce(0),
+                first_block_index: 0,
+                max_amount: Nat::from(99_999_999_u64),
+            },
+        ],
+    )?;
     assert_eq!(debug_index_calls(&h)?.len(), baseline + 1);
     h.pic.advance_time(Duration::from_millis(200));
     tick_n(&h.pic, 8);
-    assert_eq!(debug_index_calls(&h)?.len(), baseline + 1);
+    assert_eq!(debug_index_calls(&h)?.len(), baseline + 2);
     h.pic.advance_time(Duration::from_secs(10));
     tick_n(&h.pic, 8);
     assert_eq!(debug_index_calls(&h)?.len(), baseline + 2);

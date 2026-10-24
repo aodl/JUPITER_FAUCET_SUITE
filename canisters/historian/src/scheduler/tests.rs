@@ -3428,25 +3428,30 @@ mod tests {
     }
 
     #[test]
-    fn newer_hint_moves_the_single_trailing_deadline_without_an_early_check() {
+    fn repeated_hints_cannot_postpone_the_first_deferred_check() {
         configure_state(10);
         assert!(record_poke_hint(0));
         assert!(!record_poke_hint(9_900_000_000));
-        assert_eq!(poke_deferred_state_for_test(), (Some(19_900_000_000), true));
+        assert_eq!(
+            poke_deferred_state_for_test(),
+            (Some(10 * NANOS_PER_SECOND), true)
+        );
         assert_eq!(
             deferred_timer_action(10 * NANOS_PER_SECOND),
-            DeferredTimerAction::Reschedule(Duration::from_millis(9_900))
+            DeferredTimerAction::Check
         );
-        assert_eq!(poke_deferred_state_for_test(), (Some(19_900_000_000), true));
+        assert_eq!(poke_deferred_state_for_test(), (None, false));
+        assert!(record_poke_hint(19_900_000_000));
+        assert!(!record_poke_hint(29_800_000_000));
         assert_eq!(
-            deferred_timer_action(19_900_000_000),
+            deferred_timer_action(29_900_000_000),
             DeferredTimerAction::Check
         );
         assert_eq!(poke_deferred_state_for_test(), (None, false));
     }
 
     #[test]
-    fn rapid_pokes_keep_one_timer_and_one_final_deadline() {
+    fn rapid_pokes_keep_one_timer_and_the_first_deadline() {
         configure_state(10);
         assert!(record_poke_hint(0));
         for now_seconds in [1, 2, 3, 4, 5] {
@@ -3454,14 +3459,14 @@ mod tests {
         }
         assert_eq!(
             poke_deferred_state_for_test(),
-            (Some(15 * NANOS_PER_SECOND), true)
+            (Some(10 * NANOS_PER_SECOND), true)
         );
         assert_eq!(
-            deferred_timer_action(14 * NANOS_PER_SECOND),
+            deferred_timer_action(9 * NANOS_PER_SECOND),
             DeferredTimerAction::Reschedule(Duration::from_secs(1))
         );
         assert_eq!(
-            deferred_timer_action(15 * NANOS_PER_SECOND),
+            deferred_timer_action(10 * NANOS_PER_SECOND),
             DeferredTimerAction::Check
         );
         assert_eq!(

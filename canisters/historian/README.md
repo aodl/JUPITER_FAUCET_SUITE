@@ -251,7 +251,7 @@ Historian accepts `poke(PokeNotification)` directly from the canonical Event Hor
 
 This target identifies the NNS Governance-owned staking account derived from Disburser as controller with nonce zero, not a neuron ID. Block index and amount may describe different transfers; neither changes a durable cursor or proves funding. Authoritative ICP Index reconciliation checks at most one 500-record page per admitted attempt under the existing writer lease and ten-second minimum attempt interval.
 
-A relevant notification requests an immediate bounded check and at most one deferred check ten seconds after the latest accepted hint in the pending window. A busy or rate-limited opportunity may be skipped; failures create no indefinite retries. Timers are heap-only. Missed notifications affect latency only: normal periodic commitment indexing remains independent. `get_endowment_transaction_status(transaction_id)` remains unchanged.
+A relevant notification requests an immediate bounded check and at most one deferred check anchored ten seconds after the first accepted hint in the pending window. Later hints do not postpone it. A busy or rate-limited opportunity may be skipped; failures create no indefinite retries. Timers are heap-only. Missed notifications affect latency only: normal periodic commitment indexing remains independent. `get_endowment_transaction_status(transaction_id)` remains unchanged.
 
 The intended separately admitted and funded subscription memo is exactly 32 ASCII bytes:
 

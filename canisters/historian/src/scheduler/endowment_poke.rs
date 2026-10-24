@@ -21,14 +21,16 @@ thread_local! {
 pub(super) fn record_poke_hint(now_ns: u64) -> bool {
     POKE_DEFERRED.with(|cell| {
         let mut deferred = cell.get();
+        if deferred.timer_pending {
+            return false;
+        }
         deferred.due_at_ns =
             Some(now_ns.saturating_add(
                 ENDOWMENT_POKE_MIN_INTERVAL_SECONDS.saturating_mul(NANOS_PER_SECOND),
             ));
-        let should_schedule = !deferred.timer_pending;
         deferred.timer_pending = true;
         cell.set(deferred);
-        should_schedule
+        true
     })
 }
 
@@ -240,7 +242,7 @@ fn schedule_poke_deferred_check(delay: Duration) {
 
 pub(crate) async fn handle_staking_poke() {
     // Establish the trailing check before an Index await or a busy lease can
-    // coalesce this call. New hints move the one pending deadline forward.
+    // coalesce this call. Later hints retain the first pending deadline.
     let now_ns = ic_cdk::api::time();
     if record_poke_hint(now_ns) {
         schedule_poke_deferred_check(Duration::from_secs(ENDOWMENT_POKE_MIN_INTERVAL_SECONDS));
