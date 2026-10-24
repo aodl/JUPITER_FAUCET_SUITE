@@ -5,7 +5,7 @@ pub const MAX_NEURON_ID_MEMO_BYTES: usize = 20;
 /// Maximum exact-byte memo carried by an immutable Relay surplus recipient.
 pub const MAX_RELAY_SURPLUS_MEMO_BYTES: usize = 32;
 mod aliases;
-pub use aliases::{CANISTER_ALIASES, EVENT_HORIZON_CANISTER_ID};
+pub use aliases::{CANISTER_ALIASES, DISBURSER_CANISTER_ID, EVENT_HORIZON_CANISTER_ID};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemoDirective {

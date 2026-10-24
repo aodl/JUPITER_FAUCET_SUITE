@@ -125,10 +125,14 @@ mod alias_tests {
         let initial = list_canister_aliases(Default::default());
         assert_eq!(
             hex::encode(&initial.revision),
-            "89d9f25601962fb394ad9ebf34aaceccf46b833b9cfd3ed2dc7eb942e9d63625"
+            "d216eb713b3082a92186c72ce6f7ba31cdcd50f1978cd6d92c4fcd92d4a9e4e3"
         );
         let destination = jupiter_memo_policy::EVENT_HORIZON_CANISTER_ID;
-        let bindings = [("F", destination), ("E", destination)];
+        let bindings = [
+            ("F", destination),
+            ("E", destination),
+            ("D", jupiter_memo_policy::DISBURSER_CANISTER_ID),
+        ];
         let added = canister_aliases_page(&bindings, Default::default());
         assert_ne!(added.revision, initial.revision);
         assert_eq!(
@@ -137,9 +141,13 @@ mod alias_tests {
                 .iter()
                 .map(|item| item.alias.as_str())
                 .collect::<Vec<_>>(),
-            ["E", "F"]
+            ["D", "E", "F"]
         );
-        let reversed = [("E", destination), ("F", destination)];
+        let reversed = [
+            ("D", jupiter_memo_policy::DISBURSER_CANISTER_ID),
+            ("E", destination),
+            ("F", destination),
+        ];
         assert_eq!(canister_aliases_page(&reversed, Default::default()), added);
         for start_after in [None, Some("E".into()), Some("Z".into())] {
             let page = canister_aliases_page(

@@ -1622,6 +1622,11 @@ fn faucet_raw_icp_memo_directive_sends_to_default_account_without_cmc_notify() -
         ),
         (event_horizon, "E.foo.bar".to_string(), "foo.bar"),
         (event_horizon, "E.suffix:1".to_string(), "suffix:1"),
+        (
+            event_horizon,
+            "E.j5gs6uiaaaaaaarqb5cqcai@D.n0:1".to_string(),
+            "j5gs6uiaaaaaaarqb5cqcai@D.n0:1",
+        ),
     ] {
         let env = FaucetEnv::new()?;
 

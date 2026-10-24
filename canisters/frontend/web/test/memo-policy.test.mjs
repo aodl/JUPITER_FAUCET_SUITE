@@ -14,15 +14,16 @@ test('only E routes to the published Event Horizon identity with an exact bounde
   const published = JSON.parse(readFileSync(
     new URL('../../../../crates/memo-policy/fixtures/published-canister-aliases.json', import.meta.url), 'utf8',
   ));
-  assert.deepEqual(published, [['E', EVENT_HORIZON_CANISTER_TEXT]]);
-  for (const suffix of ['foo.bar', 'suffix:1', 'a'.repeat(30)]) {
+  assert.deepEqual(published, [['D', 'uccpi-cqaaa-aaaar-qby3q-cai'], ['E', EVENT_HORIZON_CANISTER_TEXT]]);
+  assert.equal(new TextEncoder().encode('E.j5gs6uiaaaaaaarqb5cqcai@D.n0:1').length, 32);
+  for (const suffix of ['j5gs6uiaaaaaaarqb5cqcai@D.n0:1', 'foo.bar', 'suffix:1', 'a'.repeat(30)]) {
     const parsed = parseJupiterMemo(`E.${suffix}`);
     assert.equal(parsed.kind, 'rawIcpCanister');
     assert.equal(parsed.canisterId.toText(), EVENT_HORIZON_CANISTER_TEXT);
     assert.equal(parsed.destinationSubaccount, null);
     assert.equal(parsed.outgoingMemoText, suffix);
   }
-  for (const memo of ['X.foo', 'e.foo', 'E.', 'E', 'E:1.foo', 'E:.foo', 'E:0', 'F.foo', `E.${'a'.repeat(31)}`]) {
+  for (const memo of ['X.foo', 'e.foo', 'E.', 'E', 'E:1.foo', 'E:.foo', 'E:0', 'F.foo', 'D.foo', `E.${'a'.repeat(31)}`]) {
     assert.equal(parseJupiterMemo(memo).kind, 'invalid', memo);
   }
 });

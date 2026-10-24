@@ -75,14 +75,20 @@ fn production_alias_query_is_consumed_by_a_canister_without_an_index() -> Result
     let response = response.map_err(anyhow::Error::msg)?;
     assert_eq!(
         response.items,
-        vec![CanisterAlias {
-            alias: "E".into(),
-            canister_id: Principal::from_text(jupiter_memo_policy::EVENT_HORIZON_CANISTER_ID)?,
-        }]
+        vec![
+            CanisterAlias {
+                alias: "D".into(),
+                canister_id: Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID)?,
+            },
+            CanisterAlias {
+                alias: "E".into(),
+                canister_id: Principal::from_text(jupiter_memo_policy::EVENT_HORIZON_CANISTER_ID)?,
+            }
+        ]
     );
     assert_eq!(
         hex::encode(&response.revision),
-        "89d9f25601962fb394ad9ebf34aaceccf46b833b9cfd3ed2dc7eb942e9d63625"
+        "d216eb713b3082a92186c72ce6f7ba31cdcd50f1978cd6d92c4fcd92d4a9e4e3"
     );
     assert_eq!(response.next_start_after, None);
     Ok(())

@@ -5,15 +5,15 @@
 The ordinary public `list_canister_aliases` query publishes the shared, reviewed
 identity table independently of commitment indexing, including during an incomplete
 or faulted reconciliation. It makes no external calls and reads no mutable state.
-The initial and only production binding is `E` → `eo6ei-gaaaa-aaaar-qchra-cai`
-(Event Horizon). The unused `X` binding is not published or supported.
+The production bindings are `D` → `uccpi-cqaaa-aaaar-qby3q-cai` (Disburser)
+and `E` → `eo6ei-gaaaa-aaaar-qchra-cai` (Event Horizon). The unused `X` binding is not published or supported.
 
 Released names and principals are permanent. Future releases may add bindings, but
 must never remove or reassign them. Entries use `[A-Z][A-Z0-9]{0,7}`, reject direct
 principal-spelling collisions, and are ordered by ASCII alias bytes. The shared
 `crates/memo-policy/fixtures/published-canister-aliases.json` fixture records
 published bindings as add-only release evidence; additions require explicit review
-and an appended fixture entry. It is not another runtime registry.
+and an additional fixture entry, preserving ASCII order. It is not another runtime registry.
 
 Identity publication abbreviates principals for consumers. It grants no Faucet
 payment-routing permission: only `E.<nonempty suffix>` is the special raw-ICP route.
@@ -44,9 +44,8 @@ The canonical revision encoding begins with ASCII `JUPITER_CANISTER_ALIASES_V1`
 and a NUL byte, followed by the entry count as unsigned 32-bit big-endian. For each
 entry in ascending ASCII order, append a one-byte alias length, the raw ASCII alias,
 a one-byte principal length, and `Principal::as_slice()` bytes. SHA-256 of that
-sequence is returned as raw bytes. For the E-only table the principal bytes are
-`00000000023011e20101` and the revision is
-`89d9f25601962fb394ad9ebf34aaceccf46b833b9cfd3ed2dc7eb942e9d63625`.
+sequence is returned as raw bytes. For the D/E table, the revision is
+`d216eb713b3082a92186c72ce6f7ba31cdcd50f1978cd6d92c4fcd92d4a9e4e3`.
 This encoding remains stable across releases.
 
 Event Horizon consumers must follow exclusive continuation cursors, require the

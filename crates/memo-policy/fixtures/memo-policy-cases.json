@@ -1,5 +1,22 @@
 [
   {
+    "name": "direct Historian subscription is exactly 32 ASCII bytes",
+    "memo_text": "E.j5gs6uiaaaaaaarqb5cqcai@D.n0:1",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "eo6ei-gaaaa-aaaar-qchra-cai",
+      "memo_text": "j5gs6uiaaaaaaarqb5cqcai@D.n0:1",
+      "destination_subaccount_hex": null
+    },
+    "builder": null
+  },
+  {
+    "name": "published D identity is not a payment route",
+    "memo_text": "D.suffix",
+    "expected_directive": null,
+    "builder": null
+  },
+  {
     "name": "reject unsupported or oversized alias X.foo",
     "memo_text": "X.foo",
     "expected_directive": null,

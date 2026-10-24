@@ -1,9 +1,15 @@
 /// Reviewed Event Horizon identity; also the destination of the sole special E. route.
 pub const EVENT_HORIZON_CANISTER_ID: &str = "eo6ei-gaaaa-aaaar-qchra-cai";
 
+/// Reviewed Disburser identity; publication does not authorize a D. payment route.
+pub const DISBURSER_CANISTER_ID: &str = "uccpi-cqaaa-aaaar-qby3q-cai";
+
 /// Permanent identity publication, sorted by ASCII alias. Released bindings are
 /// add-only: never remove or reassign a name. Publication grants no payment route.
-pub const CANISTER_ALIASES: &[(&str, &str)] = &[("E", EVENT_HORIZON_CANISTER_ID)];
+pub const CANISTER_ALIASES: &[(&str, &str)] = &[
+    ("D", DISBURSER_CANISTER_ID),
+    ("E", EVENT_HORIZON_CANISTER_ID),
+];
 
 #[cfg(test)]
 mod tests {
@@ -60,7 +66,13 @@ mod tests {
     fn production_table_is_valid_and_preserves_every_published_binding() {
         assert_eq!(validate(CANISTER_ALIASES), Ok(()));
         assert!(preserves_published(CANISTER_ALIASES));
-        assert_eq!(CANISTER_ALIASES, &[("E", EVENT_HORIZON_CANISTER_ID)]);
+        assert_eq!(
+            CANISTER_ALIASES,
+            &[
+                ("D", "uccpi-cqaaa-aaaar-qby3q-cai"),
+                ("E", EVENT_HORIZON_CANISTER_ID)
+            ]
+        );
         assert_eq!(
             hex::encode(
                 Principal::from_text(EVENT_HORIZON_CANISTER_ID)
@@ -113,6 +125,7 @@ mod tests {
     #[test]
     fn publication_is_add_only_and_does_not_authorize_other_payment_prefixes() {
         let added = [
+            ("D", DISBURSER_CANISTER_ID),
             ("E", EVENT_HORIZON_CANISTER_ID),
             ("F", EVENT_HORIZON_CANISTER_ID),
         ];
@@ -124,5 +137,6 @@ mod tests {
             "rrkah-fqaaa-aaaaa-aaaaq-cai"
         )]));
         assert!(crate::parse_memo_directive(b"F.suffix").is_none());
+        assert!(crate::parse_memo_directive(b"D.suffix").is_none());
     }
 }
