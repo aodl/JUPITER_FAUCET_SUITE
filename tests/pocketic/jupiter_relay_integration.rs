@@ -2482,9 +2482,9 @@ fn nine_topups_then_two_neuron_surpluses_preserve_second_memo_across_cap() -> Re
     let second_memo = b"10292412127977304661".to_vec();
     let targets: Vec<_> = (70..78).map(|n| Principal::from_slice(&[n])).collect();
 
-    // The uncapped control exercises the same second recipient and memo. The
-    // ten-transfer case must retain its eleventh payment for a later main tick.
-    for cap in [11, 10] {
+    // Retries reuse a slot: both 50 and 11 complete eleven payments despite a retry.
+    // The ten-transfer case must retain its eleventh payment for a later main tick.
+    for cap in [50, 11, 10] {
         let env = RelayEnv::new_with_config(Some(cap), |_, _, _, _| {
             (
                 targets.clone(),
@@ -2510,10 +2510,17 @@ fn nine_topups_then_two_neuron_surpluses_preserve_second_memo_across_cap() -> Re
         for target in &targets {
             env.set_canister_cycles(*target, 5_000_000_000_000)?;
         }
+        if cap >= 11 {
+            env.set_ledger_error_script(vec![DebugNextTransferError::TemporarilyUnavailable])?;
+        }
 
         let first = env.tick_relay()?;
         let transfers = env.transfers()?;
-        assert_eq!(transfers.len(), cap as usize, "cap={cap}: {first:?}");
+        assert_eq!(
+            transfers.len(),
+            cap.min(11) as usize,
+            "cap={cap}: {first:?}"
+        );
         for target in targets.iter().copied().chain([env.relay]) {
             assert_eq!(
                 transfers[..9]
@@ -2572,7 +2579,18 @@ fn nine_topups_then_two_neuron_surpluses_preserve_second_memo_across_cap() -> Re
         assert_eq!(completed.cmc_notify_success_count, 9);
         let transfers = env.transfers()?;
         assert_eq!(transfers.len(), 11);
-        assert_eq!(env.transfer_attempts()?.len(), 11);
+        let attempts = env.transfer_attempts()?;
+        assert_eq!(attempts.len(), if cap >= 11 { 12 } else { 11 });
+        if cap >= 11 {
+            assert_eq!(attempts[0].result, "TemporarilyUnavailable");
+            assert_eq!(attempts[1].result, "Ok");
+            let mut first_attempt = attempts[0].clone();
+            first_attempt.result = attempts[1].result.clone();
+            assert_eq!(
+                first_attempt, attempts[1],
+                "retry must reuse the exact identity"
+            );
+        }
         assert_eq!(env.notifications()?.len(), 9, "surplus must not notify CMC");
         let topup_cost: u64 = transfers[..9]
             .iter()
@@ -2614,6 +2632,7 @@ fn nine_topups_then_two_neuron_surpluses_preserve_second_memo_across_cap() -> Re
             "completed payments must not replay"
         );
         assert_eq!(env.notifications()?.len(), 9);
+        assert_eq!(env.transfer_attempts()?.len(), attempts.len());
     }
     Ok(())
 }

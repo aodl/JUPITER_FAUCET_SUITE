@@ -304,7 +304,7 @@ The value-moving paths are designed around fixed transfer identities and bounded
 - splitter state and compact reward-payout state use isolated stable memory so in-flight identities can survive a same-canister upgrade; and
 - if a splitter remains uncertain beyond safe ledger deduplication, that exact splitter identity is quarantined instead of guessed, while unrelated Relay work can continue.
 
-`max_transfers_per_tick`, when configured, limits only outgoing ICP-ledger transfers started by the **default-account allocation job**. Splitter and subaccount-1 work are separate stages. Historian sets the self-service value to `target_count + recipient_count + 1`, where the final slot covers Relay itself.
+`max_transfers_per_tick`, when configured, limits new payment identities started by the **default-account allocation job** per invocation. The canonical preset and newly created self-service Relays use **50**, leaving headroom above the canonical eleven-payment job and the self-service maximum of 26 payments (20 targets, five recipients, and Relay itself). Bounded retries reuse the same payment identity and do not consume another cap slot; CMC notifications and probes are not separate transfer slots. Splitter and subaccount-1 work are separate stages. Jobs exceeding a configured cap retain their unpaid plan for a later invocation. Explicit custom caps remain supported, and existing instances retain their installed configuration.
 
 ## Public interface and observability
 

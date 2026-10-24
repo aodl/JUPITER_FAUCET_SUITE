@@ -19,7 +19,7 @@
     icp_index_canister_id = opt principal "qhbym-qaaaa-aaaaa-aaafq-cai";
 
     main_interval_seconds = opt (86400 : nat64);
-    max_transfers_per_tick = opt (10 : nat32);
+    max_transfers_per_tick = opt (50 : nat32);
 
     surplus_canister_recipients = null;
     surplus_neuron_recipients = vec {

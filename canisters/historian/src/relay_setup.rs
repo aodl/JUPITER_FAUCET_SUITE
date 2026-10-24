@@ -770,12 +770,6 @@ fn relay_init_arg(config: &Config, setup: &CanonicalRelaySetup) -> Vec<u8> {
         surplus_canister_recipients: Option<Vec<SurplusCanisterRecipient>>,
         surplus_neuron_recipients: Vec<SurplusNeuronRecipient>,
     }
-    let transfer_cap = setup
-        .target_count()
-        .checked_add(setup.surplus_recipient_count())
-        .and_then(|count| count.checked_add(1))
-        .and_then(|count| u32::try_from(count).ok())
-        .expect("self-service Relay transfer cap is bounded at 20 + 5 + 1");
     let mut principal_recipients = Vec::new();
     let mut neuron_recipients = Vec::new();
     for recipient in setup.surplus_recipients() {
@@ -803,7 +797,8 @@ fn relay_init_arg(config: &Config, setup: &CanonicalRelaySetup) -> Vec<u8> {
         sns_rewards_canister_id: None,
         icp_index_canister_id: None,
         main_interval_seconds: Some(config.self_service_relay_interval_seconds),
-        max_transfers_per_tick: Some(transfer_cap),
+        // Leave headroom above the self-service maximum of 20 + 5 + Relay self.
+        max_transfers_per_tick: Some(50),
         surplus_canister_recipients: (!principal_recipients.is_empty())
             .then_some(principal_recipients),
         surplus_neuron_recipients: neuron_recipients,
@@ -5941,7 +5936,7 @@ mod tests {
     }
 
     #[test]
-    fn maximum_configuration_installs_canonical_mixed_recipients_and_cap_26() {
+    fn maximum_configuration_installs_canonical_mixed_recipients_and_cap_50() {
         reset();
         let targets = (100..120).rev().map(principal).collect::<Vec<_>>();
         let recipients = vec![
@@ -6021,7 +6016,7 @@ mod tests {
             (100..120).map(principal).collect::<Vec<_>>()
         );
         assert_eq!(init.blackhole_canister_id, None);
-        assert_eq!(init.max_transfers_per_tick, Some(26));
+        assert_eq!(init.max_transfers_per_tick, Some(50));
         let installed_recipients = init.surplus_canister_recipients.unwrap();
         assert_eq!(
             installed_recipients
@@ -6126,7 +6121,7 @@ mod tests {
             candid::decode_one(&relay_init_arg(&config(), &zero_setup)).unwrap();
         assert!(zero_init.surplus_canister_recipients.is_none());
         assert!(zero_init.surplus_neuron_recipients.is_empty());
-        assert_eq!(zero_init.max_transfers_per_tick, Some(2));
+        assert_eq!(zero_init.max_transfers_per_tick, Some(50));
     }
 
     #[test]
@@ -6187,7 +6182,7 @@ mod tests {
         let init: InitArgs = candid::decode_one(&installs[0].arg).unwrap();
         assert!(init.surplus_canister_recipients.is_none());
         assert!(init.surplus_neuron_recipients.is_empty());
-        assert_eq!(init.max_transfers_per_tick, Some(2));
+        assert_eq!(init.max_transfers_per_tick, Some(50));
     }
 
     #[test]

@@ -3713,8 +3713,10 @@ mod tests {
             .to_bytes()
             .unwrap();
         let (args,): (crate::InitArgs,) = candid::decode_args(&args).unwrap();
-        let cfg = crate::config_from_init_args(args);
-        assert_eq!(cfg.max_transfers_per_tick, Some(10));
+        let mut cfg = crate::config_from_init_args(args);
+        assert_eq!(cfg.max_transfers_per_tick, Some(50));
+        // Retain the smaller-budget regression independently of the canonical preset.
+        cfg.max_transfers_per_tick = Some(10);
         let mut job = job_with_three_topups();
         job.canisters = logic::effective_managed_canisters(&cfg.managed_canisters, relay_self())
             .into_iter()

@@ -2347,7 +2347,7 @@ fn zero_recipient_factory_child_executes_all_cycles_mode() -> Result<()> {
         .map(|record| String::from_utf8_lossy(&record.content).into_owned())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(logs.contains("max_transfers_per_tick=2"));
+    assert!(logs.contains("max_transfers_per_tick=50"));
     assert!(logs.contains("surplus_recipient_count=0"));
     assert!(logs.contains("surplus_recipients=none"));
 
@@ -2957,7 +2957,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
         .join("|");
     assert!(multi_logs.contains(&format!("managed_canisters={canonical_targets}")));
     assert!(multi_logs.contains(&format!("effective_managed_canisters={effective_targets}")));
-    assert!(multi_logs.contains("max_transfers_per_tick=26"));
+    assert!(multi_logs.contains("max_transfers_per_tick=50"));
     assert!(multi_logs.contains("surplus_recipient_count=5"));
     let canonical_recipients = memoed_recipients
         .iter()
@@ -2985,7 +2985,7 @@ fn multi_target_setup_finalizes_one_and_twenty_target_relays_and_survives_upgrad
         .map(|record| String::from_utf8_lossy(&record.content).into_owned())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(all_cycles_logs.contains("max_transfers_per_tick=2"));
+    assert!(all_cycles_logs.contains("max_transfers_per_tick=50"));
     assert!(all_cycles_logs.contains("surplus_recipient_count=0"));
     assert!(all_cycles_logs.contains("surplus_recipients=none"));
     for relay in [
