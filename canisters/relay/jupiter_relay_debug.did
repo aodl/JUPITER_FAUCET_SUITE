@@ -3,7 +3,12 @@ type SurplusTarget = variant { Canister : principal; Neuron : nat64 };
 type SurplusCanisterRecipient = record { canister_id : principal; memo : blob };
 type SurplusNeuronRecipient = record { neuron_id : nat64; memo : blob };
 type EventHorizonPokeTarget = variant { subaccount : nat64; neuron_nonce : nat64 };
-type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; first_block_index : nat64; max_amount : nat };
+type EventHorizonPokeMatch = record {
+  subject : principal; target : EventHorizonPokeTarget; first_block_index : nat64; max_amount : nat };
+type EventHorizonPokeNotification = record {
+  global_activity : bool;
+  matches : vec EventHorizonPokeMatch;
+};
 type InitArgs = record {
   managed_canisters : vec principal;
   ledger_canister_id : opt principal;
@@ -166,7 +171,7 @@ type RewardState = record {
   pending_payout : opt PendingRewardPayout;
 };
 service : (InitArgs) -> {
-  poke : (vec EventHorizonPokeMatch) -> ();
+  poke : (EventHorizonPokeNotification) -> ();
   debug_main_tick : () -> ();
   debug_hold_main_lease : (nat64) -> ();
   debug_state : () -> (DebugState) query;

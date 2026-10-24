@@ -105,7 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn target_aware_poke_candid_matches_disburser_notification() {
+    fn unified_poke_candid_matches_event_horizon_notification() {
         for (label, service) in [
             ("Rust export", __export_service()),
             (
@@ -118,13 +118,16 @@ mod tests {
             ),
         ] {
             assert!(
-                service.contains("poke : (vec EventHorizonPokeMatch) -> ();"),
-                "{label} omits the target-aware poke method"
+                service.contains("poke : (EventHorizonPokeNotification) -> ();"),
+                "{label} omits the unified poke method"
             );
             assert!(
                 service.contains("subaccount : nat64")
                     && service.contains("neuron_nonce : nat64")
                     && service.contains("target : EventHorizonPokeTarget")
+                    && service.contains("subject : principal")
+                    && service.contains("global_activity : bool")
+                    && service.contains("matches : vec EventHorizonPokeMatch")
                     && service.contains("first_block_index : nat64")
                     && service.contains("max_amount : nat"),
                 "{label} target-aware poke types diverged"
@@ -1230,7 +1233,9 @@ mod tests {
         state::set_state(st);
         assert!(!staking_poke_is_relevant(&Nat::from(99_999_999u64)));
         assert!(staking_poke_is_relevant(&Nat::from(100_000_000u64)));
-        assert!(staking_poke_is_relevant(&Nat::from(u128::MAX)));
+        let huge: Nat = format!("1{}", "0".repeat(100)).parse().unwrap();
+        assert!(huge > Nat::from(u128::MAX));
+        assert!(staking_poke_is_relevant(&huge));
     }
 
     #[test]

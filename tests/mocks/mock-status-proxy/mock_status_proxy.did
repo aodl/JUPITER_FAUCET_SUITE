@@ -36,8 +36,13 @@ type ProxyCanisterStatusResult = record {
 };
 type DebugCall = record { canister_id : principal; caller : principal };
 type EventHorizonPokeTarget = variant { subaccount : nat64; neuron_nonce : nat64 };
-type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; first_block_index : nat64; max_amount : nat };
-type DebugReceivedPoke = record { caller : principal; matches : vec EventHorizonPokeMatch };
+type EventHorizonPokeMatch = record {
+  subject : principal; target : EventHorizonPokeTarget; first_block_index : nat64; max_amount : nat };
+type EventHorizonPokeNotification = record {
+  global_activity : bool;
+  matches : vec EventHorizonPokeMatch;
+};
+type DebugReceivedPoke = record { caller : principal; notification : EventHorizonPokeNotification };
 type CanisterAlias = record { alias : text; canister_id : principal };
 type ListCanisterAliasesArgs = record { start_after : opt text; limit : opt nat32 };
 type ListCanisterAliasesResponse = record {
@@ -61,9 +66,9 @@ service : {
   }) -> (variant { Ok; Err : text });
   debug_poke : (record {
     canister_id : principal;
-    matches : vec EventHorizonPokeMatch;
+    notification : EventHorizonPokeNotification;
   }) -> (variant { Ok; Err : text });
-  poke : (vec EventHorizonPokeMatch) -> ();
+  poke : (EventHorizonPokeNotification) -> ();
   debug_received_pokes : () -> (vec DebugReceivedPoke) query;
   debug_calls : () -> (vec DebugCall) query;
   debug_reset : () -> ();

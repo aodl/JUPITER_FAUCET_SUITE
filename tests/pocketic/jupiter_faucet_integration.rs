@@ -6,7 +6,9 @@ use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use jupiter_ic_clients::account::principal_to_subaccount;
-use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
+use jupiter_ic_clients::event_horizon::{
+    EventHorizonPokeMatch, EventHorizonPokeNotification, EventHorizonPokeTarget,
+};
 use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResult, IndexOperation,
 };
@@ -44,8 +46,9 @@ static FAUCET_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static LIFELINE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
-fn subaccount_match(id: u64) -> EventHorizonPokeMatch {
+fn subaccount_match(subject: Principal, id: u64) -> EventHorizonPokeMatch {
     EventHorizonPokeMatch {
+        subject,
         first_block_index: 17,
         target: EventHorizonPokeTarget::Subaccount(id),
         max_amount: Nat::from(100_000_000u64),
@@ -129,7 +132,7 @@ struct FaucetInitArg {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct PokeProxyArgs {
     canister_id: Principal,
-    matches: Vec<EventHorizonPokeMatch>,
+    notification: EventHorizonPokeNotification,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -1355,7 +1358,10 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
                 env.faucet,
                 caller,
                 "poke",
-                encode_args((vec![subaccount_match(0)],))?
+                encode_args((EventHorizonPokeNotification {
+                    global_activity: false,
+                    matches: vec![subaccount_match(env.faucet, 0)]
+                },))?
             )
             .is_err());
     }
@@ -1366,12 +1372,31 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_poke",
         PokeProxyArgs {
             canister_id: env.faucet,
-            matches: vec![subaccount_match(0)],
+            notification: EventHorizonPokeNotification {
+                global_activity: false,
+                matches: vec![subaccount_match(env.faucet, 0)],
+            },
         },
     )?;
     assert!(rejected
         .unwrap_err()
         .contains("caller is not Event Horizon"));
+    for global_activity in [false, true] {
+        let accepted: Result<(), String> = update_one(
+            &env.pic,
+            proxy,
+            Principal::anonymous(),
+            "debug_poke",
+            PokeProxyArgs {
+                canister_id: env.faucet,
+                notification: EventHorizonPokeNotification {
+                    global_activity,
+                    matches: vec![subaccount_match(Principal::anonymous(), 0)],
+                },
+            },
+        )?;
+        accepted.map_err(anyhow::Error::msg)?;
+    }
     for ids in [vec![], vec![7, 8]] {
         let accepted: Result<(), String> = update_one(
             &env.pic,
@@ -1380,7 +1405,13 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
             "debug_poke",
             PokeProxyArgs {
                 canister_id: env.faucet,
-                matches: ids.into_iter().map(subaccount_match).collect(),
+                notification: EventHorizonPokeNotification {
+                    global_activity: true,
+                    matches: ids
+                        .into_iter()
+                        .map(|id| subaccount_match(env.faucet, id))
+                        .collect(),
+                },
             },
         )?;
         accepted.map_err(anyhow::Error::msg)?;
@@ -1397,11 +1428,14 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_poke",
         PokeProxyArgs {
             canister_id: env.faucet,
-            matches: vec![
-                subaccount_match(7),
-                subaccount_match(0),
-                subaccount_match(0),
-            ],
+            notification: EventHorizonPokeNotification {
+                global_activity: true,
+                matches: vec![
+                    subaccount_match(env.faucet, 7),
+                    subaccount_match(env.faucet, 0),
+                    subaccount_match(env.faucet, 0),
+                ],
+            },
         },
     )?;
     accepted.map_err(anyhow::Error::msg)?;
@@ -1430,7 +1464,10 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
             "debug_poke",
             PokeProxyArgs {
                 canister_id: env.faucet,
-                matches: vec![subaccount_match(0)],
+                notification: EventHorizonPokeNotification {
+                    global_activity: false,
+                    matches: vec![subaccount_match(env.faucet, 0)],
+                },
             },
         )?;
         accepted.map_err(anyhow::Error::msg)?;
@@ -1494,18 +1531,23 @@ fn event_horizon_small_hints_do_no_work_and_daily_poll_finds_small_funding() -> 
             "debug_poke",
             PokeProxyArgs {
                 canister_id: env.faucet,
-                matches: vec![
-                    EventHorizonPokeMatch {
-                        first_block_index: 17,
-                        target: EventHorizonPokeTarget::Subaccount(7),
-                        max_amount: Nat::from(u64::MAX),
-                    },
-                    EventHorizonPokeMatch {
-                        first_block_index: 17,
-                        target: EventHorizonPokeTarget::Subaccount(0),
-                        max_amount: Nat::from(amount),
-                    },
-                ],
+                notification: EventHorizonPokeNotification {
+                    global_activity: false,
+                    matches: vec![
+                        EventHorizonPokeMatch {
+                            subject: env.faucet,
+                            first_block_index: 17,
+                            target: EventHorizonPokeTarget::Subaccount(7),
+                            max_amount: Nat::from(u64::MAX),
+                        },
+                        EventHorizonPokeMatch {
+                            subject: env.faucet,
+                            first_block_index: 17,
+                            target: EventHorizonPokeTarget::Subaccount(0),
+                            max_amount: Nat::from(amount),
+                        },
+                    ],
+                },
             },
         )?;
         accepted.map_err(anyhow::Error::msg)?;
@@ -1556,7 +1598,10 @@ fn event_horizon_small_hints_do_no_work_and_daily_poll_finds_small_funding() -> 
         "debug_poke",
         PokeProxyArgs {
             canister_id: env.faucet,
-            matches: vec![subaccount_match(0)],
+            notification: EventHorizonPokeNotification {
+                global_activity: false,
+                matches: vec![subaccount_match(env.faucet, 0)],
+            },
         },
     )?;
     accepted.map_err(anyhow::Error::msg)?;

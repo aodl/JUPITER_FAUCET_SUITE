@@ -247,9 +247,21 @@ Up to 100 exact routes can be queried in one call, so consumers can batch the re
 
 ### Staking wake-up notifications
 
-Historian intentionally uses the same target-aware `poke(vec PokeMatch)` wire ABI as the direct Event Horizon subscribers, but it does not subscribe to or trust Event Horizon directly. Production authorizes only Jupiter Disburser, which forwards one `neuron_nonce(0)` match containing Event Horizon's greatest observed `max_amount`; Historian ignores every other target. This target identifies the Jupiter Faucet neuron's NNS Governance-owned staking account, derived from Jupiter Disburser as controller with nonce zero. Historian compares the arbitrary-precision hint with its runtime `min_tx_e8s` before touching admission state, then checks ICP Index authoritatively.
+Historian accepts `poke(PokeNotification)` directly from the canonical Event Horizon ICP instance (`eo6ei-gaaaa-aaaar-qchra-cai`). The record contains `global_activity : bool` and `matches : vec PokeMatch`; each match carries `subject : principal`, `target`, `first_block_index : nat64` and arbitrary-precision `max_amount : nat`. Only an individual match for Disburser (`uccpi-cqaaa-aaaar-qby3q-cai`), `neuron_nonce(0)`, and at least the configured `min_tx_e8s` can schedule work. An unrelated subject's larger amount cannot qualify another match. The global flag alone grants no interest; a valid specific match is accepted with either flag value. Disburser is not an authorized notification caller and does not forward hints.
 
-Historian checks at most one 500-transaction Index page per admitted attempt. A relevant hint requests an immediate bounded check plus one coalesced trailing check 10 seconds after the latest hint. The forwarding is best effort; missed notifications affect latency only because every normal driver run indexes commitments. `get_endowment_transaction_status(transaction_id)` remains unchanged.
+This target identifies the NNS Governance-owned staking account derived from Disburser as controller with nonce zero, not a neuron ID. Block index and amount may describe different transfers; neither changes a durable cursor or proves funding. Authoritative ICP Index reconciliation checks at most one 500-record page per admitted attempt under the existing writer lease and ten-second minimum attempt interval.
+
+A relevant notification requests an immediate bounded check and at most one deferred check ten seconds after the latest accepted hint in the pending window. A busy or rate-limited opportunity may be skipped; failures create no indefinite retries. Timers are heap-only. Missed notifications affect latency only: normal periodic commitment indexing remains independent. `get_endowment_transaction_status(transaction_id)` remains unchanged.
+
+The intended separately admitted and funded subscription memo is exactly 32 ASCII bytes:
+
+```text
+E.j5gs6uiaaaaaaarqb5cqcai@D.n0:1
+```
+
+Here the compact Historian principal is the subscriber, published `D` names the Disburser subject, and `E.` remains the only Jupiter payment route. No Historian alias is published. Documentation does not admit or fund this route. Before an operator funds it, verify the deployed Event Horizon supports the unified record ABI, that its alias cache has successfully refreshed the complete D/E table at the revision above, and that `preview_subscription` resolves the unprefixed suffix to Historian, Disburser, neuron nonce zero and a 1 ICP individual-transfer threshold. GitHub source alone does not establish deployed compatibility. Preview is read-only and does not establish admission or receipt.
+
+The `:1` sets the individual-transfer hint minimum. Admission separately requires a dynamically priced productive endowment (initial reference account price: 10 ICP), potentially subject to Jupiter's staking recognition delay. Exact-route funding evidence applies: an existing `E.<Disburser>.n0:1` endowment is not automatically credited to this direct Historian route. Keep the staging subscription unchanged. Funding/admission requires a separate operator approval.
 
 ## Self-service Relay configurations
 

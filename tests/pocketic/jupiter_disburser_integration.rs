@@ -12,7 +12,9 @@ use candid::{encode_args, encode_one, CandidType, Deserialize, Nat, Principal};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{TransferArg, TransferError};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
-use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
+use jupiter_ic_clients::event_horizon::{
+    EventHorizonPokeMatch, EventHorizonPokeNotification, EventHorizonPokeTarget,
+};
 use jupiter_ic_clients::management::{
     CanisterStatusArgs, CanisterStatusResult, LogVisibility, StatusVisibility,
 };
@@ -254,16 +256,23 @@ static INDEX_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 static CMC_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 
-fn subaccount_match(id: u64) -> EventHorizonPokeMatch {
+fn subaccount_match(subject: Principal, id: u64) -> EventHorizonPokeMatch {
     EventHorizonPokeMatch {
+        subject,
         first_block_index: 17,
         target: EventHorizonPokeTarget::Subaccount(id),
         max_amount: Nat::from(100_000_000u64),
     }
 }
 
-fn neuron_match(nonce: u64, first_block_index: u64, max_amount: u64) -> EventHorizonPokeMatch {
+fn neuron_match(
+    subject: Principal,
+    nonce: u64,
+    first_block_index: u64,
+    max_amount: u64,
+) -> EventHorizonPokeMatch {
     EventHorizonPokeMatch {
+        subject,
         first_block_index,
         target: EventHorizonPokeTarget::NeuronNonce(nonce),
         max_amount: Nat::from(max_amount),
@@ -277,13 +286,13 @@ fn event_horizon_proxy() -> Principal {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct PokeProxyArgs {
     canister_id: Principal,
-    matches: Vec<EventHorizonPokeMatch>,
+    notification: EventHorizonPokeNotification,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugReceivedPoke {
     caller: Principal,
-    matches: Vec<EventHorizonPokeMatch>,
+    notification: EventHorizonPokeNotification,
 }
 
 fn build_wasm_cached(
@@ -1548,7 +1557,10 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
                 disburser,
                 caller,
                 "poke",
-                encode_args((vec![subaccount_match(0)],))?
+                encode_args((EventHorizonPokeNotification {
+                    global_activity: false,
+                    matches: vec![subaccount_match(disburser, 0)]
+                },))?
             )
             .is_err());
     }
@@ -1559,12 +1571,31 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_poke",
         PokeProxyArgs {
             canister_id: disburser,
-            matches: vec![subaccount_match(0)],
+            notification: EventHorizonPokeNotification {
+                global_activity: false,
+                matches: vec![subaccount_match(disburser, 0)],
+            },
         },
     )?;
     assert!(rejected
         .unwrap_err()
         .contains("caller is not Event Horizon"));
+    for global_activity in [false, true] {
+        let accepted: Result<(), String> = update_call(
+            &pic,
+            proxy,
+            Principal::anonymous(),
+            "debug_poke",
+            PokeProxyArgs {
+                canister_id: disburser,
+                notification: EventHorizonPokeNotification {
+                    global_activity,
+                    matches: vec![subaccount_match(Principal::anonymous(), 0)],
+                },
+            },
+        )?;
+        accepted.map_err(anyhow::Error::msg)?;
+    }
     for ids in [vec![], vec![7, 8], vec![7, 0, 0]] {
         let accepted: Result<(), String> = update_call(
             &pic,
@@ -1573,7 +1604,13 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
             "debug_poke",
             PokeProxyArgs {
                 canister_id: disburser,
-                matches: ids.into_iter().map(subaccount_match).collect(),
+                notification: EventHorizonPokeNotification {
+                    global_activity: true,
+                    matches: ids
+                        .into_iter()
+                        .map(|id| subaccount_match(disburser, id))
+                        .collect(),
+                },
             },
         )?;
         accepted.map_err(anyhow::Error::msg)?;
@@ -1585,11 +1622,14 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_poke",
         PokeProxyArgs {
             canister_id: disburser,
-            matches: vec![
-                neuron_match(0, (1_u64 << 53) + 1, 250_000_000),
-                neuron_match(0, u64::MAX, 300_000_000),
-                neuron_match(1, 0, 900_000_000),
-            ],
+            notification: EventHorizonPokeNotification {
+                global_activity: true,
+                matches: vec![
+                    neuron_match(disburser, 0, (1_u64 << 53) + 1, 250_000_000),
+                    neuron_match(disburser, 0, u64::MAX, 300_000_000),
+                    neuron_match(disburser, 1, 0, 900_000_000),
+                ],
+            },
         },
     )?;
     accepted.map_err(anyhow::Error::msg)?;
@@ -1601,11 +1641,9 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_received_pokes",
         (),
     )?;
-    assert_eq!(received_pokes.len(), 1);
-    assert_eq!(received_pokes[0].caller, disburser);
-    assert_eq!(
-        received_pokes[0].matches,
-        vec![neuron_match(0, (1_u64 << 53) + 1, 300_000_000)]
+    assert!(
+        received_pokes.is_empty(),
+        "Disburser must not forward neuron hints"
     );
     let after: DebugState = query_call(&pic, disburser, Principal::anonymous(), "debug_state", ())?;
     assert_eq!(after.last_main_run_ts, before.last_main_run_ts);

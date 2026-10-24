@@ -16,7 +16,9 @@ use ic_stable_structures::{
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::TransferArg;
 use jupiter_ic_clients::account_identifier::account_identifier_text;
-use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
+use jupiter_ic_clients::event_horizon::{
+    EventHorizonPokeMatch, EventHorizonPokeNotification, EventHorizonPokeTarget,
+};
 use jupiter_ic_clients::icrc_index::{
     GetAccountTransactionsArgs as IcrcGetAccountTransactionsArgs,
     GetAccountTransactionsResult as IcrcGetAccountTransactionsResult,
@@ -47,8 +49,9 @@ static SNS_ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static SNS_GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static STATUS_PROXY_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 
-fn subaccount_match(id: u64) -> EventHorizonPokeMatch {
+fn subaccount_match(subject: Principal, id: u64) -> EventHorizonPokeMatch {
     EventHorizonPokeMatch {
+        subject,
         first_block_index: 17,
         target: EventHorizonPokeTarget::Subaccount(id),
         max_amount: Nat::from(1u64),
@@ -131,7 +134,7 @@ struct RewardRelayInitArg {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct PokeProxyArgs {
     canister_id: Principal,
-    matches: Vec<EventHorizonPokeMatch>,
+    notification: EventHorizonPokeNotification,
 }
 
 #[derive(CandidType)]
@@ -1131,7 +1134,10 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
                 env.relay,
                 caller,
                 "poke",
-                encode_args((vec![subaccount_match(0)],))?,
+                encode_args((EventHorizonPokeNotification {
+                    global_activity: false,
+                    matches: vec![subaccount_match(env.relay, 0)]
+                },))?,
             )
             .is_err());
     }
@@ -1142,13 +1148,32 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_poke",
         PokeProxyArgs {
             canister_id: env.relay,
-            matches: vec![subaccount_match(0)],
+            notification: EventHorizonPokeNotification {
+                global_activity: false,
+                matches: vec![subaccount_match(env.relay, 0)],
+            },
         },
     )?;
     assert!(rejected
         .unwrap_err()
         .contains("caller is not Event Horizon"));
 
+    for global_activity in [false, true] {
+        let accepted: Result<(), String> = update_one(
+            &env.pic,
+            proxy,
+            Principal::anonymous(),
+            "debug_poke",
+            PokeProxyArgs {
+                canister_id: env.relay,
+                notification: EventHorizonPokeNotification {
+                    global_activity,
+                    matches: vec![subaccount_match(Principal::anonymous(), 0)],
+                },
+            },
+        )?;
+        accepted.map_err(anyhow::Error::msg)?;
+    }
     for ids in [vec![], vec![7, 8]] {
         let accepted: Result<(), String> = update_one(
             &env.pic,
@@ -1157,7 +1182,13 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
             "debug_poke",
             PokeProxyArgs {
                 canister_id: env.relay,
-                matches: ids.into_iter().map(subaccount_match).collect(),
+                notification: EventHorizonPokeNotification {
+                    global_activity: true,
+                    matches: ids
+                        .into_iter()
+                        .map(|id| subaccount_match(env.relay, id))
+                        .collect(),
+                },
             },
         )?;
         accepted.map_err(anyhow::Error::msg)?;
@@ -1172,12 +1203,15 @@ fn event_horizon_poke_authorization_filtering_and_cadence_are_independent() -> R
         "debug_poke",
         PokeProxyArgs {
             canister_id: env.relay,
-            matches: vec![
-                subaccount_match(37),
-                subaccount_match(10),
-                subaccount_match(1),
-                subaccount_match(0),
-            ],
+            notification: EventHorizonPokeNotification {
+                global_activity: true,
+                matches: vec![
+                    subaccount_match(env.relay, 37),
+                    subaccount_match(env.relay, 10),
+                    subaccount_match(env.relay, 1),
+                    subaccount_match(env.relay, 0),
+                ],
+            },
         },
     )?;
     accepted.map_err(anyhow::Error::msg)?;
@@ -1241,7 +1275,10 @@ fn event_horizon_poke_resumes_but_does_not_replace_active_default_job() -> Resul
         "debug_poke",
         PokeProxyArgs {
             canister_id: env.relay,
-            matches: vec![subaccount_match(0)],
+            notification: EventHorizonPokeNotification {
+                global_activity: false,
+                matches: vec![subaccount_match(env.relay, 0)],
+            },
         },
     )?;
     accepted.map_err(anyhow::Error::msg)?;

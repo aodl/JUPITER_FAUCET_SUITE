@@ -3,7 +3,12 @@ type Account = record {
   subaccount : opt blob;
 };
 type EventHorizonPokeTarget = variant { subaccount : nat64; neuron_nonce : nat64 };
-type EventHorizonPokeMatch = record { target : EventHorizonPokeTarget; first_block_index : nat64; max_amount : nat };
+type EventHorizonPokeMatch = record {
+  subject : principal; target : EventHorizonPokeTarget; first_block_index : nat64; max_amount : nat };
+type EventHorizonPokeNotification = record {
+  global_activity : bool;
+  matches : vec EventHorizonPokeMatch;
+};
 
 type InitArgs = record {
   neuron_id : nat64;
@@ -23,5 +28,5 @@ type InitArgs = record {
 };
 
 service : (InitArgs) -> {
-  poke : (vec EventHorizonPokeMatch) -> ();
+  poke : (EventHorizonPokeNotification) -> ();
 }

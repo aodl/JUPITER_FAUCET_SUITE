@@ -1,5 +1,7 @@
 use super::*;
-use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
+use jupiter_ic_clients::event_horizon::{
+    EventHorizonPokeMatch, EventHorizonPokeNotification, EventHorizonPokeTarget,
+};
 use std::ops::Bound::{Excluded, Unbounded};
 
 #[ic_cdk::query]
@@ -504,13 +506,11 @@ pub(super) async fn notify_relay_configuration(args: RelaySetupArgs) -> RelaySet
     crate::relay_setup::notify_relay_configuration(args).await
 }
 
-// Historian intentionally shares Event Horizon's target-aware poke ABI so the callback surface
-// remains reusable. Production currently authorizes only Jupiter Disburser, which forwards
-// neuron_nonce(0) staking hints.
+// Only the canonical Event Horizon ICP instance may accelerate staking reconciliation.
 #[cfg(not(feature = "debug_api"))]
-const HISTORIAN_POKE_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 14, 55, 1, 1]];
+const HISTORIAN_POKE_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 17, 226, 1, 1]];
 
-// Debug builds use the fixed PocketIC proxy to simulate Jupiter Disburser.
+// Debug builds use the fixed PocketIC proxy to simulate Event Horizon.
 #[cfg(feature = "debug_api")]
 const HISTORIAN_POKE_CALLER_WHITELIST: &[&[u8]] = &[&[0, 0, 0, 0, 2, 48, 15, 70, 1, 1]];
 
@@ -528,9 +528,13 @@ fn guard_historian_poke_caller() -> Result<(), String> {
 }
 
 pub(crate) fn staking_max_amount(matches: &[EventHorizonPokeMatch]) -> Option<Nat> {
+    let disburser = Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID).unwrap();
     matches
         .iter()
-        .filter(|item| matches!(&item.target, EventHorizonPokeTarget::NeuronNonce(0)))
+        .filter(|item| {
+            item.subject == disburser
+                && matches!(&item.target, EventHorizonPokeTarget::NeuronNonce(0))
+        })
         .map(|item| item.max_amount.clone())
         .max()
 }
@@ -541,9 +545,9 @@ pub(crate) fn staking_poke_is_relevant(max_amount: &Nat) -> bool {
 }
 
 #[ic_cdk::update(guard = "guard_historian_poke_caller")]
-pub(super) async fn poke(matches: Vec<EventHorizonPokeMatch>) {
-    // Ingress is rejected; the replicated guard authorizes Jupiter Disburser.
-    let Some(max_amount) = staking_max_amount(&matches) else {
+pub(super) async fn poke(notification: EventHorizonPokeNotification) {
+    // Ingress is rejected; the replicated guard authorizes Event Horizon.
+    let Some(max_amount) = staking_max_amount(&notification.matches) else {
         return;
     };
     if staking_poke_is_relevant(&max_amount) {
@@ -976,19 +980,19 @@ mod tests {
 
     #[cfg(not(feature = "debug_api"))]
     #[test]
-    fn production_historian_poke_whitelist_accepts_only_disburser() {
-        assert!(historian_poke_caller_is_whitelisted(Principal::from_slice(
-            &[0, 0, 0, 0, 2, 48, 14, 55, 1, 1]
-        )));
-        assert!(!historian_poke_caller_is_whitelisted(
+    fn production_historian_poke_whitelist_accepts_only_event_horizon() {
+        assert!(historian_poke_caller_is_whitelisted(
             Principal::from_text("eo6ei-gaaaa-aaaar-qchra-cai").unwrap()
+        ));
+        assert!(!historian_poke_caller_is_whitelisted(
+            Principal::from_text("uccpi-cqaaa-aaaar-qby3q-cai").unwrap()
         ));
         assert!(!historian_poke_caller_is_whitelisted(Principal::anonymous()));
         assert!(!historian_poke_caller_is_whitelisted(
             Principal::self_authenticating(b"authenticated ingress")
         ));
         assert!(!historian_poke_caller_is_whitelisted(
-            Principal::from_slice(&[0, 0, 0, 0, 2, 48, 14, 55, 1, 2])
+            Principal::from_slice(&[0, 0, 0, 0, 2, 48, 17, 226, 1, 2])
         ));
     }
 
@@ -1006,11 +1010,20 @@ mod tests {
     #[test]
     fn staking_target_classification_uses_only_neuron_nonce_zero_maximum() {
         let item = |target, amount: u64| EventHorizonPokeMatch {
+            subject: Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID).unwrap(),
             first_block_index: 17,
             target,
             max_amount: Nat::from(amount),
         };
         assert_eq!(staking_max_amount(&[]), None);
+        let mut unrelated = item(EventHorizonPokeTarget::NeuronNonce(0), u64::MAX);
+        unrelated.subject = Principal::anonymous();
+        assert_eq!(staking_max_amount(&[unrelated.clone()]), None);
+        assert_eq!(
+            staking_max_amount(&[unrelated, item(EventHorizonPokeTarget::NeuronNonce(0), 1)]),
+            Some(Nat::from(1_u64))
+        );
+
         assert_eq!(
             staking_max_amount(&[
                 item(EventHorizonPokeTarget::Subaccount(0), 900),

@@ -1,6 +1,6 @@
 use candid::{CandidType, Deserialize, Nat, Principal};
 use ic_cdk::call::Call;
-use jupiter_ic_clients::event_horizon::EventHorizonPokeMatch;
+use jupiter_ic_clients::event_horizon::EventHorizonPokeNotification;
 use jupiter_ic_clients::management::{
     self, CanisterStatusArgs as ManagementCanisterStatusArgs,
     CanisterStatusResult as ManagementCanisterStatusResult, UpdateSettingsArgs,
@@ -40,13 +40,13 @@ struct DebugCall {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct PokeArgs {
     canister_id: Principal,
-    matches: Vec<EventHorizonPokeMatch>,
+    notification: EventHorizonPokeNotification,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct DebugReceivedPoke {
     caller: Principal,
-    matches: Vec<EventHorizonPokeMatch>,
+    notification: EventHorizonPokeNotification,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -112,7 +112,7 @@ async fn debug_management_update_settings(args: UpdateSettingsArgs) -> Result<()
 #[ic_cdk::update]
 async fn debug_poke(args: PokeArgs) -> Result<(), String> {
     let response = Call::bounded_wait(args.canister_id, "poke")
-        .with_arg(&args.matches)
+        .with_arg(&args.notification)
         .await
         .map_err(|err| format!("poke call failed: {err:?}"))?;
     response
@@ -134,11 +134,11 @@ async fn debug_list_canister_aliases(
 }
 
 #[ic_cdk::update]
-fn poke(matches: Vec<EventHorizonPokeMatch>) {
+fn poke(notification: EventHorizonPokeNotification) {
     RECEIVED_POKES.with(|pokes| {
         pokes.borrow_mut().push(DebugReceivedPoke {
             caller: ic_cdk::api::msg_caller(),
-            matches,
+            notification,
         });
     });
 }

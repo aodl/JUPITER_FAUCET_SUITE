@@ -218,24 +218,29 @@ mod tests {
         for matches in [
             vec![],
             vec![crate::EventHorizonPokeMatch {
+                subject: candid::Principal::management_canister(),
                 first_block_index: 17,
                 target: crate::EventHorizonPokeTarget::Subaccount(0),
                 max_amount: candid::Nat::from(99_999_999_u64),
             }],
             vec![crate::EventHorizonPokeMatch {
+                subject: candid::Principal::management_canister(),
                 first_block_index: 17,
                 target: crate::EventHorizonPokeTarget::Subaccount(7),
                 max_amount: candid::Nat::from(u64::MAX),
             }],
             vec![crate::EventHorizonPokeMatch {
+                subject: candid::Principal::management_canister(),
                 first_block_index: 17,
                 target: crate::EventHorizonPokeTarget::NeuronNonce(0),
                 max_amount: candid::Nat::from(u64::MAX),
             }],
         ] {
-            // Exercise the actual callback. Reaching an IC API on this native
-            // path would also fail the test, rather than scheduling hidden work.
-            crate::poke(matches);
+            // The callback uses this predicate before touching scheduler state.
+            assert!(!crate::has_relevant_event_horizon_match(
+                &matches,
+                candid::Principal::management_canister(),
+            ));
             assert_eq!(POKE_RUNTIME.with(Cell::get), before);
         }
         assert_eq!(

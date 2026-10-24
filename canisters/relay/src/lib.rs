@@ -9,7 +9,9 @@ mod state;
 use candid::{CandidType, Deserialize, Principal};
 use jupiter_ic_clients::constants;
 use jupiter_ic_clients::cycles_probe::CyclesProbePolicy;
-use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
+use jupiter_ic_clients::event_horizon::{
+    EventHorizonPokeMatch, EventHorizonPokeNotification, EventHorizonPokeTarget,
+};
 
 #[derive(CandidType, Deserialize, Clone)]
 pub struct InitArgs {
@@ -266,16 +268,21 @@ fn guard_event_horizon_caller() -> Result<(), String> {
         .ok_or_else(|| "caller is not Event Horizon".to_string())
 }
 
-fn has_relevant_event_horizon_match(matches: &[EventHorizonPokeMatch]) -> bool {
-    matches.iter().any(|item| match item.target {
-        EventHorizonPokeTarget::Subaccount(id) => EVENT_HORIZON_FUNDING_SUBACCOUNTS.contains(&id),
-        EventHorizonPokeTarget::NeuronNonce(_) => false,
+fn has_relevant_event_horizon_match(matches: &[EventHorizonPokeMatch], subject: Principal) -> bool {
+    matches.iter().any(|item| {
+        item.subject == subject
+            && match item.target {
+                EventHorizonPokeTarget::Subaccount(id) => {
+                    EVENT_HORIZON_FUNDING_SUBACCOUNTS.contains(&id)
+                }
+                EventHorizonPokeTarget::NeuronNonce(_) => false,
+            }
     })
 }
 
 #[ic_cdk::update(guard = "guard_event_horizon_caller")]
-async fn poke(matches: Vec<EventHorizonPokeMatch>) {
-    if has_relevant_event_horizon_match(&matches) {
+async fn poke(notification: EventHorizonPokeNotification) {
+    if has_relevant_event_horizon_match(&notification.matches, ic_cdk::api::canister_self()) {
         scheduler::handle_event_horizon_poke().await;
     }
 }
@@ -564,7 +571,7 @@ mod tests {
     #[test]
     fn production_did_exposes_only_event_horizon_poke() {
         let did = include_str!("../jupiter_relay.did");
-        assert!(did.contains("poke : (vec EventHorizonPokeMatch) -> ();"));
+        assert!(did.contains("poke : (EventHorizonPokeNotification) -> ();"));
         assert!(!did.contains(concat!("Relay", "Status")));
         assert!(!did.contains(concat!("relay_", "status")));
         assert!(!did.contains("admin_schedule_main_tick_now"));
@@ -593,20 +600,27 @@ mod tests {
         assert!(event_horizon_caller_is_whitelisted(exact));
         assert!(!event_horizon_caller_is_whitelisted(near));
         let item = |target| EventHorizonPokeMatch {
+            subject: Principal::management_canister(),
             first_block_index: 17,
             target,
             max_amount: candid::Nat::from(1u64),
         };
-        assert!(!has_relevant_event_horizon_match(&[]));
-        assert!(!has_relevant_event_horizon_match(&[item(
-            EventHorizonPokeTarget::Subaccount(37)
-        )]));
-        assert!(!has_relevant_event_horizon_match(&[item(
-            EventHorizonPokeTarget::NeuronNonce(0)
-        )]));
-        assert!(has_relevant_event_horizon_match(&[item(
-            EventHorizonPokeTarget::Subaccount(0)
-        )]));
+        assert!(!has_relevant_event_horizon_match(
+            &[],
+            Principal::management_canister()
+        ));
+        assert!(!has_relevant_event_horizon_match(
+            &[item(EventHorizonPokeTarget::Subaccount(37))],
+            Principal::management_canister()
+        ));
+        assert!(!has_relevant_event_horizon_match(
+            &[item(EventHorizonPokeTarget::NeuronNonce(0))],
+            Principal::management_canister()
+        ));
+        assert!(has_relevant_event_horizon_match(
+            &[item(EventHorizonPokeTarget::Subaccount(0))],
+            Principal::management_canister()
+        ));
     }
 
     #[cfg(feature = "debug_api")]
@@ -818,4 +832,18 @@ mod tests {
         assert!(is_production_canister(prod));
         assert!(!is_production_canister(Principal::anonymous()));
     }
+}
+
+#[test]
+fn event_horizon_other_subject_cannot_trigger_our_worker() {
+    let subject = Principal::management_canister();
+    let mut item = EventHorizonPokeMatch {
+        subject: Principal::anonymous(),
+        target: EventHorizonPokeTarget::Subaccount(0),
+        first_block_index: u64::MAX,
+        max_amount: candid::Nat::from(u128::MAX),
+    };
+    assert!(!has_relevant_event_horizon_match(&[item.clone()], subject));
+    item.subject = subject;
+    assert!(has_relevant_event_horizon_match(&[item], subject));
 }

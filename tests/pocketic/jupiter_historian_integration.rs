@@ -14,7 +14,9 @@ use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg};
 use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
 use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
 use jupiter_ic_clients::account_identifier::account_identifier_text;
-use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
+use jupiter_ic_clients::event_horizon::{
+    EventHorizonPokeMatch, EventHorizonPokeNotification, EventHorizonPokeTarget,
+};
 use jupiter_ic_clients::index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResponse,
     GetAccountIdentifierTransactionsResult, IndexOperation,
@@ -453,7 +455,10 @@ fn poke_historian_via_proxy(
         "debug_poke",
         PokeProxyArgs {
             canister_id: historian,
-            matches,
+            notification: EventHorizonPokeNotification {
+                global_activity: true,
+                matches,
+            },
         },
     )?;
     response.map_err(|message| anyhow!(message))
@@ -470,6 +475,7 @@ fn staking_poke_via_proxy(
         proxy,
         historian,
         vec![EventHorizonPokeMatch {
+            subject: Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID)?,
             first_block_index: 17,
             target: EventHorizonPokeTarget::NeuronNonce(0),
             max_amount: Nat::from(max_amount),
@@ -489,7 +495,7 @@ struct EndowmentTransactionStatusResponse {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct PokeProxyArgs {
     canister_id: Principal,
-    matches: Vec<EventHorizonPokeMatch>,
+    notification: EventHorizonPokeNotification,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -3553,6 +3559,7 @@ fn debug_index_calls(h: &Harness) -> Result<Vec<DebugIndexGetCall>> {
 #[ignore]
 fn staking_poke_prefilters_amount_and_checks_one_bounded_page() -> Result<()> {
     let h = Harness::new_with_scan_interval_and_min_tx(false, 3_600, 100_000_000)?;
+    h.skip_install_main_tick()?;
     let staking_id = h.staking_identifier()?;
     let target = Principal::from_slice(&[71]);
     let _: u64 = update_bytes(
@@ -3582,6 +3589,7 @@ fn staking_poke_prefilters_amount_and_checks_one_bounded_page() -> Result<()> {
         h.proxy,
         h.historian,
         vec![EventHorizonPokeMatch {
+            subject: Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID)?,
             first_block_index: 17,
             target: EventHorizonPokeTarget::Subaccount(0),
             max_amount: Nat::from(500_000_000u64),
@@ -3592,12 +3600,36 @@ fn staking_poke_prefilters_amount_and_checks_one_bounded_page() -> Result<()> {
         h.proxy,
         h.historian,
         vec![EventHorizonPokeMatch {
+            subject: Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID)?,
             first_block_index: 17,
             target: EventHorizonPokeTarget::NeuronNonce(1),
             max_amount: Nat::from(500_000_000u64),
         }],
     )?;
     staking_poke_via_proxy(&h.pic, h.proxy, h.historian, 99_999_999)?;
+    // Unrelated subjects cannot lend their amounts to a small relevant match.
+    poke_historian_via_proxy(
+        &h.pic,
+        h.proxy,
+        h.historian,
+        vec![
+            EventHorizonPokeMatch {
+                subject: h.historian,
+                target: EventHorizonPokeTarget::NeuronNonce(0),
+                first_block_index: u64::MAX,
+                max_amount: format!("1{}", "0".repeat(100)).parse()?,
+            },
+            EventHorizonPokeMatch {
+                subject: Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID)?,
+                target: EventHorizonPokeTarget::NeuronNonce(0),
+                first_block_index: 0,
+                max_amount: Nat::from(99_999_999_u64),
+            },
+        ],
+    )?;
+    h.pic.advance_time(Duration::from_secs(12));
+    tick_n(&h.pic, 8);
+
     assert_eq!(debug_index_calls(&h)?.len(), calls_before);
     assert_eq!(h.pic.get_stable_memory(h.historian), stable_before);
     let after_irrelevant: DebugState = query_one(
@@ -3614,14 +3646,16 @@ fn staking_poke_prefilters_amount_and_checks_one_bounded_page() -> Result<()> {
         h.historian,
         vec![
             EventHorizonPokeMatch {
+                subject: Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID)?,
                 first_block_index: 17,
                 target: EventHorizonPokeTarget::NeuronNonce(0),
                 max_amount: Nat::from(100_000_000u64),
             },
             EventHorizonPokeMatch {
-                first_block_index: 17,
+                subject: Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID)?,
+                first_block_index: u64::MAX,
                 target: EventHorizonPokeTarget::NeuronNonce(0),
-                max_amount: Nat::from(250_000_000u64),
+                max_amount: format!("1{}", "0".repeat(100)).parse()?,
             },
         ],
     )?;
@@ -3655,6 +3689,11 @@ fn historian_poke_rejects_ingress_and_untrusted_canisters() -> Result<()> {
     h.pic.add_cycles(attacker, 1_000_000_000_000);
     h.pic
         .install_canister(attacker, status_proxy_wasm()?, vec![], None);
+    let disburser = Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID)?;
+    create_fixed_canister(&h.pic, disburser)?;
+    h.pic.add_cycles(disburser, 1_000_000_000_000);
+    h.pic
+        .install_canister(disburser, status_proxy_wasm()?, vec![], None);
     let before = h.pic.get_stable_memory(h.historian);
     let calls_before = debug_index_calls(&h)?.len();
     for caller in [
@@ -3667,31 +3706,41 @@ fn historian_poke_rejects_ingress_and_untrusted_canisters() -> Result<()> {
                 h.historian,
                 caller,
                 "poke",
-                encode_args((vec![EventHorizonPokeMatch {
-                    first_block_index: 17,
-                    target: EventHorizonPokeTarget::NeuronNonce(0),
-                    max_amount: Nat::from(100_000_000u64),
-                }],))?
+                encode_args((EventHorizonPokeNotification {
+                    global_activity: false,
+                    matches: vec![EventHorizonPokeMatch {
+                        subject: Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID)?,
+                        first_block_index: 17,
+                        target: EventHorizonPokeTarget::NeuronNonce(0),
+                        max_amount: Nat::from(100_000_000u64),
+                    }]
+                },))?
             )
             .is_err());
     }
-    let rejection: Result<(), String> = update_one(
-        &h.pic,
-        attacker,
-        Principal::anonymous(),
-        "debug_poke",
-        PokeProxyArgs {
-            canister_id: h.historian,
-            matches: vec![EventHorizonPokeMatch {
-                first_block_index: 17,
-                target: EventHorizonPokeTarget::NeuronNonce(0),
-                max_amount: Nat::from(100_000_000u64),
-            }],
-        },
-    )?;
-    assert!(rejection
-        .unwrap_err()
-        .contains("caller is not an authorized Historian poke source"));
+    for source in [attacker, disburser] {
+        let rejection: Result<(), String> = update_one(
+            &h.pic,
+            source,
+            Principal::anonymous(),
+            "debug_poke",
+            PokeProxyArgs {
+                canister_id: h.historian,
+                notification: EventHorizonPokeNotification {
+                    global_activity: false,
+                    matches: vec![EventHorizonPokeMatch {
+                        subject: Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID)?,
+                        first_block_index: 17,
+                        target: EventHorizonPokeTarget::NeuronNonce(0),
+                        max_amount: Nat::from(100_000_000u64),
+                    }],
+                },
+            },
+        )?;
+        assert!(rejection
+            .unwrap_err()
+            .contains("caller is not an authorized Historian poke source"));
+    }
     assert_eq!(debug_index_calls(&h)?.len(), calls_before);
     assert_eq!(h.pic.get_stable_memory(h.historian), before);
     staking_poke_via_proxy(&h.pic, h.proxy, h.historian, RELEVANT_STAKING_MAX_AMOUNT)?;
@@ -3747,6 +3796,19 @@ fn staking_poke_trailing_check_and_normal_poll_remain_independent() -> Result<()
         (),
     )?;
     assert_eq!(after.last_main_run_ts, initial.last_main_run_ts);
+    // Re-observing the same transfer through another hint/follow-up is idempotent.
+    staking_poke_via_proxy(&h.pic, h.proxy, h.historian, RELEVANT_STAKING_MAX_AMOUNT)?;
+    h.pic.advance_time(Duration::from_secs(11));
+    tick_n(&h.pic, 8);
+    let repeated: PublicCounts = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    assert_eq!(repeated.qualifying_commitment_count, 1);
+
     let _: u64 = update_bytes(
         &h.pic,
         h.index,
@@ -3759,7 +3821,7 @@ fn staking_poke_trailing_check_and_normal_poll_remain_independent() -> Result<()
             Some(target.to_text().into_bytes()),
         ))?,
     )?;
-    // A new hint requests its own immediate attempt and moves the one trailing deadline.
+    // A new coalescing window requests an immediate attempt and one deferred check.
     staking_poke_via_proxy(&h.pic, h.proxy, h.historian, RELEVANT_STAKING_MAX_AMOUNT)?;
     h.pic.advance_time(Duration::from_secs(11));
     tick_n(&h.pic, 8);
@@ -3968,6 +4030,13 @@ fn legacy_poke_lease_root_restores_before_post_upgrade_reset() -> Result<()> {
     let h = Harness::new_with_scan_interval(false, 3_600)?;
     h.pic.advance_time(Duration::from_secs(121));
     tick_n(&h.pic, 8);
+    let aliases_before: ListCanisterAliasesResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_canister_aliases",
+        ListCanisterAliasesArgs::default(),
+    )?;
     let stable_before = h.pic.get_stable_memory(h.historian);
     let _: () = update_noargs(
         &h.pic,
@@ -4010,6 +4079,14 @@ fn legacy_poke_lease_root_restores_before_post_upgrade_reset() -> Result<()> {
     )?;
     assert_eq!(restored.commitment_index_lock_expires_at_ts, Some(0));
     assert_eq!(restored.poke_next_allowed_ts, seeded.poke_next_allowed_ts);
+    let aliases_after: ListCanisterAliasesResponse = query_one(
+        &h.pic,
+        h.historian,
+        Principal::anonymous(),
+        "list_canister_aliases",
+        ListCanisterAliasesArgs::default(),
+    )?;
+    assert_eq!(aliases_after, aliases_before);
     Ok(())
 }
 

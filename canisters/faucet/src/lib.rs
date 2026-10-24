@@ -11,7 +11,9 @@ use jupiter_canister_logging::{
     format_event_line, FIELD_EVENT, FIELD_MAIN_INTERVAL_SECONDS, FIELD_TIMERS_INSTALLED,
 };
 use jupiter_ic_clients::constants;
-use jupiter_ic_clients::event_horizon::{EventHorizonPokeMatch, EventHorizonPokeTarget};
+use jupiter_ic_clients::event_horizon::{
+    EventHorizonPokeMatch, EventHorizonPokeNotification, EventHorizonPokeTarget,
+};
 
 use crate::state::State;
 
@@ -432,16 +434,18 @@ fn guard_event_horizon_caller() -> Result<(), String> {
 // Wake-up economics are independent of staking commitment eligibility (min_tx_e8s).
 const EVENT_HORIZON_POKE_MIN_AMOUNT_E8S: u64 = 100_000_000;
 
-fn has_relevant_event_horizon_match(matches: &[EventHorizonPokeMatch]) -> bool {
+fn has_relevant_event_horizon_match(matches: &[EventHorizonPokeMatch], subject: Principal) -> bool {
     let minimum = candid::Nat::from(EVENT_HORIZON_POKE_MIN_AMOUNT_E8S);
     matches.iter().any(|item| {
-        matches!(item.target, EventHorizonPokeTarget::Subaccount(0)) && item.max_amount >= minimum
+        item.subject == subject
+            && matches!(item.target, EventHorizonPokeTarget::Subaccount(0))
+            && item.max_amount >= minimum
     })
 }
 
 #[ic_cdk::update(guard = "guard_event_horizon_caller")]
-fn poke(matches: Vec<EventHorizonPokeMatch>) {
-    if has_relevant_event_horizon_match(&matches) {
+fn poke(notification: EventHorizonPokeNotification) {
+    if has_relevant_event_horizon_match(&notification.matches, ic_cdk::api::canister_self()) {
         scheduler::handle_event_horizon_poke();
     }
 }
@@ -1442,7 +1446,7 @@ fn production_event_horizon_policy_is_enabled_and_exact() {
         &[0, 0, 0, 0, 2, 48, 15, 70, 1, 1,]
     )));
     let did = include_str!("../jupiter_faucet.did");
-    assert!(did.contains("poke : (vec EventHorizonPokeMatch) -> ();"));
+    assert!(did.contains("poke : (EventHorizonPokeNotification) -> ();"));
     assert!(!did.contains("debug_"));
     assert_committed_did_matches_rust_service("jupiter_faucet.did");
 }
@@ -1455,54 +1459,68 @@ fn debug_event_horizon_policy_accepts_only_exact_fixture() {
     assert!(event_horizon_caller_is_whitelisted(exact));
     assert!(!event_horizon_caller_is_whitelisted(near));
     let item = |target| EventHorizonPokeMatch {
+        subject: Principal::management_canister(),
         first_block_index: 17,
         target,
         max_amount: candid::Nat::from(100_000_000u64),
     };
-    assert!(!has_relevant_event_horizon_match(&[]));
-    assert!(!has_relevant_event_horizon_match(&[item(
-        EventHorizonPokeTarget::Subaccount(7)
-    )]));
-    assert!(!has_relevant_event_horizon_match(&[item(
-        EventHorizonPokeTarget::NeuronNonce(0)
-    )]));
-    assert!(has_relevant_event_horizon_match(&[item(
-        EventHorizonPokeTarget::Subaccount(0)
-    )]));
+    assert!(!has_relevant_event_horizon_match(
+        &[],
+        Principal::management_canister()
+    ));
+    assert!(!has_relevant_event_horizon_match(
+        &[item(EventHorizonPokeTarget::Subaccount(7))],
+        Principal::management_canister()
+    ));
+    assert!(!has_relevant_event_horizon_match(
+        &[item(EventHorizonPokeTarget::NeuronNonce(0))],
+        Principal::management_canister()
+    ));
+    assert!(has_relevant_event_horizon_match(
+        &[item(EventHorizonPokeTarget::Subaccount(0))],
+        Principal::management_canister()
+    ));
     assert_committed_did_matches_rust_service("jupiter_faucet_debug.did");
 }
 
 #[test]
 fn event_horizon_amount_policy_is_local_to_the_approved_target() {
     let item = |target, max_amount| EventHorizonPokeMatch {
+        subject: Principal::management_canister(),
         target,
         first_block_index: 17,
         max_amount,
     };
     for amount in [0_u64, 1, 99_999_999, 100_000_000, 100_000_001] {
         assert_eq!(
-            has_relevant_event_horizon_match(&[item(
-                EventHorizonPokeTarget::Subaccount(0),
-                candid::Nat::from(amount),
-            )]),
+            has_relevant_event_horizon_match(
+                &[item(
+                    EventHorizonPokeTarget::Subaccount(0),
+                    candid::Nat::from(amount),
+                )],
+                Principal::management_canister()
+            ),
             amount >= 100_000_000,
             "local wake-up policy for {amount} e8s"
         );
     }
     let huge: candid::Nat = "184467440737095516160000000000000000000".parse().unwrap();
-    assert!(has_relevant_event_horizon_match(&[item(
-        EventHorizonPokeTarget::Subaccount(0),
-        huge.clone()
-    )]));
-    assert!(!has_relevant_event_horizon_match(&[]));
+    assert!(has_relevant_event_horizon_match(
+        &[item(EventHorizonPokeTarget::Subaccount(0), huge.clone())],
+        Principal::management_canister()
+    ));
+    assert!(!has_relevant_event_horizon_match(
+        &[],
+        Principal::management_canister()
+    ));
     for target in [
         EventHorizonPokeTarget::Subaccount(7),
         EventHorizonPokeTarget::NeuronNonce(0),
     ] {
-        assert!(!has_relevant_event_horizon_match(&[item(
-            target,
-            huge.clone()
-        )]));
+        assert!(!has_relevant_event_horizon_match(
+            &[item(target, huge.clone())],
+            Principal::management_canister()
+        ));
     }
     let mut mixed = vec![
         item(EventHorizonPokeTarget::Subaccount(7), huge.clone()),
@@ -1512,10 +1530,30 @@ fn event_horizon_amount_policy_is_local_to_the_approved_target() {
             candid::Nat::from(99_999_999_u64),
         ),
     ];
-    assert!(!has_relevant_event_horizon_match(&mixed));
+    assert!(!has_relevant_event_horizon_match(
+        &mixed,
+        Principal::management_canister()
+    ));
     mixed.push(item(
         EventHorizonPokeTarget::Subaccount(0),
         candid::Nat::from(100_000_000_u64),
     ));
-    assert!(has_relevant_event_horizon_match(&mixed));
+    assert!(has_relevant_event_horizon_match(
+        &mixed,
+        Principal::management_canister()
+    ));
+}
+
+#[test]
+fn event_horizon_other_subject_cannot_trigger_our_worker() {
+    let subject = Principal::management_canister();
+    let mut item = EventHorizonPokeMatch {
+        subject: Principal::anonymous(),
+        target: EventHorizonPokeTarget::Subaccount(0),
+        first_block_index: u64::MAX,
+        max_amount: candid::Nat::from(u128::MAX),
+    };
+    assert!(!has_relevant_event_horizon_match(&[item.clone()], subject));
+    item.subject = subject;
+    assert!(has_relevant_event_horizon_match(&[item], subject));
 }

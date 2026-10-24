@@ -76,7 +76,9 @@ A newly installed Relay is a replenishment controller, not an initial rescue mec
 
 ## Event Horizon acceleration
 
-Relay uses the single declaration `E.u2qkpaqaaaaaaarqb7eacai.0-90`. Event Horizon expands that numeric subaccount range, while Relay reacts only to actual subaccounts `0`, `1`, `10`, `20`, `30`, `40`, `50`, `60`, `70`, `80`, and `90`; intermediate matches such as `37` are ignored. The required callback record contains `target`, `first_block_index : nat64`, and `max_amount : nat`. The index and amount aggregate independently and are only hints; neither changes a durable cursor or financial decision. Verify the deployed Event Horizon sender supports this ABI before upgrading Jupiter. A relevant callback runs fixed splitters, subaccount-1 Faucet forwarding, and then resumes an already-active default allocation job if one exists.
+Relay uses the single declaration `E.u2qkpaqaaaaaaarqb7eacai.0-90`. Event Horizon expands that numeric subaccount range, while Relay requires `subject` equal to its own principal and reacts only to actual subaccounts `0`, `1`, `10`, `20`, `30`, `40`, `50`, `60`, `70`, `80`, and `90`; intermediate matches such as `37` are ignored. The callback receives `{ global_activity : bool; matches : vec PokeMatch }`; each match contains `subject : principal`, `target`, `first_block_index : nat64`, and `max_amount : nat`. Global-only notifications are ignored, while a valid specific match remains eligible when `global_activity` is true. The index and amount aggregate independently and are only hints; neither changes a durable cursor or financial decision. Verify the deployed Event Horizon sender supports this ABI before upgrading Jupiter. A relevant callback runs fixed splitters, subaccount-1 Faucet forwarding, and then resumes an already-active default allocation job if one exists.
+
+Inventory installed controllerless children and their callback ABIs before coordinating the breaking Event Horizon rollout. Finalized children retain their immutable code; the updated factory template applies to new children. Older children with a vector callback may rely solely on their independent periodic processing after the sender adopts the notification wrapper. This release adds no dual-ABI route and does not modify existing children or their controllers.
 
 A poke never starts a new default allocation job, takes a fresh cycles sample, establishes a burn baseline, or makes a new infrastructure-demand or surplus decision. Subaccount `0` is therefore intentionally relevant: existing active jobs may resume using their pinned economic plan, while new default-account funds remain for the next ordinary daily sample. Poke neither runs the independent SNS reward sweep nor advances Relay's daily cadence, and all durable splitter fencing and quarantine rules remain unchanged.
 
@@ -312,7 +314,7 @@ Relay's sole production post-init method is the permissioned Event Horizon `poke
 
 ```did
 service : (InitArgs) -> {
-  poke : (vec EventHorizonPokeMatch) -> ();
+  poke : (EventHorizonPokeNotification) -> ();
 }
 ```
 
@@ -366,7 +368,7 @@ type InitArgs = record {
   surplus_neuron_recipients : vec SurplusNeuronRecipient;
 };
 service : (InitArgs) -> {
-  poke : (vec EventHorizonPokeMatch) -> ();
+  poke : (EventHorizonPokeNotification) -> ();
 };
 ```
 

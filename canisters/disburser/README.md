@@ -46,7 +46,9 @@ Both can be overridden at install time. Status and cycles observation is provide
 
 ## Event Horizon acceleration
 
-Event Horizon (`eo6ei-gaaaa-aaaar-qchra-cai`) calls the target-aware `poke(vec PokeMatch)` callback. `subaccount(0)`, declared as `E.uccpicqaaaaaaarqby3qcai.0`, accelerates the existing staging payout path. `neuron_nonce(0)`, declared as `E.uccpicqaaaaaaarqby3qcai.n0:1`, identifies the Jupiter Faucet neuron staking account derived from Disburser as controller with nonce zero; `n0` is not neuron ID `11614578985374291210`. The minimum relevant `first_block_index` and greatest `max_amount` are aggregated independently and forwarded immediately to Historian through the same target-aware `poke(vec PokeMatch)` ABI as a one-element `neuron_nonce(0)` vector. Historian currently authorizes Disburser rather than Event Horizon directly, and forwarding remains best-effort one-way with no retry or journal. The staging worker still checks Governance and proceeds only when no maturity disbursement is in progress. The required callback record contains `target`, `first_block_index : nat64`, and `max_amount : nat`. The index and amount can describe different transfers; neither advances accounting cursors or authorizes payment. Verify the deployed Event Horizon sender supports this three-field ABI before upgrading Jupiter; GitHub source alone does not establish installed compatibility. Neither hint changes normal Disburser or Historian polling, which remain authoritative.
+Event Horizon (`eo6ei-gaaaa-aaaar-qchra-cai`) calls `poke(PokeNotification)`, containing `global_activity : bool` and `matches : vec PokeMatch`. Each match has `subject : principal`, `target`, `first_block_index : nat64`, and arbitrary-precision `max_amount : nat`. Disburser requires its own subject and `subaccount(0)`, declared as `E.uccpicqaaaaaaarqby3qcai.0`. Other subjects, neuron targets and global-only notifications return without scheduling staging work; a valid specific match remains eligible when the global flag is true. There is no additional local amount threshold. The staging worker checks Governance and proceeds only when no maturity disbursement is in progress. Index and amount are hints, never authority to advance accounting or pay. Verify the deployed Event Horizon sender supports this record ABI before upgrading Jupiter.
+
+Disburser does not forward staking notifications. Historian receives its independent direct Event Horizon subscription, documented in [Historian's README](../historian/README.md#staking-wake-up-notifications). Already admitted neuron subscriptions may continue sending hints under Event Horizon's permanent policy; Disburser ignores those matches. Documentation does not remove or modify subscriptions. Normal periodic processing remains authoritative.
 
 ## Runtime model
 
@@ -259,7 +261,7 @@ The [faucet production install args](../faucet/mainnet-install-args.did) separat
 
 ## Public interface
 
-Production builds expose exactly the permissioned Event Horizon `poke(vec PokeMatch)` callback and no user or administrator methods.
+Production builds expose exactly the permissioned Event Horizon `poke(PokeNotification)` callback and no user or administrator methods.
 
 Debug-only methods are gated behind the `debug_api` feature and are intended for local integration and PocketIC tests only. Debug builds also check the embedded production canister ID at runtime and reject debug API use when the canister principal is the production disburser principal. The operational model treats that production-principal guard as sufficient: debug builds must not be installed on production canister IDs, production canister IDs reject debug API use, and a newly deployed canister with debug APIs is a separate non-production/debug deployment. No additional caller-authorization layer is desired for these debug surfaces. The committed debug Candid file is:
 

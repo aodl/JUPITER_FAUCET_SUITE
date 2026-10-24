@@ -43,10 +43,10 @@ EXPECTED_HISTORIAN_RELAY_CYCLE_SAFETY_MARGIN_E8S = 5_000_000
 EXPECTED_HISTORIAN_RELAY_MIN_SUBACCOUNT_ONE_SEED_E8S = 100_020_000
 # Canonical remediation candidate pins; production approval is a separate review.
 REVIEWED_HISTORIAN_RELAY_RAW_WASM_SHA256 = (
-    "c4475d21140e2d5652728bbf0ea06bbe9f97d58faccc0d5a48dfb34ba9da2f93"
+    "8db17b838a57e67c733b4d5d2ff098e07242e9d41784c35396f834ba0991b661"
 )
 REVIEWED_HISTORIAN_RELAY_INSTALL_PAYLOAD_SHA256 = (
-    "f1cbf4ef71ac77c0df704b759b0be8afbf87ca52ed6d22e75c480c556549b13c"
+    "221765e5940e3d0721dac7677f0294e05f616a6d91385f984c59a34ceb71cde0"
 )
 EXPECTED_RELAY_MANAGED = {
     PROD["jupiter_disburser"],
@@ -412,12 +412,15 @@ def validate_relay_prod_did(path: Path) -> None:
             f"got methods {sorted(methods)}"
         )
     if not re.search(
-        r"(?m)^\s*poke\s*:\s*\(\s*vec\s+EventHorizonPokeMatch\s*\)\s*->\s*\(\s*\)\s*;",
+        r"(?m)^\s*poke\s*:\s*\(\s*EventHorizonPokeNotification\s*\)\s*->\s*\(\s*\)\s*;",
         body,
     ):
-        fail(f"{path} relay poke must have signature (vec EventHorizonPokeMatch) -> ()")
+        fail(f"{path} relay poke must have signature (EventHorizonPokeNotification) -> ()")
     require_contains(text, "subaccount : nat64", str(path))
     require_contains(text, "neuron_nonce : nat64", str(path))
+    require_contains(text, "subject : principal", str(path))
+    require_contains(text, "global_activity : bool", str(path))
+    require_contains(text, "matches : vec EventHorizonPokeMatch", str(path))
     require_contains(text, "first_block_index : nat64", str(path))
     require_contains(text, "max_amount : nat", str(path))
     forbidden = [
@@ -1152,6 +1155,26 @@ def validate_relay() -> None:
 
 
 def run_self_tests() -> None:
+    from unittest.mock import patch
+
+    relay_did_path = REPO_ROOT / "canisters" / "relay" / "jupiter_relay.did"
+    relay_did = relay_did_path.read_text()
+    validate_relay_prod_did(relay_did_path)
+    for original, obsolete in [
+        ("poke : (EventHorizonPokeNotification)", "poke : (vec EventHorizonPokeMatch)"),
+        ("subject : principal;", ""),
+        ("global_activity : bool;", ""),
+        ("matches : vec EventHorizonPokeMatch;", ""),
+    ]:
+        if original not in relay_did:
+            fail(f"self-test fixture lacks {original}")
+        with patch.object(Path, "read_text", return_value=relay_did.replace(original, obsolete)):
+            try:
+                validate_relay_prod_did(relay_did_path)
+            except SystemExit:
+                pass
+            else:
+                fail(f"self-test accepted obsolete or incomplete poke contract: {original}")
     path = Path("relay-test.did")
     if null_field_error("blackhole_canister_id = null;", "blackhole_canister_id", path):
         fail("self-test unexpectedly rejected canonical Relay Auto configuration")
