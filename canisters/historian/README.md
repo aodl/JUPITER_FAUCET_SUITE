@@ -57,10 +57,15 @@ signature. Consumers should use the normal replicated inter-canister response fr
 the trusted Historian principal. Event Horizon polling, caching and subscription
 admission belong to the Event Horizon repository.
 
-Before a Jupiter deployment, verify that the running Event Horizon sender uses the
-required three-field callback (`target`, `first_block_index : nat64`, `max_amount : nat`).
-The index and maximum may refer to different transactions; neither authorizes a
-cursor advance or payment. A GitHub revision does not prove installed compatibility.
+Before a Jupiter deployment, verify that the deployed Event Horizon sender supports
+`poke(PokeNotification)`, with `global_activity : bool` and `matches : vec PokeMatch`.
+Each match includes `subject : principal`, `target`, `first_block_index : nat64` and
+`max_amount : nat`. Historian accepts only authenticated Event Horizon notifications
+for Disburser's `neuron_nonce(0)` meeting its configured `min_tx_e8s`; the global flag
+alone does not authorize reconciliation. The index and maximum may refer to different
+transactions and are non-authoritative hints, never permission to advance accounting
+cursors or pay. A compatible GitHub revision does not prove the running sender was upgraded.
+
 Current operational examples in Event Horizon should use Jupiter's `E.` payment
 prefix; its backend receives only the unprefixed declaration. Documentation changes
 do not create or alter live subscriptions, and an admitted less restrictive threshold
