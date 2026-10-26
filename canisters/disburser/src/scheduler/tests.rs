@@ -1163,10 +1163,17 @@ mod tests {
         ));
         assert!(poll_once(callback.as_mut()).is_pending());
         run_ready(attempt(true, D + 120));
+        let completed_calls = calls();
+        assert!(completed_calls > 0);
         run_ready(run_scheduled_main_tick(attempt(false, 2 * D), &schedule));
         let successor = timers.borrow_mut().pop().unwrap();
         ready.set(true);
         run_ready(callback);
+        assert_eq!(
+            calls(),
+            completed_calls,
+            "stale completion performs no client work"
+        );
         assert!(reserve_scheduled_main_retry().is_none());
         run_ready(run_scheduled_main_retry(
             successor,
@@ -1174,6 +1181,10 @@ mod tests {
             &schedule,
         ));
         assert_eq!(state::with_state(|st| st.last_main_run_ts), 2 * D + 60);
+        assert!(
+            calls() > completed_calls,
+            "the successor still performs client work"
+        );
         assert!(timers.borrow().is_empty());
     }
 

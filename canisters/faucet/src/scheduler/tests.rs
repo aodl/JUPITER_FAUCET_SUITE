@@ -1267,8 +1267,8 @@ mod tests {
         let mut st = state::State::new(cfg.clone(), 0);
         st.last_main_run_ts = 0;
         state::set_state(st);
-        let ledger = BalanceRecordingLedger::new(0, 0, 0, vec![]);
-        let index = RecordingIndex::new(vec![]);
+        let ledger = BalanceRecordingLedger::new(10_000, 100_000_000, 100_000_000, vec![]);
+        let index = ScriptedIndex::new(vec![IndexResponseStep::Err, IndexResponseStep::Err]);
         let cmc = ScriptedCmc::new(vec![]);
         let attempt = |force, now| {
             run_main_tick_with_clients(
@@ -1285,6 +1285,7 @@ mod tests {
         let calls = || ledger.read_calls.load(Ordering::SeqCst);
         let timers = std::cell::RefCell::new(Vec::new());
         let schedule = |reservation| timers.borrow_mut().push(reservation);
+        take_test_logs();
         let busy = MainGuard::acquire(D).unwrap();
         assert_eq!(
             run_ready(run_scheduled_main_tick(attempt(false, D), &schedule)),
@@ -1312,6 +1313,11 @@ mod tests {
             &schedule,
         ));
         assert_eq!(state::with_state(|st| st.last_main_run_ts), D + 120);
+        assert!(
+            take_test_logs().iter().any(|line| line == "ERR:3001"),
+            "the admitted attempt must actually exercise an operational failure"
+        );
+        assert_eq!(index.steps.lock().unwrap().len(), 1);
         let completed_calls = calls();
         assert!(completed_calls > 0);
         assert!(
@@ -1333,6 +1339,7 @@ mod tests {
             completed_calls,
             "Deferred performs no external work"
         );
+        assert_eq!(index.steps.lock().unwrap().len(), 1);
         let retry = timers
             .borrow_mut()
             .pop()
@@ -1349,6 +1356,10 @@ mod tests {
             "the scheduled retry actually calls the clients before 3D"
         );
         assert!(timers.borrow().is_empty());
+        assert!(index.steps.lock().unwrap().is_empty());
+        assert!(take_test_logs().iter().any(|line| line == "ERR:3001"));
+        assert!(ledger.transfer_amounts().is_empty());
+        assert_eq!(cmc.call_count(), 0);
     }
 
     #[test]
@@ -1459,10 +1470,17 @@ mod tests {
         ));
         assert!(poll_once(callback.as_mut()).is_pending());
         run_ready(attempt(true, D + 120));
+        let completed_calls = calls();
+        assert!(completed_calls > 0);
         run_ready(run_scheduled_main_tick(attempt(false, 2 * D), &schedule));
         let successor = timers.borrow_mut().pop().unwrap();
         ready.set(true);
         run_ready(callback);
+        assert_eq!(
+            calls(),
+            completed_calls,
+            "stale completion performs no client work"
+        );
         assert!(reserve_scheduled_main_retry().is_none());
         run_ready(run_scheduled_main_retry(
             successor,
@@ -1470,6 +1488,10 @@ mod tests {
             &schedule,
         ));
         assert_eq!(state::with_state(|st| st.last_main_run_ts), 2 * D + 60);
+        assert!(
+            calls() > completed_calls,
+            "the successor still performs client work"
+        );
         assert!(timers.borrow().is_empty());
     }
 
