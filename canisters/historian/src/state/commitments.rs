@@ -82,6 +82,8 @@ pub(super) fn load_stable_commitment_history_internal(
                     .into_iter()
                     .filter_map(|tx_id| {
                         with_commitment_entry_map(|entry_map| {
+                            #[cfg(test)]
+                            COMMITMENT_SAMPLE_READS.with(|reads| reads.set(reads.get() + 1));
                             entry_map.get(&CommitmentEntryKey::new(canister_id, tx_id))
                         })
                     })
@@ -147,4 +149,14 @@ pub(super) fn load_stable_cycles_history_internal(canister_id: Principal) -> Vec
             })
             .unwrap_or_default()
     })
+}
+
+#[cfg(test)]
+thread_local! {
+    static COMMITMENT_SAMPLE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn take_commitment_sample_reads_for_test_internal() -> u64 {
+    COMMITMENT_SAMPLE_READS.with(|reads| reads.replace(0))
 }

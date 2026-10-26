@@ -1451,6 +1451,58 @@ mod tests {
     }
 
     #[test]
+    fn public_membership_counts_do_not_decode_retained_commitment_samples() {
+        let mut st = base_state();
+        for i in 0..128u8 {
+            let canister = Principal::from_slice(&[i, 1]);
+            st.canister_tracking_reasons.insert(
+                canister,
+                BTreeSet::from([
+                    CanisterTrackingReason::MemoCommitment,
+                    CanisterTrackingReason::RelayTarget,
+                ]),
+            );
+            st.commitment_history.insert(
+                canister,
+                (0..100)
+                    .map(|tx_id| CommitmentSample {
+                        tx_id,
+                        timestamp_nanos: None,
+                        amount_e8s: 100_000_000,
+                        counts_toward_faucet: true,
+                        raw_icp_destination_subaccount: None,
+                    })
+                    .collect(),
+            );
+        }
+        st.canister_tracking_reasons.insert(
+            Principal::from_slice(&[128, 1]),
+            BTreeSet::from([CanisterTrackingReason::SnsDiscovery]),
+        );
+        st.canister_tracking_reasons.insert(
+            Principal::from_slice(&[129, 1]),
+            BTreeSet::from([CanisterTrackingReason::RelayInstance]),
+        );
+        st.canister_tracking_reasons
+            .insert(Principal::from_slice(&[130, 1]), BTreeSet::new());
+        // Metadata-only subjects are not tracked memberships.
+        st.distinct_canisters
+            .insert(Principal::from_slice(&[131, 1]));
+        state::set_state(st);
+        state::clear_loaded_history_caches_after_flush();
+        state::take_commitment_sample_reads_for_test();
+        let counts = get_public_counts();
+        assert_eq!(counts.memo_registered_canister_count, 128);
+        assert_eq!(counts.tracked_canister_count, 130);
+        let reads = state::take_commitment_sample_reads_for_test();
+        eprintln!("128 x 100 retained history: registered=128 tracked=130 sample_reads={reads}");
+        assert_eq!(
+            reads, 0,
+            "membership counts must not decode retained display histories"
+        );
+    }
+
+    #[test]
     fn get_public_counts_surfaces_expected_frontend_metrics() {
         let memo_canister = principal("rrkah-fqaaa-aaaaa-aaaaq-cai");
         let sns_only = principal("ryjl3-tyaaa-aaaaa-aaaba-cai");
@@ -1517,6 +1569,8 @@ mod tests {
             }],
         );
         state::set_state(st);
+        state::with_state_mut(normalize_runtime_state);
+        state::with_state(|st| assert!(!st.canister_tracking_reasons.contains_key(&memo_canister)));
 
         let counts = get_public_counts();
         assert_eq!(counts.tracked_canister_count, 0);

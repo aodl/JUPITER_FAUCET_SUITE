@@ -367,3 +367,8 @@ pub(crate) fn with_root_registry_and_cycles_canister_state_mut<R>(
         f,
     )
 }
+
+#[cfg(test)]
+pub(crate) fn take_commitment_sample_reads_for_test() -> u64 {
+    take_commitment_sample_reads_for_test_internal()
+}

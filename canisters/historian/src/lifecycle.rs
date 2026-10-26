@@ -161,15 +161,15 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
 
 pub(super) fn count_registered_canisters(st: &State) -> u64 {
     st.canister_tracking_reasons
-        .iter()
-        .filter(|(canister_id, sources)| memo_source_is_registered(st, canister_id, sources))
+        .values()
+        .filter(|sources| sources.contains(&CanisterTrackingReason::MemoCommitment))
         .count() as u64
 }
 
 pub(super) fn count_tracked_canisters(st: &State) -> u64 {
     st.canister_tracking_reasons
-        .keys()
-        .filter(|canister_id| visible_tracking_reasons_for_canister(st, canister_id).is_some())
+        .values()
+        .filter(|sources| !sources.is_empty())
         .count() as u64
 }
 
