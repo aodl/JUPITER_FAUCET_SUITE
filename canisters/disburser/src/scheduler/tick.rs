@@ -179,17 +179,14 @@ pub(super) async fn run_scheduled_main_tick(
 }
 
 fn schedule_scheduled_main_retry(reservation: u64, retry_after_seconds: u64) {
-    ic_cdk_timers::set_timer(
-        Duration::from_secs(retry_after_seconds),
-        async move {
-            run_scheduled_main_retry(
-                reservation,
-                || main_tick(false),
-                schedule_scheduled_main_retry,
-            )
-            .await;
-        },
-    );
+    ic_cdk_timers::set_timer(Duration::from_secs(retry_after_seconds), async move {
+        run_scheduled_main_retry(
+            reservation,
+            || main_tick(false),
+            schedule_scheduled_main_retry,
+        )
+        .await;
+    });
 }
 
 pub(super) async fn run_scheduled_main_retry<F: std::future::Future<Output = MainTickOutcome>>(
