@@ -16,7 +16,7 @@ thread_local! {
 pub(super) enum MainTickOutcome {
     Completed,
     MainGuardBusy,
-    Deferred,
+    Deferred(u64),
 }
 pub(super) struct MainGuard {
     inner: TimerLeaseGuard,
@@ -161,25 +161,26 @@ async fn scheduled_main_tick() {
 // Keep the production admission decision and callback wiring testable with existing clients.
 pub(super) async fn run_scheduled_main_tick(
     run: impl std::future::Future<Output = MainTickOutcome>,
-    schedule: impl FnOnce(u64),
+    schedule: impl FnOnce(u64, u64),
 ) -> MainTickOutcome {
     let marker = MAIN_RUN_MARKER.with(Cell::get);
     let outcome = run.await;
-    if matches!(
-        outcome,
-        MainTickOutcome::MainGuardBusy | MainTickOutcome::Deferred
-    ) && MAIN_RUN_MARKER.with(Cell::get) == marker
-    {
+    let retry_after_seconds = match outcome {
+        MainTickOutcome::Completed => return outcome,
+        MainTickOutcome::MainGuardBusy => SCHEDULED_MAIN_RETRY_SECONDS,
+        MainTickOutcome::Deferred(remaining) => remaining,
+    };
+    if MAIN_RUN_MARKER.with(Cell::get) == marker {
         if let Some(reservation) = reserve_scheduled_main_retry() {
-            schedule(reservation);
+            schedule(reservation, retry_after_seconds);
         }
     }
     outcome
 }
 
-fn schedule_scheduled_main_retry(reservation: u64) {
+fn schedule_scheduled_main_retry(reservation: u64, retry_after_seconds: u64) {
     ic_cdk_timers::set_timer(
-        Duration::from_secs(SCHEDULED_MAIN_RETRY_SECONDS),
+        Duration::from_secs(retry_after_seconds),
         async move {
             run_scheduled_main_retry(
                 reservation,
@@ -194,7 +195,7 @@ fn schedule_scheduled_main_retry(reservation: u64) {
 pub(super) async fn run_scheduled_main_retry<F: std::future::Future<Output = MainTickOutcome>>(
     reservation: u64,
     run: impl FnOnce() -> F,
-    schedule: impl FnOnce(u64),
+    schedule: impl FnOnce(u64, u64),
 ) {
     let owns = SCHEDULED_MAIN_RETRY_PENDING.with(|pending| {
         if pending.get() != Some(reservation) {
@@ -259,12 +260,14 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
 
     if !force {
         // duplicate suppression if timer fires twice closely
-        let min_gap = state::with_state(|st| st.config.main_interval_seconds.saturating_sub(60));
-        let recently_ran =
-            state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
-        if recently_ran {
+        let remaining = state::with_state(|st| {
+            st.last_main_run_ts
+                .saturating_add(st.config.main_interval_seconds.saturating_sub(60))
+                .saturating_sub(now_secs)
+        });
+        if remaining > 0 {
             drop(guard);
-            return MainTickOutcome::Deferred;
+            return MainTickOutcome::Deferred(remaining);
         }
     }
 

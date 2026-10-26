@@ -61,7 +61,7 @@ Default timers are:
 
 Each timer interval is clamped to at least 60 seconds by the runtime code.
 
-Scheduled main calls that find a busy lease or arrive before the cadence gate opens share one heap-only minute retry intent. A too-early call releases its lease without advancing `last_main_run_ts` or performing external work. An admitted main attempt retires older admission retries; completion also retires hints received while that attempt was active, including handled operational failures. Stale callbacks cannot consume a newer reservation. This retry concerns scheduler admission, not repeated financial settlement. Timer jitter, dependency failures and an occupied lease can still delay the daily attempt; execution at an exact wall-clock time is not guaranteed.
+Scheduled main calls share one heap-only admission retry intent. A busy lease retries after 60 seconds. A too-early call releases its lease without advancing `last_main_run_ts` or performing external work, and schedules its retry for the remaining time until `last_main_run_ts + main_interval_seconds.saturating_sub(60)`. An admitted main attempt retires older admission retries; completion also retires hints received while that attempt was active, including handled operational failures. Stale callbacks cannot consume a newer reservation. This retry concerns scheduler admission, not repeated financial settlement. Timer jitter, dependency failures and an occupied lease can still delay the daily attempt; execution at an exact wall-clock time is not guaranteed.
 
 
 ### Runtime config verification

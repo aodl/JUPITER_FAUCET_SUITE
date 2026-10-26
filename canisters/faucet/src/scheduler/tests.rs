@@ -1284,7 +1284,10 @@ mod tests {
         };
         let calls = || ledger.read_calls.load(Ordering::SeqCst);
         let timers = std::cell::RefCell::new(Vec::new());
-        let schedule = |reservation| timers.borrow_mut().push(reservation);
+        let schedule = |reservation, delay| {
+            assert_eq!(delay, SCHEDULED_MAIN_RETRY_SECONDS);
+            timers.borrow_mut().push(reservation);
+        };
         take_test_logs();
         let busy = MainGuard::acquire(D).unwrap();
         assert_eq!(
@@ -1327,7 +1330,7 @@ mod tests {
 
         assert_eq!(
             run_ready(run_scheduled_main_tick(attempt(false, 2 * D), &schedule)),
-            MainTickOutcome::Deferred
+            MainTickOutcome::Deferred(60)
         );
         assert_eq!(
             state::with_state(|st| st.last_main_run_ts),
@@ -1363,6 +1366,88 @@ mod tests {
     }
 
     #[test]
+    fn forced_run_before_daily_timer_defers_once_until_due_without_minute_polling() {
+        const D: u64 = 86_400;
+        clear_scheduled_main_retry();
+        let mut cfg = test_config();
+        cfg.main_interval_seconds = D;
+        state::set_state(state::State::new(cfg.clone(), 0));
+        let ledger = BalanceRecordingLedger::new(0, 0, 0, vec![]);
+        let index = RecordingIndex::new(vec![]);
+        let cmc = ScriptedCmc::new(vec![]);
+        let attempt = |force, now| {
+            run_main_tick_with_clients(
+                force,
+                now * 1_000_000_000,
+                now,
+                &ledger,
+                &index,
+                &cmc,
+                &NoopGovernance,
+                &crate::clients::canister_info::NoopCanisterStatusClient,
+            )
+        };
+        let calls = || ledger.read_calls.load(Ordering::SeqCst);
+        let timers = std::cell::RefCell::new(Vec::new());
+        let schedule = |reservation, delay| timers.borrow_mut().push((reservation, delay));
+        assert_eq!(run_ready(attempt(true, D - 1)), MainTickOutcome::Completed);
+        let forced_calls = calls();
+        assert!(forced_calls > 0);
+        run_ready(run_scheduled_main_tick(attempt(false, D), &schedule));
+        let due = (D - 1) + (D - 60);
+        assert_eq!(timers.borrow().len(), 1);
+        assert_eq!(
+            timers.borrow()[0].1,
+            due - D,
+            "Deferred must schedule the known due time, not another minute poll"
+        );
+        for now in [D + 1, D + 60, due - 1] {
+            run_ready(run_scheduled_main_tick(attempt(false, now), &schedule));
+            assert_eq!(timers.borrow().len(), 1, "duplicate requests coalesce");
+        }
+        assert_eq!(calls(), forced_calls);
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), D - 1);
+        let (first, delay) = timers.borrow_mut().pop().unwrap();
+        run_ready(run_scheduled_main_retry(
+            first,
+            || attempt(false, D + delay),
+            &schedule,
+        ));
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), due);
+        assert!(
+            calls() > forced_calls,
+            "the delayed callback performs actual client work"
+        );
+        assert!(timers.borrow().is_empty());
+
+        // The next anchored daily invocation also waits directly for its due time.
+        let completed_calls = calls();
+        run_ready(run_scheduled_main_tick(attempt(false, 2 * D), &schedule));
+        let next_due = due + (D - 60);
+        assert_eq!(timers.borrow().len(), 1);
+        assert_eq!(timers.borrow()[0].1, next_due - 2 * D);
+        let (successor, delay) = timers.borrow_mut().pop().unwrap();
+        run_ready(run_scheduled_main_retry(
+            first,
+            || async { panic!("obsolete callback performed work") },
+            &schedule,
+        ));
+        assert!(
+            reserve_scheduled_main_retry().is_none(),
+            "successor remains reserved"
+        );
+        assert_eq!(calls(), completed_calls);
+        run_ready(run_scheduled_main_retry(
+            successor,
+            || attempt(false, 2 * D + delay),
+            &schedule,
+        ));
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), next_due);
+        assert!(calls() > completed_calls);
+        assert!(timers.borrow().is_empty());
+    }
+
+    #[test]
     fn obsolete_scheduled_retry_cannot_poll_or_clear_a_newer_intent() {
         const D: u64 = 86_400;
         clear_scheduled_main_retry();
@@ -1388,7 +1473,7 @@ mod tests {
         };
         let calls = || ledger.read_calls.load(Ordering::SeqCst);
         let timers = std::cell::RefCell::new(Vec::new());
-        let schedule = |reservation| timers.borrow_mut().push(reservation);
+        let schedule = |reservation, _delay| timers.borrow_mut().push(reservation);
         let busy = MainGuard::acquire(D).unwrap();
         run_ready(run_scheduled_main_tick(attempt(false, D), &schedule));
         let old = timers.borrow_mut().pop().unwrap();
@@ -1452,7 +1537,7 @@ mod tests {
         };
         let calls = || ledger.read_calls.load(Ordering::SeqCst);
         let timers = std::cell::RefCell::new(Vec::new());
-        let schedule = |reservation| timers.borrow_mut().push(reservation);
+        let schedule = |reservation, _delay| timers.borrow_mut().push(reservation);
         let old = reserve_scheduled_main_retry().unwrap();
         let ready = std::cell::Cell::new(false);
         let mut callback = Box::pin(run_scheduled_main_retry(
