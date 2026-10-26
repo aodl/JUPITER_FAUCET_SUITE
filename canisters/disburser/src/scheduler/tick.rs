@@ -4,7 +4,10 @@ use std::cell::Cell;
 pub(super) const SCHEDULED_MAIN_RETRY_SECONDS: u64 = 60;
 
 thread_local! {
-    static SCHEDULED_MAIN_RETRY_PENDING: Cell<bool> = const { Cell::new(false) };
+    // A one-shot retry owns the marker it reserved. Main admission/completion
+    // retires older intents; callbacks consume only their own reservation before await.
+    static SCHEDULED_MAIN_RETRY_PENDING: Cell<Option<u64>> = const { Cell::new(None) };
+    static MAIN_RUN_MARKER: Cell<u64> = const { Cell::new(0) };
     #[cfg(test)]
     pub(super) static TEST_NOW_SECONDS: Cell<u64> = const { Cell::new(0) };
 }
@@ -13,6 +16,7 @@ thread_local! {
 pub(super) enum MainTickOutcome {
     Completed,
     MainGuardBusy,
+    Deferred,
 }
 pub(super) struct MainGuard {
     inner: TimerLeaseGuard,
@@ -60,6 +64,7 @@ impl MainGuard {
         }
         state::with_state_mut(|st| {
             if self.inner.release(st.main_lock_state_ts) == LeaseFinish::Released {
+                advance_main_run_marker();
                 st.last_main_run_ts = now_secs;
                 st.main_lock_state_ts = Some(0);
             }
@@ -150,27 +155,85 @@ pub(crate) fn schedule_immediate_rescue_reconcile() {
 /// - logs "CONFIG ..." only when the tick reaches the payout / maturity-disbursement path
 /// - logs only errors otherwise
 async fn scheduled_main_tick() {
-    if main_tick(false).await == MainTickOutcome::MainGuardBusy {
-        schedule_scheduled_main_retry();
-    }
+    run_scheduled_main_tick(main_tick(false), schedule_scheduled_main_retry).await;
 }
 
-fn schedule_scheduled_main_retry() {
-    if !reserve_scheduled_main_retry() {
-        return;
+// Keep the production admission decision and callback wiring testable with existing clients.
+pub(super) async fn run_scheduled_main_tick(
+    run: impl std::future::Future<Output = MainTickOutcome>,
+    schedule: impl FnOnce(u64),
+) -> MainTickOutcome {
+    let marker = MAIN_RUN_MARKER.with(Cell::get);
+    let outcome = run.await;
+    if matches!(
+        outcome,
+        MainTickOutcome::MainGuardBusy | MainTickOutcome::Deferred
+    ) && MAIN_RUN_MARKER.with(Cell::get) == marker
+    {
+        if let Some(reservation) = reserve_scheduled_main_retry() {
+            schedule(reservation);
+        }
     }
-    ic_cdk_timers::set_timer(Duration::from_secs(SCHEDULED_MAIN_RETRY_SECONDS), async {
-        clear_scheduled_main_retry();
-        scheduled_main_tick().await;
+    outcome
+}
+
+fn schedule_scheduled_main_retry(reservation: u64) {
+    ic_cdk_timers::set_timer(
+        Duration::from_secs(SCHEDULED_MAIN_RETRY_SECONDS),
+        async move {
+            run_scheduled_main_retry(
+                reservation,
+                || main_tick(false),
+                schedule_scheduled_main_retry,
+            )
+            .await;
+        },
+    );
+}
+
+pub(super) async fn run_scheduled_main_retry<F: std::future::Future<Output = MainTickOutcome>>(
+    reservation: u64,
+    run: impl FnOnce() -> F,
+    schedule: impl FnOnce(u64),
+) {
+    let owns = SCHEDULED_MAIN_RETRY_PENDING.with(|pending| {
+        if pending.get() != Some(reservation) {
+            return false;
+        }
+        pending.set(None);
+        true
     });
+    if owns && MAIN_RUN_MARKER.with(Cell::get) == reservation {
+        run_scheduled_main_tick(run(), schedule).await;
+    }
 }
 
-pub(super) fn reserve_scheduled_main_retry() -> bool {
-    SCHEDULED_MAIN_RETRY_PENDING.with(|pending| !pending.replace(true))
+pub(super) fn reserve_scheduled_main_retry() -> Option<u64> {
+    let marker = MAIN_RUN_MARKER.with(Cell::get);
+    SCHEDULED_MAIN_RETRY_PENDING.with(|pending| {
+        if pending.get() == Some(marker) {
+            return None;
+        }
+        pending.set(Some(marker));
+        Some(marker)
+    })
 }
 
+fn advance_main_run_marker() {
+    MAIN_RUN_MARKER.with(|marker| {
+        marker.set(
+            marker
+                .get()
+                .checked_add(1)
+                .expect("main run marker exhausted"),
+        )
+    });
+    SCHEDULED_MAIN_RETRY_PENDING.with(|pending| pending.set(None));
+}
+
+#[cfg(test)]
 pub(super) fn clear_scheduled_main_retry() {
-    SCHEDULED_MAIN_RETRY_PENDING.with(|pending| pending.set(false));
+    SCHEDULED_MAIN_RETRY_PENDING.with(|pending| pending.set(None));
 }
 
 pub(super) async fn main_tick(force: bool) -> MainTickOutcome {
@@ -200,11 +263,12 @@ pub(super) async fn run_main_tick_with_clients<L: LedgerClient, G: GovernanceCli
         let recently_ran =
             state::with_state(|st| now_secs.saturating_sub(st.last_main_run_ts) < min_gap);
         if recently_ran {
-            guard.finish(now_secs, None, false);
-            return MainTickOutcome::Completed;
+            drop(guard);
+            return MainTickOutcome::Deferred;
         }
     }
 
+    advance_main_run_marker();
     let mut err: Option<u32> = None;
 
     #[cfg(feature = "debug_api")]

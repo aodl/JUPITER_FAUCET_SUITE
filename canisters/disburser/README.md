@@ -61,6 +61,9 @@ Default timers are:
 
 Each timer interval is clamped to at least 60 seconds by the runtime code.
 
+Scheduled main calls that find a busy lease or arrive before the cadence gate opens share one heap-only minute retry intent. A too-early call releases its lease without advancing `last_main_run_ts` or performing external work. An admitted main attempt retires older admission retries; completion also retires hints received while that attempt was active, including handled operational failures. Stale callbacks cannot consume a newer reservation. This retry concerns scheduler admission, not repeated financial settlement. Timer jitter, dependency failures and an occupied lease can still delay the daily attempt; execution at an exact wall-clock time is not guaranteed.
+
+
 ### Runtime config verification
 
 After verifying that the deployed Wasm matches the source build, users can verify the live install-time config from public canister logs. The disburser emits a single `CONFIG ...` line when a main tick reaches the payout / maturity-disbursement path. Daily timer ticks that only observe an in-flight NNS maturity disbursement still emit the regular `Cycles: ...` health line, but skip the config line; in normal operation this makes config logging follow the slower payout cadence. The line is comma-separated `key=value` text and includes the neuron ID, payout recipient accounts, ledger/governance canister IDs, rescue controller, autonomous-rescue state, and timer intervals.

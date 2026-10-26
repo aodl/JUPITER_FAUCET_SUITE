@@ -966,15 +966,227 @@ mod tests {
     }
 
     #[test]
+    fn delayed_daily_attempt_does_not_consume_the_next_regular_opportunity() {
+        const D: u64 = 86_400;
+        clear_scheduled_main_retry();
+        let mut cfg = test_config();
+        cfg.main_interval_seconds = D;
+        let mut st = state::State::new(cfg.clone(), 0);
+        st.last_main_run_ts = 0;
+        state::set_state(st);
+        let ledger = CountingLedger::new(0);
+        let gov = ScriptedGovernance::new(
+            vec![
+                Err(GovernanceError {
+                    error_type: -1,
+                    error_message: "unavailable".into()
+                });
+                3
+            ],
+            vec![],
+        );
+        let attempt = |force, now| {
+            run_main_tick_with_clients(force, now * 1_000_000_000, now, &cfg, &ledger, &gov)
+        };
+        let calls = || gov.get_full_neuron_calls();
+        let timers = std::cell::RefCell::new(Vec::new());
+        let schedule = |reservation| timers.borrow_mut().push(reservation);
+        let busy = MainGuard::acquire(D).unwrap();
+        assert_eq!(
+            run_ready(run_scheduled_main_tick(attempt(false, D), &schedule)),
+            MainTickOutcome::MainGuardBusy
+        );
+        let first = timers.borrow_mut().pop().unwrap();
+        run_ready(run_scheduled_main_retry(
+            first,
+            || attempt(false, D + 60),
+            &schedule,
+        ));
+        assert_eq!(
+            timers.borrow().len(),
+            1,
+            "still-busy retry reserves one future opportunity"
+        );
+        run_ready(run_scheduled_main_tick(attempt(false, D + 60), &schedule));
+        assert_eq!(timers.borrow().len(), 1, "concurrent requests coalesce");
+        assert_eq!(calls(), 0);
+        drop(busy);
+        let retry = timers.borrow_mut().pop().unwrap();
+        run_ready(run_scheduled_main_retry(
+            retry,
+            || attempt(false, D + 120),
+            &schedule,
+        ));
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), D + 120);
+        let completed_calls = calls();
+        assert!(completed_calls > 0);
+        assert!(
+            timers.borrow().is_empty(),
+            "handled operational errors keep ordinary failure cadence"
+        );
+
+        assert_eq!(
+            run_ready(run_scheduled_main_tick(attempt(false, 2 * D), &schedule)),
+            MainTickOutcome::Deferred
+        );
+        assert_eq!(
+            state::with_state(|st| st.last_main_run_ts),
+            D + 120,
+            "a too-early daily opportunity must not advance the admitted-attempt timestamp"
+        );
+        assert_eq!(
+            calls(),
+            completed_calls,
+            "Deferred performs no external work"
+        );
+        let retry = timers
+            .borrow_mut()
+            .pop()
+            .expect("production decision must schedule Deferred work");
+        assert!(timers.borrow().is_empty());
+        run_ready(run_scheduled_main_retry(
+            retry,
+            || attempt(false, 2 * D + SCHEDULED_MAIN_RETRY_SECONDS),
+            &schedule,
+        ));
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), 2 * D + 60);
+        assert!(
+            calls() > completed_calls,
+            "the scheduled retry actually calls the clients before 3D"
+        );
+        assert!(timers.borrow().is_empty());
+    }
+
+    #[test]
+    fn obsolete_scheduled_retry_cannot_poll_or_clear_a_newer_intent() {
+        const D: u64 = 86_400;
+        clear_scheduled_main_retry();
+        let mut cfg = test_config();
+        cfg.main_interval_seconds = D;
+        let mut st = state::State::new(cfg.clone(), 0);
+        st.last_main_run_ts = 0;
+        state::set_state(st);
+        let ledger = CountingLedger::new(0);
+        let gov = ScriptedGovernance::new(
+            vec![
+                Err(GovernanceError {
+                    error_type: -1,
+                    error_message: "unavailable".into()
+                });
+                3
+            ],
+            vec![],
+        );
+        let attempt = |force, now| {
+            run_main_tick_with_clients(force, now * 1_000_000_000, now, &cfg, &ledger, &gov)
+        };
+        let calls = || gov.get_full_neuron_calls();
+        let timers = std::cell::RefCell::new(Vec::new());
+        let schedule = |reservation| timers.borrow_mut().push(reservation);
+        let busy = MainGuard::acquire(D).unwrap();
+        run_ready(run_scheduled_main_tick(attempt(false, D), &schedule));
+        let old = timers.borrow_mut().pop().unwrap();
+        drop(busy);
+        run_ready(attempt(true, D + 120));
+        let completed_calls = calls();
+        run_ready(run_scheduled_main_retry(
+            old,
+            || async { panic!("obsolete retry ran") },
+            &schedule,
+        ));
+        assert!(
+            timers.borrow().is_empty(),
+            "obsolete callback must not start minute polling"
+        );
+        run_ready(run_scheduled_main_tick(attempt(false, 2 * D), &schedule));
+        let successor = timers.borrow_mut().pop().unwrap();
+        assert_ne!(old, successor);
+        run_ready(run_scheduled_main_retry(
+            old,
+            || async { panic!("stale callback ran") },
+            &schedule,
+        ));
+        assert!(
+            reserve_scheduled_main_retry().is_none(),
+            "stale callback must leave the successor reserved"
+        );
+        assert_eq!(calls(), completed_calls);
+        run_ready(run_scheduled_main_retry(
+            successor,
+            || attempt(false, 2 * D + 60),
+            &schedule,
+        ));
+        assert!(calls() > completed_calls);
+        assert!(timers.borrow().is_empty());
+    }
+
+    #[test]
+    fn scheduled_callback_completion_cannot_discard_an_intent_created_during_await() {
+        const D: u64 = 86_400;
+        clear_scheduled_main_retry();
+        let mut cfg = test_config();
+        cfg.main_interval_seconds = D;
+        let mut st = state::State::new(cfg.clone(), 0);
+        st.last_main_run_ts = 0;
+        state::set_state(st);
+        let ledger = CountingLedger::new(0);
+        let gov = ScriptedGovernance::new(
+            vec![
+                Err(GovernanceError {
+                    error_type: -1,
+                    error_message: "unavailable".into()
+                });
+                3
+            ],
+            vec![],
+        );
+        let attempt = |force, now| {
+            run_main_tick_with_clients(force, now * 1_000_000_000, now, &cfg, &ledger, &gov)
+        };
+        let calls = || gov.get_full_neuron_calls();
+        let timers = std::cell::RefCell::new(Vec::new());
+        let schedule = |reservation| timers.borrow_mut().push(reservation);
+        let old = reserve_scheduled_main_retry().unwrap();
+        let ready = std::cell::Cell::new(false);
+        let mut callback = Box::pin(run_scheduled_main_retry(
+            old,
+            || {
+                std::future::poll_fn(|_| {
+                    if ready.get() {
+                        std::task::Poll::Ready(MainTickOutcome::Completed)
+                    } else {
+                        std::task::Poll::Pending
+                    }
+                })
+            },
+            &schedule,
+        ));
+        assert!(poll_once(callback.as_mut()).is_pending());
+        run_ready(attempt(true, D + 120));
+        run_ready(run_scheduled_main_tick(attempt(false, 2 * D), &schedule));
+        let successor = timers.borrow_mut().pop().unwrap();
+        ready.set(true);
+        run_ready(callback);
+        assert!(reserve_scheduled_main_retry().is_none());
+        run_ready(run_scheduled_main_retry(
+            successor,
+            || attempt(false, 2 * D + 60),
+            &schedule,
+        ));
+        assert_eq!(state::with_state(|st| st.last_main_run_ts), 2 * D + 60);
+        assert!(timers.borrow().is_empty());
+    }
+
+    #[test]
     fn scheduled_main_retry_requests_coalesce_until_timer_begins() {
         clear_scheduled_main_retry();
 
-        assert!(reserve_scheduled_main_retry());
-        assert!(!reserve_scheduled_main_retry());
+        assert!(reserve_scheduled_main_retry().is_some());
+        assert!(reserve_scheduled_main_retry().is_none());
 
         clear_scheduled_main_retry();
-        assert!(reserve_scheduled_main_retry());
-        assert!(!reserve_scheduled_main_retry());
+        assert!(reserve_scheduled_main_retry().is_some());
+        assert!(reserve_scheduled_main_retry().is_none());
 
         clear_scheduled_main_retry();
     }
