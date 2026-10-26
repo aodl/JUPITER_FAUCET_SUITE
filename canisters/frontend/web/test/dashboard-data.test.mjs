@@ -919,6 +919,10 @@ test('loadTrackerData loads endowment, observed CMC top-up, and cycles histories
           commitment_points: 1,
         }];
       },
+      async get_commitment_route_summaries(args) {
+        assert.deepEqual(args.routes, [{ CyclesTopUp: { canister_id: target } }]);
+        return { complete_from_genesis: true, truncated: false, commitment_index_fault: [], items: [{ route: args.routes[0], total_qualifying_committed_e8s: 1100_00000000n }] };
+      },
       async get_commitment_history(args) {
         calls.push(['commitments', args]);
         return {
@@ -990,6 +994,9 @@ test('loadTrackerData loads endowment, observed CMC top-up, and cycles histories
     },
   });
 
+  assert.equal(data.commitmentRouteSummary.items[0].total_qualifying_committed_e8s, 1100_00000000n);
+  assert.equal(progress[0].commitmentRouteSummary.loading, true);
+  assert.ok(progress.some((partial) => partial.commitmentRouteSummary?.items?.length === 1));
   assert.equal(data.isRecognized, true);
   assert.equal(data.isCommitmentBeneficiary, true);
   assert.equal(data.commitments.items.length, 1);
@@ -1228,6 +1235,9 @@ test('loadTrackerData pages recent historian histories until the timestamp cutof
     calls.filter(([kind]) => kind === 'cycles').map(([, args]) => args.start_after_ts),
     [[], [4_000_000n]],
   );
+  assert.equal(data.commitmentRouteSummary, null);
+  assert.match(data.errors.commitmentRouteSummary, /get_commitment_route_summaries/);
+  assert.ok(data.cycles.items.length > 0);
 });
 
 test('loadTrackerData treats SNS-only canisters as cycles-tracked without endowment history', async () => {

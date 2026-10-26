@@ -2684,6 +2684,78 @@ mod tests {
     }
 
     #[test]
+    fn memo_summaries_keep_lifetime_totals_after_retention_and_restore() {
+        const ICP: u64 = 100_000_000;
+        for cap in [100, 250] {
+            let staking_id = configure_state(10);
+            state::with_state_mut(|st| {
+                st.config.max_commitment_entries_per_canister = cap;
+                st.config.min_tx_e8s = ICP;
+            });
+            let beneficiary = principal("jufzc-caaaa-aaaar-qb5da-cai");
+            let competitor = principal("j5gs6-uiaaa-aaaar-qb5cq-cai");
+            let insert = |id, target, amount| {
+                apply_indexed_commitment_tx(
+                    &transfer_to_staking_tx(id, &staking_id, target, amount, id * 1_000_000_000),
+                    &staking_id,
+                    100,
+                    id,
+                );
+            };
+            insert(1, beneficiary, 1_000 * ICP);
+            for id in 2..=u64::from(cap) {
+                insert(id, beneficiary, ICP);
+            }
+            let check = |count, total| {
+                let page = crate::list_memo_registered_canister_summaries(
+                    crate::ListMemoRegisteredCanisterSummariesArgs {
+                        page: None,
+                        page_size: None,
+                    },
+                );
+                let item = page
+                    .items
+                    .iter()
+                    .find(|item| item.canister_id == beneficiary)
+                    .unwrap();
+                assert_eq!(item.qualifying_commitment_count, count);
+                assert_eq!(item.total_qualifying_committed_e8s, total);
+                assert_eq!(
+                    page.items[0].canister_id, beneficiary,
+                    "ranking must use lifetime capital"
+                );
+                let prefix =
+                    crate::find_canisters_by_memo_prefix(crate::FindCanistersByMemoPrefixArgs {
+                        prefix: beneficiary.to_text().replace('-', ""),
+                        limit: None,
+                    });
+                assert_eq!(prefix.items[0].total_qualifying_committed_e8s, total);
+                assert_eq!(prefix.items[0].qualifying_commitment_count, count);
+            };
+            check(u64::from(cap), (999 + u64::from(cap)) * ICP);
+            insert(1_000, competitor, 500 * ICP);
+            insert(1_001, beneficiary, ICP);
+            // A raw-ICP route to the same principal is a different aggregate.
+            let raw = transfer_to_staking_memo_tx(
+                1_002,
+                &staking_id,
+                format!("{}.", beneficiary.to_text()).into_bytes(),
+                9_000 * ICP,
+                1_002,
+            );
+            apply_indexed_commitment_tx(&raw, &staking_id, 100, 1_002);
+            // Duplicate indexing must not increase either lifetime total.
+            insert(1_001, beneficiary, ICP);
+            check(u64::from(cap) + 1, (1_000 + u64::from(cap)) * ICP);
+            state::with_state(|st| {
+                assert_eq!(st.commitment_history[&beneficiary].len(), cap as usize)
+            });
+            crate::restore_post_upgrade_state_with_timestamp(None, 2_000);
+            check(u64::from(cap) + 1, (1_000 + u64::from(cap)) * ICP);
+        }
+    }
+
+    #[test]
     fn exact_route_rollups_aggregate_independently_of_retained_history_caps() {
         let staking_id = configure_state(10);
         state::with_state_mut(|st| st.config.max_commitment_entries_per_canister = 1);

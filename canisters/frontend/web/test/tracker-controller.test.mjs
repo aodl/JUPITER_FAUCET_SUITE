@@ -2121,3 +2121,88 @@ test('raw ICP tracker uses generic source segments when outgoing memo is absent'
     assert.doesNotMatch(html, /Outgoing memo<\/dt>/);
   });
 });
+
+
+test('simulator capital uses exact indexed lifetime total independently of retained chart range', async () => {
+  const canisterId = Principal.fromText('jufzc-caaaa-aaaar-qb5da-cai');
+  const data = minimalTrackerData();
+  data.canisterId = canisterId;
+  data.commitments.items = [{ amount_e8s: 100_00000000n, counts_toward_faucet: true, timestamp_nanos: [1_700_000_000_000_000_000n] }];
+  data.cycles.items = burnEstimateCycleSamples();
+  data.commitmentRouteSummary = {
+    complete_from_genesis: true, truncated: false, commitment_index_fault: [],
+    items: [{ route: { CyclesTopUp: { canister_id: canisterId } }, total_qualifying_committed_e8s: 1100_00000000n, qualifying_commitment_count: 101n }],
+    indexed_through_staking_tx_id: [101n], last_index_run_ts: [1_700_000_000n],
+  };
+  await withFakeTrackerDom(trackerNodes(), async ({ nodeMap }) => {
+    const controller = createTrackerController({ frontendConfig: {}, isLocalHost: () => false, simulatorHashForPrefill, loadData: async () => data });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = canisterId.toText();
+    await controller.submitPrincipal();
+    assert.match(nodeMap.get('tracker-result').innerHTML, /commitment=1100\.0/);
+    const range = new FakeElement({ 'data-tracker-range': 'all' });
+    range.owner = nodeMap.get('tracker-result');
+    nodeMap.get('tracker-result').listeners.get('click')({ target: range, preventDefault() {} });
+    await flushMicrotasks();
+    assert.match(nodeMap.get('tracker-result').innerHTML, /commitment=1100\.0/);
+  });
+});
+
+for (const kind of ['loading', 'failed', 'missing', 'wrong-route', 'raw-route', 'truncated', 'incomplete', 'faulted', 'zero']) {
+  test(`simulator never substitutes retained capital for ${kind} lifetime summary`, async () => {
+    const data = minimalTrackerData();
+    data.canisterId = Principal.fromText('jufzc-caaaa-aaaar-qb5da-cai');
+    data.cycles.items = burnEstimateCycleSamples();
+    const summary = { complete_from_genesis: true, truncated: false, commitment_index_fault: [], items: [{
+      route: { CyclesTopUp: { canister_id: data.canisterId } }, total_qualifying_committed_e8s: 0n,
+    }] };
+    if (kind === 'loading') data.commitmentRouteSummary = { loading: true };
+    else if (kind === 'failed') data.errors.commitmentRouteSummary = 'offline';
+    else if (kind !== 'missing') {
+      data.commitmentRouteSummary = summary;
+      if (kind === 'wrong-route') summary.items[0].route.CyclesTopUp.canister_id = Principal.fromText('j5gs6-uiaaa-aaaar-qb5cq-cai');
+      if (kind === 'raw-route') summary.items[0].route = { RawIcp: { destination_canister_id: data.canisterId } };
+      if (kind === 'truncated') summary.truncated = true;
+      if (kind === 'incomplete') summary.complete_from_genesis = false;
+      if (kind === 'faulted') summary.commitment_index_fault = [{ code: 'fault' }];
+    }
+    await withFakeTrackerDom(trackerNodes(), async ({ nodeMap }) => {
+      const controller = createTrackerController({ frontendConfig: {}, isLocalHost: () => false, simulatorHashForPrefill, loadData: async () => data });
+      controller.bindPane();
+      nodeMap.get('tracker-principal-input').value = data.canisterId.toText();
+      await controller.submitPrincipal();
+      const html = nodeMap.get('tracker-result').innerHTML;
+      assert.doesNotMatch(html, /data-simulator-prefill|commitment=/);
+      assert.match(html, kind === 'zero' ? /No qualifying indexed endowment/ : /capital (?:unavailable or incomplete|is loading)/);
+      assert.match(html, /Patron endowments shown/);
+    });
+  });
+}
+
+test('late lifetime progress and completion cannot replace a newer target or invalid input', async () => {
+  let oldProgress, finish;
+  const pending = new Promise((resolve) => { finish = resolve; });
+  const old = minimalTrackerData();
+  old.canisterId = Principal.fromText('jufzc-caaaa-aaaar-qb5da-cai');
+  old.cycles.items = burnEstimateCycleSamples();
+  old.commitmentRouteSummary = { complete_from_genesis: true, truncated: false, commitment_index_fault: [], items: [{ route: { CyclesTopUp: { canister_id: old.canisterId } }, total_qualifying_committed_e8s: 1100_00000000n }] };
+  await withFakeTrackerDom(trackerNodes(), async ({ nodeMap }) => {
+    const controller = createTrackerController({ frontendConfig: {}, isLocalHost: () => false, simulatorHashForPrefill, loadData: async ({ canisterId, onProgress }) => {
+      if (canisterId.toText() === old.canisterId.toText()) { oldProgress = onProgress; return pending; }
+      return { ...minimalTrackerData(), canisterId };
+    } });
+    controller.bindPane();
+    nodeMap.get('tracker-principal-input').value = old.canisterId.toText();
+    const first = controller.submitPrincipal();
+    await flushMicrotasks();
+    nodeMap.get('tracker-principal-input').value = 'j5gs6-uiaaa-aaaar-qb5cq-cai';
+    await controller.submitPrincipal();
+    oldProgress(old);
+    assert.doesNotMatch(nodeMap.get('tracker-result').innerHTML, /commitment=1100/);
+    nodeMap.get('tracker-principal-input').value = 'invalid!';
+    await controller.submitPrincipal();
+    oldProgress(old); finish(old); await first;
+    assert.equal(controller.state.data, null);
+    assert.doesNotMatch(nodeMap.get('tracker-result').innerHTML, /commitment=1100/);
+  });
+});

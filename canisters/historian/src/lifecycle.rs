@@ -218,18 +218,6 @@ pub(super) fn effective_faucet_canister_id(st: &State) -> Principal {
         .unwrap_or_else(mainnet_faucet_id)
 }
 
-pub(super) fn qualifying_rollup(history: &[CommitmentSample]) -> (u64, u64, Option<u64>) {
-    let mut count = 0u64;
-    let mut total = 0u64;
-    let mut last_ts = None;
-    for item in history.iter().filter(|item| item.counts_toward_faucet) {
-        count = count.saturating_add(1);
-        total = total.saturating_add(item.amount_e8s);
-        last_ts = last_ts.max(item.timestamp_nanos.map(|ts| ts / 1_000_000_000));
-    }
-    (count, total, last_ts)
-}
-
 pub(super) fn latest_cycles(history: &[CyclesSample]) -> Option<u128> {
     history
         .iter()
@@ -353,8 +341,14 @@ pub(super) fn memo_registered_canister_summary_for(
     if history.is_empty() {
         return None;
     }
-    let (qualifying_commitment_count, total_qualifying_committed_e8s, rollup_last_ts) =
-        qualifying_rollup(&history);
+    let key =
+        state::CommitmentRouteKey::from_public(&CommitmentRoute::CyclesTopUp { canister_id })?;
+    let rollup = state::get_commitment_route_rollup(&key);
+    let retained_last_ts = history
+        .iter()
+        .filter(|item| item.counts_toward_faucet)
+        .filter_map(|item| item.timestamp_nanos.map(|ts| ts / 1_000_000_000))
+        .max();
     let meta = st
         .per_canister_meta
         .get(&canister_id)
@@ -364,9 +358,9 @@ pub(super) fn memo_registered_canister_summary_for(
     Some(MemoRegisteredCanisterSummary {
         canister_id,
         tracking_reasons: tracking_reasons.into_iter().collect(),
-        qualifying_commitment_count,
-        total_qualifying_committed_e8s,
-        last_commitment_ts: meta.last_commitment_ts.or(rollup_last_ts),
+        qualifying_commitment_count: rollup.qualifying_commitment_count,
+        total_qualifying_committed_e8s: rollup.total_qualifying_committed_e8s,
+        last_commitment_ts: meta.last_commitment_ts.or(retained_last_ts),
         latest_cycles: latest_cycles(&cycles_history),
         last_cycles_probe_ts: meta.last_cycles_probe_ts,
     })

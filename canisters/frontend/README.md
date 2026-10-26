@@ -123,6 +123,8 @@ The Active view shows Relay's default account, staging subaccount 1, and splitte
 
 ### Dashboard loader behavior
 
+For a cycles-top-up beneficiary, automatic simulator capital comes from the exact-route indexed lifetime summary, independently of retained history and chart range. A complete, fault-free positive summary enables prefill; explicit zero leaves capital unset. Loading, unavailable or incomplete summaries leave manual simulator input available without substituting retained history. These ordinary-query observations describe indexed commitments, not live Ledger-tip synchronization or guaranteed returns.
+
 The browser does not call Historian's permissioned `poke(PokeNotification)` method. Event Horizon may supply direct, best-effort staking wake-ups through that subject-aware ABI, while every normal 10-minute scan remains authoritative. Browser-facing Historian methods, including transaction status and route summaries, remain queries.
 
 The browser data loader is intentionally defensive:

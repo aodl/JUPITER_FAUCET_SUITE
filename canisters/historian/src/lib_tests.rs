@@ -229,6 +229,7 @@ mod tests {
     }
 
     fn base_state() -> State {
+        state::clear_commitment_route_rollups();
         State {
             config: Config {
                 staking_account: sample_account(),
@@ -361,12 +362,20 @@ mod tests {
         assert!(route_index_fault(&st).is_none());
     }
 
+    fn seed_cycles_rollup(canister_id: Principal, amount_e8s: u64) {
+        let key =
+            state::CommitmentRouteKey::from_public(&CommitmentRoute::CyclesTopUp { canister_id })
+                .unwrap();
+        state::increment_commitment_route_rollup(key, amount_e8s);
+    }
+
     fn add_memo_registered_canister(
         st: &mut State,
         canister_id: Principal,
         tx_id: u64,
         amount_e8s: u64,
     ) {
+        seed_cycles_rollup(canister_id, amount_e8s);
         st.distinct_canisters.insert(canister_id);
         st.canister_tracking_reasons.insert(
             canister_id,
@@ -521,6 +530,7 @@ mod tests {
                 raw_icp_destination_subaccount: None,
             }],
         );
+        seed_cycles_rollup(canister, 123_000_000);
         st.per_canister_meta.insert(
             canister,
             CanisterMeta {
@@ -579,6 +589,7 @@ mod tests {
                     raw_icp_destination_subaccount: None,
                 }],
             );
+            seed_cycles_rollup(canister, amount_e8s);
             refresh_memo_registered_canister_summary(&mut st, canister);
         }
 
@@ -597,6 +608,7 @@ mod tests {
                 raw_icp_destination_subaccount: None,
             }],
         );
+        seed_cycles_rollup(first, 789_000_000);
         refresh_memo_registered_canister_summary(&mut st, first);
 
         assert_eq!(
@@ -2998,6 +3010,8 @@ mod tests {
             },
         );
 
+        seed_cycles_rollup(canister, 100);
+        seed_cycles_rollup(canister, 250);
         let item = memo_registered_canister_summary_for(&st, canister)
             .expect("memo-registered canister should have a summary");
         assert_eq!(item.qualifying_commitment_count, 2);
@@ -3008,7 +3022,7 @@ mod tests {
 
     #[test]
     fn commitment_route_summary_query_is_bounded_ordered_and_fault_tolerant() {
-        state::clear_commitment_route_rollups();
+        let mut st = base_state();
         let canister = principal("22255-zqaaa-aaaas-qf6uq-cai");
         let cycles = CommitmentRoute::CyclesTopUp {
             canister_id: canister,
@@ -3043,7 +3057,6 @@ mod tests {
             offending_tx_id: 87,
             message: "test fault".to_string(),
         };
-        let mut st = base_state();
         st.last_indexed_staking_tx_id = Some(99);
         st.last_index_run_ts = Some(777);
         st.commitment_index_fault = Some(fault.clone());

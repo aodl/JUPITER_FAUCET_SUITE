@@ -7,6 +7,7 @@ import {
   RAW_ICP_TRACKER_TRANSFER_LIMIT,
 } from '../dashboard-data.js';
 import { readOpt } from '../candid-opt.js';
+import { principalToText } from '../data/dashboard-transforms.js';
 import { escapeHtml } from '../followee-links.js';
 import { renderAmountBarChart, renderEmptyChart, renderLineChart, renderStackedAmountBarChart } from '../chart-rendering.js';
 import { cycleSamplesForBurnEstimate, estimateCyclesBurnedPerDay, sortedCycleSamples } from '../tracker-cycles.js';
@@ -758,11 +759,23 @@ function renderTrackerLogs(data) {
     </details>`;
 }
 
-function renderSimulatorPrefillLink({ dailyBurnCycles, commitmentE8s, simulatorHashForPrefill }) {
+function renderSimulatorPrefillLink({ data, dailyBurnCycles, simulatorHashForPrefill }) {
+  const summary = data.commitmentRouteSummary;
+  if (summary?.loading) return 'Indexed lifetime capital is loading; manual simulator input remains available.';
+  const item = summary?.items?.[0];
+  const routeCanister = item?.route?.CyclesTopUp?.canister_id;
+  const exactRoute = principalToText(routeCanister) === principalToText(data.canisterId);
+  if (!summary || summary.complete_from_genesis !== true || summary.truncated !== false
+      || optValue(summary.commitment_index_fault) !== null || summary.items?.length !== 1 || !routeCanister || !exactRoute
+      || typeof item.total_qualifying_committed_e8s !== 'bigint' || item.total_qualifying_committed_e8s < 0n) {
+    return 'Indexed lifetime capital unavailable or incomplete; enter capital manually in the simulator.';
+  }
+  if (item.total_qualifying_committed_e8s === 0n) return 'No qualifying indexed endowment; enter capital manually in the simulator.';
   const dailyBurnInput = formatDailyBurnInputFromCyclesPerDay(dailyBurnCycles);
-  const commitmentInput = formatIcpCommitmentInputRoundedUp(commitmentE8s);
+  const commitmentInput = formatIcpCommitmentInputRoundedUp(item.total_qualifying_committed_e8s);
   if (!dailyBurnInput || !commitmentInput) return DASH;
-  return `<a href="${escapeHtml(simulatorHashForPrefill({ dailyBurn: dailyBurnInput, icpCommitment: commitmentInput }))}" class="pane-external-link" data-simulator-prefill="true">Open simulator</a>`;
+  const observed = `Indexed through staking transaction ${optValue(summary.indexed_through_staking_tx_id)?.toString() ?? 'unavailable'}; last index scan ${formatTimestampSeconds(optValue(summary.last_index_run_ts))}. Indexed snapshot, not the live Ledger tip.`;
+  return `<a href="${escapeHtml(simulatorHashForPrefill({ dailyBurn: dailyBurnInput, icpCommitment: commitmentInput }))}" class="pane-external-link" data-simulator-prefill="true" title="${escapeHtml(observed)}">Open simulator</a>`;
 }
 
 function renderCyclesProbeInfoNote(cyclesStatus, usingLogCycles) {
@@ -1272,7 +1285,6 @@ export function createTrackerController({
 
     const visibleData = filterTrackerDataByRange(classifiedData, state.range);
     const summary = trackerMetricSummary(visibleData);
-    const fullSummary = trackerMetricSummary(classifiedData);
     const commitmentLoading = Boolean(classifiedData?.commitments?.loading);
     const cyclesLoading = Boolean(classifiedData?.cycles?.loading);
     const cmcLoading = Boolean(classifiedData?.cmcTransfers?.loading);
@@ -1295,7 +1307,7 @@ export function createTrackerController({
       : escapeHtml(formatTrillionCyclesPerDay(estimatedObservedCyclesBurnedPerDay));
     const simulatorPrefillHtml = renderSimulatorPrefillLink({
       dailyBurnCycles: estimatedObservedCyclesBurnedPerDay,
-      commitmentE8s: fullSummary.qualifyingCommittedE8s || fullSummary.totalCommittedE8s,
+      data: classifiedData,
       simulatorHashForPrefill,
     });
     const commitmentError = classifiedData.errors?.commitments ? `<p class="pane-status-note tracker-status-note">Endowment history unavailable: ${escapeHtml(classifiedData.errors.commitments)}</p>` : '';

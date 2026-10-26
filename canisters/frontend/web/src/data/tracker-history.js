@@ -369,6 +369,7 @@ export async function loadTrackerData({
     relayInstances: progressPage(null, true),
     isRecognized: true,
     isCommitmentBeneficiary,
+    commitmentRouteSummary: isCommitmentBeneficiary ? { loading: true } : null,
     commitments: progressPage(null, isCommitmentBeneficiary),
     cycles: progressPage(null, true),
     logs: progressPage(null, true),
@@ -388,6 +389,17 @@ export async function loadTrackerData({
     key: 'commitments',
     onProgress,
     errorKey: 'commitments',
+  });
+  const commitmentRouteSummaryPromise = trackProgressPromise(isCommitmentBeneficiary
+    ? Promise.resolve().then(() => historian.get_commitment_route_summaries({
+        routes: [{ CyclesTopUp: { canister_id: canisterId } }],
+      }))
+    : Promise.resolve(null), {
+    progress,
+    key: 'commitmentRouteSummary',
+    onProgress,
+    page: false,
+    errorKey: 'commitmentRouteSummary',
   });
   const cyclesPromise = trackProgressPromise(loadTrackerCycles(historian, {
     canisterId,
@@ -435,13 +447,14 @@ export async function loadTrackerData({
     errorKey: 'cmcTransfers',
   });
 
-  const [commitmentsResult, cyclesResult, statusResult, relayInstancesResult, logsResult, cmcTransfersResult] = await Promise.allSettled([
+  const [commitmentsResult, cyclesResult, statusResult, relayInstancesResult, logsResult, cmcTransfersResult, commitmentRouteSummaryResult] = await Promise.allSettled([
     commitmentsPromise,
     cyclesPromise,
     statusPromise,
     relayInstancesPromise,
     logsPromise,
     cmcTransfersPromise,
+    commitmentRouteSummaryPromise,
   ]);
 
   return {
@@ -451,11 +464,13 @@ export async function loadTrackerData({
     relayInstances: fulfilledOrNull(relayInstancesResult) || { items: [] },
     isRecognized: true,
     isCommitmentBeneficiary,
+    commitmentRouteSummary: fulfilledOrNull(commitmentRouteSummaryResult),
     commitments: fulfilledOrNull(commitmentsResult) || { items: [] },
     cycles: fulfilledOrNull(cyclesResult) || { items: [] },
     logs: fulfilledOrNull(logsResult) || { items: [] },
     cmcTransfers: fulfilledOrNull(cmcTransfersResult) || { items: [] },
     errors: {
+      commitmentRouteSummary: commitmentRouteSummaryResult.status === 'rejected' ? normalizeError(commitmentRouteSummaryResult.reason) : null,
       commitments: commitmentsResult.status === 'rejected' ? normalizeError(commitmentsResult.reason) : null,
       cycles: cyclesResult.status === 'rejected' ? normalizeError(cyclesResult.reason) : null,
       logs: logsResult.status === 'rejected' ? normalizeError(logsResult.reason) : null,
