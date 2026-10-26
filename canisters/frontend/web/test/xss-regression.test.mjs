@@ -300,7 +300,6 @@ test('raw HTML sinks stay inventoried for XSS review coverage', () => {
   assert.deepEqual(sinks, [
     "app/bootstrap.js:popover.innerHTML = `",
     'app/bootstrap.js:textNode.innerHTML = content;',
-    'app/dashboard-tables-controller.js:body.innerHTML = items.length',
     'app/dashboard-tables-controller.js:body.innerHTML = pageItems.length',
     'app/dashboard-tables-controller.js:node.innerHTML = `Jupiter neuron maturity is disbursed to the controlling canister\'s ${stagingLink}. ${escapeHtml(routeLabel)} counts ICP routed from that staging account to ${destination}. ${aggregate ? \'Historian tracks the aggregate; \' : \'\'}recent rows are fetched directly from the ICP index canister.`;',
     "app/relay-setup-controller.js:if (node) node.innerHTML = value || '';",

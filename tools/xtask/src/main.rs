@@ -961,18 +961,11 @@ struct MockXrcCall {
 #[derive(Debug, CandidType, Deserialize)]
 struct HistorianMemoRegisteredCanisterSummary {
     canister_id: Principal,
-    qualifying_commitment_count: u64,
-    total_qualifying_committed_e8s: u64,
-    last_commitment_ts: Option<u64>,
-    latest_cycles: Option<Nat>,
-    last_cycles_probe_ts: Option<u64>,
 }
 
 #[derive(Debug, CandidType, Deserialize)]
 struct ListMemoRegisteredCanisterSummariesResponse {
     items: Vec<HistorianMemoRegisteredCanisterSummary>,
-    page: u32,
-    page_size: u32,
     total: u64,
 }
 
@@ -1001,7 +994,6 @@ struct FrontendDashboardExpected {
     stakeE8s: String,
     counts: FrontendDashboardExpectedCounts,
     status: FrontendDashboardExpectedStatus,
-    registered: FrontendDashboardExpectedRegistered,
     recent: FrontendDashboardExpectedRecent,
     errors: FrontendDashboardExpectedErrors,
 }
@@ -1025,24 +1017,6 @@ struct FrontendDashboardExpectedStatus {
     stakingAccountIdentifier: String,
     lastIndexRunTsPresent: bool,
     lastCyclesSweepTsPresent: bool,
-}
-
-#[allow(non_snake_case)]
-#[derive(Debug, serde::Serialize)]
-struct FrontendDashboardExpectedRegistered {
-    total: String,
-    items: Vec<FrontendDashboardExpectedRegisteredItem>,
-}
-
-#[allow(non_snake_case)]
-#[derive(Debug, serde::Serialize)]
-struct FrontendDashboardExpectedRegisteredItem {
-    canisterId: String,
-    qualifyingCommitmentCount: String,
-    totalQualifyingCommittedE8s: String,
-    lastCommitmentTsPresent: bool,
-    latestCycles: Option<String>,
-    lastCyclesProbeTsPresent: bool,
 }
 
 #[allow(non_snake_case)]
@@ -1078,10 +1052,6 @@ struct IndexGetCall {
     start: Option<u64>,
     max_results: u64,
     returned_count: u64,
-}
-
-fn nat_plain_string(value: &Nat) -> String {
-    value.to_string().replace('_', "")
 }
 
 fn nat_to_u64(value: &Nat) -> u64 {
@@ -3761,23 +3731,6 @@ fn run_local_frontend_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<(
                     lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
                     lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
                 },
-                registered: FrontendDashboardExpectedRegistered {
-                    total: registered.total.to_string(),
-                    items: registered
-                        .items
-                        .iter()
-                        .map(|item| FrontendDashboardExpectedRegisteredItem {
-                            canisterId: item.canister_id.to_text(),
-                            qualifyingCommitmentCount: item.qualifying_commitment_count.to_string(),
-                            totalQualifyingCommittedE8s: item
-                                .total_qualifying_committed_e8s
-                                .to_string(),
-                            lastCommitmentTsPresent: item.last_commitment_ts.is_some(),
-                            latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
-                            lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
-                        })
-                        .collect(),
-                },
                 recent: FrontendDashboardExpectedRecent {
                     items: recent
                         .items
@@ -4862,23 +4815,6 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                     lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
                     lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
                 },
-                registered: FrontendDashboardExpectedRegistered {
-                    total: registered.total.to_string(),
-                    items: registered
-                        .items
-                        .iter()
-                        .map(|item| FrontendDashboardExpectedRegisteredItem {
-                            canisterId: item.canister_id.to_text(),
-                            qualifyingCommitmentCount: item.qualifying_commitment_count.to_string(),
-                            totalQualifyingCommittedE8s: item
-                                .total_qualifying_committed_e8s
-                                .to_string(),
-                            lastCommitmentTsPresent: item.last_commitment_ts.is_some(),
-                            latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
-                            lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
-                        })
-                        .collect(),
-                },
                 recent: FrontendDashboardExpectedRecent {
                     items: recent
                         .items
@@ -4971,6 +4907,8 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
             "list_memo_registered_canister_summaries",
             "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
         )?;
+        anyhow::ensure!(registered.items.len() == 1 && registered.items[0].canister_id == target,
+            "commitment-only backend summary must retain its beneficiary");
         let recent: ListRecentCommitmentsResponse = call_raw(
             "jupiter_historian_dbg",
             "list_recent_commitments",
@@ -4993,21 +4931,6 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 stakingAccountIdentifier: account_identifier_text(status.staking_account.owner, status.staking_account.subaccount),
                 lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
                 lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
-            },
-            registered: FrontendDashboardExpectedRegistered {
-                total: registered.total.to_string(),
-                items: registered
-                    .items
-                    .iter()
-                    .map(|item| FrontendDashboardExpectedRegisteredItem {
-                        canisterId: item.canister_id.to_text(),
-                        qualifyingCommitmentCount: item.qualifying_commitment_count.to_string(),
-                        totalQualifyingCommittedE8s: item.total_qualifying_committed_e8s.to_string(),
-                        lastCommitmentTsPresent: item.last_commitment_ts.is_some(),
-                        latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
-                        lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
-                    })
-                    .collect(),
             },
             recent: FrontendDashboardExpectedRecent {
                 items: recent
@@ -5140,21 +5063,6 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
                 lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
             },
-            registered: FrontendDashboardExpectedRegistered {
-                total: registered.total.to_string(),
-                items: registered
-                    .items
-                    .iter()
-                    .map(|item| FrontendDashboardExpectedRegisteredItem {
-                        canisterId: item.canister_id.to_text(),
-                        qualifyingCommitmentCount: item.qualifying_commitment_count.to_string(),
-                        totalQualifyingCommittedE8s: item.total_qualifying_committed_e8s.to_string(),
-                        lastCommitmentTsPresent: item.last_commitment_ts.is_some(),
-                        latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
-                        lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
-                    })
-                    .collect(),
-            },
             recent: FrontendDashboardExpectedRecent {
                 items: recent
                     .items
@@ -5239,6 +5147,10 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                 "list_memo_registered_canister_summaries",
                 "(record { page = opt (0:nat32); page_size = opt (10:nat32) })",
             )?;
+            anyhow::ensure!(
+                registered.items.is_empty() && registered.total == 0,
+                "SNS-only backend summary must not contain memo beneficiaries"
+            );
             let recent: ListRecentCommitmentsResponse = call_raw(
                 "jupiter_historian_dbg",
                 "list_recent_commitments",
@@ -5264,23 +5176,6 @@ fn run_local_historian_scenarios(outcomes: &mut Vec<ScenarioOutcome>) -> Result<
                     ),
                     lastIndexRunTsPresent: status.last_index_run_ts.is_some(),
                     lastCyclesSweepTsPresent: status.last_completed_cycles_sweep_ts.is_some(),
-                },
-                registered: FrontendDashboardExpectedRegistered {
-                    total: registered.total.to_string(),
-                    items: registered
-                        .items
-                        .iter()
-                        .map(|item| FrontendDashboardExpectedRegisteredItem {
-                            canisterId: item.canister_id.to_text(),
-                            qualifyingCommitmentCount: item.qualifying_commitment_count.to_string(),
-                            totalQualifyingCommittedE8s: item
-                                .total_qualifying_committed_e8s
-                                .to_string(),
-                            lastCommitmentTsPresent: item.last_commitment_ts.is_some(),
-                            latestCycles: item.latest_cycles.as_ref().map(nat_plain_string),
-                            lastCyclesProbeTsPresent: item.last_cycles_probe_ts.is_some(),
-                        })
-                        .collect(),
                 },
                 recent: FrontendDashboardExpectedRecent {
                     items: recent

@@ -294,7 +294,6 @@ test('transaction table pagination uses a responsive page size', () => {
   assert.match(mainJs, /Math\.min\(TABLE_MAX_PAGE_SIZE, Math\.max\(TABLE_MIN_PAGE_SIZE, estimatedRows\)\)/);
   assert.match(mainJs, /const currentPageSizeForTable = \(kind\) => \{[\s\S]*kind === 'commitments'[\s\S]*kind === 'commitments-raw'[\s\S]*kind === 'commitments-neurons'[\s\S]*currentTablePageSize\(\) \+ adjustment/);
   assert.match(mainJs, /const pageSize = currentPageSizeForTable\(kind\);[\s\S]*state\.items\.slice\(start, start \+ pageSize\)/);
-  assert.match(mainJs, /registeredPageSize: dashboardTablesController\.currentTablePageSize\(\)/);
   assert.match(mainJs, /window\.addEventListener\('resize'/);
   assert.doesNotMatch(mainJs, /const TABLE_PAGE_SIZE = 6;/);
 });

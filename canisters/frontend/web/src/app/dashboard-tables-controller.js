@@ -1,17 +1,12 @@
 import {
   accountIdentifierHex,
   dquorumStakingAccount,
-  loadMemoRegisteredCanisterSummaryPage,
-  normalizeError,
 } from '../dashboard-data.js';
 import { setPaneValueText, setText } from '../dom-helpers.js';
 import { escapeHtml } from '../followee-links.js';
-import { mergeRegisteredLandingData } from '../registered-page-state.js';
 import { EVENT_HORIZON_CANISTER_TEXT, numberedSubaccountNumberText, parseJupiterMemo } from '../memo-policy.js';
 import { COMMITMENT_TABLE_PAGE_SIZE_ADJUSTMENT, calculateResponsiveTablePageSize } from './responsive-tables.js';
 import {
-  DASH,
-  formatCycles,
   formatIcpE8s,
   formatInteger,
   formatTimestampNanos,
@@ -20,31 +15,8 @@ import {
   renderNeuronTrackerLink,
 } from './view-formatters.js';
 
-function numericValue(value, fallback = 0) {
-  if (value === null || value === undefined) return fallback;
-  return Number(value);
-}
-
 function paneEmptyMessage(data, key, defaultText) {
   return data?.errors?.[key] ? `${defaultText} (${data.errors[key]})` : defaultText;
-}
-
-function renderCyclesHelpIcon() {
-  return `
-    <button
-      class="pane-inline-tooltip-icon"
-      type="button"
-      data-tooltip-id="blackhole-controller-help"
-      aria-label="Cycles observability help"
-    >i</button>`;
-}
-
-function renderCyclesStatusCell(label = 'unavailable') {
-  return `
-    <span class="pane-inline-tooltip-fallback">
-      <span>${escapeHtml(label)}</span>
-      ${renderCyclesHelpIcon()}
-    </span>`;
 }
 
 function formatCommitmentTarget(item) {
@@ -149,26 +121,11 @@ function renderRouteTransferRow(item) {
 }
 
 export function createDashboardTablesController({
-  frontendConfig,
-  isLocalHost,
   getLandingData = () => window.__JUPITER_LANDING_DATA__ || null,
-  setLandingData = (data) => {
-    window.__JUPITER_LANDING_DATA__ = data;
-  },
-}) {
+} = {}) {
   let tablePageSize = calculateResponsiveTablePageSize();
   let tableResizeTimer = null;
   const tableState = {
-    registered: {
-      page: 0,
-      items: [],
-      total: 0,
-      pageSize: tablePageSize,
-      loading: false,
-      pendingPage: null,
-      error: null,
-      pages: new Map(),
-    },
     commitments: { page: 0, items: [] },
     'commitments-raw': { page: 0, items: [] },
     'commitments-neurons': { page: 0, items: [] },
@@ -205,118 +162,6 @@ export function createDashboardTablesController({
     const next = document.getElementById(`${kind}-next-page`);
     if (prev) prev.disabled = state.page === 0;
     if (next) next.disabled = state.page >= totalPages - 1;
-  };
-
-  const registeredPageCacheKey = (page, pageSize) => `${page}:${pageSize}`;
-
-  const cacheRegisteredPage = (response) => {
-    if (!response) return;
-    const state = tableState.registered;
-    const page = numericValue(response.page, 0);
-    const pageSize = Math.max(1, numericValue(response.page_size, currentTablePageSize()));
-    const items = Array.isArray(response.items) ? response.items : [];
-    state.pages.set(registeredPageCacheKey(page, pageSize), response);
-    state.page = page;
-    state.pageSize = pageSize;
-    state.total = numericValue(response.total, items.length);
-    state.items = items;
-    state.error = null;
-  };
-
-  const registeredTotalPages = () => {
-    const state = tableState.registered;
-    return Math.max(1, Math.ceil(state.total / Math.max(1, state.pageSize || currentTablePageSize())));
-  };
-
-  const renderRegisteredPane = (data) => {
-    const state = tableState.registered;
-    if (data?.registered) {
-      cacheRegisteredPage(data.registered);
-      state.error = data?.errors?.registered || null;
-    } else if (state.pages.size === 0) {
-      state.items = [];
-      state.total = 0;
-      state.page = 0;
-      state.pageSize = currentTablePageSize();
-      state.error = data?.errors?.registered || null;
-    }
-
-    const page = state.loading && Number.isInteger(state.pendingPage) ? state.pendingPage : state.page;
-    const totalPages = registeredTotalPages();
-    const body = document.getElementById('registered-pane-body');
-    const items = state.items || [];
-    const emptyMessage = state.error
-      ? `Declared canisters unavailable (${state.error})`
-      : paneEmptyMessage(data, 'registered', 'No memo-registered canisters indexed yet.');
-    if (body) {
-      body.innerHTML = items.length
-        ? items.map((item) => `
-          <tr>
-            <td>${formatCommitmentTarget(item)}</td>
-            <td>${escapeHtml(formatInteger(item.qualifying_commitment_count))}</td>
-            <td>${escapeHtml(formatIcpE8s(item.total_qualifying_committed_e8s))}</td>
-            <td>${item.latest_cycles?.[0] !== undefined && item.latest_cycles?.[0] !== null ? escapeHtml(formatCycles(item.latest_cycles[0])) : renderCyclesStatusCell(item.last_cycles_probe_ts?.[0] !== undefined && item.last_cycles_probe_ts?.[0] !== null ? 'unavailable' : 'pending')}</td>
-          </tr>`).join('')
-        : `<tr><td colspan="4" class="empty-cell">${escapeHtml(emptyMessage)}</td></tr>`;
-    }
-
-    const pageLabel = state.loading
-      ? `Page ${page + 1} of ${totalPages} (loading…)`
-      : `Page ${page + 1} of ${totalPages}`;
-    setText('registered-page-info', state.error ? `${pageLabel} · ${state.error}` : pageLabel);
-    const prev = document.getElementById('registered-prev-page');
-    const next = document.getElementById('registered-next-page');
-    if (prev) prev.disabled = state.loading || page === 0;
-    if (next) next.disabled = state.loading || page >= totalPages - 1;
-  };
-
-  const fetchRegisteredPage = async (page) => {
-    const state = tableState.registered;
-    if (state.loading) return;
-    const pageSize = Math.max(1, state.pageSize || currentTablePageSize());
-    const cacheKey = registeredPageCacheKey(page, pageSize);
-    const cached = state.pages.get(cacheKey);
-    if (cached) {
-      cacheRegisteredPage(cached);
-      const current = getLandingData() || {};
-      setLandingData(mergeRegisteredLandingData(current, {
-        registered: cached,
-        registeredError: null,
-      }));
-      renderRegisteredPane(getLandingData() || null);
-      return;
-    }
-
-    state.loading = true;
-    state.pendingPage = page;
-    state.error = null;
-    renderRegisteredPane(getLandingData() || null);
-    try {
-      const response = await loadMemoRegisteredCanisterSummaryPage({
-        historianCanisterId: frontendConfig?.historianCanisterId,
-        host: window.location.origin,
-        local: isLocalHost(),
-        page,
-        pageSize,
-      });
-      cacheRegisteredPage(response);
-      const current = getLandingData() || {};
-      setLandingData(mergeRegisteredLandingData(current, {
-        registered: response,
-        registeredError: null,
-      }));
-    } catch (error) {
-      state.error = normalizeError(error);
-      console.warn('Memo registered canister page failed', error);
-      const current = getLandingData() || {};
-      setLandingData(mergeRegisteredLandingData(current, {
-        registeredError: state.error,
-      }));
-    } finally {
-      state.loading = false;
-      state.pendingPage = null;
-      renderRegisteredPane(getLandingData() || null);
-    }
   };
 
   const renderCommitmentsPane = (data) => {
@@ -426,7 +271,6 @@ export function createDashboardTablesController({
   };
 
   const renderAll = (data) => {
-    renderRegisteredPane(data);
     renderCommitmentsPane(data);
     renderOutputPane(data);
     renderRewardsPane(data);
@@ -434,23 +278,6 @@ export function createDashboardTablesController({
   };
 
   const bindPaginationButtons = () => {
-    const registeredPrev = document.getElementById('registered-prev-page');
-    const registeredNext = document.getElementById('registered-next-page');
-    if (registeredPrev && registeredPrev.dataset.bound !== 'true') {
-      registeredPrev.dataset.bound = 'true';
-      registeredPrev.addEventListener('click', () => {
-        const targetPage = Math.max(0, tableState.registered.page - 1);
-        fetchRegisteredPage(targetPage);
-      });
-    }
-    if (registeredNext && registeredNext.dataset.bound !== 'true') {
-      registeredNext.dataset.bound = 'true';
-      registeredNext.addEventListener('click', () => {
-        const targetPage = Math.min(registeredTotalPages() - 1, tableState.registered.page + 1);
-        fetchRegisteredPage(targetPage);
-      });
-    }
-
     [
       ['commitments', renderCommitmentsPane],
       ['commitments-raw', renderCommitmentsPane],
@@ -499,17 +326,6 @@ export function createDashboardTablesController({
     renderOutputPane(data);
     renderRewardsPane(data);
     renderDquorumPane(data);
-
-    const registered = tableState.registered;
-    const firstVisibleRegistered = registered.page * Math.max(1, registered.pageSize || previousPageSize);
-    const targetRegisteredPage = Math.max(0, Math.floor(firstVisibleRegistered / nextPageSize));
-    registered.pageSize = nextPageSize;
-    registered.page = targetRegisteredPage;
-    if (registered.pages.size > 0 || data?.registered) {
-      void fetchRegisteredPage(targetRegisteredPage);
-    } else {
-      renderRegisteredPane(data);
-    }
   };
 
   const bindResponsiveTablePageSize = () => {
@@ -522,12 +338,10 @@ export function createDashboardTablesController({
   return {
     bindPaginationButtons,
     bindResponsiveTablePageSize,
-    currentTablePageSize,
     renderAll,
     renderCommitmentsPane,
     renderDquorumPane,
     renderOutputPane,
-    renderRegisteredPane,
     renderRewardsPane,
     state: tableState,
   };

@@ -8,37 +8,12 @@ import { createHistorianClient, getOrCreateAgent, isMethodMissingError, normaliz
 import { loadRecentRouteTransfersFromIndex } from './index-transactions.js';
 import {
   RECENT_COMMITMENT_LIMIT,
-  REGISTERED_SUMMARY_PAGE_SIZE,
   accountIdentifierBytes,
-  buildRegisteredCanisterSummariesRequest,
   dquorumStakingAccount,
   hexToBytes,
   principalToText,
   readOptional,
 } from './dashboard-transforms.js';
-
-export async function loadMemoRegisteredCanisterSummaryPage({
-  historianCanisterId,
-  host,
-  local = false,
-  agent = null,
-  historianActor = null,
-  historianActorFactory = createHistorianActor,
-  page = 0,
-  pageSize = REGISTERED_SUMMARY_PAGE_SIZE,
-} = {}) {
-  const { historian } = await createHistorianClient({
-    historianCanisterId,
-    host,
-    local,
-    agent,
-    historianActor,
-    historianActorFactory,
-  });
-  return historian.list_memo_registered_canister_summaries(
-    buildRegisteredCanisterSummariesRequest({ page, pageSize }),
-  );
-}
 
 export async function loadCanisterModuleHashes({
   historianCanisterId,
@@ -131,8 +106,6 @@ export async function loadDashboardData({
   ledgerActorFactory = createLedgerActor,
   indexActorFactory = createIndexActor,
   localStakeConfig = null,
-  registeredPage = 0,
-  registeredPageSize = REGISTERED_SUMMARY_PAGE_SIZE,
 } = {}) {
   let resolvedAgent;
   let historian;
@@ -150,7 +123,6 @@ export async function loadDashboardData({
     return {
       counts: null,
       status: null,
-      registered: null,
       recent: null,
       outputTransfers: null,
       rewardsTransfers: null,
@@ -160,7 +132,6 @@ export async function loadDashboardData({
       errors: {
         counts: reason,
         status: reason,
-        registered: reason,
         recent: reason,
         outputTransfers: reason,
         rewardsTransfers: reason,
@@ -172,15 +143,9 @@ export async function loadDashboardData({
     };
   }
 
-  const [countsResult, statusResult, registeredResult, recentResult] = await Promise.allSettled([
+  const [countsResult, statusResult, recentResult] = await Promise.allSettled([
     historian.get_public_counts(),
     historian.get_public_status(),
-    historian.list_memo_registered_canister_summaries(
-      buildRegisteredCanisterSummariesRequest({
-        page: registeredPage,
-        pageSize: registeredPageSize,
-      }),
-    ),
     historian.list_recent_commitments({
       limit: [RECENT_COMMITMENT_LIMIT],
       qualifying_only: [false],
@@ -246,7 +211,6 @@ export async function loadDashboardData({
   const errors = {
     counts: countsResult.status === 'rejected' ? normalizeError(countsResult.reason) : null,
     status: statusResult.status === 'rejected' ? normalizeError(statusResult.reason) : null,
-    registered: registeredResult.status === 'rejected' ? normalizeError(registeredResult.reason) : null,
     recent: recentResult.status === 'rejected' ? normalizeError(recentResult.reason) : null,
     outputTransfers: outputTransfersResult.status === 'rejected' ? normalizeError(outputTransfersResult.reason) : null,
     rewardsTransfers: rewardsTransfersResult.status === 'rejected' ? normalizeError(rewardsTransfersResult.reason) : null,
@@ -254,14 +218,13 @@ export async function loadDashboardData({
     stake: stakeResult.status === 'rejected' ? normalizeError(stakeResult.reason) : null,
   };
 
-  const historianFailures = [countsResult, statusResult, registeredResult, recentResult].filter((result) => result.status === 'rejected');
-  const historianAllRejected = historianFailures.length === 4;
+  const historianFailures = [countsResult, statusResult, recentResult].filter((result) => result.status === 'rejected');
+  const historianAllRejected = historianFailures.length === 3;
   const historianLikelyOutdated = historianAllRejected && historianFailures.every((result) => isMethodMissingError(result.reason));
 
   return {
     counts: countsValue,
     status: statusResult.status === 'fulfilled' ? statusResult.value : null,
-    registered: registeredResult.status === 'fulfilled' ? registeredResult.value : null,
     recent: recentResult.status === 'fulfilled' ? recentResult.value : null,
     outputTransfers: outputTransfersResult.status === 'fulfilled' ? outputTransfersResult.value : null,
     rewardsTransfers: rewardsTransfersResult.status === 'fulfilled' ? rewardsTransfersResult.value : null,
@@ -270,7 +233,6 @@ export async function loadDashboardData({
     hasAnyFailure:
       countsResult.status === 'rejected' ||
       statusResult.status === 'rejected' ||
-      registeredResult.status === 'rejected' ||
       recentResult.status === 'rejected' ||
       stakeResult.status === 'rejected',
     errors,

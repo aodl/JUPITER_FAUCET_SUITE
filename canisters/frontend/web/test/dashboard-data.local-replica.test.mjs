@@ -107,22 +107,6 @@ maybeTest('loadDashboardData matches the expected local replica fixture', async 
     assert.equal(optionalBigIntString(data.status.last_completed_cycles_sweep_ts) !== null, expected.status.lastCyclesSweepTsPresent);
   }
 
-  if (expected.registered) {
-    assert.ok(data.registered, 'expected memo registered canister summaries to be present');
-    assert.equal(asString(data.registered.total), expected.registered.total);
-    assert.equal(data.registered.items.length, expected.registered.items.length);
-    for (let i = 0; i < expected.registered.items.length; i += 1) {
-      const actual = data.registered.items[i];
-      const exp = expected.registered.items[i];
-      assert.equal(actual.canister_id.toText(), exp.canisterId);
-      assert.equal(asString(actual.qualifying_commitment_count), exp.qualifyingCommitmentCount);
-      assert.equal(asString(actual.total_qualifying_committed_e8s), exp.totalQualifyingCommittedE8s);
-      assert.equal(optionalBigIntString(actual.last_commitment_ts) !== null, exp.lastCommitmentTsPresent);
-      assert.equal(optionalBigIntString(actual.latest_cycles), exp.latestCycles ?? null);
-      assert.equal(optionalBigIntString(actual.last_cycles_probe_ts) !== null, exp.lastCyclesProbeTsPresent);
-    }
-  }
-
   if (expected.recent) {
     assert.ok(data.recent, 'expected recent endowments to be present');
     assert.equal(data.recent.items.length, expected.recent.items.length);

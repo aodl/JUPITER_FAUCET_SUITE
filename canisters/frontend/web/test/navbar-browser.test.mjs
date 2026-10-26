@@ -493,3 +493,35 @@ test('a late application exception fails a geometrically sound navbar scenario',
     assert.equal(await page.locator('#actions-menu').isVisible(), true);
   }), /late-app-fault-probe/);
 });
+
+test('shipped dashboard keeps feed pagination across resize without registered-pane requests', async () => {
+  await withBrowser(async ({ openPage }) => {
+    const { page, checkFailures } = await openPage({ width: 1024, height: 650 });
+    let removedRequests = 0;
+    page.on('request', (request) => {
+      if (request.postDataBuffer()?.includes(Buffer.from('list_memo_registered_canister_summaries'))) removedRequests += 1;
+    });
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => window.__JUPITER_LANDING_DATA__, null, { timeout: 30_000 });
+    await page.evaluate(() => {
+      window.__JUPITER_LANDING_DATA__ = {
+        recent: { items: Array.from({ length: 20 }, (_, i) => ({
+          canister_id: ['jufzc-caaaa-aaaar-qb5da-cai'], tx_id: BigInt(i),
+          timestamp_nanos: [1_700_000_000_000_000_000n], amount_e8s: 100_000_000n,
+        })) }, errors: {},
+      };
+      window.location.hash = '#metric-commitments';
+    });
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await page.waitForFunction(() => document.querySelector('#commitments-page-info')?.textContent === 'Page 1 of 3');
+    await page.locator('#commitments-next-page').click();
+    assert.equal(await page.locator('#commitments-page-info').textContent(), 'Page 2 of 3');
+    await page.setViewportSize({ width: 1024, height: 600 });
+    await page.waitForFunction(() => document.querySelector('#commitments-page-info')?.textContent === 'Page 2 of 4');
+    await page.locator('#commitments-next-page').click();
+    assert.equal(await page.locator('#commitments-page-info').textContent(), 'Page 3 of 4');
+    assert.equal(await page.locator('#registered-pane-body, #registered-prev-page, #registered-next-page, #registered-pane-subtitle').count(), 0);
+    assert.equal(removedRequests, 0);
+    checkFailures();
+  });
+});

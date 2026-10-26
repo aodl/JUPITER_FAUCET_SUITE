@@ -37,14 +37,6 @@ function commitmentPaneNodes() {
   ]);
 }
 
-function registeredPaneNodes() {
-  return new Map([
-    ['registered-pane-body', { innerHTML: '' }],
-    ['registered-page-info', { textContent: '' }],
-    ['registered-prev-page', { disabled: false }],
-    ['registered-next-page', { disabled: false }],
-  ]);
-}
 
 test('raw and neuron endowment rows link full declared memos to tracker', () => {
   const nodes = commitmentPaneNodes();
@@ -222,34 +214,35 @@ test('raw ICP declared memo links keep compact canister memo text within the mem
   assert.doesNotMatch(html, /r5m5y-diaaa-aaaaa-qanaa-cai\.2r3eo-5q/);
 });
 
-test('declared canister table uses memo-registered unavailable and empty wording', () => {
-  const emptyNodes = registeredPaneNodes();
-  withDashboardTableDom(emptyNodes, () => {
-    createDashboardTablesController({
-      frontendConfig: {},
-      isLocalHost: () => false,
-      getLandingData: () => ({}),
-    }).renderRegisteredPane({ errors: {} });
+test('production-shaped tables retain pagination across resize without a registry pane', () => {
+  const nodes = commitmentPaneNodes();
+  const listeners = new Map();
+  let resize;
+  const data = { recent: { items: Array.from({ length: 20 }, (_, i) => ({
+    canister_id: ['jufzc-caaaa-aaaar-qb5da-cai'], tx_id: BigInt(i),
+    timestamp_nanos: [1_700_000_000_000_000_000n], amount_e8s: 100_000_000n,
+  })) }, errors: {} };
+  for (const [id, node] of nodes) {
+    node.dataset = {};
+    node.addEventListener = (event, fn) => listeners.set(`${id}:${event}`, fn);
+  }
+  withDashboardTableDom(nodes, () => {
+    window.addEventListener = (event, fn) => { assert.equal(event, 'resize'); resize = fn; };
+    let deferred;
+    window.setTimeout = (fn) => { deferred = fn; return 1; };
+    window.clearTimeout = () => { deferred = null; };
+    const controller = createDashboardTablesController({ getLandingData: () => data });
+    controller.renderAll(data);
+    controller.bindPaginationButtons();
+    controller.bindResponsiveTablePageSize();
+    listeners.get('commitments-next-page:click')();
+    assert.equal(nodes.get('commitments-page-info').textContent, 'Page 2 of 3');
+    window.innerHeight = 600;
+    resize(); deferred();
+    assert.equal(nodes.get('commitments-page-info').textContent, 'Page 2 of 4');
+    listeners.get('commitments-next-page:click')();
+    assert.equal(nodes.get('commitments-page-info').textContent, 'Page 3 of 4');
+    assert.equal(nodes.has('registered-pane-body'), false);
+    assert.equal('registered' in controller.state, false);
   });
-
-  assert.match(
-    emptyNodes.get('registered-pane-body').innerHTML,
-    /No memo-registered canisters indexed yet\./
-  );
-  assert.doesNotMatch(emptyNodes.get('registered-pane-body').innerHTML, /tracked canisters/i);
-
-  const errorNodes = registeredPaneNodes();
-  withDashboardTableDom(errorNodes, () => {
-    createDashboardTablesController({
-      frontendConfig: {},
-      isLocalHost: () => false,
-      getLandingData: () => ({}),
-    }).renderRegisteredPane({ errors: { registered: 'index unavailable' } });
-  });
-
-  assert.match(
-    errorNodes.get('registered-pane-body').innerHTML,
-    /Declared canisters unavailable \(index unavailable\)/
-  );
-  assert.doesNotMatch(errorNodes.get('registered-pane-body').innerHTML, /Tracked canisters unavailable/);
 });

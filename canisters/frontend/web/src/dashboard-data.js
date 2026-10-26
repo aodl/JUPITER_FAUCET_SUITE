@@ -8,13 +8,11 @@ export {
 export {
   loadCanisterModuleHashes,
   loadDashboardData,
-  loadMemoRegisteredCanisterSummaryPage,
 } from './data/dashboard-loaders.js';
 export {
   FRONTEND_HINT,
   RECENT_COMMITMENT_LIMIT,
   RECENT_ROUTE_TRANSFER_LIMIT,
-  REGISTERED_SUMMARY_PAGE_SIZE,
   accountIdentifierHex,
   bytesToHex,
   dquorumStakingAccount,

@@ -7,7 +7,6 @@ import {
 } from '../app/config.js';
 
 export const FRONTEND_HINT = 'Frontend expects the upgraded jupiter_historian canister with the public dashboard query methods.';
-export const REGISTERED_SUMMARY_PAGE_SIZE = 100;
 export const RECENT_COMMITMENT_LIMIT = 100;
 export const RECENT_ROUTE_TRANSFER_LIMIT = 100;
 export { MAINNET_CMC_CANISTER_ID };
@@ -137,13 +136,6 @@ export function icrcAccountText(account) {
   ]);
   const canonicalSuffix = bytesToHex(subaccount).replace(/^0+/u, '');
   return `${owner}-${base32NoPadding(checksumBytes)}.${canonicalSuffix}`;
-}
-
-export function buildRegisteredCanisterSummariesRequest({ page = 0, pageSize = REGISTERED_SUMMARY_PAGE_SIZE } = {}) {
-  return {
-    page: [page],
-    page_size: [pageSize],
-  };
 }
 
 export function readOptional(value) {

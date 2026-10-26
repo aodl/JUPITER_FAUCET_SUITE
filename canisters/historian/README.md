@@ -317,7 +317,7 @@ Defaults are:
 - `max_index_pages_per_tick = 10`
 - `max_canisters_per_cycles_tick = 25`
 
-The historian also schedules an immediate one-shot tick roughly 1 second after install or upgrade so local and fresh deployments do not have to wait for the first full scan interval. In steady state, commitment/endowment indexing runs on every normal 10-minute main-driver execution. Disburser staking hints independently request an earlier bounded check plus one trailing-edge check 10 seconds after the latest relevant hint.
+The historian also schedules an immediate one-shot tick roughly 1 second after install or upgrade so local and fresh deployments do not have to wait for the first full scan interval. In steady state, commitment/endowment indexing runs on every normal 10-minute main-driver execution. Authenticated Event Horizon staking notifications independently request an earlier bounded check plus one deferred check anchored 10 seconds after the first accepted hint in the coalescing window.
 
 ### What the driver does
 

@@ -81,16 +81,15 @@ Used for:
 
 - `get_public_counts`
 - `get_public_status`
-- `list_memo_registered_canister_summaries`
 - `list_recent_commitments`
 - canonical full-configuration setup through `get_relay_configuration_view` and explicit `notify_relay_configuration`
 - paginated `list_canisters` filtered by `RelayInstance` for tracker source classification
 
-These power the registry table, endowment feed, and historian-backed status surface.
+These power counts, the endowment feed and the Historian-backed status surface. The tracker separately reads the exact `CyclesTopUp` route through `get_commitment_route_summaries` for indexed lifetime capital.
 
 ### 2) the configured ledger canister
 
-The browser learns the staking account and ledger canister ID from `historian.get_public_status()`, then reads current stake from the ledger.
+The browser reads the observed stake balance for the configured canonical staking account from the trusted ICP Ledger. Explicit local fixtures supply their own trusted account and Ledger; `get_public_status()` does not select the payment destination or balance account.
 
 The loader attempts:
 
@@ -129,7 +128,7 @@ The browser does not call Historian's permissioned `poke(PokeNotification)` meth
 
 The browser data loader is intentionally defensive:
 
-- it fetches historian counts, status, registered-canister summaries, and recent endowments together; the staking destination and observed stake balance use the configured canonical account and mainnet ICP Ledger, independently of status
+- it fetches Historian counts, status and recent endowments together; the staking destination and observed stake balance use the configured canonical account and mainnet ICP Ledger, independently of status
 - the displayed historian history tables are intentionally bounded views and also show the historian canister's current allocated memory footprint; the tracked target-canister registry is not pruned, and full transfer history still lives on the ICP ledger and its archive canisters
 - the Source Code pane certificate-verifies canister-specific module hashes and controllers directly with the pinned SDK and mainnet root key; memory remains an informational Historian observation, and verifier results are not stored in localStorage
 - invalid memo text is not echoed back in the dashboard tables; invalid entries render as a generic placeholder instead
@@ -181,7 +180,7 @@ Inline JavaScript and inline CSS are not allowed by the frontend CSP. Page and f
 
 The checked-in historian declarations under [`web/declarations/jupiter_historian/`](web/declarations/jupiter_historian) are the browser-facing Candid bindings used by the bundle.
 
-[`web/declarations/icp_ledger/`](web/declarations/icp_ledger) is a checked-in declaration subset for the production ICP ledger methods the frontend uses. It is intentionally kept separate from any mock canister declarations; at runtime the actor is pointed at the ledger canister ID returned by historian status.
+[`web/declarations/icp_ledger/`](web/declarations/icp_ledger) is a checked-in declaration subset for the production ICP ledger methods the frontend uses. It is intentionally kept separate from any mock canister declarations; at runtime the stake-balance actor uses the trusted ICP Ledger configuration, with explicit Ledger/account injection for local fixtures.
 
 The ICP Index browser method subset is defined in
 [`web/declarations/icp_index/icp_index.did`](web/declarations/icp_index/icp_index.did),

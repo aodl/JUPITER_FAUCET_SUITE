@@ -54,10 +54,7 @@ const sourcePaneController = createSourcePaneController({
   isLocalHost,
 });
 
-const dashboardTablesController = createDashboardTablesController({
-  frontendConfig: FRONTEND_CONFIG,
-  isLocalHost,
-});
+const dashboardTablesController = createDashboardTablesController();
 
 const simulatorController = createSimulatorController({
   copyTextToClipboard,
@@ -174,7 +171,6 @@ function renderPaneSubtitles(data) {
     ? ''
     : `(${formatInteger(declaredNeuronCount)})`;
   setText('landing-next-run', subtitle);
-  setText('registered-pane-subtitle', subtitle);
   setText('commitments-pane-subtitle', subtitle);
   setText('commitments-canister-count', countDisplays.declaredCanisterBadge);
   setText('commitments-raw-canister-count', commitmentsRawCanisterCount);
@@ -439,7 +435,6 @@ async function initLandingPage() {
       local: isLocalHost(),
       localStakeConfig: FRONTEND_CONFIG?.network === 'local'
         ? { ledgerCanisterId: FRONTEND_CONFIG.ledgerCanisterId } : null,
-      registeredPageSize: dashboardTablesController.currentTablePageSize(),
     });
     if (data.historianLikelyOutdated) {
       console.warn(`${FRONTEND_HINT} Redeploy jupiter_historian, then hard-refresh the frontend.`);
