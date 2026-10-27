@@ -1,6 +1,9 @@
-# OSV Scanner exceptions for no-safe-upgrade RustSec findings.
-# Keep these aligned with deny.toml and remove each entry when the upstream
-# dependency path provides a safe upgrade.
+# Scoped OSV Scanner exceptions. Keep shared RustSec entries aligned with
+# deny.toml; remove each entry when its documented review condition is met.
+
+[[IgnoredVulns]]
+id = "GHSA-qwgh-2vcv-g2f7"
+reason = "block-buffer 0.10.4 via sha2 0.10.9 -> digest 0.10.7 in production Wasm (including value-moving canisters and frontend certification), native tooling and tests. Classification: version-specific-inapplicable-code. The advisory's inline cursor is absent: 0.10.4 stores pos separately from the block and has no ReadBuffer; caught compression/generator panic-and-reuse regressions preserve the cursor. Canonical wasm32-unknown-unknown also uses panic=abort and the CDK panic hook traps, so production does not unwind back to reuse a failed buffer; native tooling can unwind and is covered by the version-specific source review/tests. This is not a dev-only or universal panic-safety claim. No compatible 0.10.x fix is published; 0.12.1 requires an incompatible digest/RustCrypto migration. Scope enforcement: security-scan runs tools/xtask/tests/block_buffer_advisory.rs, rejecting any changed version, source, checksum or additional block-buffer package before OSV. Owner: protocol-maintainers. Review/remove on upstream advisory correction, compatible release, any dependency/buffering/panic-model change, or contrary evidence; see docs/security/dependency-scanning.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0012"

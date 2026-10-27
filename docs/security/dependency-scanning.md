@@ -48,6 +48,7 @@ Run the canonical local command from any directory in the repository:
 The script fails non-zero if any of these steps fails:
 
 - [`tools/scripts/check-production-reachability`](../../tools/scripts/check-production-reachability)
+- `cargo test --locked -p xtask --test block_buffer_advisory`
 - `cargo audit`
 - `cargo deny check advisories licenses bans sources`
 - [`node tools/scripts/check-npm-lock-hermetic.mjs`](../../tools/scripts/check-npm-lock-hermetic.mjs)
@@ -94,7 +95,9 @@ Allowed RustSec ignores must be classified as one of:
 - `dev-test-only`: local tooling, mocks, tests, or PocketIC-only paths.
 
 Global advisory ignores are allowed only when paired with automated
-reachability checks. [`tools/scripts/check-production-reachability`](../../tools/scripts/check-production-reachability), called by
+reachability checks. The specific GHSA-qwgh-2vcv-g2f7 exception below instead
+requires the gate's exact-version applicability guard.
+[`tools/scripts/check-production-reachability`](../../tools/scripts/check-production-reachability), called by
 [`tools/scripts/security-scan`](../../tools/scripts/security-scan), validates the locked wasm-target normal/build
 trees for `jupiter-disburser`, `jupiter-faucet`, `jupiter-relay`,
 `jupiter-historian`, `jupiter-lifeline`, and `jupiter-sns-rewards`. Disburser,
@@ -140,7 +143,60 @@ privileged operational canister runtimes.
 
 Do not broaden ignores or silence a new advisory without adding a classification,
 owner, mitigation path, and automated proof that the finding is outside the
-production value-moving runtime path.
+production value-moving runtime path. The GHSA-qwgh-2vcv-g2f7 decision below is
+the narrowly scoped exception based on absence of the vulnerable implementation
+in the exact reviewed package. Production reachability must not be relabeled
+as dev/test-only.
+
+### GHSA-qwgh-2vcv-g2f7: reviewed block-buffer 0.10.4
+
+The [advisory](https://github.com/RustCrypto/utils/security/advisories/GHSA-qwgh-2vcv-g2f7)
+reports an inline buffer cursor corrupted when a callback panics, the panic is
+caught, and the same buffer is reused. OSV's range includes every version below
+0.12.1. Jupiter's locked `sha2 0.10.9 -> digest 0.10.7 -> block-buffer 0.10.4`
+path reaches production Wasm, including value-moving canisters, principal
+derivation and frontend certification. It also reaches native xtask,
+NNS binding generation, build/proc-macro dependencies and PocketIC tests.
+
+Classification: `version-specific-inapplicable-code`, owned by
+**protocol-maintainers**, reviewed 27 October 2026. The
+[0.10.4 implementation](https://docs.rs/block-buffer/0.10.4/src/block_buffer/lib.rs.html)
+has a separate `pos: u8`; filling the block cannot overwrite it. Its compression
+callback runs before updating that separate cursor, and its generation API
+uses a local partial block before assigning it. There is no `ReadBuffer` in
+this version. The advisory's inline-cursor failure therefore does not apply to
+the reviewed implementation. This is Jupiter's source-based assessment, not a
+claim that the upstream advisory range has been corrected or that arbitrary
+hash computations can safely resume after a panic.
+
+The existing canonical build uses Rust 1.94.1's `wasm32-unknown-unknown`
+`panic="abort"` target; the locked CDK executor's panic hook calls `ic0::trap`.
+A production panic cannot unwind into a handler that reuses the failed buffer;
+IC traps roll back the trapping message's changes, not earlier messages across
+an await. This is an additional boundary, not an assertion that panics cannot
+occur. Native tooling/tests can unwind, so the Wasm argument alone does not
+cover them. The separate-cursor review and native caught-panic regressions
+cover the specific reported mechanism there as well. No Miri or live-canister
+proof is claimed.
+
+The latest compatible block-buffer release is 0.10.4. The published fix, 0.12.1,
+does not satisfy digest 0.10.7's `block-buffer = "0.10"`; moving the RustCrypto
+stack and its downstream consumers is outside a compatible lockfile fix.
+No dependency or cryptographic implementation is changed for this exception.
+
+Before OSV applies the single-advisory exception, the security gate runs
+[`block_buffer_advisory.rs`](../../tools/xtask/tests/block_buffer_advisory.rs).
+It requires exactly the reviewed registry package/version/archive checksum,
+rejects changed or additional versions (including underscore spelling), and
+exercises the advisory's compression panic/reuse plus the existing generation
+API's panic paths. The exception cannot silently cover a newly resolved
+block-buffer version. Other advisories and existing production exclusions
+remain enforced; this GHSA-only entry does not add a RustSec ignore.
+
+Review/remove the exception when upstream corrects applicability, publishes a
+compatible release, or any buffering, dependency or panic model changes, and
+immediately on contrary evidence. A failed guard requires a fresh review, not
+updating its expected version merely to restore green CI.
 
 ## NNS Dependency Boundary
 
