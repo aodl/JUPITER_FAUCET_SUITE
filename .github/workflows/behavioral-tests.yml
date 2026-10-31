@@ -19,6 +19,7 @@ env:
   CARGO_PROFILE_DEV_DEBUG: 0
   CARGO_PROFILE_TEST_DEBUG: 0
   POCKET_IC_MUTE_SERVER: 1
+  ICP_CLI_ARCHIVE_SHA256: df4ad7359ae397f540cbeccba501be5ba209ccaf3c219a05d7da77b0d8c67b91
   DIDC_VERSION: 0.6.2
   # Official dfinity/candid didc-v0.6.2 x86_64 Linux MUSL archive.
   DIDC_ARCHIVE_SHA256: ced232a08d12190f7124110b6a39d8023732160838c062285e015d2c03bcc930
@@ -77,7 +78,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dfinity/icp-cli/releases/download/v1.2.0/icp-cli-installer.sh | sh
+          # Pin the executable archive directly; no bootstrap or updater execution.
+          archive="$RUNNER_TEMP/icp-cli.tar.xz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/dfinity/icp-cli/releases/download/v1.2.0/icp-cli-x86_64-unknown-linux-gnu.tar.xz -o "$archive"
+          printf '%s  %s\n' "$ICP_CLI_ARCHIVE_SHA256" "$archive" | sha256sum --check --strict
+          tar -xJf "$archive" -C "$RUNNER_TEMP" icp-cli-x86_64-unknown-linux-gnu/icp
+          install -Dm0755 "$RUNNER_TEMP/icp-cli-x86_64-unknown-linux-gnu/icp" "$HOME/.local/bin/icp"
+          test "$("$HOME/.local/bin/icp" --version)" = 'icp 1.2.0'
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           archive="$RUNNER_TEMP/didc-x86_64-unknown-linux-musl.tar.xz"
           curl --proto '=https' --tlsv1.2 -fsSL \
@@ -143,7 +151,14 @@ jobs:
         run: |
           set -euo pipefail
           npm ci --no-fund --no-audit
-          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dfinity/icp-cli/releases/download/v1.2.0/icp-cli-installer.sh | sh
+          # Pin the executable archive directly; no bootstrap or updater execution.
+          archive="$RUNNER_TEMP/icp-cli.tar.xz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/dfinity/icp-cli/releases/download/v1.2.0/icp-cli-x86_64-unknown-linux-gnu.tar.xz -o "$archive"
+          printf '%s  %s\n' "$ICP_CLI_ARCHIVE_SHA256" "$archive" | sha256sum --check --strict
+          tar -xJf "$archive" -C "$RUNNER_TEMP" icp-cli-x86_64-unknown-linux-gnu/icp
+          install -Dm0755 "$RUNNER_TEMP/icp-cli-x86_64-unknown-linux-gnu/icp" "$HOME/.local/bin/icp"
+          test "$("$HOME/.local/bin/icp" --version)" = 'icp 1.2.0'
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           archive="$RUNNER_TEMP/didc-x86_64-unknown-linux-musl.tar.xz"
           curl --proto '=https' --tlsv1.2 -fsSL \
