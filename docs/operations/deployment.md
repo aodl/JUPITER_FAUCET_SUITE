@@ -14,8 +14,9 @@ Record installed hashes, controller vectors, public status/log visibility, accou
 
 ## Readiness and recovery boundaries
 
-The developer's unused-factory inventory applies to self-service setup, not to
-canonical Faucet/Historian accounts or history. This release preserves those
+Any unused-factory inventory is an operator assertion to reverify against the
+installed configuration and retained setup records before release; it does not
+apply to canonical Faucet/Historian accounts or history. This release preserves those
 live roots and authoritative maps. Faucet's memory 2 records one pending
 transfer's dispatch provenance without changing its strict V1 root. Missing
 provenance is conservative (possibly dispatched), never proof of no debit.

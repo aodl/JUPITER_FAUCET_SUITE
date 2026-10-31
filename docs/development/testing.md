@@ -108,6 +108,10 @@ network start/stop, then xtask verifies its server version. Browser tests use
 the existing Playwright image. Missing tools or unavailable suites fail; there
 is no release skip mode.
 
+Both behavioral and canonical-release jobs install icp-cli 1.2.0 from its
+repository-SHA-pinned official Linux executable archive, verified before
+extraction. They do not execute a downloaded shell installer or updater.
+
 Both behavioral and canonical-release jobs install the official DFINITY
 `didc-v0.6.2` x86_64 Linux MUSL release archive, checking its pinned SHA-256
 before extraction/installation. The workflow's shared version/digest pins

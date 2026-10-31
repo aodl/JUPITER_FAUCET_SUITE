@@ -71,7 +71,7 @@ Funding authority is the aggregate `icrc1_balance_of` value for the authoritativ
 
 Notification rereads the setup balance, Ledger fee, and CMC rate before Governance work. Underfunded calls do not reserve an entry, resolve a neuron, probe a target, or spend funds. A funded exact key enters `Reserved`; same-key callers observe the existing phase, and at most four distinct funded configurations may be creating concurrently. This is a total unresolved `Creating`-state circuit breaker: `RelayFunded` and `FinalizationAttempted` entries continue to consume capacity until activation replaces them with `Active`. Public neuron recipients must resolve through NNS Governance before targets are probed. Zero-recipient and Principal-only configurations make no Governance request.
 
-Every target must pass the shared Auto cycles probe before irreversible work. Auto prefers protocol-native direct `canister_status`. Preflight uses the `AnyCanister` requirement: a direct observation is reusable by the future Relay only when status visibility is exactly `public`; Historian controller access or a Historian-only `allowed_viewers` entry is insufficient. A successful non-public response still provides authoritative controllers, allowing a recognized reusable proxy to qualify the target without another metadata call. Fresh compatibility discovery calls only production blackholes that control the target, canonical NNS Root when it controls the target, and SNS Root/Swap routes authenticated through SNS-W and membership validation. NNS Root may also observe itself. Arbitrary controllers are never called as status proxies. Successful fallback routes are cached only in heap, behind the direct attempt, and stale routes rediscover after failure. The state machine journals the prepared CMC transfer, accepted block, cycles minted, child-create dispatch fence and returned ID, prepared Relay-funding transfer, accepted block, phase, and bounded diagnostic information. Clean pre-spend failures remove the reservation. Ambiguous transfer results, creation results after dispatch, install reconciliation failures, funding failures, and failed final audits become `ManualRecoveryRequired`; public notification never replays those operations.
+Every target must pass the shared Auto cycles probe before irreversible work. Auto prefers protocol-native direct `canister_status`. Preflight uses the `AnyCanister` requirement: a direct observation is reusable by the future Relay only when status visibility is exactly `public`; Historian controller access or a Historian-only `allowed_viewers` entry is insufficient. A successful non-public response still provides authoritative controllers, allowing a recognized reusable proxy to qualify the target without another metadata call. Fresh compatibility discovery calls only production blackholes that control the target, canonical NNS Root when it controls the target, and SNS Root/Swap routes authenticated through SNS-W and membership validation. NNS Root may also observe itself. Arbitrary controllers are never called as status proxies. Successful fallback routes are cached only in heap, behind the direct attempt, and stale routes rediscover after failure. The state machine journals the prepared CMC transfer, accepted block, cycles minted, child-create dispatch fence and returned ID, prepared Relay-funding transfer, accepted block, phase, and bounded diagnostic information. Clean pre-spend failures remove the reservation. Normal setup notifications also examine at most the four Creating keys and reclaim journal-empty `Reserved`/`ProbingTargets` entries with no live transient attempt. This permits same-key retries and unrelated setups after a pre-spend callback interruption without requiring an upgrade. Cleanup is fenced by the existing admission attempt token, so an old callback cannot clear a replacement at the same phase. Prepared or dispatched operations are never reclaimed by this path. Ambiguous transfer results, creation results after dispatch, install reconciliation failures, funding failures, and failed final audits become `ManualRecoveryRequired`; public notification never replays those operations.
 
 Admission precedes the first balance/fee/rate, neuron or probe call. New preflight is limited to four outstanding attempts and eight attempts per aligned 60-second window. Paid CMC reconciliation and already-funded finalization share a protected two-slot/eight-attempt allowance, separate from new setup traffic. Same-key work is single-flight across both lanes; completed/manual terminal reads are cheap and uncharged. Failed work still consumes its window token. Transient memory holds at most six keys, never all unfunded keys or callers. Pre-spend work is fenced by a five-minute lease and a 512-call ceiling shared with nested probe calls. Admission is checked in the same message immediately before CMC-transfer preparation/dispatch. Once dispatched, the durable journal and bounded Creating index govern the paid tail; each callback must still match its expected phase. A delayed transfer/CMC/create/install/funding reply is classified normally, not replaced with `Busy` because the transient lease expired. Ambiguous or failed irreversible operations retain manual-recovery evidence and release their Creating slot; they are never automatically replayed. Admission failure in finalization leaves only the existing safely resumable funded phases. A stale pre-spend response cannot reserve, spend or clear a successor's guard. Capacity/refill permits retries, but an unlimited Sybil flood has no new-caller fairness guarantee.
 
@@ -121,3 +121,49 @@ Deploy matching Historian and frontend builds in the same maintenance window bec
 7. Verify memory-26 setup state, known active mappings, `RelayTarget`/`RelayInstance` tracking, public state, canonical hashes/accounts, and any interrupted setup state.
 
 Future upgrades may begin with active, recoverable, and tracked self-service Relay state. That state is expected and must be preserved.
+
+## Incident records and recovery rehearsal
+
+Before accepting public paid setups, the release operator must demonstrate a
+retained configuration inventory and an incident rehearsal. The installed
+factory enablement, existing setup inventory, and retention process require
+operator verification; checked-in fresh-install arguments do not prove live
+configuration or absence of paid jobs.
+
+Retain the Historian principal/network, exact target principals, every recipient's
+kind and principal or numeric neuron ID, and **raw memo bytes in hexadecimal**.
+Record the authoritative setup-view response (including setup subaccount/key),
+deposit Ledger block IDs, notification result/phase, returned child ID if any,
+and observation times. Keep the canonical configuration independently of the
+original browser/session; screenshots or rendered memo text alone are inadequate.
+No new receipt or enumeration service is implied by this procedure.
+
+For a concrete known-configuration rehearsal:
+
+1. Start from an independently retained configuration record, not browser state.
+   Reconstruct `RelaySetupArgs` with both vectors and decode each memo hex string
+   into bytes. Preserve an empty memo as an empty blob, not a missing recipient.
+2. Check canonicalization against the committed vector above: target raw `01`,
+   Principal recipient raw `02`, memo `00ff` yields setup key
+   `953bb6f741d0fd96d989a53d442f9ef919ba92c5848c7b328cd2585af634087f`.
+   This synthetic vector verifies byte reconstruction, not a funded live incident.
+3. For the actual incident, call `get_relay_configuration_view` with the recovered
+   exact configuration on the recorded Historian. Compare its setup subaccount
+   with the retained key and Ledger deposit destination. Do not call notification
+   as a discovery probe. A key alone cannot reconstruct its hashed configuration.
+4. Correlate the returned phase and child ID with retained transfer block IDs,
+   Ledger debits/fees, CMC notification evidence and management creation/install/
+   controller evidence. Distinguish observed facts from missing replies. In
+   particular, an unknown create result is not proof that no child was created.
+5. Use only the documented explicit resumable phases. For
+   `ManualRecoveryRequired`, stop automation and retain evidence for a separately
+   reviewed operator decision; never repeat a conversion transfer, create, install
+   or funding operation merely because a response is missing.
+
+Record the rehearsal's configuration source, query response, correlated evidence,
+remaining unknowns and reviewer approval with release evidence. No live incident
+rehearsal is established by the synthetic vector. If neither operator nor user
+retained the configuration and no independent source can reconstruct it,
+production offers no general discovery mechanism. Public paid-factory launch
+requires acceptance of that recovery limitation or a verified retention process;
+a downloadable record alone would not solve complete record loss.
