@@ -24,6 +24,15 @@ struct ScanGuard {
 }
 
 impl ScanGuard {
+    fn owns_scan(&self, root: candid::Principal, expected: Option<&OwnerScan>) -> bool {
+        state::with_state(|st| {
+            self.inner.is_active()
+                && st.scan_lock_state_ts == Some(self.inner.lease_expires_at_ts())
+                && st.config.reward_sns_root_canister_id == Some(root)
+                && st.scan.as_ref() == expected
+        })
+    }
+
     fn acquire(now_secs: u64) -> Option<Self> {
         state::with_state_mut(|st| {
             let inner =
@@ -101,7 +110,7 @@ fn schedule_continuation() {
 pub(crate) async fn scan_tick(force: bool) {
     let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
-    let Some(_guard) = ScanGuard::acquire(now_secs) else {
+    let Some(guard) = ScanGuard::acquire(now_secs) else {
         if !force {
             schedule_scan_check(Duration::from_secs(SCAN_BUSY_RECHECK_SECONDS), false);
         }
@@ -119,19 +128,19 @@ pub(crate) async fn scan_tick(force: bool) {
             schedule_next_due_check(now_nanos);
             return;
         }
-        match start_scan().await {
+        match start_scan(&guard).await {
             StartScanResult::Started(started_at_nanos) => {
                 schedule_next_due_check(started_at_nanos);
             }
-            StartScanResult::NotConfigured => return,
+            StartScanResult::NotConfigured | StartScanResult::Stale => return,
             StartScanResult::Failed => {
                 schedule_start_retry();
                 return;
             }
         }
     }
-    match process_one_page(ic_cdk::api::time(), !force).await {
-        PageResult::InProgress => {}
+    match process_one_page(&guard, ic_cdk::api::time(), !force).await {
+        PageResult::InProgress | PageResult::Stale => {}
         PageResult::Completed => schedule_next_due_check(ic_cdk::api::time()),
         PageResult::Failed => schedule_scan_check(
             Duration::from_secs(SCAN_PAGE_FAILURE_RECHECK_SECONDS),
@@ -140,17 +149,32 @@ pub(crate) async fn scan_tick(force: bool) {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum StartScanResult {
     Started(u64),
     NotConfigured,
+    Stale,
     Failed,
 }
 
-async fn start_scan() -> StartScanResult {
+async fn start_scan(guard: &ScanGuard) -> StartScanResult {
     let Some(root) = state::with_state(|st| st.config.reward_sns_root_canister_id) else {
         return StartScanResult::NotConfigured;
     };
-    let resolved = match SnsRootCanister.list_sns_canisters(root).await {
+    let response = SnsRootCanister.list_sns_canisters(root).await;
+    finish_start_scan(guard, root, response)
+}
+
+fn finish_start_scan(
+    guard: &ScanGuard,
+    root: candid::Principal,
+    response: Result<ListSnsCanistersResponse, jupiter_ic_clients::ClientError>,
+) -> StartScanResult {
+    // No await separates this fence from staging writes or the caller's timer.
+    if !guard.owns_scan(root, None) {
+        return StartScanResult::Stale;
+    }
+    let resolved = match response {
         Ok(value) => value,
         Err(err) => {
             crate::logging::scan("failed", None, None, Some(&err.to_string()));
@@ -229,13 +253,19 @@ fn fail_scan(reason: &str) {
     state::with_state_mut(|st| st.scan = None);
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum PageResult {
     InProgress,
+    Stale,
     Completed,
     Failed,
 }
 
-async fn process_one_page(now_nanos: u64, schedule_next_page: bool) -> PageResult {
+async fn process_one_page(
+    guard: &ScanGuard,
+    now_nanos: u64,
+    schedule_next_page: bool,
+) -> PageResult {
     let Some(scan) = state::with_state(|st| st.scan.clone()) else {
         return PageResult::Failed;
     };
@@ -243,12 +273,23 @@ async fn process_one_page(now_nanos: u64, schedule_next_page: bool) -> PageResul
         fail_scan("page_cap_reached");
         return PageResult::Failed;
     }
-    let response = match crate::clients::list_neurons(
-        scan.sns_governance_canister_id,
-        scan.start_page_at.clone(),
-    )
-    .await
-    {
+    let response =
+        crate::clients::list_neurons(scan.sns_governance_canister_id, scan.start_page_at.clone())
+            .await;
+    finish_page(guard, scan, response, now_nanos, schedule_next_page)
+}
+
+fn finish_page(
+    guard: &ScanGuard,
+    scan: OwnerScan,
+    response: Result<crate::clients::ListNeuronsResponse, String>,
+    now_nanos: u64,
+    schedule_next_page: bool,
+) -> PageResult {
+    if !guard.owns_scan(scan.sns_root_canister_id, Some(&scan)) {
+        return PageResult::Stale;
+    }
+    let response = match response {
         Ok(value) => value,
         Err(err) => {
             fail_scan(&err);
@@ -323,6 +364,102 @@ mod tests {
             }],
             cached_neuron_stake_e8s: 1,
             neuron_fees_e8s: 0,
+        }
+    }
+
+    #[test]
+    fn stale_root_error_does_not_retry_or_change_new_scan() {
+        let root = Principal::from_slice(&[1]);
+        state::reset_for_test(state::Config {
+            reward_sns_root_canister_id: Some(root),
+        });
+        let old = ScanGuard::acquire(10).unwrap();
+        let new = ScanGuard::acquire(10 + SCAN_LEASE_SECONDS).unwrap();
+        let before = state::with_state(Clone::clone);
+        assert_eq!(
+            finish_start_scan(
+                &old,
+                root,
+                Err(jupiter_ic_clients::ClientError::Call(
+                    "late root failure".into()
+                ))
+            ),
+            StartScanResult::Stale
+        );
+        assert_eq!(state::with_state(Clone::clone), before);
+        assert_eq!(
+            finish_start_scan(
+                &old,
+                root,
+                Ok(ListSnsCanistersResponse {
+                    root: Some(root),
+                    governance: Some(Principal::from_slice(&[2])),
+                    ledger: Some(Principal::from_slice(&[3])),
+                    ..Default::default()
+                })
+            ),
+            StartScanResult::Stale
+        );
+        assert_eq!(state::with_state(Clone::clone), before);
+        drop(new);
+    }
+
+    #[test]
+    fn stale_page_success_and_error_cannot_mutate_successor_or_publish() {
+        for advance_same_scan in [false, true] {
+            for response in [
+                Ok(crate::clients::ListNeuronsResponse {
+                    neurons: vec![neuron(9)],
+                }),
+                Err("late failure".into()),
+            ] {
+                state::reset_for_test(state::Config {
+                    reward_sns_root_canister_id: Some(Principal::from_slice(&[1])),
+                });
+                let old = ScanGuard::acquire(10).unwrap();
+                let scan = OwnerScan {
+                    staging_slot: OwnerIndexSlot::A,
+                    sns_root_canister_id: Principal::from_slice(&[1]),
+                    sns_governance_canister_id: Principal::from_slice(&[2]),
+                    sns_ledger_canister_id: Principal::from_slice(&[3]),
+                    scan_started_at_timestamp_nanos: 10,
+                    start_page_at: None,
+                    pages_processed: 0,
+                    neurons_processed: 0,
+                };
+                state::with_state_mut(|st| st.scan = Some(scan.clone()));
+                let new = ScanGuard::acquire(10 + SCAN_LEASE_SECONDS).unwrap();
+                state::with_state_mut(|st| {
+                    let current = st.scan.as_mut().unwrap();
+                    if advance_same_scan {
+                        current.start_page_at = Some(vec![5; 32]);
+                        current.pages_processed = 1;
+                    } else {
+                        current.scan_started_at_timestamp_nanos += 1;
+                        current.staging_slot = OwnerIndexSlot::B;
+                    }
+                });
+                state::insert_owner(OwnerIndexSlot::A, Principal::from_slice(&[6]));
+                state::insert_owner(OwnerIndexSlot::B, Principal::from_slice(&[7]));
+                let before = state::with_state(Clone::clone);
+                assert_eq!(
+                    finish_page(&old, scan.clone(), response.clone(), 99, false),
+                    PageResult::Stale
+                );
+                assert_eq!(state::with_state(Clone::clone), before);
+                assert_eq!(state::slot_len(OwnerIndexSlot::A), 1);
+                assert_eq!(state::slot_len(OwnerIndexSlot::B), 1);
+                // Even a current lease cannot apply a response for a different
+                // scan or page position (all fields participate in the fence).
+                assert_eq!(
+                    finish_page(&new, scan, response, 99, false),
+                    PageResult::Stale
+                );
+                assert_eq!(state::with_state(Clone::clone), before);
+                drop(old);
+                assert_eq!(state::with_state(Clone::clone), before);
+                drop(new);
+            }
         }
     }
 
