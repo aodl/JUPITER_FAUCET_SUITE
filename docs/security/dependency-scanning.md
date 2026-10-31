@@ -25,8 +25,7 @@ Install OSV Scanner from the official GitHub release binary. The version observe
 ```bash
 mkdir -p "$HOME/bin"
 curl -fsSLo /tmp/osv-scanner_linux_amd64 https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64
-curl -fsSLo /tmp/osv-scanner_SHA256SUMS https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_SHA256SUMS
-grep 'osv-scanner_linux_amd64$' /tmp/osv-scanner_SHA256SUMS | (cd /tmp && sha256sum -c -)
+printf '%s  %s\n' bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc /tmp/osv-scanner_linux_amd64 | sha256sum --check --strict
 install -m 0755 /tmp/osv-scanner_linux_amd64 "$HOME/bin/osv-scanner"
 ```
 
