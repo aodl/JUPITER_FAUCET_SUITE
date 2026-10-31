@@ -2132,7 +2132,7 @@ fn factory_admission_bounds_unfunded_outcalls_and_recovers_after_callback_traps(
 #[test]
 #[ignore]
 fn funded_pre_spend_callback_trap_retries_without_upgrade() -> Result<()> {
-    let env = SelfServiceTestEnv::new(relay_enabled_historian_wasm()?)?;
+    let env = SelfServiceTestEnv::new(build_relay_enabled_historian_wasm(true)?)?;
     let args = RelaySetupArgs {
         target_canister_ids: vec![env.target],
         surplus_recipients: vec![],
