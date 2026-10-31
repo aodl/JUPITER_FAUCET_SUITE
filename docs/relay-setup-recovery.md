@@ -130,6 +130,17 @@ factory enablement, existing setup inventory, and retention process require
 operator verification; checked-in fresh-install arguments do not prove live
 configuration or absence of paid jobs.
 
+The setup controller keeps its configuration and notification result in browser
+memory; it does not provide an independent operator archive. For a known,
+installed child, retained public Relay `CONFIG` logs can supply
+`managed_canisters`, typed `surplus_recipients` and aligned
+`surplus_recipient_memos` (`hex:...`, or `none` for an empty memo).
+Use the configured target list, not `effective_managed_canisters`, which also
+includes Relay self. Activated children are tracked as `RelayInstance`s. These
+are useful reconstruction sources when present, but bounded logs can be evicted,
+and an interrupted setup before child installation/activation need not have
+such a record. They are not a complete incident inventory.
+
 Retain the Historian principal/network, exact target principals, every recipient's
 kind and principal or numeric neuron ID, and **raw memo bytes in hexadecimal**.
 Record the authoritative setup-view response (including setup subaccount/key),
