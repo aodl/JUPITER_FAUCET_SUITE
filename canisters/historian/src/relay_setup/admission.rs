@@ -94,6 +94,17 @@ pub(super) struct Ticket {
     token: u64,
 }
 
+// Query only the bounded transient slots; no durable registry or age heuristic.
+pub(super) fn has_live_attempt(key: RelaySetupKey) -> bool {
+    LIMITER.with(|limiter| {
+        limiter
+            .borrow()
+            .slots
+            .iter()
+            .any(|slot| slot.key == key && slot.expires > now())
+    })
+}
+
 pub(super) struct Guard(Ticket);
 
 impl Guard {
@@ -176,6 +187,18 @@ impl Drop for Guard {
 }
 
 impl Ticket {
+    // Cleanup may run after expiry, but must never own a replacement token.
+    pub(super) fn owns_slot(self, key: RelaySetupKey) -> bool {
+        self.key == key
+            && LIMITER.with(|limiter| {
+                limiter
+                    .borrow()
+                    .slots
+                    .iter()
+                    .any(|slot| slot.key == key && slot.token == self.token)
+            })
+    }
+
     fn visit(self, charge_call: bool) -> Result<(), RelaySetupNotifyResult> {
         LIMITER.with(|limiter| {
             let mut limiter = limiter.borrow_mut();

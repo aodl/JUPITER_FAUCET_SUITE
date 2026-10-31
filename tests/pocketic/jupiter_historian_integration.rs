@@ -2131,6 +2131,93 @@ fn factory_admission_bounds_unfunded_outcalls_and_recovers_after_callback_traps(
 
 #[test]
 #[ignore]
+fn funded_pre_spend_callback_trap_retries_without_upgrade() -> Result<()> {
+    let env = SelfServiceTestEnv::new(relay_enabled_historian_wasm()?)?;
+    let args = RelaySetupArgs {
+        target_canister_ids: vec![env.target],
+        surplus_recipients: vec![],
+    };
+    let account = relay_setup_view(&env.pic, env.historian, args.clone())?
+        .setup_account
+        .unwrap();
+    env.fund_account(account, 300_000_000)?;
+    let call = env
+        .pic
+        .submit_call(
+            env.historian,
+            Principal::anonymous(),
+            "notify_relay_configuration",
+            encode_one(args.clone())?,
+        )
+        .map_err(|error| anyhow!("{error}"))?;
+    let mut reserved = false;
+    for _ in 0..100 {
+        env.pic.tick();
+        let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
+        let manager = MemoryManager::init(memory);
+        let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+            manager.get(MemoryId::new(26)),
+        );
+        for entry in entries.iter() {
+            let state: FixtureRelayEntry = candid::decode_one(&entry.value().0)?;
+            if let FixtureRelayEntry::Creating(progress) = state {
+                assert!(
+                    progress.cmc_transfer.is_none(),
+                    "must intercept before spend"
+                );
+                assert!(matches!(
+                    progress.phase,
+                    RelayCreationPhase::Reserved | RelayCreationPhase::ProbingTargets
+                ));
+                reserved = true;
+            }
+        }
+        if reserved {
+            break;
+        }
+    }
+    assert!(reserved, "must observe a funded durable reservation");
+    update_one::<_, ()>(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "debug_trap_after_factory_call",
+        true,
+    )?;
+    let error = env
+        .pic
+        .await_call(call)
+        .expect_err("pre-spend callback must trap");
+    assert!(format!("{error:?}").contains("debug factory callback interruption"));
+    update_one::<_, ()>(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "debug_trap_after_factory_call",
+        false,
+    )?;
+    assert_eq!(
+        support::ledger::icrc1_balance(&env.pic, env.ledger, &account)?,
+        300_000_000
+    );
+    assert_eq!(relay_setup_entry_count(&env.pic, env.historian), 1);
+    env.pic.advance_time(Duration::from_secs(301));
+    let result: RelaySetupNotifyResult = update_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        args,
+    )?;
+    assert!(
+        matches!(result, RelaySetupNotifyResult::Active { .. }),
+        "{result:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
 fn factory_expired_cmc_call_enters_manual_recovery_without_replay() -> Result<()> {
     // Real Ledger messages: let the bounded call and admission both expire
     // after dispatch. A deadline rejection is uncertain, not admission Busy.

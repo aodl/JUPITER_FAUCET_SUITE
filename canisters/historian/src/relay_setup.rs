@@ -640,6 +640,39 @@ fn reserve(key: RelaySetupKey) -> Result<RelayCreationProgress, RelaySetupNotify
     Ok(progress)
 }
 
+// Only the two journal-empty phases are reclaimable. Never touch prepared or
+// dispatched work, even when its transient admission has expired.
+fn reclaim_abandoned_pre_spend_reservations() {
+    for key in state::relay_creating_keys() {
+        if admission::has_live_attempt(key) {
+            continue;
+        }
+        if let Some(RelaySetupEntry::Creating(progress)) = get_entry(key) {
+            if matches!(
+                progress.phase,
+                RelayCreationPhase::Reserved | RelayCreationPhase::ProbingTargets
+            ) && progress.cmc_transfer.is_none()
+                && progress.cycles_minted.is_none()
+                && progress.create_dispatched_at_ts.is_none()
+                && progress.relay_canister_id.is_none()
+                && progress.relay_funding_transfer.is_none()
+            {
+                remove_entry(key);
+            }
+        }
+    }
+}
+
+fn remove_owned_reservation(
+    key: RelaySetupKey,
+    expected: RelayCreationPhase,
+    ticket: admission::Ticket,
+) {
+    if ticket.owns_slot(key) {
+        remove_reservation(key, expected);
+    }
+}
+
 fn remove_reservation(key: RelaySetupKey, expected: RelayCreationPhase) {
     if matches!(
         get_entry(key),
@@ -1114,13 +1147,13 @@ async fn validate_neuron_recipients(
         {
             Ok(resolution) => resolution,
             Err(result) => {
-                remove_reservation(key, RelayCreationPhase::Reserved);
+                remove_owned_reservation(key, RelayCreationPhase::Reserved, ticket);
                 return Err(result);
             }
         };
         require_phase(key, RelayCreationPhase::Reserved)?;
         if resolution.is_err() {
-            remove_reservation(key, RelayCreationPhase::Reserved);
+            remove_owned_reservation(key, RelayCreationPhase::Reserved, ticket);
             return Err(RelaySetupNotifyResult::FailedPreSpend {
                 message: bounded_message(format!(
                     "Could not verify neuron {neuron_id} as publicly readable by NNS Governance. Check the neuron ID and try again."
@@ -1150,6 +1183,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
         Err(message) => return RelaySetupNotifyResult::FailedPreSpend { message },
     };
     let key = setup.key();
+    reclaim_abandoned_pre_spend_reservations();
     if let Some(entry) = get_entry(key) {
         return match entry {
             RelaySetupEntry::Creating(RelayCreationProgress {
@@ -1263,7 +1297,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     }
     for target in setup.targets() {
         if let Err(result) = ticket.check() {
-            remove_reservation(key, RelayCreationPhase::ProbingTargets);
+            remove_owned_reservation(key, RelayCreationPhase::ProbingTargets, ticket);
             return result;
         }
         let cached_route =
@@ -1280,7 +1314,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
         )
         .await;
         if let Err(result) = ticket.check() {
-            remove_reservation(key, RelayCreationPhase::ProbingTargets);
+            remove_owned_reservation(key, RelayCreationPhase::ProbingTargets, ticket);
             return result;
         }
         if let Err(result) = require_phase(key, RelayCreationPhase::ProbingTargets) {
@@ -1298,7 +1332,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
                 });
             }
             Err(error) => {
-                remove_reservation(key, RelayCreationPhase::ProbingTargets);
+                remove_owned_reservation(key, RelayCreationPhase::ProbingTargets, ticket);
                 return RelaySetupNotifyResult::FailedPreSpend {
                     message: bounded_message(format!(
                         "target {} cannot be observed by the Auto cycles probe: {}",
@@ -1312,7 +1346,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     let conversion_e8s = match cmc_conversion_e8s(&config, &rate) {
         Ok(value) => value,
         Err(message) => {
-            remove_reservation(key, RelayCreationPhase::ProbingTargets);
+            remove_owned_reservation(key, RelayCreationPhase::ProbingTargets, ticket);
             return RelaySetupNotifyResult::FailedPreSpend { message };
         }
     };
@@ -1325,7 +1359,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     // Last transient fence, in the same message as preparation and dispatch.
     // No await may separate this check from the first value-moving call.
     if let Err(result) = ticket.check() {
-        remove_reservation(key, RelayCreationPhase::ProbingTargets);
+        remove_owned_reservation(key, RelayCreationPhase::ProbingTargets, ticket);
         return result;
     }
     if let Err(result) = update_progress(key, RelayCreationPhase::ProbingTargets, |progress| {
@@ -5085,6 +5119,101 @@ mod tests {
             assert!(ledger.transfers.lock().unwrap().is_empty());
             assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
         }
+    }
+
+    #[test]
+    fn runtime_reclamation_preserves_every_paid_phase_and_inconsistent_journal() {
+        for phase in [
+            RelayCreationPhase::CmcTransferPrepared,
+            RelayCreationPhase::CmcTransferAccepted,
+            RelayCreationPhase::CmcNotifySucceeded,
+            RelayCreationPhase::CreateDispatched,
+            RelayCreationPhase::ChildCreated,
+            RelayCreationPhase::CodeInstalled,
+            RelayCreationPhase::RelayFundingPrepared,
+            RelayCreationPhase::RelayFunded,
+            RelayCreationPhase::FinalizationAttempted,
+            RelayCreationPhase::Reserved,
+            RelayCreationPhase::ProbingTargets,
+        ] {
+            reset();
+            let key = key_for_targets(&[principal(11)]);
+            let progress = progress_for_phase(phase); // includes spend evidence
+            insert_entry(key, RelaySetupEntry::Creating(progress.clone()));
+            reclaim_abandoned_pre_spend_reservations();
+            assert_eq!(get_entry(key), Some(RelaySetupEntry::Creating(progress)));
+            assert_eq!(state::relay_creating_keys(), vec![key]);
+        }
+    }
+
+    #[test]
+    fn old_pre_spend_cleanup_cannot_remove_same_phase_replacement() {
+        reset();
+        let key = key_for_targets(&[principal(11)]);
+        for phase in [
+            RelayCreationPhase::Reserved,
+            RelayCreationPhase::ProbingTargets,
+        ] {
+            let old = admission::Guard::acquire(key, admission::Lane::New).unwrap();
+            let mut progress = reserve(key).unwrap();
+            progress.phase = phase;
+            insert_entry(key, RelaySetupEntry::Creating(progress.clone()));
+            admission::set_time_for_test(admission::time_for_test() + 301);
+            reclaim_abandoned_pre_spend_reservations();
+            let new = admission::Guard::acquire(key, admission::Lane::New).unwrap();
+            reserve(key).unwrap();
+            insert_entry(key, RelaySetupEntry::Creating(progress.clone()));
+            remove_owned_reservation(key, phase, old.ticket());
+            assert_eq!(get_entry(key), Some(RelaySetupEntry::Creating(progress)));
+            drop(old);
+            assert!(new.ticket().check().is_ok());
+            remove_owned_reservation(key, phase, new.ticket());
+            assert!(get_entry(key).is_none());
+        }
+    }
+
+    #[test]
+    fn abandoned_funded_reservations_recover_without_upgrade() {
+        reset();
+        for n in 11..=14 {
+            let key = key_for_targets(&[principal(n)]);
+            let guard = admission::Guard::acquire(key, admission::Lane::New).unwrap();
+            let mut progress = reserve(key).unwrap();
+            if n % 2 == 0 {
+                progress.phase = RelayCreationPhase::ProbingTargets;
+            }
+            insert_entry(key, RelaySetupEntry::Creating(progress));
+            std::mem::forget(guard); // callback trap left committed pre-spend state
+        }
+        reclaim_abandoned_pre_spend_reservations();
+        assert_eq!(state::relay_creating_keys().len(), 4);
+        admission::set_time_for_test(301);
+        // Same-key retry must reclaim its slot as well as the other three.
+        let (ledger, probe, cmc, management) = mocks(
+            MockLedger::new(
+                [300_000_000, 292_990_000],
+                [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
+            ),
+            true,
+            None,
+        );
+        assert_eq!(
+            block_on(notify_with_clients_for_historian(
+                setup_args(vec![principal(11)]),
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management,
+            )),
+            RelaySetupNotifyResult::Active {
+                relay_canister_id: principal(80)
+            }
+        );
+        assert!(state::relay_creating_keys().is_empty());
+        let unrelated = key_for_targets(&[principal(15)]);
+        assert!(reserve(unrelated).is_ok());
+        remove_entry(unrelated);
     }
 
     #[test]
