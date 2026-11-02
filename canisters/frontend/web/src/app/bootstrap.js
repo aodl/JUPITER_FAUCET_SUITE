@@ -503,7 +503,13 @@ document.addEventListener('navpanel:open', async (event) => {
   }
   if (event?.detail?.key === 'relay-setup') {
     await getRelaySetupController();
-    window.setTimeout(() => document.getElementById('relay-setup-target-input')?.focus?.(), 0);
+    window.setTimeout(() => {
+      const panel = document.getElementById('nav-panel-relay-setup');
+      const focus = panel?.querySelector('#relay-setup-form:not([hidden]) [data-relay-target-input]')
+        || panel?.querySelector('#relay-setup-review:not([hidden]) h3')
+        || panel?.querySelector('#relay-funding-section:not([hidden]) h3');
+      focus?.focus?.();
+    }, 0);
   }
 });
 if (window.location.hash === '#source' || document.querySelector('.nav-panel-section--active[data-panel="source"]')) {

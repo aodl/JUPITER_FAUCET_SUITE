@@ -115,9 +115,9 @@ class FakeElement {
 }
 
 const DOM_IDS = [
-  'relay-setup-form', 'relay-setup-result',
+  'relay-setup-form',
   'relay-setup-summary', 'relay-setup-status', 'relay-setup-status-label',
-  'relay-setup-factory', 'relay-setup-target-count', 'relay-setup-canonical-targets',
+  'relay-setup-target-count', 'relay-setup-canonical-targets',
   'relay-setup-base-minimum', 'relay-setup-extra-count', 'relay-setup-extra-unit',
   'relay-setup-extra-total', 'relay-setup-minimum', 'relay-setup-requirement',
   'relay-setup-balance', 'relay-setup-icrc-account', 'relay-setup-account-identifier',
@@ -130,12 +130,17 @@ const DOM_IDS = [
   'relay-setup-target-announcement', 'relay-setup-warning', 'relay-setup-submit',
   'relay-setup-recipient-list', 'relay-setup-add-recipient', 'relay-setup-recipient-count-hint',
   'relay-setup-recipient-announcement', 'relay-setup-recipient-count',
-  'relay-setup-canonical-recipients', 'relay-setup-configuration-hash',
+  'relay-setup-canonical-recipients',
   'relay-setup-mode-routing', 'relay-setup-mode-all-cycles',
   'relay-setup-recipient-editor', 'relay-setup-surplus-mode',
   'relay-setup-surplus-mode-summary',
   'relay-funding-section', 'relay-funding-owner', 'relay-funding-destinations',
   'relay-funding-copy-status', 'relay-funding-memo-builder-link',
+  'relay-setup-review', 'relay-setup-edit', 'relay-setup-shortfall',
+  'relay-setup-recheck', 'relay-setup-copy-status', 'relay-setup-equal-split',
+  'relay-funding-operating', 'relay-funding-future', 'relay-funding-split',
+  'relay-funding-percentage', 'relay-funding-staging-alternative', 'relay-funding-options',
+  'relay-funding-add',
 ];
 
 async function withDom(run) {
@@ -473,11 +478,12 @@ async function submit(nodes, harness, input = TARGET_A, recipients = RECIPIENT_A
   await harness.controller.submitTarget();
 }
 
-test('initial prompt is visible before target submission', async () => {
+test('initial configuration is visible and review is hidden before submission', async () => {
   await withDom(async (nodes) => {
     const { controller } = controllerHarness();
     controller.render();
-    assert.equal(nodes.get('relay-setup-result').hidden, false);
+    assert.equal(nodes.get('relay-setup-form').hidden, false);
+    assert.equal(nodes.get('relay-setup-review').hidden, true);
     assert.equal(nodes.get('relay-setup-summary').hidden, true);
   });
 });
@@ -606,6 +612,25 @@ test('trusted network identity changes invalidate an in-flight authenticated vie
     assert.equal(harness.controller.state.view, null);
     assert.equal(nodes.get('relay-setup-create').disabled, true);
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+  });
+});
+
+test('a late polling error cannot discard a newer authenticated Active mapping', async () => {
+  await withDom(async (nodes) => {
+    const older = deferred();
+    const harness = controllerHarness({ getView: (_args, call) => call === 2 ? older.promise : { Ok: viewFor() } });
+    await submit(nodes, harness);
+    harness.runPoll();
+    await flushMicrotasks();
+    const active = viewFor({ account: null, state: { Active: { relay_canister_id: Principal.fromText(RELAY) } } });
+    harness.actor.get_relay_configuration_view = async () => ({ Ok: active });
+    await harness.controller.refresh();
+    older.reject(new Error('late poll failure'));
+    await flushMicrotasks(20);
+    assert.equal(harness.controller.state.activeRelayId, RELAY);
+    assert.equal(nodes.get('relay-funding-section').hidden, false);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(harness.calls.notify, 0);
   });
 });
 
@@ -980,7 +1005,7 @@ test('static and added recipient rows expose the same memo field semantics', asy
   });
 });
 
-test('removing the final recipient selects all-cycles mode and switching back creates a blank row', async () => {
+test('removing the final recipient requires an explicit policy choice and returning to routing creates a blank row', async () => {
   await withDom(async (nodes) => {
     seedTargetRow(nodes, TARGET_A);
     const recipient = seedRecipientRow(nodes, RECIPIENT_A);
@@ -988,12 +1013,14 @@ test('removing the final recipient selects all-cycles mode and switching back cr
     harness.controller.bindPane();
     nodes.get('relay-setup-recipient-list').listeners.get('click')({ target: recipient.remove });
     assert.equal(nodes.get('relay-setup-recipient-list').querySelectorAll('[data-relay-recipient-row]').length, 0);
-    assert.equal(nodes.get('relay-setup-mode-all-cycles').checked, true);
+    assert.equal(nodes.get('relay-setup-mode-all-cycles').checked, false);
+    assert.equal(nodes.get('relay-setup-recipient-editor').hidden, false);
+    assert.equal(nodes.get('relay-setup-submit').disabled, true);
+    const cycles = nodes.get('relay-setup-mode-all-cycles');
+    cycles.checked = true;
+    nodes.get('relay-setup-mode-routing').checked = false;
+    cycles.listeners.get('change')();
     assert.equal(nodes.get('relay-setup-recipient-editor').hidden, true);
-    assert.equal(
-      nodes.get('relay-setup-surplus-mode-summary').textContent,
-      'All-cycles mode selected. No raw ICP surplus recipient will be configured.',
-    );
     assert.equal(nodes.get('relay-setup-submit').disabled, false);
 
     const routing = nodes.get('relay-setup-mode-routing');
@@ -1004,7 +1031,7 @@ test('removing the final recipient selects all-cycles mode and switching back cr
     assert.equal(nodes.get('relay-setup-recipient-editor').hidden, false);
     assert.equal(
       nodes.get('relay-setup-surplus-mode-summary').textContent,
-      'Recipient routing selected. Configure one to five surplus recipients.',
+      'Cycles first, then surplus payments selected.',
     );
     assert.equal(nodes.get('relay-setup-submit').disabled, true);
   });
@@ -1028,8 +1055,8 @@ test('all-cycles mode requests and creates with an empty recipient vector and no
     await harness.controller.submitConfiguration();
     assert.deepEqual(viewArgs.surplus_recipients, []);
     assert.equal(harness.calls.governanceActors, 0);
-    assert.equal(nodes.get('relay-setup-surplus-mode').textContent, 'All-cycles mode');
-    assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, 'None — all-cycles mode');
+    assert.equal(nodes.get('relay-setup-surplus-mode').textContent, 'All funding for cycles');
+    assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, 'None — all funding for cycles');
     assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, '—');
     await harness.controller.createRelay();
     assert.deepEqual(notifyArgs.surplus_recipients, []);
@@ -1500,8 +1527,7 @@ test('canonical recipient order and count are displayed', async () => {
     const harness = controllerHarness({ view: viewFor({ recipients: [RECIPIENT_A, RECIPIENT_B] }) });
     await submit(nodes, harness, TARGET_A, `${RECIPIENT_B}\n${RECIPIENT_A}`);
     assert.equal(nodes.get('relay-setup-recipient-count').textContent, '2');
-    assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, `Principal: ${RECIPIENT_A}\nMemo: none\nPrincipal: ${RECIPIENT_B}\nMemo: none`);
-    assert.equal(nodes.get('relay-setup-configuration-hash').textContent, 'ab'.repeat(32));
+    assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, `Principal default ICP account: ${RECIPIENT_A}\nMemo: none\nPrincipal default ICP account: ${RECIPIENT_B}\nMemo: none`);
   });
 });
 
@@ -1874,7 +1900,7 @@ test('stale view for an earlier recipient set is ignored', async () => {
     await submit(nodes, harness, TARGET_A, RECIPIENT_B);
     pending.resolve({ Ok: viewFor({ recipients: [RECIPIENT_A] }) });
     await first;
-    assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, `Principal: ${RECIPIENT_B}\nMemo: none`);
+    assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, `Principal default ICP account: ${RECIPIENT_B}\nMemo: none`);
   });
 });
 
@@ -2019,7 +2045,7 @@ test('neuron recipients serialize as bigint and preflight through NNS Governance
     assert.deepEqual(harness.calls.neurons, [42n]);
     assert.deepEqual(callOrder, ['historian', 'governance']);
     assert.deepEqual(viewArgs.surplus_recipients, [{ Neuron: { neuron_id: 42n, memo: [] } }]);
-    assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, 'Neuron: 42\nMemo: none');
+    assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, 'Public NNS neuron: 42\nMemo: none');
   });
 });
 
@@ -2051,7 +2077,7 @@ test('existing Active neuron configuration remains visible when the neuron loade
     assert.equal(harness.calls.governanceActors, 0);
     assert.deepEqual(harness.calls.neurons, []);
     assert.equal(harness.calls.balance, 0);
-    assert.equal(nodes.get('relay-setup-status').textContent, 'Active');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Relay created');
     assert.match(nodes.get('relay-setup-existing-relay').innerHTML, /br5f7/);
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
   });
@@ -2069,7 +2095,7 @@ test('existing InProgress neuron configuration skips Governance preflight', asyn
     assert.equal(harness.calls.governanceActors, 0);
     assert.deepEqual(harness.calls.neurons, []);
     assert.equal(harness.calls.balance, 0);
-    assert.match(nodes.get('relay-setup-status-label').textContent, /CreateDispatched/);
+    assert.match(nodes.get('relay-setup-status').textContent, /(?:Creation in progress|In progress)/);
     assert.equal(harness.calls.intervals, 1);
   });
 });
@@ -2172,10 +2198,13 @@ test('authoritative live shortfall overrides a lower nominal query requirement',
     assert.equal(nodes.get('relay-setup-create').disabled, false);
     await harness.controller.createRelay();
     assert.equal(nodes.get('relay-setup-requirement').textContent, '4.25 ICP');
+    assert.equal(nodes.get('relay-setup-shortfall').textContent, '1.25 ICP');
     assert.equal(nodes.get('relay-setup-create').disabled, true);
     harness.setBalance(425_000_000n);
     await harness.controller.refresh();
     assert.equal(nodes.get('relay-setup-requirement').textContent, '4.25 ICP');
+    assert.equal(nodes.get('relay-setup-shortfall').textContent, '0 ICP');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Ready to create');
     assert.equal(nodes.get('relay-setup-create').disabled, false);
     await harness.controller.createRelay();
     assert.equal(harness.controller.state.requiredBalanceOverride, null);
@@ -2225,7 +2254,7 @@ test('Active notify result renders the Relay and hides setup controls before que
   });
 });
 
-test('ManualRecoveryRequired notify result renders phase, Relay ID, and error and stops polling', async () => {
+test('ManualRecoveryRequired notify result renders recovery guidance, Relay ID, and error and stops polling', async () => {
   await withDom(async (nodes) => {
     const harness = controllerHarness({
       notify: {
@@ -2238,7 +2267,8 @@ test('ManualRecoveryRequired notify result renders phase, Relay ID, and error an
     });
     await submit(nodes, harness);
     await harness.controller.createRelay();
-    assert.match(nodes.get('relay-setup-status-label').textContent, /FinalizationAttempted/);
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Manual recovery required');
+    assert.doesNotMatch(nodes.get('relay-setup-status-label').textContent, /FinalizationAttempted/);
     assert.match(nodes.get('relay-setup-status-label').textContent, /br5f7/);
     assert.match(nodes.get('relay-setup-status-label').textContent, /final state mismatch/);
     assert.equal(nodes.get('relay-setup-create-panel').hidden, true);
@@ -2270,7 +2300,7 @@ test('synchronous pre-invocation notify failure keeps its concrete error', async
     await submit(nodes, harness);
     await harness.controller.createRelay();
     assert.match(nodes.get('relay-setup-status').textContent, /local notify encoding failed/);
-    assert.equal(nodes.get('relay-setup-payment-details').hidden, false);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
     assert.notEqual(harness.controller.state.checkedConfigurationFingerprint, '');
     assert.equal(harness.calls.notify, 1);
   });
@@ -2298,7 +2328,7 @@ test('unchanged-form notify rejection requires a fresh authoritative check', asy
   });
 });
 
-test('unchanged-form post-notify refresh rejection requires a fresh authoritative check', async () => {
+test('authenticated Active notification remains usable when the follow-up read fails', async () => {
   await withDom(async (nodes) => {
     const harness = controllerHarness({
       getView: async (_args, call) => {
@@ -2308,18 +2338,33 @@ test('unchanged-form post-notify refresh rejection requires a fresh authoritativ
     });
     await submit(nodes, harness);
     await harness.controller.createRelay();
-    assertCheckedConfigurationInvalidated(nodes, harness);
-    assert.match(
-      nodes.get('relay-setup-status').textContent,
-      /request returned.*current state could not be refreshed.*check.*again/i,
-    );
-    assert.doesNotMatch(
-      nodes.get('relay-setup-status').textContent,
-      /post-notify refresh unavailable/i,
-    );
+    assert.equal(harness.controller.state.activeRelayId, RELAY);
+    assert.equal(nodes.get('relay-funding-section').hidden, false);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-setup-create-panel').hidden, true);
+    assert.equal(harness.hasScheduledPoll(), false);
     assert.equal(harness.calls.notify, 1);
     await harness.controller.createRelay();
     assert.equal(harness.calls.notify, 1);
+  });
+});
+
+test('Active notification opens the overview while its follow-up read is still pending', async () => {
+  await withDom(async (nodes) => {
+    const followup = deferred();
+    const harness = controllerHarness({ getView: (_args, call) => call === 1 ? { Ok: viewFor() } : followup.promise });
+    await submit(nodes, harness);
+    const creation = harness.controller.createRelay();
+    await flushMicrotasks(20);
+    assert.equal(harness.controller.state.activeRelayId, RELAY);
+    assert.equal(nodes.get('relay-funding-section').hidden, false);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    await harness.controller.createRelay();
+    assert.equal(harness.calls.notify, 1);
+    followup.resolve({ Ok: viewFor() });
+    await creation;
+    assert.equal(harness.controller.state.activeRelayId, RELAY);
+    assert.equal(harness.hasScheduledPoll(), false);
   });
 });
 
@@ -2342,7 +2387,7 @@ test('stale notify completion cannot mutate a newer Relay configuration view', a
   });
 });
 
-test('InProgress notify result begins polling and displays its phase', async () => {
+test('InProgress notify result begins polling and displays processing status', async () => {
   await withDom(async (nodes) => {
     let inProgress = false;
     const state = { InProgress: { phase: { CreateDispatched: null }, relay_canister_id: [] } };
@@ -2356,7 +2401,7 @@ test('InProgress notify result begins polling and displays its phase', async () 
     assert.equal(harness.controller.state.creating, false);
     assert.notEqual(harness.controller.state.checkedConfigurationFingerprint, '');
     assert.ok(harness.calls.intervals >= 1);
-    assert.match(nodes.get('relay-setup-status-label').textContent, /CreateDispatched/);
+    assert.match(nodes.get('relay-setup-status').textContent, /(?:Creation in progress|In progress)/);
   });
 });
 
@@ -2408,7 +2453,7 @@ test('earlier in-progress phases never expose the finalization resume action', a
       await submit(nodes, harness);
       assert.equal(nodes.get('relay-setup-create-panel').hidden, true, phase);
       assert.equal(nodes.get('relay-setup-finalization-resume-note').hidden, true, phase);
-      assert.equal(nodes.get('relay-setup-create').textContent, 'Create Relay', phase);
+      assert.equal(nodes.get('relay-setup-create').textContent, 'Create relay', phase);
     });
   }
 });
@@ -2512,7 +2557,7 @@ test('Active notification suppresses resume after a stale FinalizationAttempted 
     await harness.controller.createRelay();
 
     assert.equal(harness.calls.notify, 1);
-    assert.equal(nodes.get('relay-setup-status').textContent, 'Active');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Relay created');
     assert.match(nodes.get('relay-setup-existing-relay').innerHTML, /br5f7/);
     assert.equal(nodes.get('relay-setup-existing-relay').hidden, false);
     assert.equal(nodes.get('relay-setup-create-panel').hidden, true);
@@ -2627,7 +2672,7 @@ test('factory unavailable is explicit and exposes no creation controls', async (
   await withDom(async (nodes) => {
     const harness = controllerHarness({ view: viewFor({ account: null, factoryAvailable: false }) });
     await submit(nodes, harness);
-    assert.equal(nodes.get('relay-setup-factory').textContent, 'Unavailable');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Creation unavailable');
     assert.equal(nodes.get('relay-setup-create-panel').hidden, true);
   });
 });
@@ -2770,9 +2815,11 @@ test('Active query remains operational when factory creation is unavailable', as
       }),
     });
     await submit(nodes, harness);
-    assert.equal(nodes.get('relay-setup-factory').textContent, 'Unavailable');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Relay created');
     assert.equal(nodes.get('relay-funding-section').hidden, false);
-    assert.match(nodes.get('relay-funding-destinations').innerHTML, /Subaccount 90/);
+    assert.match(nodes.get('relay-funding-destinations').innerHTML, /Default \/ subaccount 0/);
+    assert.equal((nodes.get('relay-funding-destinations').innerHTML.match(/class="relay-funding-card"/g) || []).length, 1);
+    assert.doesNotMatch(nodes.get('relay-funding-destinations').innerHTML, /Subaccount 90/);
   });
 });
 
@@ -2855,9 +2902,9 @@ test('funding copy actions report success and clipboard failure accessibly', asy
     await submit(nodes, harness);
     const button = new FakeElement('', 'button');
     button.dataset.relayFundingCopy = 'icrcAccountText';
-    button.dataset.relayFundingIndex = '6';
+    button.dataset.relayFundingIndex = '0';
     await nodes.get('relay-funding-destinations').listeners.get('click')({ target: button });
-    assert.equal(harness.calls.copied[0], harness.controller.state.fundingDestinations[6].icrcAccountText);
+    assert.equal(harness.calls.copied[0], harness.controller.state.fundingDestinations[0].icrcAccountText);
     assert.match(nodes.get('relay-funding-copy-status').textContent, /copied/i);
   });
 
@@ -2870,7 +2917,7 @@ test('funding copy actions report success and clipboard failure accessibly', asy
     await submit(nodes, harness);
     const button = new FakeElement('', 'button');
     button.dataset.relayFundingCopy = 'legacyAccountIdentifier';
-    button.dataset.relayFundingIndex = '10';
+    button.dataset.relayFundingIndex = '0';
     await nodes.get('relay-funding-destinations').listeners.get('click')({ target: button });
     assert.match(nodes.get('relay-funding-copy-status').textContent, /copy failed/i);
   });
@@ -2889,7 +2936,7 @@ test('delayed funding clipboard feedback cannot survive configuration invalidati
     await harness.controller.submitConfiguration();
     const button = new FakeElement('', 'button');
     button.dataset.relayFundingCopy = 'icrcAccountText';
-    button.dataset.relayFundingIndex = '6';
+    button.dataset.relayFundingIndex = '0';
     const copy = nodes.get('relay-funding-destinations').listeners.get('click')({ target: button });
     await flushMicrotasks();
     assert.equal(harness.calls.copied.length, 1);
@@ -2899,6 +2946,58 @@ test('delayed funding clipboard feedback cannot survive configuration invalidati
     await copy;
     assert.equal(nodes.get('relay-funding-copy-status').textContent, '');
     assert.equal(harness.controller.state.activeRelayId, '');
+  });
+});
+
+test('changing funding outcomes fences old copy actions and delayed feedback', async () => {
+  await withDom(async (nodes) => {
+    const clipboard = deferred();
+    const harness = controllerHarness({
+      view: viewFor({ account: null, state: { Active: { relay_canister_id: Principal.fromText(RELAY) } } }),
+      copyTextToClipboard: () => clipboard.promise,
+    });
+    harness.controller.bindPane();
+    await submit(nodes, harness);
+    const oldButton = new FakeElement('', 'button');
+    oldButton.dataset.relayFundingCopy = 'icrcAccountText';
+    oldButton.dataset.relayFundingIndex = '0';
+    const click = nodes.get('relay-funding-destinations').listeners.get('click');
+    const pending = click({ target: oldButton });
+    await flushMicrotasks();
+    nodes.get('relay-funding-percentage').value = '50';
+    nodes.get('relay-funding-split').listeners.get('change')();
+    clipboard.resolve();
+    await pending;
+    assert.equal(nodes.get('relay-funding-copy-status').textContent, '');
+    await click({ target: oldButton });
+    assert.equal(harness.calls.copied.length, 1);
+    assert.match(nodes.get('relay-funding-destinations').innerHTML, /Subaccount 50/);
+    nodes.get('relay-funding-percentage').value = '55';
+    nodes.get('relay-funding-percentage').listeners.get('change')();
+    assert.equal(nodes.get('relay-funding-destinations').innerHTML, '', 'unsupported splits have no account');
+  });
+});
+
+test('setup clipboard failure offers manual copying and late feedback is discarded on Edit', async () => {
+  await withDom(async (nodes) => {
+    let pending;
+    const harness = controllerHarness({ copyTextToClipboard: async () => {
+      if (pending) return pending.promise;
+      throw new Error('clipboard denied');
+    } });
+    harness.controller.bindPane();
+    await submit(nodes, harness);
+    const copy = nodes.get('copy-relay-setup-icrc-account').listeners.get('click');
+    await copy();
+    assert.match(nodes.get('relay-setup-copy-status').textContent, /Copy failed.*manually/);
+    pending = deferred();
+    const copying = copy();
+    await flushMicrotasks();
+    nodes.get('relay-setup-edit').listeners.get('click')();
+    pending.resolve();
+    await copying;
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-setup-copy-status').textContent, '');
   });
 });
 
@@ -2916,7 +3015,8 @@ test('funding card rendering escapes values and narrow-screen CSS keeps cards st
   assert.match(html, /&lt;script&gt;|&lt;img/);
   const css = readFileSync(new URL('../../public/metrics.css', import.meta.url), 'utf8');
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.relay-funding-heading[\s\S]*flex-direction: column/);
-  assert.match(css, /\.relay-funding-card-grid[\s\S]*minmax\(min\(100%, 300px\), 1fr\)/);
+  assert.match(css, /\.relay-funding-value[\s\S]*overflow-wrap: anywhere/);
+  assert.doesNotMatch(css, /\.relay-funding-card-grid/);
 });
 
 test('source and markup contain no payment proof, refund, quote, indicative, or automatic notify flow', () => {
@@ -2933,13 +3033,13 @@ test('source and markup contain no payment proof, refund, quote, indicative, or 
     assert.equal(markup.includes(term), false);
   }
   assert.doesNotMatch(markup, /Indicative live requirement|payment block|refund button|late-payment sweep/i);
-  assert.match(markup, /Create Relay/);
+  assert.match(markup, /Review setup/);
   assert.match(source, /get_relay_configuration_view/);
   assert.match(source, /notify_relay_configuration/);
   assert.doesNotMatch(source, /get_relay_setup_view|notify_relay_setup/);
-  assert.match(markup, /Targets, recipient destinations, and exact memo bytes determine the setup address/i);
-  assert.match(markup, /No IO recipient is added automatically/i);
-  assert.match(markup, /incorrectly selected Relay configuration are not automatically refundable/i);
+  assert.doesNotMatch(markup, /relay-setup-(?:phase|configuration-hash|factory)|Setup support details/);
+  assert.doesNotMatch(markup, /No IO recipient is added automatically/i);
+  assert.match(markup, /Setup deposits are not automatically refundable/i);
   assert.doesNotMatch(markup, /surplus ICP will automatically be routed to the IO neuron/i);
 });
 

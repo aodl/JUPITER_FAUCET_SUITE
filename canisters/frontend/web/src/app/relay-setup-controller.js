@@ -246,33 +246,24 @@ function fundingCopyButton(index, field, label) {
   return `<button class="pane-copy-button" type="button" data-relay-funding-copy="${field}" data-relay-funding-index="${index}">${label}</button>`;
 }
 
-export function renderRelayFundingCards(destinations) {
-  const renderGroup = (title, items, offset) => `
-    <section class="relay-funding-group">
-      <h4>${escapeHtml(title)}</h4>
-      <div class="relay-funding-card-grid">
-        ${items.map((destination, localIndex) => {
-    const index = offset + localIndex;
-    const explorer = `https://dashboard.internetcomputer.org/account/${encodeURIComponent(destination.legacyAccountIdentifier)}`;
-    return `
-          <article class="relay-funding-card">
-            <h5>${escapeHtml(destination.name)}</h5>
-            <p>${escapeHtml(destination.purpose)}</p>
-            <dl>
-              <div><dt>Owner</dt><dd class="mono">${escapeHtml(destination.owner.toText())}</dd></div>
-              <div><dt>Subaccount</dt><dd class="mono">${escapeHtml(destination.semanticSubaccount)}</dd></div>
-              <div><dt>Full 32-byte subaccount hex</dt><dd class="mono relay-funding-value">${escapeHtml(destination.subaccountHex)} ${fundingCopyButton(index, 'subaccountHex', 'Copy')}</dd></div>
-              <div><dt>ICRC account</dt><dd class="mono relay-funding-value"><a class="pane-external-link" href="${explorer}" target="_blank" rel="noopener noreferrer">${escapeHtml(destination.icrcAccountText)}</a> ${fundingCopyButton(index, 'icrcAccountText', 'Copy')}</dd></div>
-              <div><dt>Legacy ICP account identifier</dt><dd class="mono relay-funding-value"><a class="pane-external-link" href="${explorer}" target="_blank" rel="noopener noreferrer">${escapeHtml(destination.legacyAccountIdentifier)}</a> ${fundingCopyButton(index, 'legacyAccountIdentifier', 'Copy')}</dd></div>
-            </dl>
-          </article>`;
-  }).join('')}
-      </div>
-    </section>`;
-  return [
-    renderGroup('Direct funding accounts', destinations.slice(0, 2), 0),
-    renderGroup('Gross-budget splitter accounts', destinations.slice(2), 2),
-  ].join('');
+// Keep the protocol-derived catalogue; present only the selected destination.
+export function renderRelayFundingCards(destinations, index = 0) {
+  const destination = destinations[index];
+  if (!destination) return '';
+  const title = destination.subaccountNumber === null ? 'Operating payment account'
+    : destination.subaccountNumber === 1 ? 'Relay staging account'
+      : `${destination.subaccountNumber}% operating / ${100 - destination.subaccountNumber}% future account`;
+  const explorer = `https://dashboard.internetcomputer.org/account/${encodeURIComponent(destination.legacyAccountIdentifier)}`;
+  return `<article class="relay-funding-card">
+    <h4>${escapeHtml(title)}</h4>
+    <div class="relay-funding-value"><code class="mono">${escapeHtml(destination.icrcAccountText)}</code>${fundingCopyButton(index, 'icrcAccountText', 'Copy account')}</div>
+    <details class="relay-funding-details"><summary>Account details</summary><dl>
+      <div><dt>Route</dt><dd>${escapeHtml(destination.name)}</dd></div>
+      <div><dt>Owner</dt><dd class="mono">${escapeHtml(destination.owner.toText())}</dd></div>
+      <div><dt>Full 32-byte subaccount</dt><dd class="mono relay-funding-value">${escapeHtml(destination.subaccountHex)} ${fundingCopyButton(index, 'subaccountHex', 'Copy subaccount')}</dd></div>
+      <div><dt>Legacy ICP account identifier</dt><dd class="mono relay-funding-value"><a class="pane-external-link" href="${explorer}" target="_blank" rel="noopener noreferrer">${escapeHtml(destination.legacyAccountIdentifier)}</a> ${fundingCopyButton(index, 'legacyAccountIdentifier', 'Copy identifier')}</dd></div>
+    </dl></details>
+  </article>`;
 }
 
 export function createRelaySetupController({
@@ -302,7 +293,10 @@ export function createRelaySetupController({
     requiredBalanceOverride: null,
     activeRelayId: '',
     fundingDestinations: [],
+    reviewing: false,
   };
+  let fundingOutcome = 'operating';
+  let fundingSelection = 0;
   let generation = 0;
   let refreshSequence = 0;
   let pollInFlight = false;
@@ -402,7 +396,7 @@ export function createRelaySetupController({
   }
 
   function recipientRoutingMode() {
-    return document.getElementById('relay-setup-mode-all-cycles')?.checked !== true;
+    return document.getElementById('relay-setup-mode-routing')?.checked === true;
   }
 
   function configurationFingerprint() {
@@ -413,7 +407,8 @@ export function createRelaySetupController({
       host: hostProvider(),
       local: isLocalHost(),
       targets: rawListValues('target'),
-      surplusMode: recipientRoutingMode() ? 'routing' : 'all-cycles',
+      surplusMode: recipientRoutingMode() ? 'routing'
+        : document.getElementById('relay-setup-mode-all-cycles')?.checked ? 'all-cycles' : '',
       surplusRecipients: recipientRowsValues({ trim: false }),
     });
   }
@@ -438,7 +433,11 @@ export function createRelaySetupController({
       error.textContent = message;
       error.hidden = !message;
     }
-    if (message) memoInput?.setAttribute?.('aria-invalid', 'true');
+    if (message) {
+      const disclosure = row?.querySelector?.('[data-relay-recipient-memo]');
+      if (disclosure) disclosure.open = true;
+      memoInput?.setAttribute?.('aria-invalid', 'true');
+    }
     else memoInput?.removeAttribute?.('aria-invalid');
   }
 
@@ -474,6 +473,9 @@ export function createRelaySetupController({
       counter.textContent = `${count === null ? '\u2014' : count}/${MAX_RELAY_SURPLUS_MEMO_BYTES} bytes`;
     }
     setMemoError(row, message);
+    const summary = row?.querySelector?.('[data-relay-recipient-memo-summary]');
+    if (summary) summary.textContent = message ? 'Edit memo — check its bytes'
+      : count ? `Memo added · ${count} bytes — edit` : 'Add memo';
     return message;
   }
 
@@ -545,8 +547,7 @@ export function createRelaySetupController({
     }
     const errors = values.map((value, index) => {
       if (duplicates.has(index)) return spec.duplicateError;
-      if (!includeIncomplete) return '';
-      if (!value) return `Enter a ${spec.noun} or remove this field.`;
+      if (!value) return includeIncomplete ? `Enter a ${spec.noun} or remove this field.` : '';
       try {
         if (kind === 'recipient' && recipientValues[index].type === 'Neuron') {
           parseRelayNeuronId(value);
@@ -583,10 +584,14 @@ export function createRelaySetupController({
         ? 'Duplicate target canisters found. Change or remove one before checking the Relay configuration.'
         : (duplicateRecipient
           ? 'Duplicate surplus recipients found. Change or remove one before checking the Relay configuration.'
-          : '');
+          : (!state.reviewing ? state.error : ''));
       warning.hidden = !warning.textContent;
     }
-    const hasEmptyFields = listInputs('target').length === 0
+    setHidden('relay-setup-error-focus', !warning?.textContent
+      || !(target.firstInvalidInput || recipient.firstInvalidInput));
+    const modeChosen = recipientRoutingMode()
+      || document.getElementById('relay-setup-mode-all-cycles')?.checked === true;
+    const hasEmptyFields = !modeChosen || listInputs('target').length === 0
       || listValues('target').some((value) => !value)
       || (recipientRoutingMode() && (
         listInputs('recipient').length === 0 || listValues('recipient').some((value) => !value)
@@ -595,7 +600,12 @@ export function createRelaySetupController({
       ? 'Add a surplus recipient or select all-cycles mode.'
       : '';
     const submitButton = document.getElementById('relay-setup-submit');
-    if (submitButton) submitButton.disabled = !target.valid || !recipient.valid || hasEmptyFields;
+    if (submitButton) submitButton.disabled = state.loading || state.creating
+      || !target.valid || !recipient.valid || hasEmptyFields;
+    setText('relay-setup-submit-reason', !modeChosen ? 'Choose how funding should be used.'
+      : hasEmptyFields ? 'Complete the canister and recipient fields.'
+        : !target.valid || !recipient.valid ? 'Check the highlighted fields.'
+          : state.loading ? 'Checking your configuration…' : 'Ready to review.');
     return {
       valid: target.valid && recipient.valid && !hasEmptyFields,
       firstInvalidInput: target.firstInvalidInput || recipient.firstInvalidInput,
@@ -621,7 +631,7 @@ export function createRelaySetupController({
           : null;
         label.textContent = kind === 'recipient'
           ? `Recipient ${recipientType === 'Neuron' ? 'neuron ID' : 'principal'} ${number}`
-          : `${spec.label} ${number}`;
+          : `${number === 1 && rows.length === 1 ? 'Canister ID' : `Canister ID ${number}`}`;
       }
       if (kind === 'recipient') {
         const input = row.querySelector?.(spec.inputSelector);
@@ -693,11 +703,13 @@ export function createRelaySetupController({
   function updateSurplusModePresentation() {
     const routing = recipientRoutingMode();
     setHidden('relay-setup-recipient-editor', !routing);
+    setHidden('relay-setup-equal-split', !routing || listRows('recipient').length < 2);
     setText(
       'relay-setup-surplus-mode-summary',
       routing
-        ? 'Recipient routing selected. Configure one to five surplus recipients.'
-        : 'All-cycles mode selected. No raw ICP surplus recipient will be configured.',
+        ? 'Cycles first, then surplus payments selected.'
+        : document.getElementById('relay-setup-mode-all-cycles')?.checked
+          ? 'All funding for cycles selected.' : 'Choose a funding policy.',
     );
   }
 
@@ -732,10 +744,10 @@ export function createRelaySetupController({
       type.setAttribute('aria-label', `Surplus recipient ${rowId} type`);
       const principalOption = document.createElement('option');
       principalOption.value = 'Principal';
-      principalOption.textContent = 'Principal';
+      principalOption.textContent = 'Principal default ICP account';
       const neuronOption = document.createElement('option');
       neuronOption.value = 'Neuron';
-      neuronOption.textContent = 'Neuron ID';
+      neuronOption.textContent = 'Public NNS neuron ID';
       type.append(principalOption, neuronOption);
       type.value = 'Principal';
       controls.append(type);
@@ -808,7 +820,19 @@ export function createRelaySetupController({
       memoNotice.setAttribute('aria-live', 'polite');
       memoNotice.hidden = true;
       memoControls.append(memoModeLabel, memoMode, memoLabel, memoInput, memoCount);
-      row.append(memoControls, memoError, memoNotice);
+      const disclosure = document.createElement('details');
+      disclosure.className = 'relay-setup-memo';
+      disclosure.dataset.relayRecipientMemo = 'true';
+      const summary = document.createElement('summary');
+      summary.dataset.relayRecipientMemoSummary = 'true';
+      summary.textContent = 'Add memo';
+      const removeMemo = document.createElement('button');
+      removeMemo.type = 'button';
+      removeMemo.className = 'pane-page-button';
+      removeMemo.dataset.relayRecipientMemoRemove = 'true';
+      removeMemo.textContent = 'Remove memo';
+      disclosure.append(summary, memoControls, memoError, memoNotice, removeMemo);
+      row.append(disclosure);
       applyRecipientType(row);
       updateRecipientMemoState(row);
     }
@@ -832,6 +856,8 @@ export function createRelaySetupController({
     state.creating = false;
     state.activeRelayId = '';
     state.fundingDestinations = [];
+    fundingSelection += 1;
+    setText('relay-setup-copy-status', '');
     render();
   }
 
@@ -851,6 +877,7 @@ export function createRelaySetupController({
     const row = createListRow(kind);
     list.append(row);
     updateListRows(kind);
+    updateSurplusModePresentation();
     invalidateCurrentConfiguration();
     validateVisibleConfiguration();
     row.querySelector?.(spec.inputSelector)?.focus?.();
@@ -869,8 +896,9 @@ export function createRelaySetupController({
     } else {
       row.remove?.();
     }
-    if (kind === 'recipient' && listRows(kind).length === 0) selectSurplusMode(false);
+    // Removing a recipient never silently changes the immutable funding policy.
     updateListRows(kind);
+    updateSurplusModePresentation();
     invalidateCurrentConfiguration();
     validateVisibleConfiguration();
     const inputs = listInputs(kind);
@@ -890,6 +918,7 @@ export function createRelaySetupController({
   }
 
   function shouldPoll(view = state.view) {
+    if (['Active', 'ManualRecoveryRequired'].includes(variantName(state.notifyResult))) return false;
     const kind = viewState(view);
     return kind === 'InProgress'
       || (kind === 'NotFunded' && Boolean(readOptional(view?.setup_account)));
@@ -995,18 +1024,17 @@ export function createRelaySetupController({
       case 'InProgress':
         return {
           status: 'In progress',
-          message: variantName(details?.phase) || DASH,
+          message: 'Your setup is being processed. Checking status never sends another payment.',
         };
       case 'Active':
-        return { status: 'Active', message: '' };
+        return { status: 'Relay created', message: '' };
       case 'FailedPreSpend':
         return { status: 'Failed before spend', message: details?.message || DASH };
       case 'ManualRecoveryRequired': {
-        const phase = variantName(details?.phase);
         const relayId = principalText(details?.relay_canister_id);
         return {
           status: 'Manual recovery required',
-          message: [phase, relayId ? `Relay ${relayId}` : '', details?.message || ''].filter(Boolean).join(' · '),
+          message: [relayId ? `Relay ${relayId}` : '', details?.message || '', 'Keep this exact configuration for support. Do not pay again or restart creation.'].filter(Boolean).join(' · '),
         };
       }
       default:
@@ -1024,7 +1052,8 @@ export function createRelaySetupController({
     const kind = viewState(view);
     const stateDetails = view?.state?.[kind];
     const relayId = relayIdFromState(view?.state);
-    const recoveryMessage = kind === 'ManualRecoveryRequired' ? stateDetails?.message : '';
+    const recoveryMessage = kind === 'ManualRecoveryRequired'
+      ? `${stateDetails?.message || ''} Keep this exact configuration for support. Do not pay again or restart creation.` : '';
     const phase = stateDetails?.phase ? variantName(stateDetails.phase) : '';
     const notifyKind = variantName(state.notifyResult);
     const notifyDetails = state.notifyResult?.[notifyKind];
@@ -1039,10 +1068,12 @@ export function createRelaySetupController({
     const activeRelayId = kind === 'Active'
       ? relayId
       : notifyKind === 'Active' ? notifiedRelayId : '';
+    const activeChanged = state.activeRelayId !== activeRelayId;
+    if (activeChanged) {
+      fundingSelection += 1;
+      state.fundingDestinations = activeRelayId ? deriveRelayFundingDestinations(activeRelayId) : [];
+    }
     state.activeRelayId = activeRelayId;
-    state.fundingDestinations = activeRelayId
-      ? deriveRelayFundingDestinations(activeRelayId)
-      : [];
     const activeOrBlocked = ['Active', 'InProgress', 'ManualRecoveryRequired'].includes(kind)
       || ['Active', 'InProgress', 'ManualRecoveryRequired'].includes(notifyKind);
     const resumableSetup = isResumableSetup(view);
@@ -1054,12 +1085,30 @@ export function createRelaySetupController({
     const effectiveRequirement = requiredBalance(view, state.requiredBalanceOverride);
     const canCreate = Boolean(view && account && !activeOrBlocked && !state.error
       && balance >= effectiveRequirement && !state.creating);
+    const fundingNotice = ['BelowMinimum', 'BelowCurrentRequirement'].includes(notifyKind);
+    const notificationStatus = fundingNotice
+      ? (canCreate ? 'Ready to create' : 'Waiting for funding') : notification?.status;
+    const status = {
+      NotFunded: !view?.factory_available ? 'Creation unavailable' : canCreate ? 'Ready to create' : 'Waiting for funding',
+      InProgress: resumableSetup ? 'Ready to resume' : 'Creation in progress',
+      ManualRecoveryRequired: 'Manual recovery required',
+      Active: 'Relay created',
+    }[kind] || DASH;
 
-    setHidden('relay-setup-result', Boolean(view || state.error || state.loading));
-    setHidden('relay-setup-summary', !view && !state.error && !state.loading);
-    setText('relay-setup-status', state.error || (state.loading ? 'Checking Relay configuration…' : (state.creating ? (resumableSetup ? resumeStatus : 'Creating Relay…') : (notification?.status || kind || DASH))));
-    setText('relay-setup-status-label', notification?.message || recoveryMessage || phase || DASH);
-    setText('relay-setup-factory', view?.factory_available ? 'Available' : 'Unavailable');
+    const reviewStage = !activeRelayId && state.reviewing;
+    setHidden('relay-setup-form', state.reviewing || Boolean(activeRelayId));
+    setHidden('relay-setup-intro', state.reviewing || Boolean(activeRelayId));
+    setHidden('relay-setup-review', !reviewStage);
+    setText('relay-setup-title', activeRelayId ? 'Relay overview' : state.reviewing ? 'Review your setup' : 'Create a relay');
+    setHidden('relay-setup-recheck', !state.error || state.loading || Boolean(activeRelayId));
+    setHidden('relay-setup-summary', !view);
+    setText('relay-setup-status', state.error ? state.error
+      : state.loading ? 'Checking setup…'
+        : state.creating ? (resumableSetup ? resumeStatus : 'Creating relay…')
+          : notificationStatus || status);
+    setText('relay-setup-status-label', state.error || (fundingNotice ? `Last creation check: ${notification.message}` : notification?.message) || recoveryMessage
+      || (kind === 'InProgress' ? 'Your setup is being processed. Do not send another setup deposit.' : ''));
+    setHidden('relay-setup-reviewed-recipients', Number(view?.surplus_recipient_count || 0) === 0);
     setText('relay-setup-target-count', view ? String(view.target_count) : DASH);
     setText('relay-setup-canonical-targets', view ? view.canonical_target_canister_ids.map(principalText).join('\n') : DASH);
     setText('relay-setup-recipient-count', view ? String(view.surplus_recipient_count) : DASH);
@@ -1067,33 +1116,36 @@ export function createRelaySetupController({
       'relay-setup-canonical-recipients',
       view
         ? (view.canonical_surplus_recipients.length === 0
-          ? 'None \u2014 all-cycles mode'
+          ? 'None — all funding for cycles'
           : view.canonical_surplus_recipients.map((recipient) => {
             if ('Neuron' in recipient) {
-              return `Neuron: ${recipient.Neuron.neuron_id}\n${relayMemoDisplay(recipient.Neuron.memo)}`;
+              return `Public NNS neuron: ${recipient.Neuron.neuron_id}\n${relayMemoDisplay(recipient.Neuron.memo)}`;
             }
-            return `Principal: ${principalText(recipient.Principal.principal)}\n${relayMemoDisplay(recipient.Principal.memo)}`;
+            return `Principal default ICP account: ${principalText(recipient.Principal.principal)}\n${relayMemoDisplay(recipient.Principal.memo)}`;
           }).join('\n'))
         : DASH,
     );
     setText(
       'relay-setup-surplus-mode',
-      view ? (Number(view.surplus_recipient_count) === 0 ? 'All-cycles mode' : 'Recipient routing') : DASH,
+      view ? (Number(view.surplus_recipient_count) === 0 ? 'All funding for cycles' : 'Cycles first, then surplus payments') : DASH,
     );
-    setText('relay-setup-configuration-hash', view?.setup_key_identifier || DASH);
     setText('relay-setup-base-minimum', view ? formatIcpE8s(view.singleton_nominal_minimum_e8s) : DASH);
     setText('relay-setup-extra-count', view ? String(view.extra_target_count) : DASH);
     setText('relay-setup-extra-unit', view ? formatIcpE8s(view.extra_target_unit_charge_e8s) : DASH);
     setText('relay-setup-extra-total', view ? formatIcpE8s(view.total_extra_target_charge_e8s) : DASH);
     setText('relay-setup-minimum', view ? formatIcpE8s(view.nominal_minimum_e8s) : DASH);
     setText('relay-setup-requirement', view ? formatIcpE8s(effectiveRequirement) : DASH);
+    setText('relay-setup-shortfall', state.balanceE8s === null ? DASH
+      : formatIcpE8s(effectiveRequirement > balance ? effectiveRequirement - balance : 0n));
+    setHidden('relay-setup-live-requirement', !view || effectiveRequirement <= BigInt(view.nominal_minimum_e8s));
+    setText('relay-setup-live-requirement', `Current live requirement: ${formatIcpE8s(effectiveRequirement)}. This is higher than the nominal minimum.`);
     setText('relay-setup-balance', state.balanceE8s === null ? DASH : formatIcpE8s(state.balanceE8s));
     setText('relay-setup-icrc-account', accountText || DASH);
     setText('relay-setup-account-identifier', identifier || DASH);
     setAccountLink('relay-setup-icrc-account-link', accountText, identifier);
     setAccountLink('relay-setup-account-identifier-link', identifier, identifier);
-    setHidden('relay-setup-payment-details', !account || activeOrBlocked);
-    setHidden('relay-setup-create-panel', resumableSetup ? false : (!account || activeOrBlocked));
+    setHidden('relay-setup-payment-details', !account || activeOrBlocked || Boolean(state.error));
+    setHidden('relay-setup-create-panel', Boolean(state.error) || (resumableSetup ? false : (!account || activeOrBlocked)));
     setText(
       'relay-setup-finalization-resume-note',
       resumesCreation
@@ -1102,16 +1154,15 @@ export function createRelaySetupController({
     );
     setHidden('relay-setup-finalization-resume-note', !resumableSetup);
     if (createButton) {
-      createButton.textContent = resumableSetup ? resumeLabel : 'Create Relay';
-      createButton.disabled = resumableSetup ? state.creating : !canCreate;
+      createButton.textContent = resumableSetup ? resumeLabel : 'Create relay';
+      createButton.disabled = state.error ? true : resumableSetup ? state.creating : !canCreate;
     }
     setHtml('relay-setup-existing-relay', displayedRelayId ? `<p>Relay: ${renderCanisterTrackerLink(displayedRelayId)}</p>` : '');
     setHidden('relay-setup-existing-relay', !displayedRelayId);
-    setHtml(
-      'relay-funding-destinations',
-      activeRelayId ? renderRelayFundingCards(state.fundingDestinations) : '',
-    );
     setText('relay-funding-owner', activeRelayId || DASH);
+    setText('relay-funding-config-summary', view ? `${view.target_count} canister${Number(view.target_count) === 1 ? '' : 's'} · ${Number(view.surplus_recipient_count) ? 'Cycles first, then surplus payments' : 'All funding for cycles'}` : '');
+    setText('relay-funding-configuration', view ? `${view.canonical_target_canister_ids.map(principalText).join('\n')}\n\n${document.getElementById('relay-setup-canonical-recipients')?.textContent || ''}` : '');
+    setHtml('relay-funding-activity', activeRelayId ? renderCanisterTrackerLink(activeRelayId, { label: 'View Relay activity' }) : '');
     setText('relay-funding-copy-status', '');
     const memoBuilderLink = document.getElementById('relay-funding-memo-builder-link');
     if (memoBuilderLink) {
@@ -1119,6 +1170,9 @@ export function createRelaySetupController({
       else memoBuilderLink.removeAttribute('href');
     }
     setHidden('relay-funding-section', !activeRelayId);
+    if (activeChanged && activeRelayId) document.getElementById('relay-funding-title')?.focus?.();
+    renderFundingChoice();
+    validateVisibleConfiguration();
   }
 
   function setupArgs() {
@@ -1225,7 +1279,9 @@ export function createRelaySetupController({
     pollHandle = setIntervalFn(() => {
       if (pollInFlight) return;
       pollInFlight = true;
+      const sequence = refreshSequence + 1;
       void refresh({ expectedConfiguration, requestGeneration }).catch((error) => {
+        if (sequence !== refreshSequence) return;
         if (!ensureConfigurationContinuationIsCurrent(
           expectedConfiguration,
           requestGeneration,
@@ -1240,6 +1296,8 @@ export function createRelaySetupController({
 
   async function submitConfiguration() {
     const fingerprint = configurationFingerprint();
+    const previousRequirement = fingerprint === state.checkedConfigurationFingerprint
+      ? state.requiredBalanceOverride : null;
     generation += 1;
     const requestGeneration = generation;
     stopPolling();
@@ -1249,12 +1307,15 @@ export function createRelaySetupController({
     state.balanceE8s = null;
     state.creating = false;
     state.notifyResult = null;
-    state.requiredBalanceOverride = null;
+    state.requiredBalanceOverride = previousRequirement;
     state.error = '';
     state.loading = true;
+    setText('relay-setup-copy-status', '');
     try {
       const validation = validateVisibleConfiguration({ includeIncomplete: true });
       if (!validation.valid) {
+        const disclosure = validation.firstInvalidInput?.closest?.('[data-relay-recipient-memo]');
+        if (disclosure) disclosure.open = true;
         validation.firstInvalidInput?.focus?.();
         throw new Error(validation.firstError);
       }
@@ -1268,7 +1329,10 @@ export function createRelaySetupController({
       } else {
         state.surplusRecipients = [];
       }
+      state.reviewing = true;
+      setHidden('relay-setup-edit-notice', true);
       render();
+      document.getElementById('relay-setup-review-heading')?.focus?.();
       await refresh({ expectedConfiguration: fingerprint, requestGeneration, preflightNeurons: true });
     } catch (error) {
       if (!ensureConfigurationContinuationIsCurrent(fingerprint, requestGeneration)) return;
@@ -1278,14 +1342,21 @@ export function createRelaySetupController({
       state.checkedConfigurationFingerprint = '';
       state.error = normalizeError(error);
       state.loading = false;
-      (listInputs('target')[0] || listInputs('recipient')[0])?.focus?.();
+      if (!state.reviewing) {
+        const validation = validateVisibleConfiguration({ includeIncomplete: true });
+        (validation.firstInvalidInput || document.getElementById('relay-setup-mode-all-cycles') || listInputs('target')[0])?.focus?.();
+        setText('relay-setup-warning', state.error);
+        setHidden('relay-setup-warning', false);
+      }
       render();
     }
   }
 
   async function createRelay() {
-    if (state.creating) return;
+    if (state.creating || state.activeRelayId
+      || variantName(state.notifyResult) === 'ManualRecoveryRequired') return;
     const resumableSetup = isResumableSetup();
+    if (variantName(state.notifyResult) === 'InProgress' && !resumableSetup) return;
     const currentKind = viewState(state.view);
     if (['Active', 'ManualRecoveryRequired'].includes(currentKind)
       || (currentKind === 'InProgress' && !resumableSetup)) return;
@@ -1312,6 +1383,8 @@ export function createRelaySetupController({
       );
       return;
     }
+    if (!resumableSetup && (state.error || state.balanceE8s === null
+      || state.balanceE8s < requiredBalance(state.view, state.requiredBalanceOverride))) return;
     const notifyArgs = setupArgs();
     if (state.requiredBalanceOverride !== null
       && state.balanceE8s !== null
@@ -1349,6 +1422,8 @@ export function createRelaySetupController({
       } else if (notifyKind === 'Active' || notifyKind === 'ManualRecoveryRequired') {
         state.requiredBalanceOverride = null;
       }
+      render();
+      if (notifyKind === 'Active' || notifyKind === 'ManualRecoveryRequired') stopPolling();
       await refresh({
         expectedConfiguration,
         requestGeneration,
@@ -1369,6 +1444,12 @@ export function createRelaySetupController({
         requestGeneration,
         staleMessage,
       )) return;
+      if (notificationResolved && variantName(state.notifyResult) === 'Active') {
+        state.creating = false;
+        stopPolling();
+        render();
+        return;
+      }
       if (notificationResolved) {
         rejectStaleCheckedConfiguration(
           'The Relay request returned, but its current state could not be refreshed. Check the configuration again.',
@@ -1396,10 +1477,53 @@ export function createRelaySetupController({
         rejectStaleCheckedConfiguration('The Relay configuration changed. Check it again.');
         return;
       }
-      if (state.error) return;
+      if (state.error || viewState(state.view) !== 'NotFunded'
+        || variantName(state.notifyResult) === 'Active') return;
+      const expected = state.checkedConfigurationFingerprint;
+      const requestGeneration = generation;
       const value = document.getElementById(valueId)?.textContent || '';
-      if (typeof copyTextToClipboard === 'function' && value && value !== DASH) await copyTextToClipboard(value);
+      if (!value || value === DASH) return;
+      let message = 'Account copied.';
+      try {
+        if (typeof copyTextToClipboard !== 'function') throw new Error('Clipboard unavailable');
+        await copyTextToClipboard(value);
+      } catch {
+        message = 'Copy failed. Select and copy the complete account manually.';
+      }
+      if (configurationStillCurrent(expected, requestGeneration)
+        && document.getElementById(valueId)?.textContent === value) {
+        setText('relay-setup-copy-status', message);
+      }
     });
+  }
+
+  function selectedFundingIndex() {
+    if (fundingOutcome === 'future') return 1;
+    if (fundingOutcome !== 'split') return 0;
+    const percentage = Number(document.getElementById('relay-funding-percentage')?.value || 50);
+    return state.fundingDestinations.findIndex((destination) => destination.subaccountNumber === percentage);
+  }
+
+  function renderFundingChoice() {
+    const future = fundingOutcome === 'future';
+    const split = fundingOutcome === 'split';
+    const staging = document.getElementById('relay-funding-staging-alternative')?.open === true;
+    setHidden('relay-funding-operating-note', future || split);
+    setHidden('relay-funding-future-flow', !future);
+    setHidden('relay-funding-split-controls', !split);
+    setHidden('relay-funding-destinations', future && !staging);
+    setHtml('relay-funding-destinations', state.activeRelayId
+      ? renderRelayFundingCards(state.fundingDestinations, selectedFundingIndex()) : '');
+    const percentage = Number(document.getElementById('relay-funding-percentage')?.value || 50);
+    setText('relay-funding-split-note', `${percentage}% gross operating funding and ${100 - percentage}% future funding. Ledger fees reduce net receipts. Processing and fee thresholds apply; staging may need more deposits. The full recipient account selects the split, not a numeric memo.`);
+  }
+
+  function editConfiguration() {
+    state.reviewing = false;
+    invalidateCurrentConfiguration();
+    setText('relay-setup-edit-notice', 'Any deposits remain with the exact previous setup. Editing does not move or refund them. Re-check the original configuration to resume it.');
+    setHidden('relay-setup-edit-notice', false);
+    listInputs('target')[0]?.focus?.();
   }
 
   function bindFundingCopies() {
@@ -1415,6 +1539,8 @@ export function createRelaySetupController({
       }
       const index = Number.parseInt(button.dataset.relayFundingIndex || '', 10);
       const field = button.dataset.relayFundingCopy;
+      if (index !== selectedFundingIndex()) return;
+      const selection = fundingSelection;
       const destination = state.fundingDestinations[index];
       const value = destination?.[field];
       if (!state.activeRelayId || typeof value !== 'string' || !value) return;
@@ -1425,14 +1551,16 @@ export function createRelaySetupController({
         }
         await copyTextToClipboard(value);
         if (
-          state.activeRelayId !== activeRelayId
+          fundingSelection !== selection
+          || state.activeRelayId !== activeRelayId
           || state.fundingDestinations[index] !== destination
           || destination[field] !== value
         ) return;
         setText('relay-funding-copy-status', `${destination.name}: copied.`);
       } catch {
         if (
-          state.activeRelayId !== activeRelayId
+          fundingSelection !== selection
+          || state.activeRelayId !== activeRelayId
           || state.fundingDestinations[index] !== destination
           || destination[field] !== value
         ) return;
@@ -1476,6 +1604,15 @@ export function createRelaySetupController({
           listRows(kind).forEach(applyRecipientType);
         }
         list.addEventListener('click', (event) => {
+          const memoRemove = kind === 'recipient' && event.target?.closest?.('[data-relay-recipient-memo-remove]');
+          if (memoRemove) {
+            const row = memoRemove.closest(spec.rowSelector);
+            const input = row?.querySelector?.(spec.memoInputSelector);
+            if (input) input.value = '';
+            setMemoConversionNotice(row);
+            handleVisibleConfigurationChange();
+            return;
+          }
           const removeButton = event.target?.closest?.(spec.removeSelector);
           if (!removeButton) return;
           removeListField(kind, removeButton);
@@ -1518,6 +1655,36 @@ export function createRelaySetupController({
     bindCopy('copy-relay-setup-icrc-account', 'relay-setup-icrc-account');
     bindCopy('copy-relay-setup-account-identifier', 'relay-setup-account-identifier');
     bindFundingCopies();
+    for (const id of ['relay-setup-edit', 'relay-setup-another']) {
+      document.getElementById(id)?.addEventListener('click', editConfiguration);
+    }
+    document.getElementById('relay-setup-recheck')?.addEventListener('click', () => void submitConfiguration());
+    document.getElementById('relay-setup-error-focus')?.addEventListener('click', () => {
+      const { firstInvalidInput } = validateVisibleConfiguration({ includeIncomplete: true });
+      const disclosure = firstInvalidInput?.closest?.('[data-relay-recipient-memo]');
+      if (disclosure) disclosure.open = true;
+      firstInvalidInput?.focus?.();
+    });
+    document.getElementById('relay-funding-add')?.addEventListener('click', () => {
+      const panel = document.getElementById('relay-funding-options');
+      const button = document.getElementById('relay-funding-add');
+      if (panel) { panel.hidden = !panel.hidden; button?.setAttribute('aria-expanded', String(!panel.hidden)); }
+    });
+    for (const outcome of ['operating', 'future', 'split']) {
+      document.getElementById(`relay-funding-${outcome}`)?.addEventListener('change', () => {
+        fundingOutcome = outcome;
+        fundingSelection += 1;
+        setText('relay-funding-copy-status', '');
+        renderFundingChoice();
+      });
+    }
+    for (const [id, event] of [['relay-funding-percentage', 'change'], ['relay-funding-staging-alternative', 'toggle']]) {
+      document.getElementById(id)?.addEventListener(event, () => {
+        fundingSelection += 1;
+        setText('relay-funding-copy-status', '');
+        renderFundingChoice();
+      });
+    }
   }
 
   return {

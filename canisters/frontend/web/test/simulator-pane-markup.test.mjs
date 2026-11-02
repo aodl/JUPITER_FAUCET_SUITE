@@ -590,7 +590,7 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /In this particular\s+case a <code>'\.'<\/code> suffix is superfluous/);
   assert.doesNotMatch(howItWorks, /<strong>Extra tip:<\/strong>/);
   assert.match(howItWorks, /A relay canister provides one stable destination for ICP transfers/);
-  assert.match(howItWorks, /<strong>Target requirement:<\/strong> Every Relay target canister must make its cycles\s*balance publicly observable/);
+  assert.match(howItWorks, /<strong>Target requirement:<\/strong> Every Relay target canister must make its cycles\s*balance observable/);
   assert.match(howItWorks, /href="#how-it-works:4" data-page-target="4"[^>]*>Cycles Observability<\/a>\s*on the next slide/);
   assert.match(howItWorks, /steadily growing cycles balance for configured target canisters/);
   assert.match(howItWorks, /topping up 1% more\s*cycles than needed to restore the previously sampled balance/);
@@ -601,12 +601,12 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.match(howItWorks, /This ensures Jupiter Faucet perpetually transfers raw ICP rather than\s*directly topping up the relay canister with cycles/);
   assert.match(howItWorks, /routes 50% of any surplus ICP back into\s*the Jupiter Faucet neuron/);
   assert.match(howItWorks, /forever increasing the rate of future\s*maturity-minted ICP back into the relay/);
-  assert.match(howItWorks, /remaining surplus ICP\s*into the IO neuron's\s*staking account \(described below\)/);
-  assert.match(howItWorks, /<strong>Example:<\/strong>[\s\S]*This flow depends on raw ICP top-ups[\s\S]*Anyone can deploy their own relay canister/);
+  assert.match(howItWorks, /remaining surplus ICP\s*into the IO neuron's\s*staking account \(forever increasing the base APY for IO holders and therefore jUP stakers\)/);
+  assert.match(howItWorks, /<strong>Example:<\/strong>[\s\S]*A relay instance depends on raw ICP top-ups[\s\S]*Anyone can deploy their own relay canister/);
   assert.match(howItWorks, /choosing either no surplus recipients for all-cycles mode or one to five immutable typed recipients/);
   assert.match(howItWorks, /Each recipient may be a Principal/);
   assert.match(howItWorks, /public NNS neuron ID/);
-  assert.match(howItWorks, /No IO recipient\s*is added automatically to a self-service Relay/);
+  assert.doesNotMatch(howItWorks, /Relay requests claim\/refresh after a successful neuron transfer|No IO recipient\s*is added automatically to a self-service Relay/);
   assert.doesNotMatch(howItWorks, /surplus ICP will automatically be routed to the IO neuron/);
   assert.match(howItWorks, /href="\/#relay-setup"[^>]*data-panel="relay-setup"[^>]*>Relay Setup<\/a>/);
   assert.match(howItWorks, /href="\/#source"[^>]*data-panel="source"[^>]*>source code<\/a>/);
@@ -959,14 +959,14 @@ test('zero historian index timestamp shows fallback cadence without a last-updat
   assert.doesNotMatch(label, /Last endowment-index update/);
 });
 
-test('Actions nav button exposes Plan, Endow, Optimize, and Track Memos pane links in order', () => {
+test('Actions nav button exposes Plan, Endow, Create relay, and Track Memos pane links in order', () => {
   const actionsStart = indexHtml.indexOf('<div class="nav-popover action-rail"');
   assert.ok(actionsStart >= 0, 'missing actions rail');
   const actionsRail = indexHtml.slice(actionsStart, indexHtml.indexOf('</div>', actionsStart) + '</div>'.length);
 
   assert.match(indexHtml, /id="actions-menu-toggle"[\s\S]*aria-controls="actions-menu"[\s\S]*>Actions<\/button>/);
   assert.match(indexHtml, /id="metrics-menu-toggle"[\s\S]*aria-controls="metrics-menu"[\s\S]*>Metrics<\/button>/);
-  assert.match(actionsRail, /href="#simulator"[^>]*data-panel="simulator"[\s\S]*>Plan<\/span>[\s\S]*href="#memo-builder"[^>]*data-panel="memo-builder"[\s\S]*>Endow<\/span>[\s\S]*href="#relay-setup"[^>]*data-panel="relay-setup"[\s\S]*>Optimize<\/span>[\s\S]*href="#metric-tracker"[^>]*data-panel="metric-tracker"[\s\S]*>Track Memos<\/span>/);
+  assert.match(actionsRail, /href="#simulator"[^>]*data-panel="simulator"[\s\S]*>Plan<\/span>[\s\S]*href="#memo-builder"[^>]*data-panel="memo-builder"[\s\S]*>Endow<\/span>[\s\S]*href="#relay-setup"[^>]*data-panel="relay-setup"[\s\S]*>Create relay<\/span>[\s\S]*href="#metric-tracker"[^>]*data-panel="metric-tracker"[\s\S]*>Track Memos<\/span>/);
   assert.match(indexHtml, /href="#metric-stake" class="metric-rail-link metric-rail-link--summary nav-item"[^>]*>[\s\S]*class="metric-rail-link-value"[\s\S]*class="metric-rail-link-label nav-item">Jupiter Stake<\/span>/);
   assert.match(indexHtml, /href="#metric-commitments" class="metric-rail-link metric-rail-link--summary nav-item"[^>]*>[\s\S]*class="metric-rail-link-value"[\s\S]*class="metric-rail-link-label nav-item">Patron Endowments<\/span>/);
   assert.match(indexHtml, /<div class="nav-disclosure" data-nav-group="actions">\s*<button[\s\S]*id="actions-menu-toggle"[\s\S]*<\/button>\s*<div class="nav-popover action-rail" id="actions-menu"[^>]*hidden>/);
@@ -999,54 +999,40 @@ test('Actions nav button exposes Plan, Endow, Optimize, and Track Memos pane lin
   assert.doesNotMatch(navbarJs, /positionMenuRails|getBoundingClientRect|let actionsMenuOpen|let metricsMenuOpen|activePanelKey|metric-rail--visible/);
 });
 
-test('Relay Setup uses accessible repeatable target and recipient fields', () => {
+test('Relay configuration offers explicit policies, contextual memo controls and separate review', () => {
   const relaySetup = sectionMarkup('relay-setup');
-
-  assert.equal(relaySetup.match(/<fieldset class="relay-setup-principal-fieldset">/g)?.length, 2);
-  assert.match(relaySetup, /<legend class="tracker-label">Target canisters<\/legend>/);
-  assert.doesNotMatch(relaySetup, /Target canisters \(1–20\)/);
-  assert.match(relaySetup, /Enter one canister ID per field/);
+  assert.match(relaySetup, /Create a relay/);
+  assert.match(relaySetup, /Automatically route ICP to efficiently service your canisters’ and community's needs\. Read more → <a href="\/#how-it-works:3"[^>]*>How relays work<\/a>\.<\/p>/);
+  assert.equal(relaySetup.match(/>How relays work<\/a>/g)?.length, 1);
   assert.match(relaySetup, /id="relay-setup-target-list"/);
-  assert.match(relaySetup, /data-relay-target-input="true"/);
-  assert.match(relaySetup, /id="relay-setup-add-target"[^>]*>Add another canister<\/button>/);
+  assert.match(relaySetup, /id="relay-setup-add-target"[^>]*>Add canister<\/button>/);
   assert.match(relaySetup, /data-relay-target-remove="true"[^>]*hidden>Remove<\/button>/);
-  assert.match(relaySetup, /id="relay-setup-target-count-hint"[^>]*>1 target canister<\/span>/);
-  assert.match(relaySetup, /<legend class="tracker-label">Surplus recipients<\/legend>/);
-  assert.match(relaySetup, /<legend class="tracker-label">Surplus handling<\/legend>/);
-  assert.match(relaySetup, /id="relay-setup-mode-routing"[^>]*type="radio"[^>]*checked/);
-  assert.match(relaySetup, /id="relay-setup-mode-all-cycles"[^>]*type="radio"/);
-  assert.match(relaySetup, /No surplus recipients — all-cycles mode/);
-  const surplusModeStatusIndex = relaySetup.indexOf('id="relay-setup-surplus-mode-summary"');
-  const recipientEditorIndex = relaySetup.indexOf('id="relay-setup-recipient-editor"');
-  assert.ok(surplusModeStatusIndex >= 0 && surplusModeStatusIndex < recipientEditorIndex);
-  assert.match(relaySetup, /id="relay-setup-surplus-mode-summary"[^>]*role="status"[^>]*aria-live="polite"/);
-  assert.match(relaySetup, /data-relay-recipient-input="true"/);
+  for (const policy of ['routing', 'all-cycles']) {
+    const input = relaySetup.match(new RegExp(`<input id="relay-setup-mode-${policy}"[^>]+>`))[0];
+    assert.match(input, /type="radio"/);
+    assert.doesNotMatch(input, /checked/);
+  }
+  assert.match(relaySetup, /id="relay-setup-recipient-editor" hidden/);
   assert.match(relaySetup, /data-relay-recipient-type="true"/);
-  assert.match(relaySetup, /<option value="Principal" selected>Principal<\/option>/);
-  assert.match(relaySetup, /<option value="Neuron">Neuron ID<\/option>/);
-  assert.match(relaySetup, /id="relay-setup-add-recipient"[^>]*>Add another recipient<\/button>/);
-  assert.match(relaySetup, /data-relay-recipient-remove="true"[^>]*>Remove<\/button>/);
-  assert.match(relaySetup, /data-relay-recipient-memo-mode="true"/);
-  assert.match(relaySetup, /<option value="Text" selected>Text<\/option>/);
-  assert.match(relaySetup, /<option value="Hex">Hexadecimal<\/option>/);
-  assert.match(relaySetup, /aria-describedby="relay-setup-recipient-memo-count-1 relay-setup-recipient-memo-error-1 relay-setup-recipient-memo-notice-1"[^>]*data-relay-recipient-memo-input="true"/);
-  assert.match(relaySetup, /data-relay-recipient-memo-count="true">0\/32 bytes<\/span>/);
-  assert.match(relaySetup, /id="relay-setup-recipient-memo-notice-1"[^>]*role="status"[^>]*aria-live="polite"[^>]*data-relay-recipient-memo-notice="true"/);
-  assert.match(relaySetup, /id="relay-setup-recipient-count-hint"[^>]*>1 surplus recipient<\/span>/);
-  assert.match(relaySetup, /id="relay-setup-submit"[^>]*disabled[^>]*>Check Relay configuration<\/button>/);
-  assert.match(relaySetup, /id="relay-setup-warning"[^>]*role="status"[^>]*aria-live="polite"/);
-  assert.match(relaySetup, /Targets, recipient destinations, and exact memo bytes determine the setup address/);
-  assert.match(relaySetup, /Changing a memo usually changes the funding account/);
-  assert.match(relaySetup, /incorrectly selected Relay configuration are not automatically refundable/);
-  assert.match(relaySetup, /id="relay-setup-recipient-count"/);
-  assert.match(relaySetup, /id="relay-setup-surplus-mode"/);
-  assert.match(relaySetup, /id="relay-setup-canonical-recipients"/);
-  assert.match(relaySetup, /id="relay-setup-configuration-hash"/);
-  assert.doesNotMatch(relaySetup, /Separate canister IDs with newlines, commas, or spaces/);
+  assert.match(relaySetup, /<option value="Principal" selected>Principal default ICP account<\/option>/);
+  assert.match(relaySetup, /<option value="Neuron">Public NNS neuron ID<\/option>/);
+  assert.match(relaySetup, /<details[^>]+data-relay-recipient-memo="true"/);
+  assert.match(relaySetup, /data-relay-recipient-memo-remove="true"/);
+  assert.match(relaySetup, /aria-describedby="relay-setup-recipient-memo-count-1 relay-setup-recipient-memo-error-1 relay-setup-recipient-memo-notice-1"/);
+  assert.match(relaySetup, /id="relay-setup-submit"[^>]*disabled[^>]*>Review setup<\/button>/);
+  assert.match(relaySetup, /id="relay-setup-warning"[^>]*role="alert"[^>]*tabindex="-1"/);
+  assert.match(relaySetup, /id="relay-setup-review" hidden/);
+  assert.match(relaySetup, /Setup deposits are not automatically refundable/);
+  assert.match(relaySetup, /Remaining funds after creation go toward the relay endowment in Jupiter Faucet's neuron/);
+  assert.match(relaySetup, /Funds first accumulate in the relay and are forwarded once the endowment threshold is met/);
+  assert.match(relaySetup, /href="\/#metric-tracker"[^>]*data-panel="metric-tracker"[^>]*>memo tracker<\/a>/);
+  assert.doesNotMatch(relaySetup, /Setup support details|Configuration key|Exact phase/);
+  assert.doesNotMatch(relaySetup, /authenticated canonical order/);
+  for (const id of ['canonical-targets', 'canonical-recipients', 'shortfall']) {
+    assert.match(relaySetup, new RegExp(`id="relay-setup-${id}"`));
+  }
   assert.doesNotMatch(relaySetup, /<textarea/);
-  assert.match(metricsCss, /\.relay-setup-principal-row--error \{[\s\S]*border-color:/);
   assert.match(metricsCss, /\.relay-setup-principal-input\[aria-invalid="true"\]/);
-  assert.match(metricsCss, /\.relay-setup-submit \{[\s\S]*margin-left: auto;/);
 });
 
 test('Patron Endowments table omits redundant category column', () => {
