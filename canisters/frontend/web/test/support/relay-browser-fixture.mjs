@@ -12,6 +12,8 @@ let notifyResult = null;
 let poll;
 let pendingQuery;
 let holdQuery = false;
+let holdNotify = false;
+let releaseNotify;
 
 function view(args) {
   const extra = BigInt(args.target_canister_ids.length - 1);
@@ -50,6 +52,7 @@ const controller = createRelaySetupController({
     },
     async notify_relay_configuration() {
       calls.notifications += 1;
+      if (holdNotify) await new Promise((resolve) => { releaseNotify = resolve; });
       if (notifyResult) return notifyResult;
       scanState = { Active: { relay_canister_id: Principal.fromText(RELAY) } };
       return scanState;
@@ -81,6 +84,8 @@ window.relayFixture = {
         : { [kind]: { phase: { [phase]: null }, relay_canister_id: [Principal.fromText(RELAY)], message: 'The previous operation needs operator investigation.' } };
   },
   setNotify: (value) => { notifyResult = value; },
+  holdNotify: () => { holdNotify = true; },
+  releaseNotify: () => { holdNotify = false; releaseNotify(); },
   holdQuery: () => { holdQuery = true; },
   releaseQuery: () => { pendingQuery.resolve(); pendingQuery = null; },
   poll: () => poll?.(),

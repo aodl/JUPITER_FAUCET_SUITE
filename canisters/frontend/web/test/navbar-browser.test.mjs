@@ -255,7 +255,13 @@ for (const width of [390, 1440]) {
       await captureRelay(page, width, 'create-ready', '#relay-setup-create');
       await page.locator('#copy-relay-setup-icrc-account').click();
       assert.equal(await page.evaluate(() => window.relayFixture.calls.copied.at(-1)), await page.locator('#relay-setup-icrc-account').textContent());
+      await page.evaluate(() => window.relayFixture.holdNotify());
       await page.locator('#relay-setup-create').click();
+      await page.waitForFunction(() => window.relayFixture.calls.notifications === 1);
+      assert.equal(await page.locator('#relay-setup-edit').isDisabled(), true);
+      await page.locator('#relay-setup-edit').dispatchEvent('click');
+      assert.equal(await page.locator('#relay-setup-form').isVisible(), false);
+      await page.evaluate(() => window.relayFixture.releaseNotify());
       await page.locator('#relay-funding-section').waitFor({ state: 'visible' });
       assert.equal(await page.locator('#relay-funding-title').evaluate((n) => document.activeElement === n), true);
       assert.equal(await page.evaluate(() => window.relayFixture.calls.notifications), 1);
@@ -286,6 +292,18 @@ for (const width of [390, 1440]) {
       }
       await page.locator('#relay-funding-percentage').selectOption('50');
       await captureRelay(page, width, 'fund-split-50', '#relay-funding-percentage');
+      await page.locator('#relay-setup-another').click();
+      assert.equal(await page.locator('[data-relay-target-input]').count(), 1);
+      assert.equal(await page.locator('[data-relay-target-input]').inputValue(), '');
+      assert.equal(await page.locator('#relay-setup-mode-routing').isChecked(), false);
+      assert.equal(await page.locator('#relay-setup-mode-all-cycles').isChecked(), false);
+      assert.equal(await page.locator('[data-relay-recipient-input]').inputValue(), '');
+      assert.equal(await page.locator('[data-relay-recipient-memo-input]').inputValue(), '');
+      assert.equal(await page.locator('[data-relay-recipient-memo]').evaluate((n) => n.open), false);
+      assert.equal(await page.locator('#relay-setup-submit').isDisabled(), true);
+      assert.equal(await page.locator('#relay-setup-payment-details').isVisible(), false);
+      assert.equal(await page.locator('#relay-funding-options').isVisible(), false);
+      assert.equal(await page.locator('[data-relay-target-input]').evaluate((n) => n === document.activeElement), true);
       await assertRelayFits(page, width);
     });
   });
@@ -335,7 +353,7 @@ for (const width of [390, 1440]) {
 }
 
 for (const width of [390, 1440]) {
-  test(`input styling follows the memo builder in tracker and Relay at ${width}px`, async () => {
+  test(`Relay styling follows the memo builder without changing tracker controls at ${width}px`, async () => {
     await withBrowser(async ({ openPage }) => {
       const { page } = await openPage({ width, height: width === 390 ? 844 : 1000 });
       const signature = async (field) => {
@@ -343,7 +361,7 @@ for (const width of [390, 1440]) {
         return field.evaluate((node) => {
           const style = getComputedStyle(node);
           return Object.fromEntries(['borderRadius', 'borderTopWidth', 'borderTopColor', 'backgroundColor',
-            'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'fontFamily', 'fontSize', 'lineHeight', 'outlineColor', 'outlineStyle', 'outlineWidth', 'outlineOffset']
+            'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'fontFamily', 'fontSize', 'lineHeight']
             .map((property) => [property, style[property]]));
         });
       };
@@ -355,12 +373,20 @@ for (const width of [390, 1440]) {
       await page.evaluate(() => { window.location.hash = '#metric-tracker'; });
       const tracker = page.locator('#tracker-principal-input');
       await tracker.waitFor({ state: 'visible' });
-      assert.deepEqual(await signature(tracker), expected);
-      const focus = await tracker.evaluate((node) => {
-        const style = getComputedStyle(node);
-        return Number.parseFloat(style.outlineWidth) + Number.parseFloat(style.outlineOffset);
-      });
-      assert.ok(focus <= 0, 'the focus outline must stay within the field so the scrolling pane cannot clip it');
+      const trackerStyle = await signature(tracker);
+      assert.equal(trackerStyle.borderRadius, '999px');
+      assert.equal(trackerStyle.fontSize, '14px');
+      assert.equal(trackerStyle.paddingLeft, '13px');
+      assert.notDeepEqual(trackerStyle, expected);
+      assert.equal(await tracker.evaluate((node) => getComputedStyle(node).outlineStyle), 'none');
+      await page.evaluate(() => { window.location.hash = '#simulator'; });
+      const simulator = page.locator('#simulator-icp-commitment');
+      await simulator.waitFor({ state: 'visible' });
+      assert.equal((await signature(simulator)).borderRadius, '999px');
+      assert.equal((await signature(simulator)).fontFamily, 'Arial');
+      assert.equal((await signature(simulator)).fontSize, '13px');
+      assert.equal((await signature(simulator)).paddingLeft, '10px');
+      await page.evaluate(() => { window.location.hash = '#metric-tracker'; });
       await captureRelay(page, width, 'tracker-field', '#tracker-principal-input');
       await page.evaluate(() => { window.location.hash = '#relay-setup'; });
       const target = page.locator('[data-relay-target-input]').first();
@@ -495,6 +521,11 @@ for (const width of [320, 768]) {
       await page.keyboard.press('Enter');
       await page.waitForFunction(() => window.relayFixture.controller.state.checkedConfigurationFingerprint);
       assert.equal(await page.locator('#relay-setup-review-heading').evaluate((n) => document.activeElement === n), true);
+      await page.locator('#relay-setup-edit').click();
+      await page.locator('#relay-setup-mode-routing').check();
+      await page.locator('[data-relay-recipient-input]').fill('bg4sm-wzk');
+      const size = await page.locator('#relay-setup-recipient-editor').evaluate((node) => ({ width: node.clientWidth, scroll: node.scrollWidth }));
+      assert.ok(size.scroll <= size.width + 1, `recipient editor overflow at ${width}px: ${JSON.stringify(size)}`);
       await assertRelayFits(page, width);
     });
   });

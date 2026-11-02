@@ -295,6 +295,7 @@ export function createRelaySetupController({
     fundingDestinations: [],
     reviewing: false,
   };
+  let creationRequestInFlight = false;
   let fundingOutcome = 'operating';
   let fundingSelection = 0;
   let generation = 0;
@@ -1048,6 +1049,10 @@ export function createRelaySetupController({
       invalidateCurrentConfiguration();
       return;
     }
+    for (const id of ['relay-setup-edit', 'relay-setup-another']) {
+      const button = document.getElementById(id);
+      if (button) button.disabled = creationRequestInFlight;
+    }
     const view = state.view;
     const kind = viewState(view);
     const stateDetails = view?.state?.[kind];
@@ -1095,6 +1100,7 @@ export function createRelaySetupController({
       Active: 'Relay created',
     }[kind] || DASH;
 
+    setHidden('relay-setup-operation-notice', !creationRequestInFlight);
     const reviewStage = !activeRelayId && state.reviewing;
     setHidden('relay-setup-form', state.reviewing || Boolean(activeRelayId));
     setHidden('relay-setup-intro', state.reviewing || Boolean(activeRelayId));
@@ -1353,7 +1359,7 @@ export function createRelaySetupController({
   }
 
   async function createRelay() {
-    if (state.creating || state.activeRelayId
+    if (creationRequestInFlight || state.creating || state.activeRelayId
       || variantName(state.notifyResult) === 'ManualRecoveryRequired') return;
     const resumableSetup = isResumableSetup();
     if (variantName(state.notifyResult) === 'InProgress' && !resumableSetup) return;
@@ -1391,6 +1397,7 @@ export function createRelaySetupController({
       && state.balanceE8s >= state.requiredBalanceOverride) {
       state.requiredBalanceOverride = null;
     }
+    creationRequestInFlight = true;
     state.creating = true;
     state.notifyResult = null;
     render();
@@ -1465,6 +1472,9 @@ export function createRelaySetupController({
       state.creating = false;
       state.error = normalizeError(error);
       render();
+    } finally {
+      creationRequestInFlight = false;
+      render();
     }
   }
 
@@ -1519,10 +1529,39 @@ export function createRelaySetupController({
   }
 
   function editConfiguration() {
+    if (creationRequestInFlight) return;
     state.reviewing = false;
     invalidateCurrentConfiguration();
     setText('relay-setup-edit-notice', 'Any deposits remain with the exact previous setup. Editing does not move or refund them. Re-check the original configuration to resume it.');
     setHidden('relay-setup-edit-notice', false);
+    listInputs('target')[0]?.focus?.();
+  }
+
+  function configureAnotherRelay() {
+    if (creationRequestInFlight) return;
+    state.reviewing = false;
+    invalidateCurrentConfiguration();
+    for (const kind of ['target', 'recipient']) {
+      listNode(kind)?.replaceChildren(createListRow(kind));
+      updateListRows(kind);
+    }
+    for (const id of ['relay-setup-mode-routing', 'relay-setup-mode-all-cycles']) {
+      const input = document.getElementById(id);
+      if (input) input.checked = false;
+    }
+    fundingOutcome = 'operating';
+    for (const outcome of ['operating', 'future', 'split']) {
+      const input = document.getElementById(`relay-funding-${outcome}`);
+      if (input) input.checked = outcome === 'operating';
+    }
+    const percentage = document.getElementById('relay-funding-percentage');
+    if (percentage) percentage.value = '50';
+    document.querySelectorAll('#nav-panel-relay-setup details').forEach((node) => { node.open = false; });
+    setHidden('relay-funding-options', true);
+    document.getElementById('relay-funding-add')?.setAttribute('aria-expanded', 'false');
+    setHidden('relay-setup-edit-notice', true);
+    updateSurplusModePresentation();
+    render();
     listInputs('target')[0]?.focus?.();
   }
 
@@ -1655,9 +1694,8 @@ export function createRelaySetupController({
     bindCopy('copy-relay-setup-icrc-account', 'relay-setup-icrc-account');
     bindCopy('copy-relay-setup-account-identifier', 'relay-setup-account-identifier');
     bindFundingCopies();
-    for (const id of ['relay-setup-edit', 'relay-setup-another']) {
-      document.getElementById(id)?.addEventListener('click', editConfiguration);
-    }
+    document.getElementById('relay-setup-edit')?.addEventListener('click', editConfiguration);
+    document.getElementById('relay-setup-another')?.addEventListener('click', configureAnotherRelay);
     document.getElementById('relay-setup-recheck')?.addEventListener('click', () => void submitConfiguration());
     document.getElementById('relay-setup-error-focus')?.addEventListener('click', () => {
       const { firstInvalidInput } = validateVisibleConfiguration({ includeIncomplete: true });

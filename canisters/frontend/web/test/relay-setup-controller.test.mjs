@@ -3046,3 +3046,32 @@ test('source and markup contain no payment proof, refund, quote, indicative, or 
 test('ICRC account rendering remains stable', () => {
   assert.match(icrcAccountText(setupAccount()), new RegExp(`^${HISTORIAN}-`));
 });
+
+
+test('Edit cannot cancel an in-flight creation or its continuation read', async () => {
+  await withDom(async (nodes) => {
+    const notify = deferred();
+    const followup = deferred();
+    const harness = controllerHarness({
+      notifyRelay: () => notify.promise,
+      getView: (_args, call) => call === 1 ? { Ok: viewFor() } : followup.promise,
+    });
+    harness.controller.bindPane();
+    await submit(nodes, harness);
+    const checked = harness.controller.state.checkedConfigurationFingerprint;
+    const creating = harness.controller.createRelay();
+    await flushMicrotasks(20);
+    assert.equal(nodes.get('relay-setup-edit').disabled, true);
+    nodes.get('relay-setup-edit').listeners.get('click')();
+    assert.equal(harness.controller.state.checkedConfigurationFingerprint, checked);
+    notify.resolve({ Active: { relay_canister_id: Principal.fromText(RELAY) } });
+    await flushMicrotasks(20);
+    assert.equal(nodes.get('relay-setup-edit').disabled, true);
+    nodes.get('relay-setup-edit').listeners.get('click')();
+    assert.equal(harness.controller.state.activeRelayId, RELAY);
+    followup.resolve({ Ok: viewFor({ account: null, state: { Active: { relay_canister_id: Principal.fromText(RELAY) } } }) });
+    await creating;
+    assert.equal(nodes.get('relay-setup-edit').disabled, false);
+    assert.equal(harness.calls.notify, 1);
+  });
+});

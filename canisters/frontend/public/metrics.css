@@ -813,7 +813,7 @@
 }
 
 .memo-builder-input,
-.tracker-input {
+#nav-panel-relay-setup .tracker-input {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -829,21 +829,21 @@
 }
 
 .memo-builder-input:focus,
-.tracker-input:focus {
+.tracker-input:focus,
+#nav-panel-relay-setup .tracker-input:focus {
   border-color: rgba(255, 255, 255, 0.38);
 }
 
-.memo-builder-input:focus-visible,
-.tracker-input:focus-visible {
+#nav-panel-relay-setup .tracker-input:focus-visible {
   outline: 2px solid #b1edf1;
   outline-offset: -2px;
 }
 
-select.tracker-input {
+#nav-panel-relay-setup select.tracker-input {
   color-scheme: dark;
 }
 
-select.tracker-input option {
+#nav-panel-relay-setup select.tracker-input option {
   background-color: #171b22;
   color: #f5f5f5;
 }
@@ -967,6 +967,14 @@ select.tracker-input option {
 
 .tracker-input {
   flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  border-radius: 999px;
+  padding: 9px 13px;
+  font-size: 14px;
+  outline: none;
 }
 
 .tracker-input:disabled,
@@ -1141,7 +1149,7 @@ select.tracker-input option {
   box-sizing: border-box;
 }
 
-.relay-setup-recipient-type {
+#nav-panel-relay-setup .relay-setup-recipient-type {
   flex: 0 0 auto;
   width: auto;
   max-width: 100%;
