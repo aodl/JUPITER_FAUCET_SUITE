@@ -813,7 +813,7 @@
 }
 
 .memo-builder-input,
-#nav-panel-relay-setup .tracker-input {
+.tracker-input {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -821,6 +821,7 @@
   background: rgba(255, 255, 255, 0.06);
   color: inherit;
   border-radius: 8px;
+  min-height: 42px;
   padding: 9px 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
@@ -829,27 +830,26 @@
 }
 
 .memo-builder-input:focus,
-.tracker-input:focus,
-#nav-panel-relay-setup .tracker-input:focus {
+.tracker-input:focus {
   border-color: rgba(255, 255, 255, 0.38);
 }
 
-#nav-panel-relay-setup .tracker-input:focus-visible {
+.memo-builder-input:focus-visible,
+.tracker-input:focus-visible {
   outline: 2px solid #b1edf1;
   outline-offset: -2px;
 }
 
-#nav-panel-relay-setup select.tracker-input {
+select.tracker-input {
   color-scheme: dark;
 }
 
-#nav-panel-relay-setup select.tracker-input option {
+select.tracker-input option {
   background-color: #171b22;
   color: #f5f5f5;
 }
 
 .memo-builder-editable {
-  min-height: 38px;
   overflow: hidden;
   white-space: pre;
   cursor: text;
@@ -967,14 +967,6 @@
 
 .tracker-input {
   flex: 1 1 auto;
-  min-width: 0;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
-  color: inherit;
-  border-radius: 999px;
-  padding: 9px 13px;
-  font-size: 14px;
-  outline: none;
 }
 
 .tracker-input:disabled,
@@ -1982,6 +1974,7 @@
   flex: 0 0 auto;
   min-width: 0;
   height: 32px;
+  min-height: 32px;
   padding: 6px 10px;
   font-size: 13px;
 }

@@ -353,15 +353,16 @@ for (const width of [390, 1440]) {
 }
 
 for (const width of [390, 1440]) {
-  test(`Relay styling follows the memo builder without changing tracker controls at ${width}px`, async () => {
+  test(`Comparable form controls share styling across Memo Builder, Tracker, Simulator and Relay at ${width}px`, async () => {
     await withBrowser(async ({ openPage }) => {
       const { page } = await openPage({ width, height: width === 390 ? 844 : 1000 });
       const signature = async (field) => {
         await field.focus();
+        await page.keyboard.press('ArrowLeft');
         return field.evaluate((node) => {
           const style = getComputedStyle(node);
           return Object.fromEntries(['borderRadius', 'borderTopWidth', 'borderTopColor', 'backgroundColor',
-            'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'fontFamily', 'fontSize', 'lineHeight']
+            'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'fontFamily', 'fontSize', 'lineHeight', 'height', 'outlineColor', 'outlineStyle', 'outlineWidth', 'outlineOffset']
             .map((property) => [property, style[property]]));
         });
       };
@@ -369,23 +370,24 @@ for (const width of [390, 1440]) {
       const memo = page.locator('#memo-builder-canister');
       await memo.waitFor({ state: 'visible' });
       const expected = await signature(memo);
+      await page.locator('input[name="memo-builder-mode"][value="rawIcp"]').check();
+      await page.locator('#memo-builder-optional').waitFor({ state: 'visible' });
+      assert.deepEqual(await signature(page.locator('#memo-builder-optional')), expected);
       await captureRelay(page, width, 'memo-builder-fields', '#memo-builder-canister');
       await page.evaluate(() => { window.location.hash = '#metric-tracker'; });
       const tracker = page.locator('#tracker-principal-input');
       await tracker.waitFor({ state: 'visible' });
       const trackerStyle = await signature(tracker);
-      assert.equal(trackerStyle.borderRadius, '999px');
-      assert.equal(trackerStyle.fontSize, '14px');
-      assert.equal(trackerStyle.paddingLeft, '13px');
-      assert.notDeepEqual(trackerStyle, expected);
-      assert.equal(await tracker.evaluate((node) => getComputedStyle(node).outlineStyle), 'none');
+      assert.deepEqual(trackerStyle, expected);
+      assert.equal(expected.height, '42px');
+      assert.equal(expected.outlineStyle, 'solid');
+      assert.equal(expected.outlineWidth, '2px');
+      assert.equal(expected.outlineOffset, '-2px');
       await page.evaluate(() => { window.location.hash = '#simulator'; });
       const simulator = page.locator('#simulator-icp-commitment');
       await simulator.waitFor({ state: 'visible' });
-      assert.equal((await signature(simulator)).borderRadius, '999px');
-      assert.equal((await signature(simulator)).fontFamily, 'Arial');
-      assert.equal((await signature(simulator)).fontSize, '13px');
-      assert.equal((await signature(simulator)).paddingLeft, '10px');
+      const compact = await signature(simulator);
+      assert.deepEqual(compact, { ...expected, height: '32px', paddingTop: '6px', paddingBottom: '6px', paddingLeft: '10px', paddingRight: '10px' });
       await page.evaluate(() => { window.location.hash = '#metric-tracker'; });
       await captureRelay(page, width, 'tracker-field', '#tracker-principal-input');
       await page.evaluate(() => { window.location.hash = '#relay-setup'; });
