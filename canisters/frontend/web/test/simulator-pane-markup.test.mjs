@@ -533,8 +533,8 @@ test('cycles help opens a dedicated observability slide with actionable route gu
   assert.doesNotMatch(howItWorks, /Cached positive route/);
   assert.doesNotMatch(howItWorks, /Adding a controller changes the canister's security/);
   assert.match(howItWorks, /<strong>TL;DR:<\/strong>/);
+  assert.doesNotMatch(howItWorks, /A new self-service Relay can rely on direct status/);
   assert.match(howItWorks, /Direct status is tried before every cached, blackhole, or SNS proxy route/);
-  assert.match(howItWorks, /new self-service Relay can rely on direct status\s*only when the target sets it to <code>public<\/code>/);
   assert.match(howItWorks, /href="#how-it-works" data-page-target="0"[^>]*>Jupiter Faucet<\/a>/);
   assert.match(howItWorks, /href="#how-it-works:3" data-page-target="3"[^>]*>Jupiter Relay<\/a>/);
   assert.match(howItWorks, /Jupiter Relay<\/a>\s*target canisters must expose their cycles so the Relay can calculate how much each needs/);
@@ -609,7 +609,8 @@ test('How it works pane includes advanced usage memo builder without restoring s
   assert.doesNotMatch(howItWorks, /Relay requests claim\/refresh after a successful neuron transfer|No IO recipient\s*is added automatically to a self-service Relay/);
   assert.doesNotMatch(howItWorks, /surplus ICP will automatically be routed to the IO neuron/);
   assert.match(howItWorks, /href="\/#relay-setup"[^>]*data-panel="relay-setup"[^>]*>Relay Setup<\/a>/);
-  assert.match(howItWorks, /href="\/#source"[^>]*data-panel="source"[^>]*>source code<\/a>/);
+  assert.doesNotMatch(howItWorks, /There are two options:|Alternatively, developers can pull/);
+  assert.match(howItWorks, /<p class="nav-panel-content">\s*Anyone can deploy their own relay canister(?:(?!<\/p>)[\s\S])*Relay Setup(?:(?!<\/p>)[\s\S])*0–32-byte memo\.(?:(?!<\/p>)[\s\S])*Relay instances are immutable \(blackholed\) and of course\s*<a href="#source" data-panel="source" class="pane-external-link">open source<\/a>\.\s*<\/p>/);
   assert.match(howItWorks, /A relay canister also accepts ICP transfers into its\s*<code>'1'<\/code> subaccount/);
   assert.match(howItWorks, /<code>u2qkp-aqaaa-aaaar-qb7ea-cai\.1<\/code>/);
   assert.match(howItWorks, /href="\/#how-it-works"[^>]*data-panel="how-it-works"[^>]*>1 ICP minimum Jupiter Faucet threshold<\/a>/);

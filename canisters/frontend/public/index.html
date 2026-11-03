@@ -721,20 +721,13 @@
               </p>
               <p class="nav-panel-content">
                 Anyone can deploy their own relay canister (specifying their own selection of target
-                canisters they wish to be kept topped up). There are two options:
+                canisters they wish to be kept topped up). The easiest path to deploying a relay
+                canister is to use the
+                <a href="/#relay-setup" data-panel="relay-setup" class="pane-external-link">Relay Setup</a>
+                tool, choosing either no surplus recipients for all-cycles mode or one to five immutable typed recipients. Each recipient may be a Principal (paid at its default ICP account) or a public NNS neuron ID (paid at its Governance staking account), with an exact optional 0–32-byte memo.
+                Relay instances are immutable (blackholed) and of course
+                <a href="#source" data-panel="source" class="pane-external-link">open source</a>.
               </p>
-              <ul class="nav-panel-content">
-                <li>
-                  The easiest path to deploying a relay canister is to use the
-                  <a href="/#relay-setup" data-panel="relay-setup" class="pane-external-link">Relay Setup</a>
-                  tool, choosing either no surplus recipients for all-cycles mode or one to five immutable typed recipients. Each recipient may be a Principal (paid at its default ICP account) or a public NNS neuron ID (paid at its Governance staking account), with an exact optional 0–32-byte memo.
-                </li>
-                <li>
-                  Alternatively, developers can pull the
-                  <a href="/#source" data-panel="source" class="pane-external-link">source code</a>
-                  and deploy an instance manually specifying their own selection of surplus accounts.
-                </li>
-              </ul>
               <p class="nav-panel-content memo-builder-safety-notice">
                 <strong>Developer tip:</strong> A relay canister also accepts ICP transfers into its
                 <code>'1'</code> subaccount (e.g. <code>u2qkp-aqaaa-aaaar-qb7ea-cai.1</code>). This
@@ -792,13 +785,11 @@
               </ul>
               <p class="nav-panel-content memo-builder-safety-notice">
                 <strong>TL;DR:</strong> Direct status is tried before every cached, blackhole, or SNS proxy route.
-                Blackhole and SNS status calls remain fallbacks. A new self-service Relay can rely on direct status
-                only when the target sets it to <code>public</code>; access granted only to Historian cannot cover the
-                child principal before it exists, though a recognized reusable proxy fallback may still qualify it.
+                Blackhole and SNS status calls remain fallbacks.
                 Newly tracked canisters may remain
                 pending until their initial probe or the next cycles sweep completes. While
                 <a href="#how-it-works" data-page-target="0" class="pane-external-link">Jupiter Faucet</a>
-                perpetually tops up target canisters whether or not their cycles are publicly observable,
+                perpetually tops up target canisters whether or not their cycles are observable,
                 <a href="#how-it-works:3" data-page-target="3" class="pane-external-link">Jupiter Relay</a>
                 target canisters must expose their cycles so the Relay can calculate how much each needs.
               </p>
