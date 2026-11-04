@@ -32,7 +32,7 @@ const INLINE_TOOLTIP_CONTENT = {
   'blackhole-controller-help': `
     <div class="pane-fixed-tooltip-content">
       <p>Cycles balances are sampled periodically by the <a class="pane-external-link" href="#metric-tracker" data-tooltip-navigation>Memo Tracker</a>.</p>
-      <p>Cycles observability first uses protocol-native direct canister status. Recognized blackhole and SNS status routes remain fallbacks. Newly tracked canisters may show as pending until the next cycles sweep completes.</p>
+      <p>Cycles observability first uses protocol-native direct canister status. Direct access may be public or granted to Historian. Recognized blackhole, NNS Root and authenticated SNS status routes remain fallbacks. Newly tracked canisters may show as pending until the next cycles sweep completes.</p>
       <a class="pane-page-button pane-fixed-tooltip-more-info" href="#how-it-works:4" data-tooltip-navigation>More info</a>
     </div>`,
   'tracker-burn-estimate-help': `

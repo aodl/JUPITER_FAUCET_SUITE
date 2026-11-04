@@ -2367,7 +2367,7 @@ fn payout_plan_persists_across_ledger_stop_and_resumes() -> Result<()> {
     )?;
     tick_n(&pic, 20);
 
-    // IMPORTANT: Don't query the ledger while it's stopped — PocketIC rejects calls to a stopped
+    // IMPORTANT: Don't query the ledger while it's stopped - PocketIC rejects calls to a stopped
     // canister (including balance queries). Instead, assert that the disburser persisted the plan.
     // We verify that *no transfers landed during downtime* after we restart the ledger.
 

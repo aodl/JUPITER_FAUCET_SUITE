@@ -278,7 +278,7 @@ function cyclesProbeStatusInfo(data) {
       kind: 'notAvailable',
       label: 'not available',
       chartMessage: 'Cycles data not available.',
-      note: `Cycles data is unavailable because historian could not obtain a balance${when !== DASH ? ` during the last probe at ${when}` : ''}. Historian probes local self, protocol-native direct status, recognized blackhole, and SNS fallback routes automatically.`,
+      note: `Cycles data is unavailable because historian could not obtain a balance${when !== DASH ? ` during the last probe at ${when}` : ''}. Historian probes local self, protocol-native direct status, recognized blackhole, NNS Root, and authenticated SNS fallback routes automatically.`,
     };
   }
 
@@ -1508,8 +1508,8 @@ export function createTrackerController({
         <div><dt>Memo type</dt><dd class="pane-detail-value">${escapeHtml(title)}</dd></div>
         <div><dt>Tracked target</dt><dd class="pane-detail-value mono">${targetHtml}</dd></div>
         <div><dt>Destination account</dt><dd class="pane-detail-value">${escapeHtml(destinationLabel)}</dd></div>
-        <div><dt>Endowments shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : renderTrackerSummaryValue(commitmentLoading, formatInteger(commitmentCount))}</dd></div>
-        <div><dt>ICP endowed shown</dt><dd class="pane-detail-value">${commitmentError ? '—' : renderTrackerSummaryValue(commitmentLoading, formatIcpE8s(committedE8s))}</dd></div>
+        <div><dt>Endowments shown</dt><dd class="pane-detail-value">${commitmentError ? '-' : renderTrackerSummaryValue(commitmentLoading, formatInteger(commitmentCount))}</dd></div>
+        <div><dt>ICP endowed shown</dt><dd class="pane-detail-value">${commitmentError ? '-' : renderTrackerSummaryValue(commitmentLoading, formatIcpE8s(committedE8s))}</dd></div>
         <div><dt>Incoming transfers shown</dt><dd class="pane-detail-value">${escapeHtml(formatInteger(summary.totalTransferCount))}</dd></div>
         <div><dt>Incoming ICP shown</dt><dd class="pane-detail-value">${escapeHtml(formatIcpE8s(summary.totalIcpE8s))}</dd></div>
         <div><dt>Jupiter Faucet inflow shown</dt><dd class="pane-detail-value">${escapeHtml(`${formatInteger(summary.faucetTransferCount)} · ${formatIcpE8s(summary.faucetIcpE8s)}`)}</dd></div>

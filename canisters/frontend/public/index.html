@@ -14,13 +14,13 @@
   <meta property="og:image:type" content="image/jpeg" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="Jupiter Faucet — perpetual cycles top-ups for Internet Computer canisters" />
+  <meta property="og:image:alt" content="Jupiter Faucet - perpetual cycles top-ups for Internet Computer canisters" />
   <meta property="og:type" content="website" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Jupiter Faucet" />
   <meta name="twitter:description" content="A perpetual cycles top-up protocol for Internet Computer canisters." />
   <meta name="twitter:image" content="https://www.jupiter-faucet.com/og/preview-20260520.jpg" />
-  <meta name="twitter:image:alt" content="Jupiter Faucet — perpetual cycles top-ups for Internet Computer canisters" />
+  <meta name="twitter:image:alt" content="Jupiter Faucet - perpetual cycles top-ups for Internet Computer canisters" />
 
   <link rel="icon" href="/favicon.ico?v=__ASSET_VERSION__">
   <link rel="preload" as="image" href="/jupiter_faucet_token_logo.svg?v=__ASSET_VERSION__" type="image/svg+xml" fetchpriority="high">
@@ -118,11 +118,11 @@
             <div class="metric-rail-list">
               <p class="metric-rail-subtitle" id="landing-next-run">Loading next historian run…</p>
               <a href="#metric-stake" class="metric-rail-link metric-rail-link--summary nav-item" data-panel="metric-stake">
-                <strong class="metric-rail-link-value"><span id="landing-current-stake">—</span><span class="metric-status" id="landing-current-stake-status" hidden aria-hidden="true"></span></strong>
+                <strong class="metric-rail-link-value"><span id="landing-current-stake">-</span><span class="metric-status" id="landing-current-stake-status" hidden aria-hidden="true"></span></strong>
                 <span class="metric-rail-link-label nav-item">Jupiter Stake</span>
               </a>
               <a href="#metric-commitments" class="metric-rail-link metric-rail-link--summary nav-item" data-panel="metric-commitments">
-                <strong class="metric-rail-link-value"><span id="landing-qualifying-commitments">—</span><span class="metric-status" id="landing-qualifying-commitments-status" hidden aria-hidden="true"></span></strong>
+                <strong class="metric-rail-link-value"><span id="landing-qualifying-commitments">-</span><span class="metric-status" id="landing-qualifying-commitments-status" hidden aria-hidden="true"></span></strong>
                 <span class="metric-rail-link-label nav-item">Patron Endowments</span>
               </a>
             </div>
@@ -763,7 +763,7 @@
                 <li>
                   <strong>Direct canister status:</strong> The preferred route is the IC management canister's
                   <code>canister_status</code> method. A target may set status visibility to <code>public</code>
-                  or name a suitable ordinary sampler in <code>allowed_viewers</code>. Public status exposes the
+                  or grant the observing caller access through its controllers or <code>allowed_viewers</code>. Public status exposes the
                   status response, including settings and cycles, rather than only a cycles number.
                 </li>
                 <li>
@@ -773,19 +773,23 @@
                   <a href="https://dashboard.internetcomputer.org/canister/77deu-baaaa-aaaar-qb6za-cai" target="_blank" rel="noopener noreferrer" class="pane-external-link">Fiduciary blackhole</a>
                   is one of its controllers. Both are immutable, run the same independently reproducible
                   blackhole Wasm <a href="https://docs.internetcomputer.org/guides/canister-management/trust-in-canisters/#black-holed-canisters" target="_blank" rel="noopener noreferrer" class="pane-external-link">documented by DFINITY</a>,
-                  and can only make canister status public. Adding either as an additional controller
+                  and expose controller-authorized status without changing the target's status visibility. Adding either as an additional controller
                   introduces no trusted operator and does not remove existing controllers; it simply lets
                   the <a href="#metric-tracker" data-panel="metric-tracker" class="pane-external-link">Memo Tracker</a>
                   read the target's cycles balance.
                 </li>
                 <li>
-                  <strong>SNS fallback:</strong> SNS discovery supplies membership. When direct status is unavailable,
-                  Root or Swap status can observe eligible SNS canisters without a recognized blackhole controller.
+                  <strong>NNS Root fallback:</strong> Canonical NNS Root can provide status for canisters it controls.
+                  A supported route also observes NNS Root itself.
+                </li>
+                <li>
+                  <strong>SNS fallback:</strong> Authenticated SNS Root and Swap routes can observe eligible SNS
+                  canisters after SNS identity and, where required, membership checks.
                 </li>
               </ul>
               <p class="nav-panel-content memo-builder-safety-notice">
-                <strong>TL;DR:</strong> Direct status is tried before every cached, blackhole, or SNS proxy route.
-                Blackhole and SNS status calls remain fallbacks.
+                <strong>TL;DR:</strong> Direct status is tried before cached routes and recognized blackhole, NNS Root, or authenticated SNS fallbacks.
+                Historian-only access does not make a target eligible for a new Relay; the future Relay needs public direct status or a supported reusable fallback.
                 Newly tracked canisters may remain
                 pending until their initial probe or the next cycles sweep completes. While
                 <a href="#how-it-works" data-page-target="0" class="pane-external-link">Jupiter Faucet</a>
@@ -1225,13 +1229,13 @@
                   <p class="pane-status-note" id="relay-setup-live-requirement" hidden></p>
                   <div class="pane-inline-block relay-setup-payment-account">
                     <div class="pane-inline-header"><strong>Setup payment account · ICRC</strong><button class="pane-copy-button" id="copy-relay-setup-icrc-account" type="button" aria-label="Copy complete setup payment account">Copy account</button></div>
-                    <a class="pane-external-link pane-inline-code-link mono" id="relay-setup-icrc-account-link" target="_blank" rel="noopener noreferrer"><code class="pane-inline-code" id="relay-setup-icrc-account">—</code></a>
+                    <a class="pane-external-link pane-inline-code-link mono" id="relay-setup-icrc-account-link" target="_blank" rel="noopener noreferrer"><code class="pane-inline-code" id="relay-setup-icrc-account">-</code></a>
                     <p class="pane-status-note" id="relay-setup-copy-status" role="status" aria-live="polite"></p>
                   </div>
                   <details class="relay-funding-details">
                     <summary>Use another account format</summary>
                     <p>Equivalent legacy ICP account identifier for the same complete Historian setup account.</p>
-                    <div class="relay-funding-value"><a class="pane-external-link mono" id="relay-setup-account-identifier-link" target="_blank" rel="noopener noreferrer"><code id="relay-setup-account-identifier">—</code></a><button class="pane-copy-button" id="copy-relay-setup-account-identifier" type="button" aria-label="Copy legacy setup account identifier">Copy</button></div>
+                    <div class="relay-funding-value"><a class="pane-external-link mono" id="relay-setup-account-identifier-link" target="_blank" rel="noopener noreferrer"><code id="relay-setup-account-identifier">-</code></a><button class="pane-copy-button" id="copy-relay-setup-account-identifier" type="button" aria-label="Copy legacy setup account identifier">Copy</button></div>
                   </details>
                   <p class="pane-status-note">Setup funding covers creation and seeds future funding; it is not the Relay’s operating account.</p>
                   <details class="relay-funding-details">
@@ -1322,15 +1326,15 @@
             <p class="pane-status-note tracker-status-note" id="simulator-status" hidden></p>
 
             <dl class="pane-detail-grid tracker-summary-grid simulator-summary-grid">
-              <div><dt>Cycles per ICP</dt><dd class="pane-detail-value" id="simulator-cycles-per-icp">—</dd></div>
-              <div><dt>ICP/XDR rate source</dt><dd class="pane-detail-value" id="simulator-icp-xdr-source">—</dd></div>
-              <div><dt>Projected annual ICP to CMC</dt><dd class="pane-detail-value" id="simulator-annual-topup-icp">—</dd></div>
-              <div><dt>Projected annual cycles</dt><dd class="pane-detail-value" id="simulator-annual-topup-cycles">—</dd></div>
-              <div><dt>Projected annual burn</dt><dd class="pane-detail-value" id="simulator-annual-burn-cycles">—</dd></div>
-              <div><dt>Age bonus diverted</dt><dd class="pane-detail-value" id="simulator-age-bonus">—</dd></div>
-              <div><dt>Effective top-up APY</dt><dd class="pane-detail-value" id="simulator-effective-apy">—</dd></div>
-              <div><dt>Year-end projected balance</dt><dd class="pane-detail-value" id="simulator-year-end-balance">—</dd></div>
-              <div><dt>Break-even endowment</dt><dd class="pane-detail-value" id="simulator-required-commitment">—</dd></div>
+              <div><dt>Cycles per ICP</dt><dd class="pane-detail-value" id="simulator-cycles-per-icp">-</dd></div>
+              <div><dt>ICP/XDR rate source</dt><dd class="pane-detail-value" id="simulator-icp-xdr-source">-</dd></div>
+              <div><dt>Projected annual ICP to CMC</dt><dd class="pane-detail-value" id="simulator-annual-topup-icp">-</dd></div>
+              <div><dt>Projected annual cycles</dt><dd class="pane-detail-value" id="simulator-annual-topup-cycles">-</dd></div>
+              <div><dt>Projected annual burn</dt><dd class="pane-detail-value" id="simulator-annual-burn-cycles">-</dd></div>
+              <div><dt>Age bonus diverted</dt><dd class="pane-detail-value" id="simulator-age-bonus">-</dd></div>
+              <div><dt>Effective top-up APY</dt><dd class="pane-detail-value" id="simulator-effective-apy">-</dd></div>
+              <div><dt>Year-end projected balance</dt><dd class="pane-detail-value" id="simulator-year-end-balance">-</dd></div>
+              <div><dt>Break-even endowment</dt><dd class="pane-detail-value" id="simulator-required-commitment">-</dd></div>
             </dl>
           </div>
         </article>

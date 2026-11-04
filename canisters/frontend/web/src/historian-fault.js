@@ -34,9 +34,9 @@ export function buildHistorianFaultBannerText(status, {
   const parts = [];
   const commitmentFault = readCommitmentIndexFault(status);
   if (commitmentFault) {
-    const observedText = commitmentFault.observedAtTs === null ? '—' : formatTimestampSeconds(commitmentFault.observedAtTs);
+    const observedText = commitmentFault.observedAtTs === null ? '-' : formatTimestampSeconds(commitmentFault.observedAtTs);
     const cursorText = commitmentFault.lastCursorTxId === null ? 'none' : formatInteger(commitmentFault.lastCursorTxId);
-    const offendingText = commitmentFault.offendingTxId === null ? '—' : formatInteger(commitmentFault.offendingTxId);
+    const offendingText = commitmentFault.offendingTxId === null ? '-' : formatInteger(commitmentFault.offendingTxId);
     parts.push(
       'Historian endowment indexing is degraded.',
       `First observed at ${observedText}.`,

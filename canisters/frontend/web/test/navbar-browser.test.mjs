@@ -163,7 +163,7 @@ async function openCheckedPage(browser, url, viewport, checks, relay = false) {
     // alone does not prove the module or its dynamic imports have executed.
     else await page.waitForFunction(() => {
       const value = document.querySelector('#simulator-required-commitment')?.textContent?.trim();
-      return value && value !== '—';
+      return value && value !== '-';
     }, null, { timeout: 5000 });
   } catch (error) {
     checkFailures();
@@ -636,7 +636,7 @@ test('rendered simulator updates from user inputs and corner controls stay hitta
     assert.equal(await panel.isVisible(), true);
     const result = panel.locator('#simulator-required-commitment');
     const before = (await result.textContent()).trim();
-    assert.notEqual(before, '—');
+    assert.notEqual(before, '-');
     await panel.locator('#simulator-icp-commitment').fill('100');
     await panel.locator('#simulator-daily-burn').fill('0.01');
     await panel.locator('#simulator-icp-price').fill('5');

@@ -219,13 +219,13 @@ export function createSimulatorController({ copyTextToClipboard, neuronId }) {
     if (assumption) {
       const dashboardHref = `https://dashboard.internetcomputer.org/neuron/${neuronId.toString()}`;
       const ageBonusCopy = state.ageBonusAvailable
-        ? `The effective top-up APY discounts the current age-bonus component—${formatAgeBonusDisplay(state.ageBonusBasisPoints)}—because Jupiter Faucet routes that component to SNS holders instead of CMC top-ups.`
+        ? `The effective top-up APY discounts the current age-bonus component - ${formatAgeBonusDisplay(state.ageBonusBasisPoints)} - because Jupiter Faucet routes that component to SNS holders instead of CMC top-ups.`
         : 'Neuron age-bonus details are still loading; the projection temporarily assumes no age-bonus diversion.';
       const rateSnapshot = state.icpXdrRateSnapshot;
       const rateCopy = rateSnapshot
         ? `The ICP/XDR input is prefilled from historian’s daily XRC cache at ${formatIcpXdrRateDisplay(rateSnapshot)}${rateSnapshot.fetched_at_ts ? `, fetched ${formatTimestampSeconds(rateSnapshot.fetched_at_ts)}` : ''}.`
         : 'No cached XRC ICP/XDR rate is available yet; edit the ICP/XDR input manually until historian completes its next refresh.';
-      assumption.innerHTML = `Projection uses the configured APY. Exact APY depends on numerous factors — consult the <a class="pane-external-link" href="${dashboardHref}" target="_blank" rel="noopener noreferrer">dashboard</a> for the current annualised rewards estimate. ${ageBonusCopy} ${rateCopy} It assumes 1T cycles per ICP/XDR price unit and a weekly-cadence one-year projection.`;
+      assumption.innerHTML = `Projection uses the configured APY. Exact APY depends on numerous factors - consult the <a class="pane-external-link" href="${dashboardHref}" target="_blank" rel="noopener noreferrer">dashboard</a> for the current annualised rewards estimate. ${ageBonusCopy} ${rateCopy} It assumes 1T cycles per ICP/XDR price unit and a weekly-cadence one-year projection.`;
     }
 
     if (!projection.ok) {

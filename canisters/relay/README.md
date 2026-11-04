@@ -342,12 +342,12 @@ relay ERR
 
 By default Relay talks to:
 
-- ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`) — balances, transfers and live ledger fee;
-- CMC (`rkp4c-7iaaa-aaaaa-aaaca-cai`) — ICP/XDR conversion and cycles top-up notification;
-- NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`) — Relay Faucet-neuron staking and public NNS neuron surplus recipients;
-- ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`) — subaccount-1 and referenced splitter reward-attribution history;
-- `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`) — SNS owner snapshots and reward-token context, whose pinned Root dynamically supplies the matching reward Index; and
-- shared Auto probe routes, or a manually configured fixed blackhole — target cycles observation.
+- ICP Ledger (`ryjl3-tyaaa-aaaaa-aaaba-cai`) - balances, transfers and live ledger fee;
+- CMC (`rkp4c-7iaaa-aaaaa-aaaca-cai`) - ICP/XDR conversion and cycles top-up notification;
+- NNS Governance (`rrkah-fqaaa-aaaaa-aaaaq-cai`) - Relay Faucet-neuron staking and public NNS neuron surplus recipients;
+- ICP Index (`qhbym-qaaaa-aaaaa-aaafq-cai`) - subaccount-1 and referenced splitter reward-attribution history;
+- `jupiter-sns-rewards` (`alk7f-5aaaa-aaaar-qb4ra-cai`) - SNS owner snapshots and reward-token context, whose pinned Root dynamically supplies the matching reward Index; and
+- shared Auto probe routes, or a manually configured fixed blackhole - target cycles observation.
 
 The public install type is defined in [`jupiter_relay.did`](jupiter_relay.did):
 
@@ -436,7 +436,7 @@ blackhole_13_node_subnet    e3mmv-5qaaa-aaaah-aadma-cai
 relay, auto-included        u2qkp-aqaaa-aaaar-qb7ea-cai
 ```
 
-The canonical Relay uses Auto probe mode, a daily cadence, and two equal public NNS neuron surplus recipients. Auto prefers protocol-native public `canister_status` for Jupiter protocol canisters, then retains cached, recognized-blackhole, and SNS routes as compatibility fallbacks for other targets:
+The canonical Relay uses Auto probe mode, a daily cadence, and two equal public NNS neuron surplus recipients. Auto prefers protocol-native public `canister_status` for Jupiter protocol canisters, then retains cached, recognized-blackhole, canonical NNS Root, and authenticated SNS routes as compatibility fallbacks for other targets:
 
 - IO neuron `10292412127977304661` with no memo;
 - Jupiter Faucet neuron `11614578985374291210` with memo `10292412127977304661`.
@@ -507,11 +507,11 @@ For the full production lifecycle, settings/finalization procedure, rollback gui
 ## Related documentation
 
 - [Suite overview](../../README.md)
-- [Jupiter Faucet](../faucet/README.md) — endowment and raw-ICP source used for perpetual Relay funding
-- [Jupiter Historian](../historian/README.md) — self-service factory and public cycles histories
-- [Jupiter frontend](../frontend/README.md) — browser Relay Setup and tracker behavior
-- [Self-service Relay configuration and recovery](../../docs/relay-setup-recovery.md) — factory state machine and recovery rules
-- [Jupiter SNS Rewards](../sns-rewards/README.md) — owner snapshots used by reward attribution
-- [Deployment operations](../../docs/operations/deployment.md) — lifecycle matrix and production procedures
-- [Reproducible builds](../../docs/operations/reproducible-builds.md) — canonical artifact verification
-- [`jupiter-memo-policy`](../../crates/memo-policy) — Faucet memo forms used for raw-ICP Relay funding
+- [Jupiter Faucet](../faucet/README.md) - endowment and raw-ICP source used for perpetual Relay funding
+- [Jupiter Historian](../historian/README.md) - self-service factory and public cycles histories
+- [Jupiter frontend](../frontend/README.md) - browser Relay Setup and tracker behavior
+- [Self-service Relay configuration and recovery](../../docs/relay-setup-recovery.md) - factory state machine and recovery rules
+- [Jupiter SNS Rewards](../sns-rewards/README.md) - owner snapshots used by reward attribution
+- [Deployment operations](../../docs/operations/deployment.md) - lifecycle matrix and production procedures
+- [Reproducible builds](../../docs/operations/reproducible-builds.md) - canonical artifact verification
+- [`jupiter-memo-policy`](../../crates/memo-policy) - Faucet memo forms used for raw-ICP Relay funding

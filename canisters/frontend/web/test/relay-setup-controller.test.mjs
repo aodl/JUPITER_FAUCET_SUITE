@@ -452,7 +452,7 @@ function controllerHarness({
 function assertCheckedConfigurationInvalidated(nodes, harness) {
   assert.equal(harness.controller.state.view, null);
   assert.equal(harness.controller.state.checkedConfigurationFingerprint, '');
-  assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+  assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
   assert.equal(nodes.get('relay-setup-existing-relay').innerHTML, '');
   assert.equal(nodes.get('relay-setup-create').disabled, true);
   assert.match(
@@ -1056,8 +1056,8 @@ test('all-cycles mode requests and creates with an empty recipient vector and no
     assert.deepEqual(viewArgs.surplus_recipients, []);
     assert.equal(harness.calls.governanceActors, 0);
     assert.equal(nodes.get('relay-setup-surplus-mode').textContent, 'All funding for cycles');
-    assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, 'None — all funding for cycles');
-    assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-canonical-recipients').textContent, 'None - all funding for cycles');
+    assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, '-');
     await harness.controller.createRelay();
     assert.deepEqual(notifyArgs.surplus_recipients, []);
     assert.equal(harness.calls.notify, 1);
@@ -1425,7 +1425,7 @@ test('event-driven invalidation during actor acquisition is not overwritten by r
     await staleCreate;
     assert.equal(harness.calls.notify, 0);
     assert.equal(nodes.get('relay-setup-canonical-targets').textContent, TARGET_B);
-    assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, '-');
     assert.equal(harness.controller.state.error, '');
   });
 });
@@ -1452,7 +1452,7 @@ test('event-driven invalidation during notify is not overwritten by rejection', 
     await staleCreate;
     assert.equal(harness.calls.notify, 1);
     assert.equal(nodes.get('relay-setup-canonical-targets').textContent, TARGET_B);
-    assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, '-');
     assert.equal(harness.controller.state.error, '');
     assert.equal(harness.controller.state.notifyResult, null);
   });
@@ -1504,7 +1504,7 @@ test('recipient type controls are independent and switching type updates and inv
     assert.equal(first.label.textContent, 'Recipient neuron ID 1');
     assert.equal(first.input.getAttribute('aria-invalid'), 'true');
     assert.equal(second.type.value, 'Principal');
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
     assert.ok(harness.calls.clears >= 1);
 
     first.type.value = 'Principal';
@@ -1549,14 +1549,14 @@ test('recipient memo controls serialize exact bytes, count bytes, and invalidate
     assert.equal(recipient.memoCount.textContent, '3/32 bytes');
     await harness.controller.submitConfiguration();
     assert.deepEqual(viewArgs.surplus_recipients[0].Principal.memo, [0x00, 0xff, 0x80]);
-    assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, '-');
 
     recipient.memoInput.value = '0x00 ff 81';
     nodes.get('relay-setup-recipient-list').listeners.get('input')({ target: recipient.memoInput });
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
     recipient.memoMode.value = 'Text';
     nodes.get('relay-setup-recipient-list').listeners.get('change')({ target: recipient.memoMode });
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
     assert.equal(recipient.memoMode.value, 'Hex');
     assert.equal(recipient.memoInput.value, '0x00 ff 81');
     assert.equal(recipient.memoError.textContent, '');
@@ -1610,7 +1610,7 @@ test('memo counters distinguish syntax errors from actual 32-byte and 33-byte va
 
     recipient.memoInput.value = '0x0z';
     list.listeners.get('input')({ target: recipient.memoInput });
-    assert.equal(recipient.memoCount.textContent, '—/32 bytes');
+    assert.equal(recipient.memoCount.textContent, '-/32 bytes');
     assert.match(recipient.memoError.textContent, /non-hexadecimal/i);
   });
 });
@@ -1755,7 +1755,7 @@ test('memo-only changes replace the account solely from the authoritative Histor
     const first = nodes.get('relay-setup-icrc-account').textContent;
     recipient.memoInput.value = 'B';
     nodes.get('relay-setup-recipient-list').listeners.get('input')({ target: recipient.memoInput });
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
     await harness.controller.submitConfiguration();
     assert.notEqual(nodes.get('relay-setup-icrc-account').textContent, first);
     assert.equal(harness.calls.view, 2);
@@ -1775,7 +1775,7 @@ test('memo edits make pending setup, Governance, and notify responses stale', as
     nodes.get('relay-setup-recipient-list').listeners.get('input')({ target: recipient.memoInput });
     pendingView.resolve({ Ok: viewFor() });
     await submitPending;
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
   });
 
   await withDom(async (nodes) => {
@@ -1791,7 +1791,7 @@ test('memo edits make pending setup, Governance, and notify responses stale', as
     nodes.get('relay-setup-recipient-list').listeners.get('input')({ target: recipient.memoInput });
     pendingGovernance.resolve({ owner: Principal.fromText(HISTORIAN), subaccount: [Array(32).fill(0)] });
     await submitPending;
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
   });
 
   await withDom(async (nodes) => {
@@ -1807,7 +1807,7 @@ test('memo edits make pending setup, Governance, and notify responses stale', as
     nodes.get('relay-setup-recipient-list').listeners.get('input')({ target: recipient.memoInput });
     pendingNotify.resolve({ Active: { relay_canister_id: Principal.fromText(RELAY) } });
     await createPending;
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
     assert.equal(nodes.get('relay-setup-existing-relay').innerHTML, '');
   });
 });
@@ -1830,7 +1830,7 @@ test('memo-mode interactions make pending setup, Governance, and notify response
     switchMemoMode(nodes, recipient, 'Hex');
     pendingView.resolve({ Ok: viewFor() });
     await submitPending;
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
   });
 
   await withDom(async (nodes) => {
@@ -1846,7 +1846,7 @@ test('memo-mode interactions make pending setup, Governance, and notify response
     switchMemoMode(nodes, recipient, 'Hex');
     pendingGovernance.resolve({ owner: Principal.fromText(HISTORIAN), subaccount: [Array(32).fill(0)] });
     await submitPending;
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
   });
 
   await withDom(async (nodes) => {
@@ -1863,7 +1863,7 @@ test('memo-mode interactions make pending setup, Governance, and notify response
     pendingNotify.resolve({ Active: { relay_canister_id: Principal.fromText(RELAY) } });
     await createPending;
     assert.equal(nodes.get('relay-setup-existing-relay').innerHTML, '');
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
   });
 });
 
@@ -2058,7 +2058,7 @@ test('unverified neuron reads the Historian view but never exposes payment detai
     assert.equal(harness.calls.view, 1);
     assert.equal(harness.calls.balance, 0);
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
     assert.equal(harness.controller.state.view, null);
     assert.match(nodes.get('relay-setup-status').textContent, /Could not verify neuron 123 as publicly readable by NNS Governance/i);
     assert.doesNotMatch(nodes.get('relay-setup-status').textContent, /must be public/i);
@@ -2126,7 +2126,7 @@ test('existing ManualRecoveryRequired neuron configuration skips Governance pref
     assert.match(nodes.get('relay-setup-status-label').textContent, /operator investigation is required/);
     assert.match(nodes.get('relay-setup-existing-relay').innerHTML, /br5f7/);
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
     assert.equal(harness.calls.intervals, 0);
   });
 });
@@ -2148,7 +2148,7 @@ test('stale neuron preflight failure cannot cross a recipient type change', asyn
     assert.doesNotMatch(nodes.get('relay-setup-status').textContent, /public\/readable/i);
     assert.equal(harness.calls.view, 1);
     assert.equal(harness.calls.balance, 0);
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
   });
 });
 
@@ -2168,7 +2168,7 @@ test('stale neuron preflight completion cannot expose a view after a value chang
     await first;
     assert.equal(harness.calls.view, 1);
     assert.equal(harness.calls.balance, 0);
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
   });
 });
 
@@ -2663,7 +2663,7 @@ test('recipient input change stops polling and clears stale account details', as
     recipient.input.value = RECIPIENT_B;
     nodes.get('relay-setup-recipient-list').listeners.get('input')({ target: recipient.input });
     assert.ok(harness.calls.clears >= 1);
-    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '—');
+    assert.equal(nodes.get('relay-setup-icrc-account').textContent, '-');
     assert.equal(nodes.get('relay-setup-icrc-account-link').href, '');
   });
 });

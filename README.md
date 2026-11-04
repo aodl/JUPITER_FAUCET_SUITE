@@ -65,7 +65,7 @@ For compact Event Horizon declarations within Jupiter Faucet's 32-byte ASCII mem
 
 The value-moving canisters expose little or no public production API. Public verification and dashboard data are concentrated in [`canisters/historian`](canisters/historian), [`canisters/frontend`](canisters/frontend), public logs, source code, Candid files, and reproducible build artifacts.
 
-Jupiter protocol canisters use protocol-native public `canister_status` for status, settings, running-state, and cycles observation; the Fiduciary blackhole is not required as their controller. Relay and Historian still retain recognized-blackhole and SNS compatibility routes for third-party targets, including the recognized blackholes themselves. Canonical Relay continues to manage both community blackholes as funding targets independently of that controller-policy retirement.
+Jupiter protocol canisters use protocol-native public `canister_status` for status, settings, running-state, and cycles observation; the Fiduciary blackhole is not required as their controller. Relay and Historian still retain recognized-blackhole, canonical NNS Root (including NNS Root itself), and authenticated SNS compatibility routes for third-party targets, including the recognized blackholes themselves. Canonical Relay continues to manage both community blackholes as funding targets independently of that controller-policy retirement.
 
 Through Historian, users can create an immutable Relay to keep 1–20 canisters funded. Surplus ICP can be sent to as many as five principal or public NNS neuron recipients, each with an optional memo, or kept entirely in the cycles-funding loop by choosing no recipients. See [Relay setup and recovery](docs/relay-setup-recovery.md).
 

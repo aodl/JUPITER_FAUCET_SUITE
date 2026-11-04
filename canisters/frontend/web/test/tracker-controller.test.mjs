@@ -1586,8 +1586,8 @@ test('raw ICP tracker isolates endowment and transfer chart failures', async () 
       const html = nodeMap.get('tracker-result').innerHTML;
       if (failure === 'commitments') {
         assert.match(html, /Endowment history unavailable: commitment query failed/);
-        assert.match(html, /Endowments shown<\/dt><dd class="pane-detail-value">—<\/dd>/);
-        assert.match(html, /ICP endowed shown<\/dt><dd class="pane-detail-value">—<\/dd>/);
+        assert.match(html, /Endowments shown<\/dt><dd class="pane-detail-value">-<\/dd>/);
+        assert.match(html, /ICP endowed shown<\/dt><dd class="pane-detail-value">-<\/dd>/);
         assert.match(html, /Incoming transfers shown<\/dt><dd class="pane-detail-value">1<\/dd>/);
         assert.equal((html.match(/Endowment history unavailable/g) || []).length, 1);
       } else {

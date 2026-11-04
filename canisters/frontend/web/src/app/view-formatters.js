@@ -2,7 +2,7 @@ import { escapeHtml } from '../followee-links.js';
 import { calculateAgeBonusMaturityShareBasisPoints } from '../projection-simulator.js';
 import { trackerHashForMemo, trackerHashForPrincipal } from './hash-routes.js';
 
-export const DASH = '—';
+export const DASH = '-';
 
 const BLACKHOLE_CANISTER_ID = '77deu-baaaa-aaaar-qb6za-cai';
 

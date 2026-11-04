@@ -471,12 +471,12 @@ export function createRelaySetupController({
       message = error.message;
     }
     if (counter) {
-      counter.textContent = `${count === null ? '\u2014' : count}/${MAX_RELAY_SURPLUS_MEMO_BYTES} bytes`;
+      counter.textContent = `${count === null ? '-' : count}/${MAX_RELAY_SURPLUS_MEMO_BYTES} bytes`;
     }
     setMemoError(row, message);
     const summary = row?.querySelector?.('[data-relay-recipient-memo-summary]');
-    if (summary) summary.textContent = message ? 'Edit memo — check its bytes'
-      : count ? `Memo added · ${count} bytes — edit` : 'Add memo';
+    if (summary) summary.textContent = message ? 'Edit memo - check its bytes'
+      : count ? `Memo added · ${count} bytes - edit` : 'Add memo';
     return message;
   }
 
@@ -1122,7 +1122,7 @@ export function createRelaySetupController({
       'relay-setup-canonical-recipients',
       view
         ? (view.canonical_surplus_recipients.length === 0
-          ? 'None — all funding for cycles'
+          ? 'None - all funding for cycles'
           : view.canonical_surplus_recipients.map((recipient) => {
             if ('Neuron' in recipient) {
               return `Public NNS neuron: ${recipient.Neuron.neuron_id}\n${relayMemoDisplay(recipient.Neuron.memo)}`;
