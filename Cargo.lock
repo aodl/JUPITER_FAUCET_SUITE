@@ -1540,6 +1540,8 @@ dependencies = [
  "jupiter-nns-types",
  "pocket-ic",
  "serde",
+ "serde_json",
+ "sha2",
  "slog",
  "thiserror 1.0.69",
  "tokio",

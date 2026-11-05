@@ -827,8 +827,10 @@ fn relay_init_arg(config: &Config, setup: &CanonicalRelaySetup) -> Vec<u8> {
         cmc_canister_id: config.cmc_canister_id,
         governance_canister_id: Some(jupiter_ic_clients::constants::nns_governance_id()),
         blackhole_canister_id: None,
-        sns_rewards_canister_id: None,
-        icp_index_canister_id: None,
+        // The configured age-bonus recipient is this environment's SNS Rewards
+        // service. Pin it and the Index rather than inheriting child defaults.
+        sns_rewards_canister_id: Some(config.rewards_account.owner),
+        icp_index_canister_id: Some(config.index_canister_id),
         main_interval_seconds: Some(config.self_service_relay_interval_seconds),
         // Leave headroom above the self-service maximum of 20 + 5 + Relay self.
         max_transfers_per_tick: Some(50),
@@ -1714,7 +1716,8 @@ pub(crate) async fn notify_relay_configuration(args: RelaySetupArgs) -> RelaySet
     let config = state::with_state(|state| state.config.clone());
     let ledger = jupiter_ic_clients::ledger::IcrcLedgerCanister::new(config.ledger_canister_id);
     let cycles_probe_client =
-        jupiter_ic_clients::cycles_probe::IcCyclesProbeClient::new(config.sns_wasm_canister_id);
+        jupiter_ic_clients::cycles_probe::IcCyclesProbeClient::new(config.sns_wasm_canister_id)
+            .with_configured_sns_root(crate::lifecycle::configured_sns_root());
     // Missing configuration is rejected synchronously inside the shared workflow before this
     // placeholder can ever be called. Constructing it here keeps target validation, exact-set
     // lookup, and all other static checks in one deterministic order.
@@ -6198,6 +6201,22 @@ mod tests {
                 .unwrap()
                 .contains(&CanisterTrackingReason::RelayInstance));
         });
+    }
+
+    #[test]
+    fn relay_init_arg_pins_environment_services_instead_of_child_defaults() {
+        #[derive(CandidType, Deserialize)]
+        struct Services {
+            sns_rewards_canister_id: Option<Principal>,
+            icp_index_canister_id: Option<Principal>,
+        }
+        let mut cfg = config();
+        cfg.rewards_account.owner = principal(61);
+        cfg.index_canister_id = principal(62);
+        let setup = CanonicalRelaySetup::canonicalize(vec![principal(1)], vec![]).unwrap();
+        let services: Services = candid::decode_one(&relay_init_arg(&cfg, &setup)).unwrap();
+        assert_eq!(services.sns_rewards_canister_id, Some(principal(61)));
+        assert_eq!(services.icp_index_canister_id, Some(principal(62)));
     }
 
     #[test]

@@ -73,6 +73,11 @@ pub type CyclesProbeResult = Result<CyclesProbeSuccess, CyclesProbeFailure>;
 
 #[allow(async_fn_in_trait)]
 pub trait CyclesProbeClient {
+    // Build/operator configuration only, never a target's claimed controller.
+    fn configured_sns_root(&self) -> Option<Principal> {
+        None
+    }
+
     async fn self_cycles(&self, target: Principal) -> Option<u128>;
     async fn direct_canister_status(
         &self,
@@ -102,6 +107,7 @@ pub trait CyclesProbeClient {
 }
 
 pub struct IcCyclesProbeClient {
+    configured_sns_root: Option<Principal>,
     sns_wasm: SnsWasmCanister,
     sns_root: SnsRootCanister,
     sns_swap: SnsSwapCanister,
@@ -110,15 +116,25 @@ pub struct IcCyclesProbeClient {
 impl IcCyclesProbeClient {
     pub fn new(sns_wasm_canister_id: Principal) -> Self {
         Self {
+            configured_sns_root: None,
             sns_wasm: SnsWasmCanister::new(sns_wasm_canister_id),
             sns_root: SnsRootCanister,
             sns_swap: SnsSwapCanister,
         }
     }
+
+    pub fn with_configured_sns_root(mut self, root: Option<Principal>) -> Self {
+        self.configured_sns_root = root;
+        self
+    }
 }
 
 #[allow(async_fn_in_trait)]
 impl CyclesProbeClient for IcCyclesProbeClient {
+    fn configured_sns_root(&self) -> Option<Principal> {
+        self.configured_sns_root
+    }
+
     async fn self_cycles(&self, target: Principal) -> Option<u128> {
         (target == ic_cdk::api::canister_self()).then(ic_cdk::api::canister_cycle_balance)
     }
@@ -488,6 +504,17 @@ async fn discover_sns_route<C: CyclesProbeClient>(
     controllers: Option<&BTreeSet<Principal>>,
     client: &C,
 ) -> Result<Option<CyclesProbeRoute>, ClientError> {
+    // Direct genesis does not create an SNS-W registry entry. Only an explicitly
+    // configured Root may use this route, and its live membership is mandatory.
+    if let Some(root) = client.configured_sns_root() {
+        if let Ok(list) = client.list_sns_canisters(root).await {
+            if list.governance.is_some() && list.ledger.is_some() && list.root == Some(root) {
+                if let Some(route) = route_from_list_sns_canisters(root, target, &list) {
+                    return Ok(Some(route));
+                }
+            }
+        }
+    }
     let deployed = client.list_deployed_snses().await?;
     let mut roots = BTreeSet::new();
     for sns in &deployed.instances {
@@ -675,6 +702,7 @@ mod tests {
     }
 
     struct RecordingClient {
+        configured_root: Option<Principal>,
         self_cycles: Option<(Principal, u128)>,
         direct: Result<DirectCanisterStatusObservation, &'static str>,
         direct_status: Option<CanisterStatusResult>,
@@ -691,6 +719,7 @@ mod tests {
     impl Default for RecordingClient {
         fn default() -> Self {
             Self {
+                configured_root: None,
                 self_cycles: None,
                 direct: Err("direct status denied"),
                 direct_status: None,
@@ -719,6 +748,10 @@ mod tests {
     }
 
     impl CyclesProbeClient for RecordingClient {
+        fn configured_sns_root(&self) -> Option<Principal> {
+            self.configured_root
+        }
+
         async fn self_cycles(&self, target: Principal) -> Option<u128> {
             self.calls
                 .lock()
@@ -1547,6 +1580,95 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn configured_direct_installed_sns_requires_real_root_membership_without_sns_w() {
+        let target = synthetic_canister(31);
+        let root = synthetic_canister(32);
+        let list = ListSnsCanistersResponse {
+            root: Some(root),
+            governance: Some(synthetic_canister(33)),
+            ledger: Some(synthetic_canister(34)),
+            dapps: vec![target],
+            ..Default::default()
+        };
+        let client = RecordingClient {
+            configured_root: Some(root),
+            deployed: Err("direct installed SNS is not registered"),
+            root_lists: BTreeMap::from([(root, Ok(list))]),
+            sns_root: BTreeMap::from([(root, TestResponse::Ok(501))]),
+            ..Default::default()
+        };
+        let outcome = probe_auto(target, None, &client).unwrap();
+        assert_eq!(outcome.cycles, 501);
+        assert!(client.calls().contains(&TestCall::ListSnsCanisters(root)));
+        assert!(!client.calls().contains(&TestCall::ListDeployedSnses));
+    }
+
+    #[test]
+    fn configured_sns_root_cannot_claim_a_nonmember_or_conflicting_root() {
+        let target = synthetic_canister(31);
+        let root = synthetic_canister(32);
+        for (returned_root, governance, ledger, member) in [
+            (
+                Some(root),
+                Some(synthetic_canister(33)),
+                Some(synthetic_canister(34)),
+                false,
+            ),
+            (
+                Some(synthetic_canister(99)),
+                Some(synthetic_canister(33)),
+                Some(synthetic_canister(34)),
+                true,
+            ),
+            (
+                None,
+                Some(synthetic_canister(33)),
+                Some(synthetic_canister(34)),
+                true,
+            ),
+            (Some(root), None, Some(synthetic_canister(34)), true),
+            (Some(root), Some(synthetic_canister(33)), None, true),
+        ] {
+            let client = RecordingClient {
+                configured_root: Some(root),
+                root_lists: BTreeMap::from([(
+                    root,
+                    Ok(ListSnsCanistersResponse {
+                        root: returned_root,
+                        governance,
+                        ledger,
+                        dapps: if member { vec![target] } else { vec![] },
+                        ..Default::default()
+                    }),
+                )]),
+                sns_root: BTreeMap::from([(root, TestResponse::Ok(501))]),
+                ..Default::default()
+            };
+            assert!(probe_auto(target, None, &client).is_err());
+            assert!(!client.calls().contains(&root_status(root, target)));
+        }
+    }
+
+    #[test]
+    fn unavailable_configured_root_preserves_registered_sns_discovery() {
+        let root = synthetic_canister(30);
+        let target = synthetic_canister(31);
+        let client = RecordingClient {
+            configured_root: Some(synthetic_canister(32)),
+            deployed: Ok(ListDeployedSnsesResponse {
+                instances: vec![crate::sns::DeployedSns {
+                    root_canister_id: Some(root),
+                    governance_canister_id: Some(target),
+                    ..Default::default()
+                }],
+            }),
+            sns_root: BTreeMap::from([(root, TestResponse::Ok(502))]),
+            ..Default::default()
+        };
+        assert_eq!(probe_auto(target, None, &client).unwrap().cycles, 502);
     }
 
     #[test]

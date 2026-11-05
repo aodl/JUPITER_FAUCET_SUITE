@@ -1,0 +1,19 @@
+{
+  "purpose": "local-fixture-not-for-deployment",
+  "token_name": "Jupiter local acceptance fixture",
+  "token_symbol": "jUP",
+  "decimals": 8,
+  "fee": 1000,
+  "minimum_neuron_stake": 100000000,
+  "parameters": "record {\nreject_cost_e8s = opt 10000; neuron_minimum_stake_e8s = opt 100000000;\ntransaction_fee_e8s = opt 1000; max_proposals_to_keep_per_action = opt 100;\ninitial_voting_period_seconds = opt 86400; wait_for_quiet_deadline_increase_seconds = opt 43200;\ndefault_followees = opt record { followees = vec {} }; max_number_of_neurons = opt 1000;\nneuron_minimum_dissolve_delay_to_vote_seconds = opt 1;\nmax_followees_per_function = opt 15; max_dissolve_delay_seconds = opt 252460800;\nmax_neuron_age_for_age_bonus = opt 126230400; max_number_of_proposals_with_ballots = opt 700;\nneuron_claimer_permissions = opt record { permissions = vec { 1; 2; 3; 4; 5; 6; 7; 8; 9; 10 } };\nneuron_grantable_permissions = opt record { permissions = vec { 1; 2; 3; 4; 5; 6; 7; 8; 9; 10 } };\nmax_number_of_principals_per_neuron = opt 5;\nvoting_rewards_parameters = opt record { initial_reward_rate_basis_points = opt 0; final_reward_rate_basis_points = opt 0; reward_rate_transition_duration_seconds = opt 0; round_duration_seconds = opt 86400 };\nmax_dissolve_delay_bonus_percentage = opt 100; max_age_bonus_percentage = opt 25;\nmaturity_modulation_disabled = opt true; automatically_advance_target_version = opt false;\n}",
+  "neurons": [],
+  "balances": [],
+  "total_supply": 0,
+  "archive_cycles": 1000000000000,
+  "metadata": {
+    "name": "Jupiter local acceptance fixture",
+    "description": "Local integration test parameters, not reviewed Jupiter token economics.",
+    "url": "https://example.com/",
+    "logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC9sAAAAASUVORK5CYII="
+  }
+}

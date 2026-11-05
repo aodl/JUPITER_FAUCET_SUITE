@@ -120,7 +120,8 @@ pub async fn main_tick(force: bool) {
         )
     });
     let index = IcpIndexCanister::new(index_id);
-    let cycles_probe = IcCyclesProbeClient::new(sns_wasm_id);
+    let cycles_probe = IcCyclesProbeClient::new(sns_wasm_id)
+        .with_configured_sns_root(crate::lifecycle::configured_sns_root());
     let sns_wasm = SnsWasmCanister::new(sns_wasm_id);
     let sns_root = SnsRootCanister;
     let governance = NnsGovernanceCanister::new(governance_id);

@@ -73,6 +73,49 @@ pub fn emit_prod_canister_id(env_var: &str, json_key: &str) {
     println!("cargo:rustc-env={env_var}={canonical_prod_id}");
 }
 
+/// Acceptance uses a separate validated profile, never production-ID overrides.
+/// No acceptance build is possible with the unresolved checked-in identities.
+pub fn emit_acceptance_bindings() {
+    println!("cargo:rustc-check-cfg=cfg(jupiter_acceptance)");
+    println!("cargo:rerun-if-env-changed=JUPITER_BUILD_ENVIRONMENT");
+    println!("cargo:rerun-if-env-changed=JUPITER_ACCEPTANCE_PROFILE");
+    match env::var("JUPITER_BUILD_ENVIRONMENT").as_deref() {
+        Err(_) | Ok("") | Ok("ic") | Ok("local") => return,
+        Ok("acceptance") => (),
+        Ok(other) => panic!("unsupported Jupiter build environment: {other}"),
+    }
+    let validator = find_repo_file_from_manifest("tools/acceptance/profile.py");
+    let profile = env::var_os("JUPITER_ACCEPTANCE_PROFILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| find_repo_file_from_manifest("deploy/acceptance/profile.json"));
+    println!("cargo:rerun-if-changed={}", validator.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        validator.with_file_name("ic.py").display()
+    );
+    println!("cargo:rerun-if-changed={}", profile.display());
+    let output = std::process::Command::new("python3")
+        .arg(&validator)
+        .arg("bindings")
+        .arg(&profile)
+        .output()
+        .expect("acceptance profile validation requires python3");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bindings: Value = serde_json::from_slice(&output.stdout).expect("validated bindings JSON");
+    println!("cargo:rustc-cfg=jupiter_acceptance");
+    for (key, value) in bindings.as_object().expect("bindings object") {
+        assert!(key.starts_with("JUPITER_BOUND_") || key == "JUPITER_CONFIGURED_SNS_ROOT");
+        println!(
+            "cargo:rustc-env={key}={}",
+            value.as_str().expect("binding text")
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

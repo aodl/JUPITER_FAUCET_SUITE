@@ -71,6 +71,11 @@ Through Historian, users can create an immutable Relay to keep 1–20 canisters 
 
 Users can also fund a Relay through fixed 10–90% splitter accounts, dividing a deposit between immediate Relay funding and Faucet staging. See the [Relay README](canisters/relay/README.md#splitter-subaccounts-1090).
 
+The separate [Jupiter acceptance SNS](deploy/acceptance/README.md) profile and
+local real-SNS test prepare isolated application identities without changing the
+existing production deployment. Mainnet genesis and installation remain gated
+on reviewed economics, identities and controller evidence.
+
 ## Source Verification and Reproducible Builds
 
 Reproducible builds are part of the trust model for Jupiter Faucet. A deployed canister's Wasm module hash can be compared with locally rebuilt release artifacts so readers can connect public source code to the code running on the Internet Computer.

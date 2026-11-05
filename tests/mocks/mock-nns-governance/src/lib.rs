@@ -4,7 +4,7 @@ use jupiter_nns_types::{
     Neuron, NeuronId,
 };
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 type NeuronResult = Result<Neuron, GovernanceError>;
 
@@ -19,6 +19,7 @@ struct GovState {
     list_neurons_calls: u64,
     claim_or_refresh_fails: bool,
     hidden_neuron_ids: BTreeSet<u64>,
+    neuron_accounts: BTreeMap<u64, Vec<u8>>,
 }
 
 thread_local! {
@@ -27,6 +28,21 @@ thread_local! {
 
 #[ic_cdk::init]
 fn init() {}
+
+fn neuron_account(neuron_id: u64) -> Vec<u8> {
+    ST.with(|state| {
+        state
+            .borrow()
+            .neuron_accounts
+            .get(&neuron_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                let mut account = vec![0u8; 32];
+                account[24..].copy_from_slice(&neuron_id.to_be_bytes());
+                account
+            })
+    })
+}
 
 #[ic_cdk::update]
 fn get_full_neuron(neuron_id: u64) -> NeuronResult {
@@ -44,12 +60,9 @@ fn get_full_neuron(neuron_id: u64) -> NeuronResult {
         Some(vec![])
     };
 
-    let mut account = vec![0u8; 32];
-    account[24..].copy_from_slice(&neuron_id.to_be_bytes());
-
     NeuronResult::Ok(Neuron {
         id: Some(NeuronId { id: neuron_id }),
-        account,
+        account: neuron_account(neuron_id),
         aging_since_timestamp_seconds: aging_since,
         maturity_disbursements_in_progress: disb,
         ..Default::default()
@@ -64,16 +77,12 @@ fn list_neurons(req: ListNeurons) -> ListNeuronsResponse {
         req.neuron_ids
             .into_iter()
             .filter(|id| *id != 0 && !hidden_neuron_ids.contains(id))
-            .map(|id| {
-                let mut account = vec![0u8; 32];
-                account[24..].copy_from_slice(&id.to_be_bytes());
-                Neuron {
-                    id: Some(NeuronId { id }),
-                    account,
-                    aging_since_timestamp_seconds: 0,
-                    maturity_disbursements_in_progress: Some(vec![]),
-                    ..Default::default()
-                }
+            .map(|id| Neuron {
+                id: Some(NeuronId { id }),
+                account: neuron_account(id),
+                aging_since_timestamp_seconds: 0,
+                maturity_disbursements_in_progress: Some(vec![]),
+                ..Default::default()
             })
             .collect()
     } else {
@@ -195,6 +204,17 @@ fn debug_set_neuron_public(neuron_id: u64, is_public: bool) {
     });
 }
 
+#[ic_cdk::update]
+fn debug_set_neuron_account(neuron_id: u64, account: Vec<u8>) {
+    assert_eq!(account.len(), 32);
+    ST.with(|state| {
+        state
+            .borrow_mut()
+            .neuron_accounts
+            .insert(neuron_id, account)
+    });
+}
+
 #[ic_cdk::query]
 fn debug_get_manage_calls() -> u64 {
     ST.with(|s| s.borrow().manage_calls)
@@ -221,3 +241,25 @@ fn debug_get_list_neurons_calls() -> u64 {
 }
 
 ic_cdk::export_candid!();
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_neuron_account_agrees_across_both_reads_and_reset() {
+        debug_reset();
+        let original = neuron_account(42);
+        assert_eq!(&original[24..], &42u64.to_be_bytes());
+        debug_set_neuron_account(42, vec![7; 32]);
+        assert_eq!(get_full_neuron(42).unwrap().account, vec![7; 32]);
+        let response = list_neurons(ListNeurons {
+            neuron_ids: vec![42],
+            include_public_neurons_in_full_neurons: Some(true),
+            ..Default::default()
+        });
+        assert_eq!(response.full_neurons[0].account, vec![7; 32]);
+        debug_reset();
+        assert_eq!(neuron_account(42), original);
+    }
+}

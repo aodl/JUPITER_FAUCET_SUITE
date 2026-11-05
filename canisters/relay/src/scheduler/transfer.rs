@@ -1148,7 +1148,7 @@ mod tests {
         st.active_faucet_commitment_transfer = Some(PendingFaucetCommitmentTransfer {
             transfer: PendingTransfer {
                 kind: PendingTransferKind::FaucetCommitment {
-                    neuron_id: logic::JUPITER_FAUCET_NEURON_ID,
+                    neuron_id: logic::faucet_neuron_id(),
                     account: destination,
                     from_subaccount: logic::relay_subaccount_one(),
                     memo: b"relay-faucet-commitment".to_vec(),

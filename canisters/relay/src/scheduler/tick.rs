@@ -87,7 +87,8 @@ async fn main_tick(force: bool, splitter_busy_retry_delay: Option<u64>) -> MainT
     let ledger = IcrcLedgerCanister::new(cfg.ledger_canister_id);
     let cmc = CyclesMintingCanister::new(cfg.cmc_canister_id);
     let governance = NnsGovernanceCanister::new(cfg.governance_canister_id);
-    let cycles_probe = IcCyclesProbeClient::new(jupiter_ic_clients::constants::sns_wasm_id());
+    let cycles_probe = IcCyclesProbeClient::new(jupiter_ic_clients::constants::sns_wasm_id())
+        .with_configured_sns_root(crate::configured_sns_root());
     let outcome = run_main_tick_with_clients(
         force,
         now_nanos,
@@ -539,7 +540,7 @@ async fn plan_faucet_commitment_with_self_with_lease<L: LedgerClient, G: Governa
     }
 
     let staking_subaccount = match governance
-        .neuron_staking_subaccount(logic::JUPITER_FAUCET_NEURON_ID)
+        .neuron_staking_subaccount(logic::faucet_neuron_id())
         .await
     {
         Ok(v) => v,
@@ -573,7 +574,7 @@ async fn plan_faucet_commitment_with_self_with_lease<L: LedgerClient, G: Governa
         st.active_faucet_commitment_transfer = Some(PendingFaucetCommitmentTransfer {
             transfer: PendingTransfer {
                 kind: PendingTransferKind::FaucetCommitment {
-                    neuron_id: logic::JUPITER_FAUCET_NEURON_ID,
+                    neuron_id: logic::faucet_neuron_id(),
                     account: plan.destination_account,
                     from_subaccount: logic::relay_subaccount_one(),
                     memo: plan.memo,
@@ -2687,7 +2688,7 @@ mod tests {
             st.active_faucet_commitment_transfer = Some(PendingFaucetCommitmentTransfer {
                 transfer: PendingTransfer {
                     kind: PendingTransferKind::FaucetCommitment {
-                        neuron_id: logic::JUPITER_FAUCET_NEURON_ID,
+                        neuron_id: logic::faucet_neuron_id(),
                         account: Account {
                             owner: st.config.governance_canister_id,
                             subaccount: Some([9; 32]),

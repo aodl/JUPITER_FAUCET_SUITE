@@ -86,11 +86,11 @@ async function loadRouteTransferTables({ status, agent, indexActorFactory }) {
       outputSourceAccount,
       routeAccount: rewardsAccount,
     }),
-    loadRecentRouteTransfersFromIndex({
+    dquorumAccount ? loadRecentRouteTransfersFromIndex({
       index,
       outputSourceAccount,
       routeAccount: dquorumAccount,
-    }),
+    }) : Promise.resolve({ items: [] }),
   ]);
 
   return { outputTransfersResult, rewardsTransfersResult, dquorumTransfersResult };

@@ -1,0 +1,24 @@
+{
+  "environment": "acceptance",
+  "network": "ic",
+  "operator": null,
+  "roles": {
+    "sns_root": null,
+    "sns_governance": null,
+    "sns_ledger": null,
+    "sns_index": null,
+    "sns_swap": null,
+    "jupiter_disburser": null,
+    "jupiter_faucet": null,
+    "jupiter_lifeline": null,
+    "jupiter_sns_rewards": null,
+    "jupiter_historian": null,
+    "jupiter_relay": null,
+    "jupiter_faucet_frontend": null
+  },
+  "nns_neuron": { "id": null, "memo": 0 },
+  "age_bonus_recipient_2": null,
+  "relay_surplus_neuron_recipients": null,
+  "initial_main_cycles_target": 3000000000000,
+  "genesis": null
+}

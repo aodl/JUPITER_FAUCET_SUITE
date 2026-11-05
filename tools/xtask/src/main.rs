@@ -6138,31 +6138,35 @@ fn run_pocketic_faucet_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> 
 
 fn run_pocketic_historian_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = pocketic_test_env()?;
-    run_cargo_test_suite(
+    let _common_env = pocketic_test_env()?;
+    let pocketic_bin = env::var("POCKET_IC_BIN")
+        .context("POCKET_IC_BIN was not set after PocketIC environment validation")?;
+    // Bound the reusable server and its module caches to one case. A lost
+    // server must not invalidate later, otherwise independent Historian tests.
+    run_cargo_ignored_tests_individually(
         outcomes,
-        "pocketic",
-        "historian",
-        "cargo",
-        &[
-            "test",
-            "-p",
-            "jupiter-historian",
-            "--test",
-            "jupiter_historian_integration",
-            "--",
-            "--ignored",
-            "--color",
-            "always",
-        ],
-        &root,
-        (&common_env, true),
+        IgnoredCargoTestSuite {
+            suite_label: "pocketic",
+            component: "historian",
+            package: "jupiter-historian",
+            test_target: "jupiter_historian_integration",
+            workdir: &root,
+            pocketic_bin: &pocketic_bin,
+            pocketic_idle_ttl_secs: 3600,
+        },
     )
 }
 
 fn run_pocketic_relay_suite(outcomes: &mut Vec<ScenarioOutcome>) -> Result<()> {
     let root = repo_root();
-    let common_env = pocketic_test_env()?;
+    let base_env = pocketic_test_env()?;
+    // The acceptance case builds an environment-bound Historian while the owned
+    // instance exists; a cold link can exceed the normal 15-minute idle TTL.
+    let common_env = [
+        base_env[0],
+        base_env[1],
+        ("JUPITER_POCKETIC_IDLE_TTL_SECS", "3600"),
+    ];
     run_cargo_test_suite(
         outcomes,
         "pocketic",
@@ -6608,6 +6612,41 @@ fn main() -> Result<()> {
     }
 
     match cmd.as_str() {
+        "acceptance_sns" => {
+            let root = repo_root();
+            let base_env = pocketic_test_env()?;
+            let common_env = [
+                base_env[0],
+                base_env[1],
+                ("JUPITER_POCKETIC_IDLE_TTL_SECS", "3600"),
+            ];
+            let mut outcomes = Vec::new();
+            run_cargo_test_suite(
+                &mut outcomes,
+                "pocketic",
+                "acceptance-sns",
+                "cargo",
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "jupiter-relay",
+                    "--test",
+                    "jupiter_relay_integration",
+                    "acceptance_sns::real_jup_sns_ownership_rewards_factory_and_governed_upgrade",
+                    "--",
+                    "--exact",
+                    "--ignored",
+                    "--nocapture",
+                ],
+                &root,
+                (&common_env, true),
+            )?;
+            if !print_summary(&outcomes) {
+                bail!("acceptance SNS integration failed");
+            }
+            Ok(())
+        }
         "setup" => cmd_setup(),
         "teardown" => cmd_teardown(),
         "frontend_setup" => cmd_frontend_setup(),
@@ -6618,6 +6657,7 @@ fn main() -> Result<()> {
                 "Usage: cargo run -p xtask -- <command>
 
                  Utility commands:
+                 - acceptance_sns (real official SNS on an owned PocketIC topology)
                  - release_artifact_validation (requires canonical artifacts)
                  - setup
                  - teardown
