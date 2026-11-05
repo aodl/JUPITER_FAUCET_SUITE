@@ -8,6 +8,7 @@ import profile as acceptance
 from test_profile import fixture
 import sns
 import candid as cd
+from ic import staking_subaccount
 
 
 def local_genesis(operator, other=None):
@@ -88,6 +89,41 @@ class OfficialConstructors(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, 'mismatch'):
                 sns.constructors(self.lock, self.interfaces, identities, genesis, 1, Path(directory) / 'bad')
+
+    def test_duplicate_effective_initial_accounts_are_rejected(self):
+        profile = fixture()
+        identities = {role: profile['roles']['sns_' + role] for role in ('root', 'governance', 'ledger', 'index', 'swap')}
+        identities.update(operator=profile['operator'], icp_ledger=acceptance.SYSTEM['ledger'],
+                          nns_governance=acceptance.SYSTEM['governance'], dapps=[])
+        operator, gov = profile['operator'], identities['governance']
+        for label, balances in [
+            ('explicit', [{'owner': operator, 'amount': 50_000_000}] * 2),
+            ('default and zero', [{'owner': operator, 'amount': 50_000_000},
+                                  {'owner': operator, 'subaccountHex': '00' * 32, 'amount': 50_000_000}]),
+            ('hex case', [{'owner': operator, 'subaccountHex': sub, 'amount': 50_000_000}
+                          for sub in ('ab' * 32, 'AB' * 32)]),
+            ('neuron staking', [{'owner': gov, 'subaccountHex': staking_subaccount(operator, 1),
+                                 'amount': 100_000_000}]),
+            ('zero allocations', [{'owner': operator, 'amount': 0}] * 2),
+        ]:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                genesis = local_genesis(operator)
+                genesis['balances'] = balances
+                genesis['total_supply'] = sum(n['stake'] for n in genesis['neurons']) + sum(b['amount'] for b in balances)
+                with self.assertRaisesRegex(ValueError, 'duplicate initial Ledger Account'):
+                    sns.constructors(self.lock, self.interfaces, identities, genesis, 1, Path(directory) / 'bad')
+
+    def test_minting_account_cannot_receive_initial_allocation(self):
+        profile = fixture()
+        identities = {role: profile['roles']['sns_' + role] for role in ('root', 'governance', 'ledger', 'index', 'swap')}
+        identities.update(operator=profile['operator'], icp_ledger=acceptance.SYSTEM['ledger'],
+                          nns_governance=acceptance.SYSTEM['governance'], dapps=[])
+        for sub in (None, '00' * 32):
+            with self.subTest(subaccount=sub), tempfile.TemporaryDirectory() as directory:
+                genesis = local_genesis(profile['operator'])
+                genesis['balances'][0].update(owner=identities['governance'], subaccountHex=sub)
+                with self.assertRaisesRegex(ValueError, 'minting Account'):
+                    sns.constructors(self.lock, self.interfaces, identities, genesis, 1, Path(directory) / 'bad')
 
 
 if __name__ == '__main__':

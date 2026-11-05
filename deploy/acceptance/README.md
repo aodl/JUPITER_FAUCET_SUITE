@@ -27,6 +27,16 @@ financial Accounts. It derives the Jupiter staking Account from the acceptance
 Disburser and its reviewed nonce. The supplied neuron ID must be verified against
 that actual NNS neuron, controller and staking Account before installation.
 
+The second age-bonus recipient may explicitly select the shared D-QUORUM
+beneficiary: NNS Governance `rrkah-fqaaa-aaaaa-aaaaq-cai`, subaccount
+`77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f`.
+This is the reviewed production Disburser's 5% age-bonus recipient, not IO's
+protected permanent neuron. No other Governance Account is allowed in that role,
+including protected Jupiter/IO staking Accounts. Protected application principals
+and neuron IDs remain rejected. Both recipient policies stay unresolved in the
+checked profile; constructor preparation authorizes no real ICP donation.
+Any real funding requires separate explicit authorization.
+
 | Executable boundary | Acceptance binding | Production behavior |
 |---|---|---|
 | Faucet remainder | Validated profile's canonical Relay at build time | Existing protected production mapping and override-consistency check |
@@ -166,7 +176,7 @@ staking inflation. None of its quantities are proposed production economics.
 | Native SNS mint/treasury operations | Pinned Governance values SNS tokens through Swap | Direct Normal genesis with a parked zero-sale Swap does not establish this valuation; use a real compatible launch if required, not fabricated sale proceeds |
 | Proposer/voters, stake, permissions and voting parameters | Owner selection is a heuristic, not voting authority | Specify independently of the operator; do not inherit IO's decisive human voter or 100M allocation |
 | Native SNS staking rewards | Not determined by SNS Rewards' owner index or planned IO rewards | Explicitly choose zero native inflation or a reviewed schedule; local zero is test data |
-| Second age-bonus recipient and canonical Relay surplus policy | Production's IO destinations cannot be reused; the acceptance IO integration is not configured | Approve distinct acceptance recipients before generating application arguments; the local operator recipient and all-cycles Relay are fixtures, not replacement production economics |
+| Second age-bonus recipient and canonical Relay surplus policy | The exact shared D-QUORUM Account is an allowed external beneficiary; protected Jupiter/IO resources remain isolated | Explicitly review the second recipient, with shared D-QUORUM preserving production intent; select acceptance Relay recipients separately. Neither is inserted into the unresolved profile |
 | Archive funding | Ledger constructor requires a separate creation budget | Review an affordable explicit value and pre-trigger funding gate; 3T main cycles does not fund every possible archive configuration |
 
 The exact official tuple is in [`sns-framework.json`](sns-framework.json),
@@ -179,6 +189,36 @@ The pinned Governance `proposal.rs::validate_and_render_mint_sns_tokens` calls
 the treasury valuation path before accepting a native mint. Its sale-free
 limitations apply even in Normal mode. The integration reward pot is a genuine
 genesis-funded Ledger transfer, not evidence of the planned issuance programme.
+
+### Narrow issuance choice under the pinned framework
+
+The [production frontend](../../canisters/frontend/public/index.html) describes patron jUP airdrops for qualifying ICP
+endowments and IO rewards for jUP stakers. Those are product intentions, not an
+implemented issuance formula or native SNS inflation schedule.
+
+| Approach | Authority and supply | Parked Swap compatibility | Minimum additional work |
+|---|---|---|---|
+| Initially funded jUP distribution reserve | Explicit genesis allocation to a non-minting Account; its custodian distributes existing tokens, without increasing supply | Yes for a dapp-owned reserve. Native SNS-token treasury releases also require valuation, so do not assume a Governance treasury reserve can be released with this Swap | Review allocation/custody and patron eligibility/pacing; implement the missing allocator and governed releases. Existing Relay pots support only their existing SNS-owner attribution policy |
+| Ongoing new jUP tokens | Governance's default Account is the Ledger minter; adopted native `MintSnsTokens` proposals create new supply | Native mint validation requires real Swap-derived valuation; the parked Swap fails this check | Decide whether ongoing patron minting is required, then review a compatible launch and issuance policy/allocator. No fabricated sale or price |
+| Native SNS voting rewards | Governance credits voting maturity under reviewed reward parameters; maturity disbursement mints jUP, independently of patron allocations | The pinned Normal-mode reward/maturity paths do not use Swap valuation; this is source-supported, not a nonzero-rewards lifecycle result from our zero-inflation fixture | Review inflation and maturity policies, configure them and test actual reward settlement/disbursement; no Jupiter minting service is required |
+| IO rewards to jUP stakers | IO's settlement authority issues/routes IO under its own contract; this creates no jUP supply | jUP Swap valuation is irrelevant to IO settlement | Agree and implement the ICP sender, IO settlement destination and staker distributor described below; this flow is absent today |
+
+The [pinned Ledger](https://github.com/dfinity/ic/blob/cf41372e3d4dc1accfe2c09a7969f8bddc729dc1/rs/ledger_suite/icrc1/ledger/src/main.rs)
+treats transfers from the minting Account as mints and transfers to it as burns.
+Constructors therefore reject initial allocations there and reject duplicate
+effective Accounts, including default/zero aliases and neuron-staking collisions.
+Native mint/treasury valuation checks are in the
+[pinned proposal validator](https://github.com/dfinity/ic/blob/98c898f8de068a1fc0e97ebc805f9fa7f315d862/rs/sns/governance/src/proposal.rs).
+The [pinned Governance](https://github.com/dfinity/ic/blob/98c898f8de068a1fc0e97ebc805f9fa7f315d862/rs/sns/governance/src/governance.rs)
+also reserves the Ledger from generic-function targets: a generic Ledger mint
+proxy is not a supported shortcut around native mint validation. Moving the
+minting Account away from Governance would change the accepted SNS contract.
+
+The narrow choice is a bounded initial patron-distribution allocation versus a
+programme requiring ongoing new patron tokens. Decide native voting inflation
+separately; a finite reserve alone does not establish a hard total-supply cap.
+IO rewards are a separate integration in either case. No rate, cap or inflation
+schedule is selected by this preparation.
 
 ## Small shared contract and extraction seam
 

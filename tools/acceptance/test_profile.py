@@ -54,6 +54,43 @@ class Isolation(unittest.TestCase):
             with self.assertRaises(ValueError):
                 acceptance.validate(profile)
 
+    def test_shared_dquorum_is_an_explicit_exact_third_party_recipient(self):
+        # Exact reviewed production Disburser beneficiary; not IO's permanent neuron.
+        sub = '77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f'
+        profile = fixture()
+        profile['age_bonus_recipient_2'] = {
+            'owner': acceptance.SYSTEM['governance'], 'subaccountHex': sub.upper()}
+        self.assertEqual(acceptance.validate(profile)['ageBonusRecipient2'],
+                         account(acceptance.SYSTEM['governance'], sub))
+        import prepare
+        import candid as cd
+        _, args = prepare.application_arguments(profile)
+        did = acceptance.REPO / 'canisters/disburser/jupiter_disburser.did'
+        shape = '(record { age_bonus_recipient_2 : Account })'
+        expected = cd.record(age_bonus_recipient_2=cd.account(profile['age_bonus_recipient_2']))
+        self.assertEqual(cd.encode_checked(did, shape, '(' + args['jupiter_disburser'] + ')'),
+                         cd.encode_checked(did, shape, '(' + expected + ')'))
+        # Preparing this choice is not permission to transfer real ICP.
+        checked_in = json.loads(acceptance.PROFILE.read_text())
+        self.assertIsNone(checked_in['age_bonus_recipient_2'])
+        self.assertIsNone(checked_in['relay_surplus_neuron_recipients'])
+
+    def test_other_governance_accounts_and_wrong_dquorum_owner_remain_rejected(self):
+        for sub in (None, '00' * 32, '01' * 32,
+                    staking_subaccount('oae4c-3iaaa-aaaar-qb5qq-cai', 0)):
+            with self.subTest(subaccount=sub):
+                profile = fixture()
+                profile['age_bonus_recipient_2'] = {
+                    'owner': acceptance.SYSTEM['governance'], 'subaccountHex': sub}
+                with self.assertRaises(ValueError):
+                    acceptance.validate(profile)
+        profile = fixture()
+        profile['age_bonus_recipient_2'] = {
+            'owner': acceptance.SYSTEM['ledger'],
+            'subaccountHex': '77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f'}
+        with self.assertRaisesRegex(ValueError, 'allowlist'):
+            acceptance.validate(profile)
+
     def test_duplicate_system_invalid_and_operator_ids(self):
         for value in (acceptance.SYSTEM['ledger'], 'aaaaa-aa', '2vxsx-fae',
                       'invalid', fixture()['operator'], fixture()['roles']['sns_root']):
@@ -111,7 +148,8 @@ class Isolation(unittest.TestCase):
     def test_acceptance_markup_has_no_production_application_or_staking_links(self):
         source = (acceptance.REPO / 'canisters/frontend/public/index.html').read_text()
         rendered = acceptance.render_markup(fixture(), source)
-        for value in acceptance.PROTECTED[:7] + tuple(map(str, acceptance.PROTECTED_NEURONS)) + acceptance.PROTECTED_STAKING:
+        for value in (acceptance.PROTECTED[:7] + tuple(map(str, acceptance.PROTECTED_NEURONS))
+                      + acceptance.PROTECTED_STAKING + (acceptance.DQUORUM_STAKING_SUBACCOUNT,)):
             self.assertNotIn(value, rendered)
         self.assertIn(acceptance.frontend(fixture())['stakingAccount']['explorerAccountHex'], rendered)
 

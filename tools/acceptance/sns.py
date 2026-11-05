@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 
 import candid as cd
-from ic import principal_bytes, staking_subaccount
+from ic import account, principal_bytes, staking_subaccount
 
 
 def sha(data):
@@ -107,6 +107,17 @@ def constructors(lock, interfaces, identities, genesis, timestamp, directory):
         neurons.append('record { ' + cd.text(sub) + '; ' + neuron + ' }')
     if any(type(b['amount']) is not int or b['amount'] < 0 for b in balances):
         raise ValueError('nonnegative exact integer token balances required')
+    initial_accounts = set()
+    minting_account = account(gov)['address']
+    for balance in balances:
+        # The existing encoding canonicalizes omitted/zero subaccounts and hex
+        # case. Include generated neuron balances in the same uniqueness check.
+        destination = account(balance['owner'], balance.get('subaccountHex'))['address']
+        if destination == minting_account:
+            raise ValueError('initial allocation to the Ledger minting Account')
+        if destination in initial_accounts:
+            raise ValueError('duplicate initial Ledger Account')
+        initial_accounts.add(destination)
     if sum(b['amount'] for b in balances) != genesis['total_supply']:
         raise ValueError('genesis supply does not reconcile')
     if type(genesis['archive_cycles']) is not int or genesis['archive_cycles'] <= 0:

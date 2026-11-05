@@ -95,6 +95,15 @@ jobs:
           install -Dm0755 "$RUNNER_TEMP/didc-x86_64-unknown-linux-musl/didc" "$HOME/.local/bin/didc"
           test "$("$HOME/.local/bin/didc" --version)" = "didc $DIDC_VERSION"
 
+      - name: Install pinned SNS acceptance tooling
+        if: matrix.suite == 'relay_pocketic_integration'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Match local acceptance and release validation; canonical builds use Docker's separate pin.
+          cargo install ic-wasm --version 0.11.0 --locked
+          test "$(ic-wasm --version)" = 'ic-wasm 0.11.0'
+
       - name: Prepare verified real blackhole fixture
         if: matrix.suite == 'historian_pocketic_integration'
         shell: bash

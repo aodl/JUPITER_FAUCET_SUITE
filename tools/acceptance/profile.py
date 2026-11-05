@@ -34,8 +34,10 @@ PROTECTED = (
 PROTECTED_NEURONS = (11614578985374291210, 10292412127977304661)
 PROTECTED_STAKING = (
     'ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68',
-    '77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f',
 )
+# Exact shared external beneficiary in Disburser's reviewed 5% age-bonus route.
+# This is neither the Jupiter staking Account nor IO's protected permanent neuron.
+DQUORUM_STAKING_SUBACCOUNT = '77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f'
 SYSTEM = {
     'ledger': 'ryjl3-tyaaa-aaaaa-aaaba-cai',
     'index': 'qhbym-qaaaa-aaaaa-aaafq-cai',
@@ -95,10 +97,11 @@ def validate(profile):
         if owner != SYSTEM['governance'] and owner not in {operator, *roles.values()}:
             raise ValueError('financial recipient is outside the explicit environment allowlist')
         derived = account(owner, recipient['subaccountHex'])
-        if owner == SYSTEM['governance'] and (not derived['subaccountHex']
-                or not any(bytes.fromhex(derived['subaccountHex']))
-                or derived['subaccountHex'] in PROTECTED_STAKING):
-            raise ValueError('production/default Governance financial destination')
+        # Only this explicitly selected third-party Account is reviewed. All
+        # other Governance Accounts stay closed, including protected Jupiter/IO
+        # staking Accounts; a neuron ID does not establish its staking bytes.
+        if owner == SYSTEM['governance'] and derived['subaccountHex'] != DQUORUM_STAKING_SUBACCOUNT:
+            raise ValueError('production/unreviewed Governance financial destination')
         recipient = derived
     surplus = profile['relay_surplus_neuron_recipients']
     if surplus is not None:
@@ -173,7 +176,9 @@ def render_markup(profile, text):
         replacements[account(old)['explorerAccountHex']] = account(new)['explorerAccountHex']
     # IO has no accepted cross-project routing/settlement contract yet. Do not
     # leave a clickable production IO neuron/account in an acceptance page.
-    io_account = account(SYSTEM['governance'], PROTECTED_STAKING[1])
+    # Keep the frontend's existing unconfigured IO/D-QUORUM links disabled;
+    # approving an explicit Disburser beneficiary does not activate IO flows.
+    io_account = account(SYSTEM['governance'], DQUORUM_STAKING_SUBACCOUNT)
     for destination in (str(PROTECTED_NEURONS[1]), io_account['explorerAccountHex']):
         text = re.sub(r'<a\b[^>]*href="[^"]*' + re.escape(destination)
                       + r'[^"]*"[^>]*>(.*?)</a>',
