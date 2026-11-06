@@ -94,12 +94,23 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
         if !sns_work_is_current_now(lease, &snapshot) {
             return Ok(());
         }
-        let deployed = result.map_err(|e| format!("list_deployed_snses failed: {e}"))?;
-        let mut root_canister_ids: Vec<_> = deployed
-            .instances
-            .into_iter()
-            .filter_map(|sns| sns.root_canister_id)
-            .collect();
+        let mut root_canister_ids: Vec<_> = match result {
+            Ok(deployed) => deployed
+                .instances
+                .into_iter()
+                .filter_map(|sns| sns.root_canister_id)
+                .collect(),
+            Err(error) if crate::lifecycle::configured_sns_root().is_some() => {
+                log_error(&format!(
+                    "SNS-W unavailable; inspecting configured Root only: {error}"
+                ));
+                Vec::new()
+            }
+            Err(error) => return Err(format!("list_deployed_snses failed: {error}")),
+        };
+        // Direct SNS genesis has no SNS-W entry. Trust only the build-configured
+        // Root, then use the same live membership verification as other SNSs.
+        root_canister_ids.extend(crate::lifecycle::configured_sns_root());
         root_canister_ids.sort();
         root_canister_ids.dedup();
         let installed = state::with_root_state_mut(|st| {
@@ -133,7 +144,10 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
         if !sns_work_is_current_now(lease, &snapshot) {
             return Ok(());
         }
-        register_sns_membership(BTreeSet::from([root_id]), now_secs);
+        let configured = Some(root_id) == crate::lifecycle::configured_sns_root();
+        if !configured {
+            register_sns_membership(BTreeSet::from([root_id]), now_secs);
+        }
         let result = sns_root.list_sns_canisters(root_id).await;
         if !sns_work_is_current_now(lease, &snapshot) {
             return Ok(());
@@ -148,6 +162,14 @@ pub(super) async fn process_sns_discovery<W: SnsWasmClient, R: SnsRootClient>(
                 continue;
             }
         };
+        if configured
+            && (response.root != Some(root_id)
+                || response.governance.is_none()
+                || response.ledger.is_none())
+        {
+            log_error("configured SNS Root returned incomplete or conflicting membership");
+            continue;
+        }
         match authoritative_membership(root_id, response) {
             Ok(canister_ids) => register_sns_membership(canister_ids, now_secs),
             Err(err) => log_error(&format!(

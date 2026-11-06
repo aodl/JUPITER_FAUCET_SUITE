@@ -165,6 +165,7 @@ PY
   FRONTEND_RENDER_TMP="$(mktemp -d)"
   mapfile -t FRONTEND_RENDERED_FILES < <(python3 - <<'PY'
 from pathlib import Path
+import os
 
 tokens = ["__ASSET_VERSION__", "__APP_BUNDLE_PATH__"]
 for path in sorted(Path("canisters/frontend/public").rglob("*")):
@@ -174,7 +175,8 @@ for path in sorted(Path("canisters/frontend/public").rglob("*")):
         text = path.read_text()
     except UnicodeDecodeError:
         continue
-    if any(token in text for token in tokens):
+    acceptance = os.environ.get('JUPITER_BUILD_ENVIRONMENT') == 'acceptance'
+    if any(token in text for token in tokens) or (acceptance and path.name == 'ic-domains'):
         print(path.as_posix())
 PY
 )

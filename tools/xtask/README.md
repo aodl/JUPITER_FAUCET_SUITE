@@ -13,6 +13,14 @@ Using `xtask` keeps the command surface stable and avoids having to remember whi
 
 The long-running PocketIC suites are intentionally marked `#[ignore]` so a plain `cargo test` stays fast during inner-loop development. Repository entry points such as `cargo run -p xtask -- test_all` explicitly invoke those ignored suites, so the annotation is deliberate rather than an oversight.
 
+`cargo run --locked -p xtask -- acceptance_sns` runs the owned, real-SNS
+PocketIC scenario in the Relay suite. It verifies the exact official framework
+tuple and builds isolated acceptance applications; it performs no mainnet
+operations. See [acceptance preparation](../../deploy/acceptance/README.md) for
+artifact prerequisites and the explicit distinction between local genesis test
+data and unresolved mainnet jUP economics. The case is also included in
+`relay_pocketic_integration` and `test_all`.
+
 ## Frontend coverage in `xtask`
 
 `xtask` includes the checked-in frontend Node tests as a first-class component:

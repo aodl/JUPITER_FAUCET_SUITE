@@ -31,6 +31,9 @@ use pocket_ic::PocketIc;
 #[path = "support/mod.rs"]
 mod support;
 
+#[path = "jupiter_acceptance_sns.rs"]
+mod acceptance_sns;
+
 use support::account_identifier::principal_to_subaccount;
 use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
 

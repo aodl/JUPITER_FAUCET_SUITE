@@ -8,6 +8,11 @@ Production canister: `jupiter_sns_rewards` / `alk7f-5aaaa-aaaar-qb4ra-cai`.
 
 `reward_sns_root_canister_id` is the canister's sole configured external component. OpenChat Root `3e3x2-xyaaa-aaaaq-aaalq-cai` is the temporary development configuration; it will be replaced by the jUP SNS Root after launch. At the start of every complete scan, the canister calls Root `list_sns_canisters` and pins the returned Root, Governance, and Ledger IDs. Governance and Ledger IDs are Root-resolved and are never independently configured.
 
+The separate [acceptance environment](../../deploy/acceptance/README.md) generates
+fresh arguments using its own jUP Root and SNS Rewards identity. Its real-SNS
+PocketIC case uses no OpenChat components. It does not retarget the existing
+production installation file or production owner snapshots.
+
 A daily scan crawls Governance `list_neurons` in bounded 100-neuron pages, processing one page per timer message. The next daily opportunity is a one-shot timer derived from the durable accepted scan-start timestamp, so timer phase cannot skip a due scan for another day. Root/component resolution must succeed before an attempt records that timestamp; a failed start is retried without consuming the daily cadence. Progress and the exclusive neuron cursor are stable and resume after upgrade. Slot A and slot B stable maps provide active/staging publication: a refresh writes only the inactive map, and the metadata cell exposes it only after the complete scan succeeds. Failed or partial refreshes leave the preceding active snapshot public.
 
 A neuron qualifies when `cached_neuron_stake_e8s.saturating_sub(neuron_fees_e8s) > 0`. Its owner is the principal with the most distinct permission codes after entries for the same principal are unioned. A tie uses the lexicographically smallest raw principal bytes. This deterministic heuristic is an attribution policy, not a claim that every unusual multi-principal permission arrangement has one objectively correct owner.

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
 import { ICP_LEDGER_CANISTER_ID } from './src/app/config.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -15,7 +16,14 @@ const manifestPath = path.join(outDir, 'frontend-bundle.json');
 const tempOutfile = path.join(outDir, '__app-build.js');
 const chunksDir = path.join(outDir, 'chunks');
 
-const network = process.env.JUPITER_FRONTEND_NETWORK || process.env.ICP_ENVIRONMENT || process.env.ICP_NETWORK || 'ic';
+const acceptanceBuild = [process.env.JUPITER_BUILD_ENVIRONMENT, process.env.ICP_CLI_ENVIRONMENT,
+  process.env.ICP_ENVIRONMENT, process.env.JUPITER_FRONTEND_NETWORK].includes('acceptance');
+if (acceptanceBuild && [process.env.JUPITER_FRONTEND_NETWORK, process.env.JUPITER_BUILD_ENVIRONMENT,
+  process.env.ICP_CLI_ENVIRONMENT, process.env.ICP_ENVIRONMENT].some((value) => value && value !== 'acceptance')) {
+  throw new Error('acceptance frontend network configuration conflict');
+}
+const network = acceptanceBuild ? 'acceptance' : process.env.JUPITER_FRONTEND_NETWORK
+  || process.env.JUPITER_BUILD_ENVIRONMENT || process.env.ICP_CLI_ENVIRONMENT || process.env.ICP_ENVIRONMENT || process.env.ICP_NETWORK || 'ic';
 const mappingPath = path.join(
   repoRoot,
   '.icp',
@@ -34,7 +42,10 @@ const resolveCanisterId = (name) => {
   return process.env[`CANISTER_ID_${name.toUpperCase()}`] || canisterIds?.[name] || '';
 };
 
-const runtimeConfig = {
+const runtimeConfig = network === 'acceptance' ? JSON.parse(execFileSync('python3', [
+  path.join(repoRoot, 'tools/acceptance/profile.py'), 'frontend',
+  process.env.JUPITER_ACCEPTANCE_PROFILE || path.join(repoRoot, 'deploy/acceptance/profile.json'),
+], { encoding: 'utf8' })) : {
   network,
   historianCanisterId: resolveCanisterId('jupiter_historian'),
   // Explicit trusted build configuration, never public-status/query or URL data.

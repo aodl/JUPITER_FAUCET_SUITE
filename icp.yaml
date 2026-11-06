@@ -1,4 +1,35 @@
 canisters:
+  # Direct SNS genesis; these roles are excluded from the production ic environment.
+  - name: sns_governance
+    build:
+      steps:
+        - type: script
+          commands:
+            - python3 tools/acceptance/icp-build.py sns_governance
+  - name: sns_root
+    build:
+      steps:
+        - type: script
+          commands:
+            - python3 tools/acceptance/icp-build.py sns_root
+  - name: sns_ledger
+    build:
+      steps:
+        - type: script
+          commands:
+            - python3 tools/acceptance/icp-build.py sns_ledger
+  - name: sns_index
+    build:
+      steps:
+        - type: script
+          commands:
+            - python3 tools/acceptance/icp-build.py sns_index
+  - name: sns_swap
+    build:
+      steps:
+        - type: script
+          commands:
+            - python3 tools/acceptance/icp-build.py sns_swap
   - name: jupiter_disburser
     build:
       steps:
@@ -156,6 +187,21 @@ networks:
       port: 4943
 
 environments:
+  - name: acceptance
+    network: ic
+    canisters:
+      - sns_governance
+      - sns_root
+      - sns_ledger
+      - sns_index
+      - sns_swap
+      - jupiter_disburser
+      - jupiter_faucet
+      - jupiter_lifeline
+      - jupiter_sns_rewards
+      - jupiter_faucet_frontend
+      - jupiter_historian
+      - jupiter_relay
   - name: local
     network: local
     canisters:

@@ -528,7 +528,7 @@ fn guard_historian_poke_caller() -> Result<(), String> {
 }
 
 pub(crate) fn staking_max_amount(matches: &[EventHorizonPokeMatch]) -> Option<Nat> {
-    let disburser = Principal::from_text(jupiter_memo_policy::DISBURSER_CANISTER_ID).unwrap();
+    let disburser = crate::lifecycle::mainnet_disburser_id();
     matches
         .iter()
         .filter(|item| {
@@ -595,18 +595,30 @@ pub(crate) const MODULE_HASH_REFRESH_INTERVAL_SECONDS: u64 = 10 * 60;
 pub(crate) const MODULE_HASH_REFRESH_LEASE_SECONDS: u64 = 5 * 60;
 
 pub(crate) fn source_module_hash_canister_ids() -> Vec<Principal> {
-    [
-        "uccpi-cqaaa-aaaar-qby3q-cai",
-        "acjuz-liaaa-aaaar-qb4qq-cai",
-        "j5gs6-uiaaa-aaaar-qb5cq-cai",
-        "afisn-gqaaa-aaaar-qb4qa-cai",
-        "alk7f-5aaaa-aaaar-qb4ra-cai",
-        "u2qkp-aqaaa-aaaar-qb7ea-cai",
-        "jufzc-caaaa-aaaar-qb5da-cai",
-    ]
-    .into_iter()
-    .map(|canister_id| Principal::from_text(canister_id).expect("invalid hardcoded canister id"))
-    .collect()
+    #[cfg(jupiter_acceptance)]
+    {
+        env!("JUPITER_BOUND_APPLICATION_CANISTERS")
+            .split(',')
+            .map(|id| Principal::from_text(id).expect("validated acceptance application"))
+            .collect()
+    }
+    #[cfg(not(jupiter_acceptance))]
+    {
+        [
+            "uccpi-cqaaa-aaaar-qby3q-cai",
+            "acjuz-liaaa-aaaar-qb4qq-cai",
+            "j5gs6-uiaaa-aaaar-qb5cq-cai",
+            "afisn-gqaaa-aaaar-qb4qa-cai",
+            "alk7f-5aaaa-aaaar-qb4ra-cai",
+            "u2qkp-aqaaa-aaaar-qb7ea-cai",
+            "jufzc-caaaa-aaaar-qb5da-cai",
+        ]
+        .into_iter()
+        .map(|canister_id| {
+            Principal::from_text(canister_id).expect("invalid hardcoded canister id")
+        })
+        .collect()
+    }
 }
 
 async fn source_memory_status(

@@ -71,6 +71,15 @@ During the build, those values are resolved in this order:
 
 The selected network comes from `JUPITER_FRONTEND_NETWORK`, then `ICP_ENVIRONMENT`, then `ICP_NETWORK`, and otherwise defaults to `ic`.
 
+The separate acceptance build instead requires the validated
+[`deploy/acceptance/profile.json`](../../deploy/acceptance/profile.json). It binds
+all application links, the Faucet neuron and staking Account from that profile,
+ignores `CANISTER_ID_*` overrides, and rejects conflicting network selections.
+Its unresolved IO destination and production custom-domain declarations are
+disabled. Public status responses never select these financial destinations.
+See [acceptance preparation](../../deploy/acceptance/README.md) for local commands
+and the mainnet installation gates; production `ic` mappings are unchanged.
+
 ## Data sources
 
 The browser reads live data from three places:

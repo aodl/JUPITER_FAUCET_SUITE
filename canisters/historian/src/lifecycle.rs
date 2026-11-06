@@ -2,6 +2,15 @@ use super::*;
 use jupiter_canister_logging::{
     format_event_line, FIELD_EVENT, FIELD_MAIN_INTERVAL_SECONDS, FIELD_TIMERS_INSTALLED,
 };
+
+fn environment_principal(acceptance: Option<&str>, production: &str) -> Principal {
+    let id = if cfg!(jupiter_acceptance) {
+        acceptance.expect("validated acceptance binding")
+    } else {
+        production
+    };
+    Principal::from_text(id).expect("validated environment principal")
+}
 pub(super) fn mainnet_ledger_id() -> Principal {
     jupiter_ic_clients::constants::icp_ledger_id()
 }
@@ -11,13 +20,17 @@ pub(super) fn mainnet_index_id() -> Principal {
 }
 
 pub(crate) fn mainnet_disburser_id() -> Principal {
-    Principal::from_text("uccpi-cqaaa-aaaar-qby3q-cai")
-        .expect("invalid hardcoded disburser principal")
+    environment_principal(
+        option_env!("JUPITER_BOUND_DISBURSER_ID"),
+        "uccpi-cqaaa-aaaar-qby3q-cai",
+    )
 }
 
 pub(crate) fn mainnet_rewards_id() -> Principal {
-    Principal::from_text("alk7f-5aaaa-aaaar-qb4ra-cai")
-        .expect("invalid hardcoded rewards principal")
+    environment_principal(
+        option_env!("JUPITER_BOUND_SNS_REWARDS_ID"),
+        "alk7f-5aaaa-aaaar-qb4ra-cai",
+    )
 }
 
 pub(crate) fn mainnet_disburser_staging_account() -> Account {
@@ -46,27 +59,51 @@ pub(crate) fn mainnet_cmc_id() -> Principal {
 }
 
 pub(crate) fn mainnet_faucet_id() -> Principal {
-    Principal::from_text("acjuz-liaaa-aaaar-qb4qq-cai").expect("invalid hardcoded faucet principal")
+    environment_principal(
+        option_env!("JUPITER_BOUND_FAUCET_ID"),
+        "acjuz-liaaa-aaaar-qb4qq-cai",
+    )
 }
 
 pub(crate) fn mainnet_relay_id() -> Principal {
-    Principal::from_text("u2qkp-aqaaa-aaaar-qb7ea-cai").expect("invalid hardcoded relay principal")
+    environment_principal(
+        option_env!("JUPITER_BOUND_RELAY_ID"),
+        "u2qkp-aqaaa-aaaar-qb7ea-cai",
+    )
+}
+
+pub(crate) fn configured_sns_root() -> Option<Principal> {
+    if !cfg!(jupiter_acceptance) {
+        return None;
+    }
+    option_env!("JUPITER_CONFIGURED_SNS_ROOT")
+        .map(|id| Principal::from_text(id).expect("validated configured SNS Root"))
 }
 
 pub(crate) fn mainnet_canonical_relay_targets() -> Vec<Principal> {
-    [
-        "uccpi-cqaaa-aaaar-qby3q-cai",
-        "afisn-gqaaa-aaaar-qb4qa-cai",
-        "acjuz-liaaa-aaaar-qb4qq-cai",
-        "alk7f-5aaaa-aaaar-qb4ra-cai",
-        "jufzc-caaaa-aaaar-qb5da-cai",
-        "j5gs6-uiaaa-aaaar-qb5cq-cai",
-        "77deu-baaaa-aaaar-qb6za-cai",
-        "e3mmv-5qaaa-aaaah-aadma-cai",
-    ]
-    .into_iter()
-    .map(|id| Principal::from_text(id).expect("invalid hardcoded canonical relay target"))
-    .collect()
+    #[cfg(jupiter_acceptance)]
+    {
+        env!("JUPITER_BOUND_MANAGED_CANISTERS")
+            .split(',')
+            .map(|id| Principal::from_text(id).expect("validated acceptance target"))
+            .collect()
+    }
+    #[cfg(not(jupiter_acceptance))]
+    {
+        [
+            "uccpi-cqaaa-aaaar-qby3q-cai",
+            "afisn-gqaaa-aaaar-qb4qa-cai",
+            "acjuz-liaaa-aaaar-qb4qq-cai",
+            "alk7f-5aaaa-aaaar-qb4ra-cai",
+            "jufzc-caaaa-aaaar-qb5da-cai",
+            "j5gs6-uiaaa-aaaar-qb5cq-cai",
+            "77deu-baaaa-aaaar-qb6za-cai",
+            "e3mmv-5qaaa-aaaah-aadma-cai",
+        ]
+        .into_iter()
+        .map(|id| Principal::from_text(id).expect("invalid hardcoded canonical relay target"))
+        .collect()
+    }
 }
 
 pub(super) fn mainnet_sns_wasm_id() -> Principal {

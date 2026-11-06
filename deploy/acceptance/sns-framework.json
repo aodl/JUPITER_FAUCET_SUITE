@@ -1,0 +1,53 @@
+{
+  "source": "Official SNS-W component tuple after NNS proposal 144202; IO reference 8b2e1cba06b43bc587898343a0391a6fac7eca23",
+  "components": {
+    "governance": {
+      "file": "sns_governance.wasm",
+      "raw_sha256": "e2fd07bffa7d71241c3b47e2c8398ef78bfc26b95427a3711a9e579ad5f9f190",
+      "gzip_sha256": "24ef2004240d2a34bcdaa616134d27bc18d11c1e96b378a46d564feedcc1a8c3",
+      "url": "https://download.dfinity.systems/ic/98c898f8de068a1fc0e97ebc805f9fa7f315d862/canisters/sns-governance-canister.wasm.gz",
+      "revision": "98c898f8de068a1fc0e97ebc805f9fa7f315d862",
+      "did_sha256": "0d3a00e821c8959991cfb90f4366d101fce340e78f3fb76b0de4ed28c1c08c38"
+    },
+    "root": {
+      "file": "sns_root.wasm",
+      "raw_sha256": "356960e58691a7438cb07c73806cf8d0948247508f0efc281cb2ccb7a382f836",
+      "gzip_sha256": "3762dd6f1348830a1d6b19252ca21f518c9f9d3a2b79b1dd99d75c0de6d46ef4",
+      "url": "https://download.dfinity.systems/ic/237a41f0f03801f24d6eda835248bcb5ce189f0e/canisters/sns-root-canister.wasm.gz",
+      "revision": "237a41f0f03801f24d6eda835248bcb5ce189f0e",
+      "did_sha256": "9867bfe913aa17d42d891c22187273e643eedb3ec8e4b3af4b894e74945d5806"
+    },
+    "ledger": {
+      "file": "sns_ledger.wasm",
+      "raw_sha256": "a273d741019b4324b22e2e64cfb0239de148ae9693e8801102a04118dfd383c0",
+      "gzip_sha256": "354dd6ecfdc72b5409805b31dea22c9db11df6e14095a5a68924eb63535e6d8a",
+      "url": "https://download.dfinity.systems/ic/cf41372e3d4dc1accfe2c09a7969f8bddc729dc1/canisters/ic-icrc1-ledger.wasm.gz",
+      "revision": "cf41372e3d4dc1accfe2c09a7969f8bddc729dc1",
+      "did_sha256": "02a42599e3d2036a19dcfa53db04ad5a5271b0bd78ac1a5986b3dd361f33a99c"
+    },
+    "index": {
+      "file": "sns_index.wasm",
+      "raw_sha256": "0768d43e0ca776c80515eb917839cbee0adca38ef69fb28280407c28fe4ea979",
+      "gzip_sha256": "dab6808d0dfc06e5e88336d0c3d3e45e5448c6e36c2a781f3e9e09bd450f528c",
+      "url": "https://download.dfinity.systems/ic/cf41372e3d4dc1accfe2c09a7969f8bddc729dc1/canisters/ic-icrc1-index-ng.wasm.gz",
+      "revision": "cf41372e3d4dc1accfe2c09a7969f8bddc729dc1",
+      "did_sha256": "701a43426ae7ba89cb3f348b9925f946e710fb4b2d3c338a2413c18d7112d95d"
+    },
+    "swap": {
+      "file": "sns_swap.wasm",
+      "raw_sha256": "3d17f42df29a764fa3d813923646f85aac9f61320d97b2b07c1045ffb342d638",
+      "gzip_sha256": "f3c9cd2a503f3136c91f1d44c5b4bac2d5f15a7d347731aaff03e5fa80df8c48",
+      "url": "https://download.dfinity.systems/ic/98c898f8de068a1fc0e97ebc805f9fa7f315d862/canisters/sns-swap-canister.wasm.gz",
+      "revision": "98c898f8de068a1fc0e97ebc805f9fa7f315d862",
+      "did_sha256": "2f0c524b3f4dd84a63ef0cbe8df37042ad662f7befc9612afe9b9e15ce900f56"
+    },
+    "archive": {
+      "file": "sns_archive.wasm",
+      "raw_sha256": "ff0ba15ca5f807ee4dc77efefc58cb5e3dafee493f67b278b4e5f0b0323dfb3e",
+      "gzip_sha256": "f7f48f402a128cbd18dc7734c7f149f2814c8181766f39897a66d514d47ccf11",
+      "url": "https://download.dfinity.systems/ic/cf41372e3d4dc1accfe2c09a7969f8bddc729dc1/canisters/ic-icrc1-archive.wasm.gz",
+      "revision": "cf41372e3d4dc1accfe2c09a7969f8bddc729dc1",
+      "did_sha256": "3c59e0283151a91d964df6cf3cb0916a49f376bb19182fb905177f0e64810f3b"
+    }
+  }
+}

@@ -57,7 +57,23 @@ fn mainnet_blackhole_id() -> Principal {
 }
 
 fn mainnet_sns_rewards_id() -> Principal {
-    constants::jupiter_sns_rewards_id()
+    #[cfg(jupiter_acceptance)]
+    {
+        Principal::from_text(env!("JUPITER_BOUND_SNS_REWARDS_ID"))
+            .expect("validated acceptance SNS Rewards")
+    }
+    #[cfg(not(jupiter_acceptance))]
+    {
+        constants::jupiter_sns_rewards_id()
+    }
+}
+
+fn configured_sns_root() -> Option<Principal> {
+    if !cfg!(jupiter_acceptance) {
+        return None;
+    }
+    option_env!("JUPITER_CONFIGURED_SNS_ROOT")
+        .map(|id| Principal::from_text(id).expect("validated configured SNS Root"))
 }
 
 fn mainnet_icp_index_id() -> Principal {

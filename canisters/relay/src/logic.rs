@@ -16,7 +16,18 @@ pub(crate) const TOPUP_HEADROOM_DENOMINATOR: u128 = 100;
 pub(crate) const CONVERSION_ESTIMATE_MAX_AGE_NANOS: u64 = 14 * 24 * 60 * 60 * 1_000_000_000;
 pub(crate) const MIN_RAW_ICP_RECIPIENT_AMOUNT_E8S: u64 = 100_000_000;
 pub(crate) const SPLITTER_PERCENTAGES: [u8; 9] = [10, 20, 30, 40, 50, 60, 70, 80, 90];
-pub(crate) const JUPITER_FAUCET_NEURON_ID: u64 = 11_614_578_985_374_291_210;
+pub(crate) fn faucet_neuron_id() -> u64 {
+    #[cfg(jupiter_acceptance)]
+    {
+        env!("JUPITER_BOUND_FAUCET_NEURON_ID")
+            .parse()
+            .expect("validated acceptance NNS neuron ID")
+    }
+    #[cfg(not(jupiter_acceptance))]
+    {
+        11_614_578_985_374_291_210
+    }
+}
 pub(crate) const SKIP_REASON_ZERO_BURN: &str = "zero_burn";
 pub(crate) const SKIP_REASON_GROSS_SHARE_DOES_NOT_EXCEED_FEE: &str =
     "gross_share_does_not_exceed_fee";

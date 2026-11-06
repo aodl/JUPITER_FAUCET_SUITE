@@ -465,7 +465,7 @@ async fn adjudicate(
     let staking_subaccount = budget
         .call(
             NnsGovernanceCanister::new(cfg.governance_canister_id)
-                .neuron_staking_subaccount(logic::JUPITER_FAUCET_NEURON_ID),
+                .neuron_staking_subaccount(logic::faucet_neuron_id()),
         )
         .await?
         .map_err(|_| "faucet_staking_account_unavailable".to_string())?;

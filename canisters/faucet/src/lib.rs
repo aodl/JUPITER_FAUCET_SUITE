@@ -84,8 +84,20 @@ fn mainnet_governance_id() -> Principal {
 }
 
 pub(crate) fn canonical_relay_canister_id() -> Principal {
-    Principal::from_text(env!("JUPITER_RELAY_PROD_CANISTER_ID"))
-        .expect("invalid embedded canonical Relay canister principal")
+    #[cfg(jupiter_acceptance)]
+    let id = env!("JUPITER_BOUND_RELAY_ID");
+    #[cfg(not(jupiter_acceptance))]
+    let id = env!("JUPITER_RELAY_PROD_CANISTER_ID");
+    Principal::from_text(id).expect("invalid embedded canonical Relay canister principal")
+}
+
+#[test]
+#[cfg(not(jupiter_acceptance))]
+fn canonical_relay_ignores_unselected_acceptance_variables() {
+    assert_eq!(
+        canonical_relay_canister_id(),
+        Principal::from_text(env!("JUPITER_RELAY_PROD_CANISTER_ID")).unwrap()
+    );
 }
 
 #[cfg(any(test, feature = "debug_api"))]

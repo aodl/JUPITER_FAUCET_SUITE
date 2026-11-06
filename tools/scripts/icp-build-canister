@@ -21,6 +21,15 @@ manifest="${REPO_ROOT}/release-artifacts/release-artifacts.sha256"
 
 cd "$REPO_ROOT"
 
+if [ "${ICP_CLI_ENVIRONMENT:-${ICP_ENVIRONMENT:-}}" = "acceptance" ]; then
+  exec python3 tools/acceptance/icp-build.py "$artifact_stem"
+fi
+
+if [ "${JUPITER_BUILD_ENVIRONMENT:-}" = "acceptance" ]; then
+  echo "acceptance artifacts cannot be handed to a non-acceptance CLI environment" >&2
+  exit 1
+fi
+
 if [ "${JUPITER_USE_CANONICAL_ARTIFACTS:-0}" = "1" ]; then
   manifest_entry="release-artifacts/${artifact_stem}.wasm.gz"
   if [ ! -f "$manifest" ]; then

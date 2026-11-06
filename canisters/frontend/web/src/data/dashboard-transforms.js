@@ -76,6 +76,7 @@ export function hexToBytes(hex) {
 }
 
 export function dquorumStakingAccount(governanceCanisterId = GOVERNANCE_CANISTER_ID) {
+  if (!DQUORUM_STAKING_ACCOUNT_SUBACCOUNT_HEX) return null;
   const owner = typeof governanceCanisterId === 'string' ? Principal.fromText(governanceCanisterId) : governanceCanisterId;
   return {
     owner,

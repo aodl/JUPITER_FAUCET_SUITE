@@ -1145,17 +1145,17 @@ pub(crate) fn run_cargo_ignored_tests_individually(
             ("RUST_TEST_THREADS".to_string(), "1".to_string()),
         ],
     )
-    .context("failed to list ignored Disburser PocketIC tests")?;
+    .with_context(|| format!("failed to list ignored {scope} tests"))?;
     if !list_captured.status.success() || list_captured.capture_error.is_some() {
         bail!(
-            "failed to list ignored Disburser PocketIC tests: {}\n{}",
+            "failed to list ignored {scope} tests: {}\n{}",
             list_captured.status,
             list_captured.combined
         );
     }
     let tests = parse_ignored_libtest_names(&list_captured.combined);
     if tests.is_empty() {
-        bail!("no ignored Disburser PocketIC tests discovered");
+        bail!("no ignored {scope} tests discovered");
     }
 
     for test_name in tests {
