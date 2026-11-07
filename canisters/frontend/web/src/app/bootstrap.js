@@ -22,6 +22,7 @@ import {
   formatBytes,
   formatDurationSeconds,
   formatIcpE8s,
+  formatIcpE8sSummary,
   formatInteger,
   formatLocalTimestampSeconds,
   formatTimestampSeconds,
@@ -124,7 +125,7 @@ function nextRunLabel(status) {
 
 function renderLandingSummary(data) {
   const countDisplays = dashboardCountDisplays(data.counts);
-  setMetricStatus('landing-current-stake', data.stakeE8s === null ? { error: data.errors?.stake || 'Stake unavailable' } : { value: formatIcpE8s(data.stakeE8s) });
+  setMetricStatus('landing-current-stake', data.stakeE8s === null ? { error: data.errors?.stake || 'Stake unavailable' } : { value: formatIcpE8sSummary(data.stakeE8s) });
   setMetricStatus('landing-total-output', data.counts?.total_output_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total output unavailable' } : { value: formatIcpE8s(data.counts.total_output_e8s) });
   setMetricStatus('landing-total-rewards', data.counts?.total_rewards_e8s === undefined || data.counts === null ? { error: data.errors?.counts || 'Total rewards unavailable' } : { value: formatIcpE8s(data.counts.total_rewards_e8s) });
   setMetricStatus('landing-registered-canisters', data.counts?.tracked_canister_count === undefined || data.counts === null ? { error: data.errors?.counts || 'Tracked canisters unavailable' } : { value: countDisplays.trackedCanisterMetric });
