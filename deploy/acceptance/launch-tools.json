@@ -1,0 +1,6 @@
+{
+  "revision": "98c898f8de068a1fc0e97ebc805f9fa7f315d862",
+  "sns_cli_gzip_sha256": "c030313fbfc257f0a42b13cff22cfda55c73205dee7b96ec33e3432a273e1634",
+  "sns_testing_bundle_sha256": "5737237a345a1d3d1e488e267df2faa78ca6e88f6581d23f37de9d4f1d282f7a",
+  "checksum_source": "https://download.dfinity.systems/ic/98c898f8de068a1fc0e97ebc805f9fa7f315d862/binaries/x86_64-linux/SHA256SUMS"
+}

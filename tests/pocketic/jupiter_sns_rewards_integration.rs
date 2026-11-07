@@ -8,6 +8,9 @@ mod support;
 
 use support::calls::{query_one, update_noargs, update_one};
 
+#[path = "production_launch.rs"]
+mod production_launch;
+
 static ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();

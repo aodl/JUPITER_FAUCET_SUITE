@@ -25,6 +25,7 @@ hex = { workspace = true }
 debug_api = []
 
 [dev-dependencies]
+serde_json = { workspace = true }
 anyhow = { workspace = true }
 candid_parser = "0.1.4"
 pocket-ic = { workspace = true }
