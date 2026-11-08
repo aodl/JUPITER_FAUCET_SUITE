@@ -56,6 +56,17 @@ def isolated_principal(text):
 
 
 
+def validate_roles(roles):
+    """Independent isolation check; supplies no operator/genesis/install authority."""
+    if set(roles) != set(APPLICATIONS + SNS):
+        raise ValueError('exactly seven application and five initial SNS roles required')
+    for value in roles.values():
+        isolated_principal(value)
+    if len(set(roles.values())) != len(roles):
+        raise ValueError('application/SNS identities must be distinct')
+    return roles
+
+
 def validate(profile):
     if set(profile) != {'environment', 'network', 'operator', 'roles', 'nns_neuron',
                         'age_bonus_recipient_2', 'relay_surplus_neuron_recipients',
@@ -64,15 +75,9 @@ def validate(profile):
     if profile['environment'] != 'acceptance' or profile['network'] != 'ic':
         raise ValueError('acceptance must explicitly target the real ic network')
     operator = isolated_principal(profile['operator'])
-    roles = profile['roles']
-    if set(roles) != set(APPLICATIONS + SNS):
-        raise ValueError('exactly seven application and five initial SNS roles required')
-    for role, value in roles.items():
-        isolated_principal(value)
-        if value == operator:
-            raise ValueError(f'{role} cannot be the operator')
-    if len(set(roles.values())) != len(roles):
-        raise ValueError('application/SNS identities must be distinct')
+    roles = validate_roles(profile['roles'])
+    if operator in roles.values():
+        raise ValueError('application/SNS role cannot be the operator')
     neuron = profile['nns_neuron']
     if set(neuron) != {'id', 'memo'}:
         raise ValueError('neuron requires id and staking memo')
@@ -197,7 +202,8 @@ if __name__ == '__main__':
         if command == 'render':
             print(render_markup(profile, sys.stdin.read()), end='')
         else:
-            result = {'bindings': bindings, 'frontend': frontend, 'check': validate}[command](profile)
+            result = {'bindings': bindings, 'frontend': frontend, 'check': validate,
+                      'check-roles': lambda p: validate_roles(p['roles'])}[command](profile)
             print(json.dumps(result, sort_keys=True))
     except (ValueError, KeyError, OSError, IndexError) as error:
         sys.exit(f'acceptance profile rejected: {error}')

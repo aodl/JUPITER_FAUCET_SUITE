@@ -19,6 +19,31 @@ def fixture():
 
 
 class Isolation(unittest.TestCase):
+    def test_actual_handoff_keeps_uint64_precision_and_explicit_role_assignment_is_isolated(self):
+        live = json.loads(acceptance.PROFILE.read_text())
+        inventory = json.loads((acceptance.REPO / 'deploy/acceptance/provisioning.json').read_text())
+        self.assertEqual(live['roles']['jupiter_disburser'], 'spoge-kaaaa-aaaas-amyoa-cai')
+        self.assertEqual(live['nns_neuron']['id'], 2234355977000034918)
+        self.assertEqual(str(live['nns_neuron']['id']), inventory['disburser']['nns_neuron_id'])
+        self.assertNotIn(None, live['roles'].values())
+        self.assertEqual(acceptance.validate_roles(live['roles']), live['roles'])
+        self.assertEqual(set(live['roles'].values()) - {live['roles']['jupiter_disburser']},
+                         set(inventory['initially_unassigned_canister_ids']))
+        self.assertEqual(len(set(inventory['initially_unassigned_canister_ids'])), 11)
+        for principal in [live['roles']['jupiter_disburser'], *inventory['initially_unassigned_canister_ids']]:
+            acceptance.isolated_principal(principal)
+        # Synthetic local role fixtures remain separate from the assigned live IDs.
+        profile = fixture()
+        profile['nns_neuron']['id'] = live['nns_neuron']['id']
+        self.assertEqual(acceptance.validate(profile)['neuronId'], '2234355977000034918')
+        import prepare
+        import candid as cd
+        _, arguments = prepare.application_arguments(profile)
+        did = acceptance.REPO / 'canisters/disburser/jupiter_disburser.did'
+        shape = '(record { neuron_id : nat64 })'
+        self.assertEqual(cd.encode_checked(did, shape, '(' + arguments['jupiter_disburser'] + ')'),
+                         cd.encode_checked(did, shape, '(record { neuron_id = 2234355977000034918 : nat64 })'))
+
     def test_unresolved_mainnet_profile_fails_closed(self):
         with self.assertRaisesRegex(ValueError, 'unresolved'):
             acceptance.validate(json.loads(acceptance.PROFILE.read_text()))
@@ -72,7 +97,9 @@ class Isolation(unittest.TestCase):
                          cd.encode_checked(did, shape, '(' + expected + ')'))
         # Preparing this choice is not permission to transfer real ICP.
         checked_in = json.loads(acceptance.PROFILE.read_text())
-        self.assertIsNone(checked_in['age_bonus_recipient_2'])
+        self.assertEqual(checked_in['age_bonus_recipient_2'], {
+            'owner': acceptance.SYSTEM['governance'],
+            'subaccountHex': acceptance.DQUORUM_STAKING_SUBACCOUNT})
         self.assertIsNone(checked_in['relay_surplus_neuron_recipients'])
 
     def test_other_governance_accounts_and_wrong_dquorum_owner_remain_rejected(self):

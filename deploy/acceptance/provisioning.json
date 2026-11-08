@@ -1,0 +1,26 @@
+{
+  "source": "Operator identity handoff, 2026-11-07; no installation or financial authorization",
+  "operator_reported_subnet": "European Application subnet",
+  "disburser": {
+    "canister_id": "spoge-kaaaa-aaaas-amyoa-cai",
+    "nns_neuron_id": "2234355977000034918",
+    "operator_reported_neuron_controller": "spoge-kaaaa-aaaas-amyoa-cai"
+  },
+  "initial_main_cycles_target": 3000000000000,
+  "actual_cycles_balances_verified": false,
+  "role_mapping_status": "Assigned explicitly in profile.json after the operator delegated arbitrary role selection; no pre-existing mapping was inferred",
+  "initially_unassigned_canister_ids": [
+    "sipaq-hyaaa-aaaas-amyoq-cai",
+    "sbmlm-rqaaa-aaaas-amypa-cai",
+    "sgnny-4iaaa-aaaas-amypq-cai",
+    "x2wx5-xaaaa-aaaas-amyqa-cai",
+    "x5xrj-2yaaa-aaaas-amyqq-cai",
+    "xuu2v-mqaaa-aaaas-amyra-cai",
+    "xtv4b-biaaa-aaaas-amyrq-cai",
+    "xgsnm-aaaaa-aaaas-amysa-cai",
+    "xbtly-nyaaa-aaaas-amysq-cai",
+    "xiqae-3qaaa-aaaas-amyta-cai",
+    "xprgq-wiaaa-aaaas-amytq-cai"
+  ],
+  "role_assignment_authority": "Operator session clarification, 7 November 2026"
+}
