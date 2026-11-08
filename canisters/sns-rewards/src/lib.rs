@@ -1,5 +1,6 @@
 mod clients;
 pub mod generated;
+pub mod io_contract;
 mod logging;
 mod policy;
 mod scheduler;

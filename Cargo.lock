@@ -1563,6 +1563,8 @@ dependencies = [
  "jupiter-ic-clients",
  "pocket-ic",
  "serde",
+ "serde_json",
+ "sha2",
  "slog",
  "tokio",
 ]
