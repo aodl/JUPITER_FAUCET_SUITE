@@ -1,0 +1,2 @@
+# Preserve the exact official interface bytes checked by the SNS schema hash test.
+candid/sns-governance/governance.did whitespace=-blank-at-eol

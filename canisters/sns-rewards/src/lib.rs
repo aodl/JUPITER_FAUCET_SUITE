@@ -1,4 +1,5 @@
 mod clients;
+pub mod generated;
 mod logging;
 mod policy;
 mod scheduler;
