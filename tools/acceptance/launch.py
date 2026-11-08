@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import urllib.request
+import subprocess
 
 import economics
 
@@ -50,12 +51,40 @@ def candidate(directory):
     return path
 
 
+def sns_wasm(fetch=False):
+    pin = json.loads((REPO / 'deploy/acceptance/launch-tools.json').read_text())
+    directory = validator(fetch).parent
+    compressed = directory / 'sns-wasm-canister.wasm.gz'
+    if not compressed.exists():
+        if not fetch:
+            raise ValueError('official SNS-W missing; explicit --fetch required')
+        url = f"https://download.dfinity.systems/ic/{pin['revision']}/canisters/sns-wasm-canister.wasm.gz"
+        with urllib.request.urlopen(url, timeout=180) as reply:
+            data = reply.read()
+        if hashlib.sha256(data).hexdigest() != pin['sns_wasm_gzip_sha256']:
+            raise ValueError('official SNS-W hash mismatch')
+        compressed.write_bytes(data)
+    if hashlib.sha256(compressed.read_bytes()).hexdigest() != pin['sns_wasm_gzip_sha256']:
+        raise ValueError('cached SNS-W hash mismatch')
+    raw = directory / 'sns-wasm.wasm'
+    raw.write_bytes(gzip.decompress(compressed.read_bytes()))
+    did = subprocess.check_output(['ic-wasm', str(raw), 'metadata', 'candid:service'])[:-1]
+    revision = subprocess.check_output(['ic-wasm', str(raw), 'metadata', 'git_commit_id']).decode().strip()
+    if hashlib.sha256(did).hexdigest() != pin['sns_wasm_did_sha256'] or revision != pin['revision']:
+        raise ValueError('SNS-W interface/source revision differs from pin')
+    (directory / 'sns-wasm.did').write_bytes(did)
+    return raw
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fetch', action='store_true')
     parser.add_argument('--candidate-directory')
+    parser.add_argument('--sns-wasm', action='store_true')
     args = parser.parse_args()
-    if args.candidate_directory:
+    if args.sns_wasm:
+        print(sns_wasm(args.fetch))
+    elif args.candidate_directory:
         print(candidate(args.candidate_directory))
     else:
         print(validator(args.fetch))

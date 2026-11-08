@@ -12,6 +12,8 @@ use support::calls::{query_one, update_noargs, update_one};
 mod production_launch;
 #[path = "representative_sns.rs"]
 mod representative_sns;
+#[path = "sale_rehearsal.rs"]
+mod sale_rehearsal;
 
 static ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
