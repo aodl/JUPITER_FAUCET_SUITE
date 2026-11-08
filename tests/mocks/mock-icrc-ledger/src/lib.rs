@@ -39,6 +39,7 @@ struct DedupKey {
 pub enum DebugNextTransferError {
     PassThrough,
     AcceptThenTrap,
+    RejectThenTrap,
     TemporarilyUnavailable,
     TooOld,
     CreatedInFuture { ledger_time: u64 },
@@ -232,6 +233,11 @@ fn query_blocks(_args: GetBlocksArgs) -> QueryBlocksResponse {
     }
 }
 
+#[ic_cdk::query]
+fn icrc1_decimals() -> u8 {
+    8
+}
+
 #[ic_cdk::update]
 async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
     let targeted_accept_then_trap = ST.with(|s| {
@@ -255,6 +261,14 @@ async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
         }
     });
     let caller = ic_cdk::api::msg_caller();
+    if matches!(scripted, Some(DebugNextTransferError::RejectThenTrap)) {
+        let attempt_index = start_transfer_attempt(&arg);
+        set_transfer_attempt_result(attempt_index, "RejectedResponseLost");
+        Call::unbounded_wait(ic_cdk::api::canister_self(), "debug_noop")
+            .await
+            .unwrap_or_else(|error| ic_cdk::trap(format!("debug barrier: {error:?}")));
+        ic_cdk::trap("debug transfer rejected without a conclusive response");
+    }
     if targeted_accept_then_trap || matches!(scripted, Some(DebugNextTransferError::AcceptThenTrap))
     {
         let attempt_index = start_transfer_attempt(&arg);
@@ -271,7 +285,9 @@ async fn icrc1_transfer(arg: TransferArg) -> Result<BlockIndex, TransferError> {
     let attempt_index = start_transfer_attempt(&arg);
     if let Some(err) = scripted {
         let error = match err {
-            DebugNextTransferError::PassThrough | DebugNextTransferError::AcceptThenTrap => None,
+            DebugNextTransferError::PassThrough
+            | DebugNextTransferError::AcceptThenTrap
+            | DebugNextTransferError::RejectThenTrap => None,
             DebugNextTransferError::TemporarilyUnavailable => {
                 Some(TransferError::TemporarilyUnavailable)
             }
