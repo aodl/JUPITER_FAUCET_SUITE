@@ -39,6 +39,7 @@ jobs:
           - faucet_pocketic_integration
           - historian_pocketic_integration
           - relay_pocketic_integration
+          - sns_rewards_pocketic_integration
 
     steps:
       - name: Check out repository
@@ -96,13 +97,23 @@ jobs:
           test "$("$HOME/.local/bin/didc" --version)" = "didc $DIDC_VERSION"
 
       - name: Install pinned SNS acceptance tooling
-        if: matrix.suite == 'relay_pocketic_integration'
+        if: matrix.suite == 'relay_pocketic_integration' || matrix.suite == 'sns_rewards_pocketic_integration'
         shell: bash
         run: |
           set -euo pipefail
           # Match local acceptance and release validation; canonical builds use Docker's separate pin.
           cargo install ic-wasm --version 0.11.0 --locked
           test "$(ic-wasm --version)" = 'ic-wasm 0.11.0'
+
+      - name: Provision verified SNS tuple and launch validator
+        if: matrix.suite == 'sns_rewards_pocketic_integration'
+        run: |
+          sns_artifact_dir="$(python3 tools/acceptance/artifacts.py --fetch)"
+          JUPITER_SNS_ARTIFACT_DIR="$sns_artifact_dir" PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/acceptance -p 'test_*.py'
+          python3 tools/acceptance/launch.py --fetch
+          python3 tools/acceptance/launch.py --sns-wasm --fetch
+          cargo run --locked -p nns-bindgen-check --example sns -- candid/sns-governance/governance.did "$RUNNER_TEMP/sns.rs"
+          cmp canisters/sns-rewards/src/generated/sns.rs "$RUNNER_TEMP/sns.rs"
 
       - name: Prepare verified real blackhole fixture
         if: matrix.suite == 'historian_pocketic_integration'
