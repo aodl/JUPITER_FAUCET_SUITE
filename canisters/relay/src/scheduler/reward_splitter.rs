@@ -1217,7 +1217,7 @@ mod tests {
         );
         budget.work(MAX_WORK - budget.usage().work).unwrap();
         assert!(
-            block_on(cache.expand(&index, relay(), &[first_anchor.clone()]))
+            block_on(cache.expand(&index, relay(), std::slice::from_ref(&first_anchor)))
                 .unwrap_err()
                 .contains(EXHAUSTED)
         );
