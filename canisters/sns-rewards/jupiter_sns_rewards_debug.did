@@ -1,13 +1,306 @@
-type InitArgs = record { reward_sns_root_canister_id : opt principal };
-type RelayRewardContext = record { sns_root_canister_id : principal; sns_governance_canister_id : principal; sns_ledger_canister_id : principal; snapshot_id : nat64; scan_started_at_timestamp_nanos : nat64; scan_completed_at_timestamp_nanos : nat64 };
-type ResolveDefaultIcpAccountsArgs = record { snapshot_id : nat64; account_identifiers : vec blob };
-type ResolveDefaultIcpAccountsResult = variant { Ok : vec opt principal; SnapshotChanged; TooManyAccounts; InvalidAccountIdentifier : record { index : nat32 } };
+// [Account](https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-3/README.md#value)
+// representation of ledgers supporting the ICRC-1 standard.
+type Account = record { owner : principal; subaccount : opt blob };
+type AutomationConfig = record {
+  treasury_retain_icp_e8s : nat64;
+  treasury_max_proposal_icp_e8s : nat64;
+  treasury_enabled : bool;
+  targets : vec MirrorTarget;
+  proposer_neuron : blob;
+};
+type AutomationState = record {
+  last_error : opt text;
+  pending : vec blob;
+  source : opt Source;
+  charge_scan : opt ChargeScan;
+  progress : vec Progress;
+  config_version : nat64;
+  funding : opt Funding;
+  next_target : nat8;
+};
+type Batch = record {
+  snapshot : Snapshot;
+  cursor : opt nat64;
+  end_block : nat64;
+  oldest : opt nat64;
+  previous_end : opt nat64;
+};
+type ChargeScan = record {
+  before : opt nat64;
+  pages : nat32;
+  open_e8s : nat64;
+};
+type DebugState = record {
+  pages_processed : nat32;
+  neurons_processed : nat64;
+  staging_slot_size : nat64;
+  scan_active : bool;
+  scan_cursor : opt blob;
+  configured_root : opt principal;
+  active_slot_size : nat64;
+  active_snapshot : opt OwnerSnapshot;
+};
+type Event = record {
+  source : Source;
+  owner_count : nat64;
+  slot : nat8;
+  end_timestamp_seconds : nat64;
+  eligible_shares : nat;
+  config_version : nat64;
+  round : nat64;
+};
+type Funding = record {
+  fee : nat64;
+  destination : Account;
+  source : Account;
+  memo : blob;
+  config_version : nat64;
+  created_at_time : nat64;
+  amount : nat64;
+  outcome : FundingOutcome;
+};
+type FundingOutcome = variant {
+  ManualReview : text;
+  Dispatched;
+  Verified : record { block : nat };
+};
+type InitArgs = record {
+  programme : opt ProgrammeConfig;
+  reward_sns_root_canister_id : opt principal;
+};
+type MirrorPhase = variant {
+  Creating : record { at_seconds : nat64; search_before : opt nat64 };
+  ManualReview : text;
+  Voting : record { vote : int32; jupiter_proposal : nat64 };
+  Verified : record { vote : int32; jupiter_proposal : nat64 };
+  Mapped : record { jupiter_proposal : nat64 };
+  Infeasible : text;
+  Discovered;
+};
+type MirrorRecord = record {
+  source_proposer : blob;
+  source : Source;
+  binding : text;
+  target : MirrorTarget;
+  config_version : nat64;
+  proposal_id : nat64;
+  content_digest : blob;
+  phase : MirrorPhase;
+};
+type MirrorTarget = record {
+  root : principal;
+  neuron : blob;
+  first_proposal : nat64;
+  governance : principal;
+  delivery_margin_seconds : nat64;
+};
+type Owner = record {
+  io : bool;
+  jup : bool;
+  "principal" : principal;
+  compound_neuron : opt blob;
+};
 type OwnerIndexSlot = variant { A; B };
-type OwnerSnapshot = record { snapshot_id : nat64; active_slot : OwnerIndexSlot; sns_root_canister_id : principal; sns_governance_canister_id : principal; sns_ledger_canister_id : principal; scan_started_at_timestamp_nanos : nat64; scan_completed_at_timestamp_nanos : nat64; neuron_count : nat64; owner_count : nat64 };
-type DebugState = record { configured_root : opt principal; scan_active : bool; scan_cursor : opt blob; pages_processed : nat32; neurons_processed : nat64; active_snapshot : opt OwnerSnapshot; active_slot_size : nat64; staging_slot_size : nat64 };
+type OwnerSnapshot = record {
+  sns_root_canister_id : principal;
+  scan_completed_at_timestamp_nanos : nat64;
+  owner_count : nat64;
+  scan_started_at_timestamp_nanos : nat64;
+  sns_ledger_canister_id : principal;
+  active_slot : OwnerIndexSlot;
+  neuron_count : nat64;
+  sns_governance_canister_id : principal;
+  snapshot_id : nat64;
+};
+type PatronOutcome = variant {
+  Skipped : record { reason : text };
+  Failed : record { error : text };
+  Dispatched : record { at_nanos : nat64 };
+  Prepared;
+  Verified : record { duplicate : bool; block : nat };
+  AssumedPaidUnverified : record { reason : text };
+};
+type PatronRecord = record {
+  to : Account;
+  recognition : opt Owner;
+  refresh_result : opt text;
+  created_at_time_nanos : nat64;
+  launch_timestamp_seconds : nat64;
+  from : Account;
+  memo : blob;
+  ownership_snapshot : Snapshot;
+  fee_e8s : nat64;
+  contribution_block : nat64;
+  amount_e8s : nat64;
+  commitment_timestamp_seconds : nat64;
+  config_version : nat64;
+  ledger : principal;
+  contributor_icp_account : blob;
+  compounded_neuron : opt blob;
+  outcome : PatronOutcome;
+  snapshot_id : nat64;
+  qualifying_icp_e8s : nat64;
+};
+type Phase = variant {
+  Uncertain : text;
+  Scanning : record {
+    spent_e8s : nat;
+    reserved_e8s : nat;
+    before : opt nat64;
+    pages : nat32;
+  };
+  TransferVerified : record { proposal_id : nat64; block : nat64 };
+  VerifyTransfer : record {
+    found : opt nat64;
+    cursor : opt nat64;
+    proposal_id : nat64;
+    end_block : nat64;
+  };
+  ManualReview : text;
+  Submitting : record { search_before : opt nat64 };
+  Proposed : record { proposal_id : nat64 };
+};
+type ProgrammeConfig = record {
+  reserve_subaccount : opt blob;
+  protocol_governance_neuron : blob;
+  launch_timestamp_seconds : opt nat64;
+  staking_account : Account;
+  io_root : principal;
+  excluded_icp_accounts : vec blob;
+  jup_root : principal;
+  excluded_jup_neurons : vec blob;
+  version : nat64;
+  icp_ledger : principal;
+  patron_enabled : bool;
+  icp_index : principal;
+  snapshot_max_age_seconds : nat64;
+  reserve_transport_neuron : opt blob;
+  canonical_relay : principal;
+  automation : opt AutomationConfig;
+};
+type Progress = record {
+  completed_tip : opt nat64;
+  next_scan_seconds : nat64;
+  cycle_tip : opt nat64;
+  before : opt nat64;
+};
+type RelayRewardContext = record {
+  sns_root_canister_id : principal;
+  scan_completed_at_timestamp_nanos : nat64;
+  scan_started_at_timestamp_nanos : nat64;
+  sns_ledger_canister_id : principal;
+  sns_governance_canister_id : principal;
+  snapshot_id : nat64;
+};
+type ReserveTransport = variant {
+  ManualReview : record {
+    destination : Account;
+    source : Source;
+    fee_e8s : nat64;
+    neuron : blob;
+    expected_net_e8s : nat64;
+    reason : text;
+  };
+  ReceiptPending : record {
+    destination : Account;
+    fee_e8s : nat64;
+    neuron : blob;
+    ledger : principal;
+    block : nat64;
+    expected_net_e8s : nat64;
+    governance : principal;
+  };
+  Dispatched : record {
+    destination : Account;
+    source : Source;
+    fee_e8s : nat64;
+    neuron : blob;
+    expected_net_e8s : nat64;
+  };
+  NotDispatched;
+  Verified : record { fee_e8s : nat64; amount_e8s : nat64; block : nat };
+};
+type ResolveDefaultIcpAccountsArgs = record {
+  account_identifiers : vec blob;
+  snapshot_id : nat64;
+};
+type ResolveDefaultIcpAccountsResult = variant {
+  Ok : vec opt principal;
+  SnapshotChanged;
+  InvalidAccountIdentifier : record { index : nat32 };
+  TooManyAccounts;
+};
+type Runtime = record {
+  last_error : opt text;
+  assumed_e8s : nat;
+  snapshot : opt Snapshot;
+  scan : opt Scan_1;
+  verified_e8s : nat;
+  failed_items : nat64;
+  pending_block : opt nat64;
+  completed_end_block : opt nat64;
+  batch : opt Batch;
+  config : opt ProgrammeConfig;
+  next_snapshot : nat64;
+};
+type Scan = record { cursor : opt blob; event : Event; pages : nat32 };
+type Scan_1 = record {
+  cursor : opt blob;
+  slot : nat8;
+  source_index : nat8;
+  started_at_seconds : nat64;
+  sources : vec Source;
+  pages : nat32;
+};
+type Snapshot = record {
+  id : nat64;
+  owners : nat64;
+  slot : nat8;
+  config_version : nat64;
+  started_at_seconds : nat64;
+  sources : vec Source;
+  completed_at_seconds : nat64;
+};
+type Source = record {
+  root : principal;
+  ledger : principal;
+  governance : principal;
+};
+type State = record {
+  last_error : opt text;
+  active : opt Event;
+  scan : opt Scan;
+};
+type State_1 = record {
+  last_error : opt text;
+  at_seconds : nat64;
+  rate_permyriad : nat64;
+  destination : Account;
+  source : Source;
+  amount_e8s : nat64;
+  config_version : nat64;
+  actual_icp_fee_e8s : nat64;
+  phase : Phase;
+  observed_balance_e8s : nat64;
+  start_block : nat64;
+};
 service : (InitArgs) -> {
-  get_relay_reward_context : () -> (opt RelayRewardContext) query;
-  resolve_default_icp_accounts : (ResolveDefaultIcpAccountsArgs) -> (ResolveDefaultIcpAccountsResult) query;
+  debug_programme_tick : () -> ();
   debug_scan_tick : () -> ();
   debug_state : () -> (DebugState) query;
-};
+  debug_trap_patron_callback_once : () -> ();
+  get_automation_status : () -> (AutomationState) query;
+  get_mirror_record : (principal, nat64) -> (opt MirrorRecord) query;
+  get_participation_status : () -> (State) query;
+  get_patron_record : (nat64) -> (opt PatronRecord) query;
+  get_programme_status : () -> (Runtime) query;
+  get_proposer_funding : (nat64) -> (opt Funding) query;
+  get_relay_reward_context : () -> (opt RelayRewardContext) query;
+  get_reserve_transport_status : () -> (ReserveTransport) query;
+  get_treasury_record : (nat64) -> (opt State_1) query;
+  get_treasury_status : () -> (opt State_1) query;
+  quote_gross_io_share : (nat64, principal) -> (opt nat) query;
+  resolve_default_icp_accounts : (ResolveDefaultIcpAccountsArgs) -> (
+      ResolveDefaultIcpAccountsResult,
+    ) query;
+}

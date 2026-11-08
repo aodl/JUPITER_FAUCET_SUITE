@@ -37,13 +37,13 @@ def launch_candidate(governance_fixture, reserve_controller, proposer_controller
                   'transaction_fee': tokens(e['transfer_fee_e8s']), 'logo': str(logo)},
         'Proposals': {'rejection_fee': tokens(e['proposal_rejection_e8s']),
                       'initial_voting_period': seconds(e['jupiter_voting_seconds']),
-                      'maximum_wait_for_quiet_deadline_extension': '1 day'},
-        'Neurons': {'minimum_creation_stake': '1 token'},
+                      'maximum_wait_for_quiet_deadline_extension': seconds(e['wait_for_quiet_seconds'])},
+        'Neurons': {'minimum_creation_stake': tokens(e['minimum_neuron_stake_e8s'])},
         'Voting': {'minimum_dissolve_delay': seconds(e['year_seconds']),
                    'MaximumVotingPowerBonuses': {
                        'DissolveDelay': {'duration': seconds(e['year_seconds']), 'bonus': '0%'},
                        'Age': {'duration': seconds(e['year_seconds'] * 4), 'bonus': '0%'}},
-                   'RewardRate': {'initial': '0%', 'final': '0%', 'transition_duration': '0 seconds'}},
+                   'RewardRate': {'initial': str(e['native_initial_reward_basis_points'] // 100) + '%', 'final': str(e['native_final_reward_basis_points'] // 100) + '%', 'transition_duration': '0 seconds'}},
         'Distribution': {'Neurons': [
             {'principal': controller, 'memo': memo, 'stake': tokens(e[key]),
              'dissolve_delay': seconds(delay), 'vesting_period': '0 seconds'}
@@ -58,5 +58,5 @@ def launch_candidate(governance_fixture, reserve_controller, proposer_controller
                  'maximum_direct_participation_icp': tokens(e['sale_max_icp_e8s']),
                  'minimum_participant_icp': tokens(e['sale_min_participant_icp_e8s']),
                  'maximum_participant_icp': tokens(e['sale_max_icp_e8s']),
-                 'VestingSchedule': {'events': 2, 'interval': seconds(e['year_seconds'])},
+                 'VestingSchedule': {'events': e['sale_basket_count'], 'interval': seconds(e['year_seconds'])},
                  'start_time': None, 'duration': '7 days', 'neurons_fund_participation': False}}

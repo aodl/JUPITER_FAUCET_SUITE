@@ -147,6 +147,10 @@ impl Storable for PrincipalValue {
 
 type Memory = VirtualMemory<DefaultMemoryImpl>;
 
+pub(crate) fn programme_memory(id: MemoryId) -> Memory {
+    MEMORY_MANAGER.with(|manager| manager.borrow().get(id))
+}
+
 thread_local! {
     static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
@@ -306,6 +310,14 @@ mod tests {
         set_state(state.clone());
         assert_eq!(restore(), state.clone());
         let bytes = candid::encode_one(VersionedStableState::V1(state.clone())).unwrap();
+        // Frozen deployed V1 encoding, including active and in-flight work.
+        // The V1 DTO/serialization source is unchanged from baseline 653f1bc.
+        // New programme fields live in separate memories, never in this root.
+        use sha2::Digest;
+        assert_eq!(
+            hex::encode(sha2::Sha256::digest(&bytes)),
+            "71d85006b5fc41e62cb54a7edbb35e9dce2c9d7a1d6b91f74698917d3c41db24"
+        );
         let decoded: VersionedStableState = candid::decode_one(&bytes).unwrap();
         match decoded {
             VersionedStableState::V1(decoded) => assert_eq!(decoded, state),

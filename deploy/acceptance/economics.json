@@ -28,5 +28,8 @@
   "dissolve_bonus_percentage": 0,
   "main_cycles_target": 3000000000000,
   "launch_timestamp_seconds": null,
-  "exclude_operational_proposer_from_external_rewards": true
+  "exclude_operational_proposer_from_external_rewards": true,
+  "wait_for_quiet_seconds": 3600,
+  "sale_basket_count": 2,
+  "patron_icp_per_jup": 10
 }

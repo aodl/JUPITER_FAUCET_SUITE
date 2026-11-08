@@ -25,6 +25,9 @@ struct ScanGuard {
 
 impl ScanGuard {
     fn owns_scan(&self, root: candid::Principal, expected: Option<&OwnerScan>) -> bool {
+        if crate::programme::read().config.is_some() {
+            return false;
+        }
         state::with_state(|st| {
             self.inner.is_active()
                 && st.scan_lock_state_ts == Some(self.inner.lease_expires_at_ts())
@@ -57,6 +60,7 @@ impl Drop for ScanGuard {
 }
 
 pub(crate) fn install_timers() {
+    crate::programme::install_timer();
     install_config_log_timer();
     schedule_scan_check(Duration::ZERO, cfg!(feature = "debug_api"));
 }
@@ -108,6 +112,9 @@ fn schedule_continuation() {
 }
 
 pub(crate) async fn scan_tick(force: bool) {
+    if crate::programme::read().config.is_some() {
+        return;
+    }
     let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
     let Some(guard) = ScanGuard::acquire(now_secs) else {
