@@ -42,8 +42,9 @@ reviewed failure-specific artifact and arguments, preserved state inventory,
 and a local rehearsal of the proposed operation. Existing controller-roundtrip,
 upgrade, factory-finalization and interruption tests exercise those supported
 boundaries, not a hypothetical universal rescue. An ambiguous external spend,
-lost child ID, mismatched child module or `ManualRecoveryRequired` record needs
-investigation; neither a canister snapshot nor a Lifeline upgrade rolls back
+lost child ID, mismatched child module or unsafe recovery assessment needs
+investigation; verified setup funding deficits use the authenticated continuation
+workflow in [Relay setup recovery](../relay-setup-recovery.md); neither a canister snapshot nor a Lifeline upgrade rolls back
 Ledger/CMC/management effects. Do not add a hidden child controller or reinstall
 a stateful canonical canister as a shortcut.
 
@@ -172,7 +173,7 @@ After upgrade, verify:
 - Unrelated counts, cursors, totals, recent feeds, and representative historical samples are preserved. `qualifying_commitment_count` must not decrease across an upgrade; an increase after restart/indexing is permitted and may represent newly indexed qualifying endowments.
 - Memory-26 entries, known exact active configuration mappings, and `RelayTarget`/`RelayInstance` tracking are preserved.
 - Automatic cycles probing and normal staking indexing continue, and new samples/endowments append exactly once.
-- Interrupted `CmcTransferAccepted` and `CmcNotifySucceeded` entries retain paid evidence for explicit serialized continuation. Other post-spend interrupted phases become `ManualRecoveryRequired`; pre-spend reservations are removed. Active mappings and existing manual evidence are preserved.
+- Interrupted `CmcTransferAccepted` and `CmcNotifySucceeded` entries retain paid evidence for explicit serialized continuation. Later phases with pinned continuation evidence pause for bounded reconciliation; unknown original transfer or creation outcomes retain `ManualRecoveryRequired`. Pre-spend reservations are removed. Active mappings and existing manual evidence are preserved.
 
 ### Historian index health
 

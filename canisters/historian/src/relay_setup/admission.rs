@@ -7,6 +7,7 @@ use std::future::Future;
 
 const NEW_SLOTS: usize = 4;
 const COMPLETION_SLOTS: usize = 2;
+const ASSESSMENT_SLOTS: usize = 2;
 const WINDOW_SECONDS: u64 = 60;
 const ATTEMPTS_PER_WINDOW: usize = 8;
 const LEASE_SECONDS: u64 = 300;
@@ -16,6 +17,7 @@ const CALLS_PER_ATTEMPT: usize = 512;
 pub(super) enum Lane {
     New,
     Completion,
+    Assessment,
 }
 
 #[derive(Default)]
@@ -38,6 +40,7 @@ struct Limiter {
     slots: Vec<Slot>,
     new: Window,
     completion: Window,
+    assessment: Window,
 }
 
 thread_local! { static LIMITER: RefCell<Limiter> = RefCell::new(Limiter::default()); }
@@ -116,6 +119,7 @@ impl Guard {
             let cap = match lane {
                 Lane::New => NEW_SLOTS,
                 Lane::Completion => COMPLETION_SLOTS,
+                Lane::Assessment => ASSESSMENT_SLOTS,
             };
             if limiter.slots.iter().any(|slot| slot.key == key)
                 || limiter
@@ -130,6 +134,7 @@ impl Guard {
             let window = match lane {
                 Lane::New => &mut limiter.new,
                 Lane::Completion => &mut limiter.completion,
+                Lane::Assessment => &mut limiter.assessment,
             };
             let number = now / WINDOW_SECONDS;
             if number < window.number {
@@ -365,6 +370,29 @@ mod tests {
         drop(guards);
         drop(completions);
         LIMITER.with(|limiter| assert!(limiter.borrow().slots.is_empty()));
+    }
+
+    #[test]
+    fn assessments_have_bounded_capacity_without_spending_continuation_permission() {
+        reset_for_test();
+        let first = Guard::acquire(key(1), Lane::Assessment).unwrap();
+        let second = Guard::acquire(key(2), Lane::Assessment).unwrap();
+        assert!(Guard::acquire(key(3), Lane::Assessment).is_none());
+        assert!(Guard::acquire(key(1), Lane::Completion).is_none());
+        assert!(Guard::acquire(key(1), Lane::New).is_none());
+        assert!(Guard::acquire(key(3), Lane::Completion).is_some());
+        drop(first);
+        drop(second);
+        for _ in 2..ATTEMPTS_PER_WINDOW {
+            assert!(Guard::acquire(key(1), Lane::Assessment).is_some());
+        }
+        assert!(Guard::acquire(key(1), Lane::Assessment).is_none());
+        let continuation = Guard::acquire(key(1), Lane::Completion).unwrap();
+        assert!(Guard::acquire(key(1), Lane::Assessment).is_none());
+        assert!(Guard::acquire(key(1), Lane::New).is_none());
+        drop(continuation);
+        set_time_for_test(60);
+        assert!(Guard::acquire(key(1), Lane::Assessment).is_some());
     }
 
     #[test]

@@ -180,7 +180,7 @@ pub(super) fn config_from_init_args(args: InitArgs) -> Config {
             .relay_factory_enabled
             .unwrap_or_else(|| crate::approved_self_service_relay_wasm().is_some()),
         relay_setup_min_e8s: args.relay_setup_min_e8s.unwrap_or(300_000_000),
-        relay_initial_cycles: args.relay_initial_cycles.unwrap_or(2_000_000_000_000),
+        relay_initial_cycles: args.relay_initial_cycles.unwrap_or(5_000_000_000_000),
         relay_cycle_safety_margin_e8s: args.relay_cycle_safety_margin_e8s.unwrap_or(5_000_000),
         relay_min_subaccount_one_seed_e8s: args
             .relay_min_subaccount_one_seed_e8s
@@ -586,6 +586,9 @@ pub(super) fn init(args: InitArgs) {
 
 pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     if let Some(args) = args {
+        if let Some(hash) = &args.relay_legacy_module_hash {
+            crate::relay_setup::enable_legacy_continuation(&st.config, hash);
+        }
         let accounting_started = st.last_index_run_ts.unwrap_or(0) > 0
             || st.last_indexed_staking_tx_id.is_some()
             || st.oldest_indexed_staking_tx_id.is_some()

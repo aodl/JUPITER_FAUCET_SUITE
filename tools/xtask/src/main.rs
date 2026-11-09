@@ -6532,6 +6532,44 @@ fn cmd_scoped(component: TestComponent, scope: TestScope) -> Result<()> {
     }
 }
 
+fn cmd_historian_relay_setup_pocketic() -> Result<()> {
+    let root = repo_root();
+    let common = pocketic_test_env()?;
+    let mut outcomes = Vec::new();
+    for test in [
+        "relay_provisioning_budget_installs_production_payload_on_fiduciary_subnet",
+        "legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callback_loss",
+    ] {
+        run_cargo_test_suite(
+            &mut outcomes,
+            "pocketic",
+            "historian/relay-setup",
+            "cargo",
+            &[
+                "test",
+                "--locked",
+                "-p",
+                "jupiter-historian",
+                "--test",
+                "jupiter_historian_integration",
+                test,
+                "--",
+                "--exact",
+                "--ignored",
+                "--color",
+                "always",
+            ],
+            &root,
+            (&common, true),
+        )?;
+    }
+    finish_outcomes(
+        outcomes,
+        "Relay setup acceptance failed",
+        "historian_relay_setup_pocketic complete",
+    )
+}
+
 fn cmd_release_artifact_validation() -> Result<()> {
     let root = repo_root();
     let mut outcomes = Vec::new();
@@ -6568,6 +6606,16 @@ fn cmd_release_artifact_validation() -> Result<()> {
             "jupiter-historian",
             "jupiter_historian_integration",
             "zero_recipient_factory_child_executes_all_cycles_mode",
+        ),
+        (
+            "jupiter-historian",
+            "jupiter_historian_integration",
+            "relay_provisioning_budget_installs_production_payload_on_fiduciary_subnet",
+        ),
+        (
+            "jupiter-historian",
+            "jupiter_historian_integration",
+            "legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callback_loss",
         ),
         (
             "jupiter-faucet",
@@ -6651,6 +6699,7 @@ fn main() -> Result<()> {
         "teardown" => cmd_teardown(),
         "frontend_setup" => cmd_frontend_setup(),
         "release_artifact_validation" => cmd_release_artifact_validation(),
+        "historian_relay_setup_pocketic" => cmd_historian_relay_setup_pocketic(),
         "faucet_production_reinstall_cutover" => cmd_faucet_production_reinstall_cutover(),
         _ => {
             eprintln!(
@@ -6659,6 +6708,7 @@ fn main() -> Result<()> {
                  Utility commands:
                  - acceptance_sns (real official SNS on an owned PocketIC topology)
                  - release_artifact_validation (requires canonical artifacts)
+                 - historian_relay_setup_pocketic (provisioning and legacy continuation)
                  - setup
                  - teardown
                  - frontend_setup

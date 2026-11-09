@@ -179,6 +179,7 @@ mod tests {
     #[test]
     fn decode_post_upgrade_args_decodes_upgrade_record() {
         let raw = encode_args((Some(UpgradeArgs {
+            relay_legacy_module_hash: None,
             staking_account: Some(alternate_account()),
             ledger_canister_id: None,
             index_canister_id: None,
@@ -1154,7 +1155,7 @@ mod tests {
     fn stored_margin_and_seed_presence_survives_full_upgrade_restoration_order() {
         let omitted = config_from_init_args(sample_init_args());
         assert_eq!(omitted.relay_setup_min_e8s, 300_000_000);
-        assert_eq!(omitted.relay_initial_cycles, 2_000_000_000_000);
+        assert_eq!(omitted.relay_initial_cycles, 5_000_000_000_000);
         assert_eq!(omitted.self_service_relay_interval_seconds, 86400);
         assert_eq!(omitted.relay_cycle_safety_margin_e8s, 5_000_000);
         assert_eq!(omitted.relay_min_subaccount_one_seed_e8s, 100_020_000);

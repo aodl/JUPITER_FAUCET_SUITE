@@ -65,6 +65,25 @@ def check(artifacts: Path):
     if relay_payload not in historian_raw:
         raise RuntimeError("Historian does not embed the exact candidate compressed Relay payload")
     print(f"embedded child binding raw={hashlib.sha256(relay_raw).hexdigest()} gzip={hashlib.sha256(relay_payload).hexdigest()}")
+    legacy = (ROOT / "canisters/historian/relay-install/legacy-relay.wasm.gz").read_bytes()
+    legacy_raw = gzip.decompress(legacy)
+    if hashlib.sha256(legacy).hexdigest() != "221765e5940e3d0721dac7677f0294e05f616a6d91385f984c59a34ceb71cde0":
+        raise RuntimeError("retained predecessor Relay payload hash changed")
+    if hashlib.sha256(legacy_raw).hexdigest() != "8db17b838a57e67c733b4d5d2ff098e07242e9d41784c35396f834ba0991b661":
+        raise RuntimeError("retained predecessor Relay raw hash changed")
+    if legacy not in historian_raw:
+        raise RuntimeError("Historian does not embed the exact retained predecessor Relay payload")
+    with tempfile.TemporaryDirectory(prefix="jupiter-legacy-export-check-") as temporary:
+        wasm = Path(temporary) / "legacy-relay.wasm"
+        wasm.write_bytes(legacy_raw)
+        info = output("ic-wasm", str(wasm), "info")
+        if re.search(r"canister_(?:update|query|composite_query) (?:debug_|admin_)", info):
+            raise RuntimeError("retained predecessor Relay exposes debug/admin methods")
+        did = Path(temporary) / "legacy-relay.did"
+        did.write_text(output("ic-wasm", str(wasm), "metadata", "candid:service"))
+        subprocess.run(["didc", "check", str(did)], check=True)
+    print("retained predecessor Relay hash, embedding, exports and Candid verified")
+
 
 
 if __name__ == "__main__":

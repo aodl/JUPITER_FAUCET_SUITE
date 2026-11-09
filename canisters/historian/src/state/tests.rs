@@ -1034,6 +1034,7 @@ mod tests {
         let relay_key = crate::relay_setup::RelaySetupKey::from_bytes(Cow::Owned(vec![7; 32]));
         let relay_entry = crate::relay_setup::RelaySetupEntry::Active {
             relay_canister_id: principal(&[43]),
+            completed: None,
         };
         with_relay_setup_entries_map(|map| {
             map.insert(relay_key, relay_entry.clone());

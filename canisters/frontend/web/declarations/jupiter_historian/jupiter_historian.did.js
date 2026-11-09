@@ -267,7 +267,23 @@ export const idlFactory = ({ IDL }) => {
       'phase' : RelayCreationPhase,
     }),
   });
+  const RelayRecoveryQuote = IDL.Record({
+    setup_account: Account,
+    setup_account_identifier: IDL.Text,
+    relay_canister_id: IDL.Opt(IDL.Principal),
+    balance_e8s: IDL.Nat64,
+    required_e8s: IDL.Nat64,
+    additional_e8s: IDL.Nat64,
+    cycles_deficit: IDL.Nat,
+  });
+  const RelayRecoveryView = IDL.Variant({
+    Ready: RelayRecoveryQuote,
+    FundingRequired: RelayRecoveryQuote,
+    CheckPending: IDL.Text,
+    Unsafe: IDL.Text,
+  });
   const RelaySetupView = IDL.Record({
+    recovery: IDL.Opt(RelayRecoveryView),
     'setup_key_identifier' : IDL.Text,
     'canonical_target_canister_ids' : IDL.Vec(IDL.Principal),
     'surplus_recipient_count' : IDL.Nat32,

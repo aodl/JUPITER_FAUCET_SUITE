@@ -831,6 +831,25 @@ struct RelaySetupView {
     nominal_minimum_e8s: u64,
     factory_available: bool,
     state: RelaySetupState,
+    recovery: Option<RelayRecoveryView>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RelayRecoveryQuote {
+    setup_account: Account,
+    setup_account_identifier: String,
+    relay_canister_id: Option<Principal>,
+    balance_e8s: u64,
+    required_e8s: u64,
+    additional_e8s: u64,
+    cycles_deficit: u128,
+}
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum RelayRecoveryView {
+    Ready(RelayRecoveryQuote),
+    FundingRequired(RelayRecoveryQuote),
+    CheckPending(String),
+    Unsafe(String),
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
@@ -1465,11 +1484,35 @@ struct SelfServiceTestEnv {
 
 impl SelfServiceTestEnv {
     fn new(historian_wasm: Vec<u8>) -> Result<Self> {
-        let pic = build_pic_with_real_icp();
+        Self::new_for_provisioning(historian_wasm, false, 1_000_000_000_000)
+    }
+
+    fn new_for_provisioning(
+        historian_wasm: Vec<u8>,
+        fiduciary: bool,
+        cycles: u128,
+    ) -> Result<Self> {
+        use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig, SubnetKind};
+        let pic = if fiduciary {
+            support::pocketic::builder()
+                .with_nns_subnet()
+                .with_application_subnet()
+                .with_fiduciary_subnet()
+                .with_icp_features(IcpFeatures {
+                    registry: Some(IcpFeaturesConfig::DefaultConfig),
+                    cycles_minting: Some(IcpFeaturesConfig::DefaultConfig),
+                    icp_token: Some(IcpFeaturesConfig::DefaultConfig),
+                    ..Default::default()
+                })
+                .build()
+        } else {
+            build_pic_with_real_icp()
+        };
         let ledger = real_icp_ledger_principal();
         let index = real_icp_index_principal();
         let cmc = support::principals::cycles_minting_canister();
         let governance = support::principals::nns_governance();
+        let on_fiduciary = fiduciary;
         let thirteen = jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id();
         let fiduciary = jupiter_ic_clients::constants::fiduciary_blackhole_canister_id();
 
@@ -1496,14 +1539,26 @@ impl SelfServiceTestEnv {
         }
         set_controllers_exact(&pic, target, vec![thirteen])?;
 
-        let historian = pic.create_canister();
+        let historian = if on_fiduciary {
+            let subnet = pic
+                .topology()
+                .subnet_configs
+                .iter()
+                .find(|(_, cfg)| cfg.subnet_kind == SubnetKind::Fiduciary)
+                .map(|(id, _)| *id)
+                .context("fiduciary subnet")?;
+            pic.create_canister_on_subnet(None, None, subnet)
+        } else {
+            pic.create_canister()
+        };
         pic.add_cycles(historian, 40_000_000_000_000);
-        pic.install_canister(
-            historian,
-            historian_wasm,
-            encode_one(self_service_historian_init(ledger, index, cmc, fiduciary))?,
-            None,
-        );
+        let mut init = self_service_historian_init(ledger, index, cmc, fiduciary);
+        init.relay_initial_cycles = Some(cycles);
+        if on_fiduciary {
+            init.relay_setup_min_e8s = Some(300_000_000);
+            init.self_service_relay_interval_seconds = Some(86_400);
+        }
+        pic.install_canister(historian, historian_wasm, encode_one(init)?, None);
         Ok(Self {
             pic,
             ledger,
@@ -7386,5 +7441,423 @@ fn historian_public_counts_exclude_sns_only_canisters_from_registered_totals() -
         },
     )?;
     assert!(recent.items.is_empty());
+    Ok(())
+}
+
+fn set_provisioning_rate(env: &SelfServiceTestEnv, rate: u64) -> Result<()> {
+    #[derive(CandidType)]
+    struct Rate {
+        data_source: String,
+        timestamp_seconds: u64,
+        xdr_permyriad_per_icp: u64,
+    }
+    env.pic.advance_time(Duration::from_secs(60));
+    tick_n(&env.pic, 2);
+    let result: Result<(), String> = update_one(
+        &env.pic,
+        env.cmc,
+        env.governance,
+        "set_icp_xdr_conversion_rate",
+        Rate {
+            data_source: "provisioning regression".into(),
+            timestamp_seconds: env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000,
+            xdr_permyriad_per_icp: rate,
+        },
+    )?;
+    result.map_err(anyhow::Error::msg)
+}
+
+#[test]
+#[ignore]
+fn relay_provisioning_budget_installs_production_payload_on_fiduciary_subnet() -> Result<()> {
+    let wasm = relay_enabled_historian_wasm()?;
+    let env = SelfServiceTestEnv::new_for_provisioning(wasm, true, 5_000_000_000_000)?;
+    set_provisioning_rate(&env, 20_000)?;
+    let args = RelaySetupArgs {
+        target_canister_ids: vec![env.target],
+        surplus_recipients: vec![],
+    };
+    let view = relay_setup_view(&env.pic, env.historian, args.clone())?;
+    let account = view.setup_account.unwrap();
+    env.fund_account(account, view.nominal_minimum_e8s)?;
+    let first: RelaySetupNotifyResult = update_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        args.clone(),
+    )?;
+    let RelaySetupNotifyResult::BelowCurrentRequirement {
+        required_e8s,
+        shortfall_e8s,
+        ..
+    } = first
+    else {
+        bail!("{first:?}");
+    };
+    assert_eq!(required_e8s, 360_040_000);
+    assert_eq!(relay_setup_entry_count(&env.pic, env.historian), 0);
+    env.fund_account(account, shortfall_e8s)?;
+    let result: RelaySetupNotifyResult = update_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        args.clone(),
+    )?;
+    let RelaySetupNotifyResult::Active {
+        relay_canister_id: child,
+    } = result
+    else {
+        bail!("{result:?}");
+    };
+    let status = env
+        .pic
+        .canister_status(child, None)
+        .map_err(|e| anyhow!("{e:?}"))?;
+    let expected = if let Some(path) = std::env::var_os("JUPITER_RELAY_RELEASE_TEST_WASM") {
+        Sha256::digest(std::fs::read(path)?).to_vec()
+    } else {
+        let root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
+        Sha256::digest(std::fs::read(
+            root.join("target/wasm32-unknown-unknown/release/jupiter_relay.wasm.gz"),
+        )?)
+        .to_vec()
+    };
+    assert_eq!(status.module_hash, Some(expected));
+    assert!(status.settings.controllers.is_empty());
+    assert!(status.memory_size <= Nat::from(256 * 1024 * 1024u64));
+    assert!(
+        env.pic.cycle_balance(child) >= 1_000_000_000_000,
+        "post-install operating balance"
+    );
+    assert_eq!(
+        support::ledger::icrc1_balance(&env.pic, env.ledger, &account)?,
+        0
+    );
+    let page = wait_for_index_transactions(
+        &env.pic,
+        env.index,
+        &account_identifier_text(account.owner, account.subaccount),
+        4,
+    )?;
+    let outgoing = page.transactions.iter().filter(|tx| matches!(&tx.transaction.operation,
+        IndexOperation::Transfer { from, .. } if from == &account_identifier_text(account.owner, account.subaccount))).count();
+    assert_eq!(outgoing, 2, "one conversion and one final seed");
+    assert!(env
+        .pic
+        .query_call(
+            child,
+            Principal::anonymous(),
+            "debug_config",
+            encode_args(())?
+        )
+        .is_err());
+    eprintln!(
+        "fiduciary bootstrap child_cycles={} memory_bytes={} required_e8s={required_e8s}",
+        env.pic.cycle_balance(child),
+        status.memory_size
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callback_loss(
+) -> Result<()> {
+    let candidate_debug = build_relay_enabled_historian_wasm(true)?;
+    let candidate_prod = relay_enabled_historian_wasm()?;
+    let old = include_bytes!("fixtures/relay-setup/historian-2026-10-24.wasm.gz").to_vec();
+    assert_eq!(
+        hex::encode(Sha256::digest(&old)),
+        "8c673c582964b17c63fbcd9be496a35759f41e0e37549b6fb47ebbaf7523dd0e"
+    );
+    let env = SelfServiceTestEnv::new_for_provisioning(old, true, 2_000_000_000_000)?;
+    set_provisioning_rate(&env, 20_000)?;
+    set_controllers_exact(
+        &env.pic,
+        env.cycle_sink,
+        vec![jupiter_ic_clients::constants::thirteen_node_blackhole_canister_id()],
+    )?;
+    let args = RelaySetupArgs {
+        target_canister_ids: vec![env.target, env.cycle_sink],
+        surplus_recipients: vec![relay_principal_recipient(env.target, vec![])],
+    };
+    let before = relay_setup_view(&env.pic, env.historian, args.clone())?;
+    let account = before.setup_account.unwrap();
+    let key = FixtureSetupKey(
+        hex::decode(&before.setup_key_identifier)?
+            .try_into()
+            .unwrap(),
+    );
+    env.fund_account(account, before.nominal_minimum_e8s)?;
+    let failed: RelaySetupNotifyResult = update_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        args.clone(),
+    )?;
+    let RelaySetupNotifyResult::ManualRecoveryRequired {
+        phase: RelayCreationPhase::ChildCreated,
+        relay_canister_id: Some(child),
+        message,
+    } = failed
+    else {
+        bail!("old factory must reproduce installation shortfall: {failed:?}");
+    };
+    assert!(message.contains("out of cycles"), "{message}");
+    assert!(env.pic.cycle_balance(child) < 800_000_000_000);
+    assert_eq!(env.pic.get_controllers(child), vec![env.historian]);
+    let controller = env.pic.get_controllers(env.historian)[0];
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 5);
+    support::governance::stop_canister_as(&env.pic, env.historian, controller)?;
+    let original_bytes;
+    let active_key = FixtureSetupKey([254; 32]);
+    let active_bytes = FixtureSetupValue(encode_one(FixtureRelayEntry::Active {
+        relay_canister_id: env.target,
+    })?);
+    {
+        let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
+        {
+            let manager = MemoryManager::init(memory.clone());
+            let mut entries =
+                StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+                    manager.get(MemoryId::new(26)),
+                );
+            original_bytes = entries.get(&key).unwrap().0;
+            let FixtureRelayEntry::ManualRecoveryRequired(progress) =
+                candid::decode_one(&original_bytes)?
+            else {
+                bail!("old journal");
+            };
+            assert!(progress
+                .cmc_transfer
+                .as_ref()
+                .and_then(|t| t.block_index)
+                .is_some());
+            assert_eq!(progress.relay_canister_id, Some(child));
+            assert!(progress.relay_funding_transfer.is_none());
+            entries.insert(active_key.clone(), active_bytes.clone());
+        }
+        env.pic.set_stable_memory(
+            env.historian,
+            memory.borrow().clone(),
+            pocket_ic::common::rest::BlobCompression::NoCompression,
+        );
+    }
+    #[derive(CandidType)]
+    struct RecoveryUpgrade {
+        relay_initial_cycles: Option<u128>,
+        relay_legacy_module_hash: Option<Vec<u8>>,
+    }
+    env.pic
+        .upgrade_canister(
+            env.historian,
+            candidate_debug,
+            encode_one(Some(RecoveryUpgrade {
+                relay_initial_cycles: Some(5_000_000_000_000),
+                relay_legacy_module_hash: Some(hex::decode(
+                    "221765e5940e3d0721dac7677f0294e05f616a6d91385f984c59a34ceb71cde0",
+                )?),
+            }))?,
+            Some(controller),
+        )
+        .map_err(|e| anyhow!("legacy in-place upgrade: {e:?}"))?;
+    support::governance::start_canister_as(&env.pic, env.historian, controller)?;
+    let view = relay_setup_view(&env.pic, env.historian, args.clone())?;
+    let Some(RelayRecoveryView::FundingRequired(quote)) = view.recovery else {
+        bail!("expected residual requirement: {view:?}");
+    };
+    assert_eq!(view.setup_key_identifier, before.setup_key_identifier);
+    assert_eq!(quote.setup_account, account);
+    assert_eq!(quote.relay_canister_id, Some(child));
+    assert!(quote.additional_e8s > 0);
+    assert!(quote.additional_e8s < before.nominal_minimum_e8s);
+    let balance_before = support::ledger::icrc1_balance(&env.pic, env.ledger, &account)?;
+    env.fund_account(account, quote.additional_e8s)?;
+    let call = env
+        .pic
+        .submit_call(
+            env.historian,
+            Principal::anonymous(),
+            "notify_relay_configuration",
+            encode_one(args.clone())?,
+        )
+        .map_err(|e| anyhow!("{e}"))?;
+    // Observe the persisted supplemental transfer identity, then interrupt its
+    // callback using the existing debug-only fixture hook.
+    #[derive(Deserialize, CandidType)]
+    struct ProgressProjection {
+        continuation: Option<ContinuationProjection>,
+    }
+    #[derive(Deserialize, CandidType)]
+    struct ContinuationProjection {
+        conversions: Vec<ConversionProjection>,
+    }
+    #[derive(Deserialize, CandidType)]
+    struct ConversionProjection {
+        transfer: FixtureRelayTransfer,
+        cycles_minted: Option<u128>,
+    }
+    #[derive(Deserialize, CandidType)]
+    enum EntryProjection {
+        Creating(ProgressProjection),
+    }
+    let mut dispatched = false;
+    for _ in 0..100 {
+        env.pic.tick();
+        let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
+        let manager = MemoryManager::init(memory);
+        let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+            manager.get(MemoryId::new(26)),
+        );
+        if let Some(bytes) = entries.get(&key) {
+            if let Ok(EntryProjection::Creating(p)) = candid::decode_one(&bytes.0) {
+                if p.continuation.is_some_and(|c| {
+                    c.conversions
+                        .iter()
+                        .any(|c| c.transfer.block_index.is_none())
+                }) {
+                    dispatched = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(dispatched, "must interrupt a prepared recovery conversion");
+    update_one::<_, ()>(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "debug_trap_after_factory_call",
+        true,
+    )?;
+    let error = env
+        .pic
+        .await_call(call)
+        .expect_err("recovery callback must trap");
+    assert!(format!("{error:?}").contains("debug factory callback interruption"));
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 10);
+    support::governance::stop_canister_as(&env.pic, env.historian, controller)?;
+    env.pic
+        .upgrade_canister(
+            env.historian,
+            candidate_prod,
+            encode_args(())?,
+            Some(controller),
+        )
+        .map_err(|e| anyhow!("recovery interruption upgrade: {e:?}"))?;
+    support::governance::start_canister_as(&env.pic, env.historian, controller)?;
+    let result: RelaySetupNotifyResult = update_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        args.clone(),
+    )?;
+    assert!(
+        matches!(result, RelaySetupNotifyResult::Active { relay_canister_id } if relay_canister_id == child),
+        "{result:?}"
+    );
+    let status = env
+        .pic
+        .canister_status(child, None)
+        .map_err(|e| anyhow!("{e:?}"))?;
+    assert_eq!(
+        status.module_hash,
+        Some(hex::decode(
+            "221765e5940e3d0721dac7677f0294e05f616a6d91385f984c59a34ceb71cde0"
+        )?)
+    );
+    assert!(status.settings.controllers.is_empty());
+    let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
+    let manager = MemoryManager::init(memory);
+    let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+        manager.get(MemoryId::new(26)),
+    );
+    assert_eq!(entries.get(&active_key), Some(active_bytes));
+    #[derive(CandidType, Deserialize)]
+    enum CompletedProjection {
+        Active {
+            completed: Option<SettledProjection>,
+        },
+    }
+    #[derive(CandidType, Deserialize)]
+    struct SettledProjection {
+        cmc_transfer: Option<FixtureRelayTransfer>,
+        cycles_minted: Option<u128>,
+        relay_funding_transfer: Option<FixtureRelayTransfer>,
+        continuation: Option<ContinuationProjection>,
+    }
+    let CompletedProjection::Active {
+        completed: Some(completed),
+    } = candid::decode_one(&entries.get(&key).unwrap().0)?
+    else {
+        bail!("completed recovery journal was not retained")
+    };
+    let FixtureRelayEntry::ManualRecoveryRequired(original) = candid::decode_one(&original_bytes)?
+    else {
+        bail!("original legacy journal")
+    };
+    assert_eq!(completed.cmc_transfer, original.cmc_transfer);
+    assert_eq!(completed.cycles_minted, original.cycles_minted);
+    let conversions = completed.continuation.unwrap().conversions;
+    assert_eq!(conversions.len(), 1);
+    assert!(conversions[0].transfer.block_index.is_some());
+    assert!(conversions[0].cycles_minted.is_some());
+    assert!(completed
+        .relay_funding_transfer
+        .as_ref()
+        .unwrap()
+        .block_index
+        .is_some());
+    let keys = StableCell::<FixtureBytes, FixtureMemory>::init(
+        manager.get(MemoryId::new(30)),
+        FixtureBytes(Vec::new()),
+    );
+    let keys: FixtureCreatingKeys = candid::decode_one(&keys.get().0)?;
+    assert!(keys.0.unwrap().is_empty());
+    assert_eq!(
+        support::ledger::icrc1_balance(&env.pic, env.ledger, &account)?,
+        0
+    );
+    let page = wait_for_index_transactions(
+        &env.pic,
+        env.index,
+        &account_identifier_text(account.owner, account.subaccount),
+        5,
+    )?;
+    let from = account_identifier_text(account.owner, account.subaccount);
+    let outgoing = page.transactions.iter().filter(|tx| matches!(&tx.transaction.operation, IndexOperation::Transfer { from: source, .. } if source == &from)).count();
+    assert_eq!(
+        outgoing, 3,
+        "original conversion, one recovery conversion and one final seed"
+    );
+    let seed_account = account_identifier_text(
+        child,
+        Some({
+            let mut bytes = [0; 32];
+            bytes[31] = 1;
+            bytes
+        }),
+    );
+    let seed = page
+        .transactions
+        .iter()
+        .find_map(|tx| match &tx.transaction.operation {
+            IndexOperation::Transfer { to, amount, .. } if to == &seed_account => {
+                Some(amount.e8s())
+            }
+            _ => None,
+        })
+        .context("accepted final Relay seed")?;
+    assert!(
+        seed >= 130_020_000,
+        "retain seed, margin and the original extra-target charge"
+    );
+    eprintln!("legacy recovery preserved child={child} existing_balance={balance_before} additional_e8s={} original_entry_bytes={} final_seed={seed}", quote.additional_e8s, original_bytes.len());
     Ok(())
 }
