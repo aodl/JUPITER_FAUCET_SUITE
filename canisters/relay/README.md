@@ -248,6 +248,24 @@ A public NNS neuron recipient is resolved through NNS Governance and paid to its
 
 Self-service creation supports both forms and passes each exact 0–32-byte memo unchanged. An empty memo preserves the established no-memo transfer semantics. No IO recipient or other protocol recipient is added automatically.
 
+### Patron programme and protocol treasury capital
+
+The separate [SNS Rewards programme](../sns-rewards/README.md#direct-patron-rewards)
+issues reserve-funded patron jUP. Its intended Relay route is base-rate liquid to
+the recognised original contributor, preserving FIFO/splitter provenance and
+excluding only protocol treasury capital within mixed batches. That integration
+is incomplete and the programme pauses Relay assessments; combined patron and
+automatic treasury activation is rejected. This does not change this Relay's
+existing pot distribution or retry policy below.
+
+Native SNS ICP treasury reinvestment targets the canonical Relay's subaccount 1.
+Existing `relay_faucet_commitment_memo` and `build_faucet_commitment_plan` determine
+the ASCII raw-ICP memo, minimum net endowment and actual fees. No numeric treasury
+memo or forwarding canister is introduced. Treasury capital receives normal
+Faucet/Disburser age-bonus treatment and the reviewed 95% SNS Rewards / 5% D-QUORUM
+split, but must not issue patron jUP. The new treasury worker proves its native
+Ledger credit; aggregate forwarding/provenance proof remains integration work.
+
 ### SNS reward attribution
 
 Reward attribution is a separate optional stage after core funding; it does not change the cycles-allocation rules. Relay normally adjudicates once per week by asking the configured [`jupiter-sns-rewards`](../sns-rewards/README.md) canister for a fresh completed owner snapshot and its Root-resolved token Ledger. A completed adjudication, including one with boundedly abandoned recipients, starts the next seven-day interval. A dependency, history, reconstruction or work-budget failure before valid adjudication does not, so Relay retries at the next accepted daily main tick. A small durable payout cursor protects exact transfer identities across awaits and upgrades, but always consumes itself rather than becoming a recovery journal.

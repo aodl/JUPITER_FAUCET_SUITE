@@ -6,16 +6,26 @@ change. Production `ic`, its mappings and installation arguments retain their
 existing meaning. In particular, production SNS Rewards still uses its reviewed
 OpenChat binding. Acceptance never uses that binding.
 
-Source baseline: Jupiter `fb231f5f45dc7cdbec50267931db6dc70e10ddc3` (clean), IO
-`8b2e1cba06b43bc587898343a0391a6fac7eca23` (untracked `results.txt` left alone).
-IO was read-only. No build, test or script here needs its checkout.
+The application and framework tests use Jupiter infrastructure. IO revision
+`8b2e1cba06b43bc587898343a0391a6fac7eca23` supplies the read-only settlement
+contract; no build, test or script needs its checkout.
 
 ## Inputs and isolation
 
-[`profile.json`](profile.json) is the canonical acceptance input. Uncreated
-application/SNS identities, operator, NNS neuron and unsettled economics are
-`null`, not fake deployment principals. Fill these only from actual provisioning
-records after separate authorization, then commit the reviewed inputs. The
+[`profile.json`](profile.json) is the canonical acceptance identity input. It contains the operator-reported Disburser
+`spoge-kaaaa-aaaas-amyoa-cai` and exact NNS neuron `2234355977000034918`.
+The checked-in handoff reports delegated selection of the other eleven roles;
+all twelve assignments are recorded in the profile and the
+[identity handoff](identity-handoff.md). The original authenticated operator
+session is not available as independent evidence in this checkout. Treat the
+eleven mappings as proposed assignments requiring final operator confirmation,
+not observations of installed mainnet roles. No read-only or mutating mainnet
+calls were authorized for this integration task.
+`provisioning.json` retains the original inventory and delegation provenance.
+No existing mapping was inferred from ID ordering. Role isolation is independently
+validated with `profile.py check-roles`. Operator, production NNX authority, launch
+timestamp and reviewed genesis/Relay surplus inputs remain unresolved, so full
+constructor preparation still fails closed. The
 `acceptance` CLI environment uses network `ic` and all twelve roles, separately
 from production. A Ledger archive is a later-created component, not an initial
 thirteenth role.
@@ -33,8 +43,9 @@ beneficiary: NNS Governance `rrkah-fqaaa-aaaaa-aaaaq-cai`, subaccount
 This is the reviewed production Disburser's 5% age-bonus recipient, not IO's
 protected permanent neuron. No other Governance Account is allowed in that role,
 including protected Jupiter/IO staking Accounts. Protected application principals
-and neuron IDs remain rejected. Both recipient policies stay unresolved in the
-checked profile; constructor preparation authorizes no real ICP donation.
+and neuron IDs remain rejected. The exact D-QUORUM recipient is encoded in the checked profile. The canonical
+Relay surplus policy remains unresolved; constructor preparation authorizes no
+real ICP donation.
 Any real funding requires separate explicit authorization.
 
 | Executable boundary | Acceptance binding | Production behavior |
@@ -79,7 +90,10 @@ The tools use Python's standard library, existing `didc` and `ic-wasm`, and the
 locked workspace. There is no SNS deployment service or on-chain coordinator.
 
 ```bash
-# Expected to fail until actual identities are supplied:
+# Role isolation succeeds; full preparation still requires the unresolved inputs:
+python3 tools/acceptance/profile.py check-roles deploy/acceptance/profile.json
+
+# Expected to fail until operator and installation inputs are reviewed:
 python3 tools/acceptance/profile.py check deploy/acceptance/profile.json
 
 # Verify a supplied exact tuple, or explicitly fetch its pinned official bytes:
@@ -110,7 +124,10 @@ Frontend templates are restored even on a failed build. These are development
 artifacts, not canonical production release hashes. Canonical production release
 verification remains the existing Docker flow.
 
-The real PocketIC case uses the verified official Governance, Root, Ledger,
+The retained compatibility PocketIC case uses its explicitly historical small
+constructor fixture (including its historical fees/bonuses), not the agreed launch
+economics. The new programme and sale cases consume `economics.json`. The
+compatibility case uses the verified official Governance, Root, Ledger,
 Index and compatible parked Swap; it exercises owner snapshots, actual jUP
 transfers, Ledger deduplication, explicit factory child configuration, immutable
 children and an adopted native application-upgrade proposal. NNS Governance is a
@@ -163,154 +180,148 @@ record. Normal registered-SNS discovery and direct status probing remain active.
 Verify physical module hashes, controllers and Root membership after each step;
 a successful command alone is insufficient deployment evidence.
 
-## jUP decisions that source cannot settle
+## One economic contract, two launch paths
 
-The `jUP` name in the UI establishes intent, not a complete Ledger/genesis or
-issuance contract. The local fixture is deliberately small and has zero native
-staking inflation. None of its quantities are proposed production economics.
+[`economics.json`](economics.json) is consumed by the launch renderer, operational
+fixtures, Rust programme and economic tests. It conserves exactly 100 million
+jUP at eight decimals: 10 million governance, 10 thousand sale, 100 operational
+proposer and 89,989,900 reserve transport; built-in SNS treasury starts at zero.
+The transfer fee is 0.1 jUP, rejection charge 1 jUP, and native reward rates and
+voting-power age/delay bonuses are zero. Native participation events remain active.
+The Julian year is 31,557,600 seconds; four years is 1,461 days.
 
-| Missing input | Existing source | Options and recommendation |
-|---|---|---|
-| Supply, decimals, distribution and treasury custody | No executable jUP genesis | Review explicit allocations and decimals before creating mainnet constructors; do not infer supply from marketing copy |
-| Endowment-to-jUP issuance and authority | Relay distributes an available reward pot using completed endowment/owner snapshots; general issuance is absent | Decide a bounded prefunded allocation or an actual minting programme and launch mechanism; keep the latter blocked until its valuation/authority contract is established |
-| Native SNS mint/treasury operations | Pinned Governance values SNS tokens through Swap | Direct Normal genesis with a parked zero-sale Swap does not establish this valuation; use a real compatible launch if required, not fabricated sale proceeds |
-| Proposer/voters, stake, permissions and voting parameters | Owner selection is a heuristic, not voting authority | Specify independently of the operator; do not inherit IO's decisive human voter or 100M allocation |
-| Native SNS staking rewards | Not determined by SNS Rewards' owner index or planned IO rewards | Explicitly choose zero native inflation or a reviewed schedule; local zero is test data |
-| Second age-bonus recipient and canonical Relay surplus policy | The exact shared D-QUORUM Account is an allowed external beneficiary; protected Jupiter/IO resources remain isolated | Explicitly review the second recipient, with shared D-QUORUM preserving production intent; select acceptance Relay recipients separately. Neither is inserted into the unresolved profile |
-| Archive funding | Ledger constructor requires a separate creation budget | Review an affordable explicit value and pre-trigger funding gate; 3T main cycles does not fund every possible archive configuration |
+The 10-million neuron is intended for NNX authority, whose implementation and
+live principal remain external dependencies. It is separate from the canister's
+SubmitProposal-only operational neuron. Both and the reserve transport are
+excluded from external reward shares. Excluding the protocol-only proposer is
+an explicit operating recommendation adopted by the fixtures. Replenishment
+uses 20/100 jUP watermarks, authentic outstanding charges and permissionless
+native stake refresh. It sponsors protocol operations only.
 
-The exact official tuple is in [`sns-framework.json`](sns-framework.json),
-initially taken from IO's reviewed SNS-W version after NNS proposal 144202. It
-intentionally spans multiple upstream commits. Verification checks all six
-compressed/raw hashes, embedded DIDs and source revisions. No framework upgrade
-or new launch mode is selected implicitly.
+The six installed components are pinned individually in
+[`sns-framework.json`](sns-framework.json). The official SNS CLI, testing bundle
+and SNS-W deployment validator have independent source/artifact pins in
+[`launch-tools.json`](launch-tools.json). Maintained upstream constructors and
+validators run against owned PocketIC infrastructure; no third repository or
+IO Wasm is a dependency.
 
-The pinned Governance `proposal.rs::validate_and_render_mint_sns_tokens` calls
-the treasury valuation path before accepting a native mint. Its sale-free
-limitations apply even in Normal mode. The integration reward pot is a genuine
-genesis-funded Ledger transfer, not evidence of the planned issuance programme.
+`production_launch.rs` validates the exact production allocation with the official
+NNS/SNS configuration converter. The large developer neurons are accepted by
+this pinned path; the historical developer-versus-swap restriction is not
+present. Equal one-year minimum/maximum voting delays are accepted. An initial
+10 ICP minimum buyer is authentically rejected for the two-neuron basket and
+1 jUP minimum stake plus fees. The supported minimum is 22 ICP. This buyer
+minimum does not change the 10,000–100,000 ICP total sale range.
 
-### Narrow issuance choice under the pinned framework
+`sale_rehearsal.rs` deploys through real SNS-W, opens the real Swap, pays local ICP,
+and finalizes successful and failed sales. It verifies participant neurons,
+refunds, treasury receipts, physical controllers, fees and supply. The supported
+basket has zero-delay and one-year members; not all participant stake qualifies
+for Jupiter's exact-year bonus. The canister-controlled zero-delay, zero-vesting
+reserve neuron disburses through native Governance into the SNS Rewards reserve
+Account after Normal mode. The reserve receives its allocation minus the actual
+native disbursement fee. No arbitrary direct Ledger allocation is presented as
+production launch support.
 
-The [production frontend](../../canisters/frontend/public/index.html) describes patron jUP airdrops for qualifying ICP
-endowments and IO rewards for jUP stakers. Those are product intentions, not an
-implemented issuance formula or native SNS inflation schedule.
+Long-lived acceptance retains the direct-installed Normal SNS and parked Swap.
+Its real Ledger/governance/controller behavior is useful operational evidence,
+but it has no sale history or authentic SNS-token sale valuation. Its small contested ownership
+fixture is not the production participant distribution. Native SNS-token treasury/mint valuation belongs in the sale rehearsal.
+ICP-treasury valuation uses the real ICP Ledger and CMC, independently of Swap,
+as the [pinned valuation source](https://github.com/dfinity/ic/blob/98c898f8de068a1fc0e97ebc805f9fa7f315d862/rs/sns/governance/token_valuation/src/lib.rs)
+shows. The sale test reinvests actual sale proceeds; a funded operational ICP
+treasury need not invent sale history. No fake price, sale proceeds or
+Governance mode transition substitutes for finalization.
 
-| Approach | Authority and supply | Parked Swap compatibility | Minimum additional work |
-|---|---|---|---|
-| Initially funded jUP distribution reserve | Explicit genesis allocation to a non-minting Account; its custodian distributes existing tokens, without increasing supply | Yes for a dapp-owned reserve. Native SNS-token treasury releases also require valuation, so do not assume a Governance treasury reserve can be released with this Swap | Review allocation/custody and patron eligibility/pacing; implement the missing allocator and governed releases. Existing Relay pots support only their existing SNS-owner attribution policy |
-| Ongoing new jUP tokens | Governance's default Account is the Ledger minter; adopted native `MintSnsTokens` proposals create new supply | Native mint validation requires real Swap-derived valuation; the parked Swap fails this check | Decide whether ongoing patron minting is required, then review a compatible launch and issuance policy/allocator. No fabricated sale or price |
-| Native SNS voting rewards | Governance credits voting maturity under reviewed reward parameters; maturity disbursement mints jUP, independently of patron allocations | The pinned Normal-mode reward/maturity paths do not use Swap valuation; this is source-supported, not a nonzero-rewards lifecycle result from our zero-inflation fixture | Review inflation and maturity policies, configure them and test actual reward settlement/disbursement; no Jupiter minting service is required |
-| IO rewards to jUP stakers | IO's settlement authority issues/routes IO under its own contract; this creates no jUP supply | jUP Swap valuation is irrelevant to IO settlement | Agree and implement the ICP sender, IO settlement destination and staker distributor described below; this flow is absent today |
+## Implemented programme and remaining boundaries
 
-The [pinned Ledger](https://github.com/dfinity/ic/blob/cf41372e3d4dc1accfe2c09a7969f8bddc729dc1/rs/ledger_suite/icrc1/ledger/src/main.rs)
-treats transfers from the minting Account as mints and transfers to it as burns.
-Constructors therefore reject initial allocations there and reject duplicate
-effective Accounts, including default/zero aliases and neuron-staking collisions.
-Native mint/treasury valuation checks are in the
-[pinned proposal validator](https://github.com/dfinity/ic/blob/98c898f8de068a1fc0e97ebc805f9fa7f315d862/rs/sns/governance/src/proposal.rs).
-The [pinned Governance](https://github.com/dfinity/ic/blob/98c898f8de068a1fc0e97ebc805f9fa7f315d862/rs/sns/governance/src/governance.rs)
-also reserves the Ledger from generic-function targets: a generic Ledger mint
-proxy is not a supported shortcut around native mint validation. Moving the
-minting Account away from Governance would change the accepted SNS contract.
+The SNS Rewards [programme documentation](../../canisters/sns-rewards/README.md)
+defines discovery, final contribution assessment, fixed-point patron rewards,
+dispatch uncertainty, reserve custody, mirror bindings and participation shares.
+Production installs reject patron and treasury activation until complete
+Relay/splitter/mixed treasury provenance is implemented. Other modules remain
+explicitly configurable; direct payment tests use the labelled debug build. Existing installations
+retain their deployed root and stable state and enable no new transfers through
+an upgrade default. Production's OpenChat installation binding is untouched.
 
-The narrow choice is a bounded initial patron-distribution allocation versus a
-programme requiring ongoing new patron tokens. Decide native voting inflation
-separately; a finite reserve alone does not establish a hard total-supply cap.
-IO rewards are a separate integration in either case. No rate, cap or inflation
-schedule is selected by this preparation.
+Two real official SNS instances exercise union ownership, direct liquid and
+compounded patron transfers, permissionless refresh, canonical Yes/No mirror
+ballots and observable target application settings. A deliberate Ledger fault
+boundary covers uncertain transfers that actually paid and actually did not pay.
+An actual post-dispatch callback trap plus upgrade exercises the durable message
+boundary. Those fault tests are not mocked Governance or Swap outcomes.
 
-## Small shared contract and extraction seam
+Motion mirroring asks whether Jupiter should vote Yes on the bound target.
+Canonical adoption means Yes, rejection means No, and open/unavailable means no
+vote. Full official action DTOs and installed Governance hashes protect the
+content digest. Targets, Roots, neurons and proposer are configured and bound;
+caller-supplied titles cannot create a mapping. Unknown submissions reconcile
+canonical identity, and unknown ballots reconcile the real target ballot.
 
-The project supplies identities, explicit genesis parameters/balances/neurons,
-permissions, registered applications and expected controller policy. Reviewed
-inputs are the six-artifact lock and project configuration. Outputs are typed
-constructor bytes, exact Account encodings and input/hash records. Observed
-modules/controllers/Root membership must be recorded separately from expectations.
+Jupiter ordinary voting is five days; target fixtures use six. Timing admission
+includes the source wait-for-quiet extension bound, discovery and execution
+margin. The shared proposed operating default is a positive one-hour native quiet
+interval, with a one-hour delivery margin. A real late-vote extension test crosses
+the original source deadline while it remains open, verifies no target ballot,
+then delivers the canonical rejection. Ordinary five/six-day cases retain room
+for the bounded native extension. Larger quiet intervals, critical proposal rules
+and late discovery still require actual deadline admission; six days is not a
+universal guarantee. NNX's suggested four-day period is documentation only.
 
-The neutral extraction boundary is `ic.py` (encodings), `candid.py` (typed
-round trips), `sns.py` (artifact verification and direct constructors), and
-`artifacts.py` (explicit pinned fetching). The IO vote-only neuron and Jupiter
-fixture vectors exercise the same constructor code; neither allocation is a
-shared default. IO's Rust adapter still includes its frozen reserve, redemption,
-governance and authority policies. Migrating it requires a deliberate adapter
-change. Both projects do **not** yet consume one versioned package, so this is
-an extraction seam, not completed cross-project standardization. Keep Jupiter's
-environment, financial accounts, build bindings and rescue model in its adapter.
+The native treasury worker uses the same proposer, authenticated balances,
+seven-day/value limits and uniquely identified durable operations.
+It proposes ICP to canonical Relay subaccount 1 and verifies the actual Ledger
+transfer. Rejection/failure requires reviewed reactivation; ambiguity blocks
+ordinary reactivation. Only pinned Governance may explicitly request a new
+operation after the prior native transfer is conclusively verified, using a new
+increasing ID and exact predecessor without changing configuration. Per-operation
+history preserves both results. The integration fixture follows the actual native
+Treasury credit through real Relay forwarding and the real ICP Ledger to the
+staking Account, with only NNS neuron lookup/refresh mocked. The runtime journal
+still stops at the native Relay credit: complete FIFO/splitter and mixed capital
+attribution is not implemented, so production treasury automation stays disabled. Existing Relay memo/fee behavior and the
+normal 95% SNS Rewards / 5% D-QUORUM age-bonus split remain unchanged.
 
-## Next phase: Jupiter-to-IO ballots
+**Integration limits:** patron history pauses at canonical Relay subaccount-1
+commitments pending exact FIFO/splitter attribution; it does not mark those
+commitments ineligible or pay the canonical Relay principal. Other Relay-child
+and splitter routes are not recognised by this guard. General patron activation
+is rejected by production install/upgrade validation until those routes are
+integrated. Native treasury activation is also rejected until mixed-batch provenance exclusion is
+implemented. Direct patron processing, discovery, reserve transport, governance
+mirroring and participation collection remain independently testable. This
+branch therefore is not production activation readiness.
 
-Use the pinned standard `AddGenericNervousSystemFunction` and
-`ExecuteGenericNervousSystemFunction` proposal path, with Jupiter SNS Rewards as
-the fixed validator/executor dapp. No such API or state is added in this task.
+## IO contract handoff
 
-Proposed payload: exact IO Governance principal, exact designated governance-only
-IO neuron bytes, IO proposal ID, explicit `Yes` or `No`. Validator and executor
-must accept calls only from the configured Jupiter Governance and reject every
-other target/neuron/action. Execution translates only to IO
-`manage_neuron(RegisterVote { proposal; vote })`; it is not a management proxy.
+[`io-handoff.json`](io-handoff.json) records the exact proposed Accounts with the
+assigned SNS Rewards principal, known reserved IO acceptance components and the
+read-only source pin. It is disabled and records no deployment observation.
 
-Persist one bounded execution record per relevant IO ballot: payload digest,
-target proposal/neuron, requested vote and dispatch/outcome evidence. The standard
-executor receives the payload, not a trusted Jupiter proposal ID; do not require
-an invented caller-supplied proposal identity. An identical request reconciles; a conflicting
-ballot fails. After an ambiguous reply, read the canonical IO proposal ballot
-through an authenticated replicated call before permitting a retry; fail if a contradictory ballot or
-closed deadline makes the instruction impossible. An adopted instruction is not
-successful merely because it dispatched. A rejected Jupiter proposal sends no IO
-ballot and must never be represented as an IO `No` vote.
+The independent collector reads official per-neuron event participation shares,
+checks complete/coherent pagination, removes protocol roles before the denominator
+and publishes atomically. Shares already contain voting power; no second stake
+multiplication is applied. A zero-weight event leaves value unallocated. The gross
+share query is a mathematical quote, not an IO entitlement or funded payout.
 
-The pinned `canister_control.rs` treats **any successful executor reply** as
-successful governance execution, without decoding an application `Result`.
-The future executor must reply only after the ballot is confirmed; explicitly
-reject failures/unknown outcomes while preserving its journal. Returning
-`Result::Err` as a successful reply would falsely mark the proposal executed.
-The validator instead returns the standard typed `Result<text, text>` rendering.
+`io_contract.rs` tests the public IO interface at the pinned read-only revision:
+exact ICP deposit Accounts/fee/time/block floor, `notify_jupiter_deposit`, Pending
+and Completed results, exact 40/60 net-of-two-fees settlement and the actual IO
+receipt Account, block, amount, fee and receipt-sequence memo. Duplicate receipts
+credit inventory once. Uncertain ICP or Pending conversion credits nothing.
+This is a contract-faithful interface test, not a run of the real IO application.
+No ICP forwarding or IO distribution worker is activated.
 
-IO's designated 100M governance-only neuron is excluded from claim backing and IO
-staking rewards. Its voting stake creates no equivalent Jupiter ICP obligation.
-Acceptance must grant the distinct acceptance SNS Rewards principal the actual
-Vote permission; IO's existing human fixture voter is not the final integration.
+The minimal IO-side change is to bind `jupiter_account` to **SNS Rewards' default
+ICP Account**, which receives age-bonus ICP, rather than the production template's
+Faucet source. `jupiter_staging` remains the IO NNS Manager default ICP Account.
+Bind `jupiter_io_account` to an explicitly reviewed SNS Rewards-owned IO Account,
+and pin the activation floor to an authenticated ICP Ledger boundary before the
+first transfer. Confirm actual IO Ledger, manager and Stream Manager reserve
+Accounts and native settlement receipts. Jupiter must not spoof Faucet or alter
+IO accounting. IO payout fees/emissions still need a reviewed policy; patron's
+sponsored jUP fee does not authorize unlimited IO fee subsidies.
 
-Before implementation, set the deadline contract: IO must remain votable through
-Jupiter's full voting and wait-for-quiet windows plus execution/reconciliation
-margin. IO's reviewed acceptance voting period is 86400 seconds with a 43200
-second wait-for-quiet increase; an immediate local majority does not solve this
-production timing problem. Tests must include real adoption/registration,
-unauthorized/conflicting/replayed instructions, ambiguous delivery with canonical
-ballot reconciliation, failed execution and deadlines. No general bridge is needed.
-
-## Next phase: ICP and IO settlement
-
-Current source proves these distinct paths:
-
-1. Disburser routes its reviewed age-bonus share to SNS Rewards' default ICP
-   Account. SNS Rewards currently indexes owners; it does not forward ICP or
-   distribute newly received IO.
-2. IO NNS Manager authenticates an exact ICP block from configured
-   `jupiter_account` to its own default `jupiter_staging` Account, including
-   amount, fee, creation time, no spender and the activation floor. Both Accounts
-   must be defaults. The production template names Faucet as the source, which
-   is not the SNS Rewards receiver above.
-3. IO's retained Jupiter operation and Stream Manager receipt machinery produce
-   settlement to configured `jupiter_io_account`; the production template still
-   names a Faucet-owned IO Account with an unresolved subaccount. This does not
-   identify a working Jupiter IO-distribution implementation.
-
-The smallest proposed alignment is **SNS Rewards default ICP Account -> IO
-acceptance NNS Manager default ICP Account**, with settled IO returned to a
-separately approved SNS Rewards-owned IO Account. This is a proposed contract,
-not active configuration. IO would need its source role aligned deliberately;
-Jupiter needs a narrow, authorized forwarding/settlement/distribution capability.
-Do not reroute funds through Faucet merely to fit the old template.
-
-Agree the exact receiving IO Account and distributor before activation. A
-Jupiter transfer must retain the exact returned ICP block and pinned identity;
-IO authenticates the Ledger block independently. Resume IO's existing deposit/
-receipt operation by that block after partial execution, never create a second
-deposit to resolve an unknown reply. Pin the activation floor to a verified
-Ledger boundary before the first eligible transfer. Both projects' Ledgers,
-Index, NNS Manager, Stream Manager, SNS authority, SNS Rewards owner snapshot
-and approved IO recipient must be installed and verified first. Separate any
-future IO-distribution liability/recovery contract from Relay's existing jUP
-best-effort reward pot; these are different tokens and responsibilities.
+There is no mainnet installation, transfer, controller change or neuron action
+in these tests. Hosted CI provisions the pinned official artifacts for the SNS
+Rewards PocketIC lane; ignored real-SNS tests are explicitly discovered by xtask.

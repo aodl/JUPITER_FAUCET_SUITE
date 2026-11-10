@@ -60,6 +60,15 @@ export function formatIcpE8s(value) {
   return fraction ? `${sign}${whole.toString()}.${fraction} ICP` : `${sign}${whole.toString()} ICP`;
 }
 
+// Compact navbar summary only. BigInt avoids losing cents for large balances.
+export function formatIcpE8sSummary(value) {
+  if (value === null || value === undefined) return DASH;
+  const amount = BigInt(value);
+  const absolute = amount < 0n ? -amount : amount;
+  const cents = (absolute + 500_000n) / 1_000_000n;
+  return `${amount < 0n ? '-' : ''}${cents / 100n}.${(cents % 100n).toString().padStart(2, '0')} ICP`;
+}
+
 export function formatGroupedBigInt(value) {
   const text = value.toString();
   const sign = text.startsWith('-') ? '-' : '';

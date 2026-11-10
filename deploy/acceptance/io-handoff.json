@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "enabled": false,
+  "source": "Read-only IO public interface and acceptance draft, revision 8b2e1cba06b43bc587898343a0391a6fac7eca23; configuration expectations, not deployment observations",
+  "jupiter_icp_source": {
+    "owner": "xgsnm-aaaaa-aaaas-amysa-cai",
+    "subaccountHex": null,
+    "address": "xgsnm-aaaaa-aaaas-amysa-cai",
+    "explorerAccountHex": "9f4871aa3492087db845ca0eb154c3a639464f40f0b882231ede354671c81a06"
+  },
+  "io_icp_destination": {
+    "owner": "gosbn-sqaaa-aaaas-amxua-cai",
+    "subaccountHex": null,
+    "address": "gosbn-sqaaa-aaaas-amxua-cai",
+    "explorerAccountHex": "627fab1555b9489e47aee8d210b23a13c9da63b592f80b1602ecd4c245e1ef7b"
+  },
+  "icp_ledger": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+  "io_manager": "gosbn-sqaaa-aaaas-amxua-cai",
+  "io_root": "hk7o7-lqaaa-aaaas-amxsa-cai",
+  "io_governance": "h7y7s-kyaaa-aaaas-amxrq-cai",
+  "io_ledger": "hn6il-giaaa-aaaas-amxsq-cai",
+  "io_receipt_source": {
+    "owner": "gjthz-7iaaa-aaaas-amxuq-cai",
+    "subaccountHex": "781a5fc2d878692d1fa555359c190f96d61f85b392cf11b80f4666169d789027",
+    "address": "gjthz-7iaaa-aaaas-amxuq-cai-jatk7ka.781a5fc2d878692d1fa555359c190f96d61f85b392cf11b80f4666169d789027",
+    "explorerAccountHex": "b7ff1bb0dbd5ab44ecafdbd7001f00b43a829534d47724530e5c726b27b99058"
+  },
+  "jupiter_io_destination": {
+    "owner": "xgsnm-aaaaa-aaaas-amysa-cai",
+    "subaccountHex": null,
+    "address": "xgsnm-aaaaa-aaaas-amysa-cai",
+    "explorerAccountHex": "9f4871aa3492087db845ca0eb154c3a639464f40f0b882231ede354671c81a06"
+  },
+  "expected_icp_fee_e8s": 10000,
+  "expected_io_fee_e8s": 10000,
+  "activation_block_floor": null,
+  "target_io_ordinary_voting_seconds": 518400,
+  "io_side_changes": [
+    "Bind jupiter_account and Jupiter role to Jupiter SNS Rewards default ICP Account, replacing the earlier Faucet source role.",
+    "Bind jupiter_io_account to the proposed SNS Rewards default IO Account.",
+    "Review and pin the authenticated activation block floor, verify installed code/Accounts and apply the intended six-day ordinary period on IO."
+  ],
+  "jupiter_side_limits": [
+    "No ICP forwarding or IO distribution worker is activated.",
+    "IO per-recipient payout fee/emission policy remains unresolved.",
+    "Only an authenticated Completed result corroborated by the exact IO Ledger receipt becomes inventory."
+  ]
+}

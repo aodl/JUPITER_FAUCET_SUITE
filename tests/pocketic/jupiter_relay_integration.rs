@@ -1056,9 +1056,9 @@ fn scheduled_daily_tick_resumes_after_two_minute_lease_collision_and_early_gap()
             None,
         )
         .map_err(|err| anyhow::anyhow!("daily fixture upgrade: {err:?}"))?;
-    let installed = (env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+    let installed = env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000;
     let advance_to = |seconds: u64| {
-        let current = (env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+        let current = env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000;
         assert!(seconds >= current);
         env.pic.advance_time(Duration::from_secs(seconds - current));
         tick_n(&env.pic, 80);
@@ -2402,7 +2402,7 @@ fn zero_need_topups_distribute_eligible_surplus_after_external_cycles_subsidy() 
     };
     let before = [balance(env.ledger)?, balance(env.cmc)?];
     let rate = jupiter_ic_clients::cmc::IcpXdrConversionRate {
-        timestamp_seconds: (env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64,
+        timestamp_seconds: env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000,
         xdr_permyriad_per_icp: 100_000,
     };
     update_one::<_, ()>(
@@ -3082,8 +3082,7 @@ fn relay_retains_funds_when_cycles_are_unchanged_and_conversion_is_missing() -> 
         Principal::anonymous(),
         "debug_set_conversion_rate",
         jupiter_ic_clients::cmc::IcpXdrConversionRate {
-            timestamp_seconds: (env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000)
-                as u64,
+            timestamp_seconds: env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000,
             xdr_permyriad_per_icp: 0,
         },
     )?;

@@ -299,11 +299,16 @@ fn real_jup_sns_ownership_rewards_factory_and_governed_upgrade() -> Result<()> {
         roles.insert(role.to_string(), json!(id.to_text()));
     }
     let role = |name: &str| Principal::from_text(roles[name].as_str().unwrap()).unwrap();
+    let acceptance_profile: serde_json::Value =
+        serde_json::from_slice(&fs::read(repo.join("deploy/acceptance/profile.json"))?)?;
+    let acceptance_neuron_id = acceptance_profile["nns_neuron"]["id"]
+        .as_u64()
+        .context("confirmed acceptance neuron ID")?;
     let context = evidence.join("context.json");
     fs::write(
         &context,
         serde_json::to_vec_pretty(&json!({"roles": roles,
-        "operator": operator.to_text(), "other": outsider.to_text(),
+        "operator": operator.to_text(), "other": outsider.to_text(), "acceptance_neuron_id": acceptance_neuron_id,
         "timestamp": pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000}))?,
     )?;
     checked_command(
@@ -318,7 +323,7 @@ import profile, prepare
 from test_sns import local_genesis
 c=json.loads(Path(sys.argv[1]).read_text()); out=Path(sys.argv[2])
 p=json.loads(profile.PROFILE.read_text()); p['roles']=c['roles']; p['operator']=c['operator']
-p['nns_neuron']['id']=42
+p['nns_neuron']['id']=c['acceptance_neuron_id']
 p['age_bonus_recipient_2']={'owner':c['operator'],'subaccountHex':None}
 p['relay_surplus_neuron_recipients']=[]
 p['genesis']=local_genesis(c['operator'], c['other'])
@@ -393,7 +398,7 @@ prepare.framework(p, sys.argv[3], out/'sns', c['timestamp'], local_fixture=True)
         nns,
         operator,
         "debug_set_neuron_account",
-        encode_args((42u64, staking_subaccount.clone()))?,
+        encode_args((acceptance_neuron_id, staking_subaccount.clone()))?,
     )?;
     let relay = role("jupiter_relay");
     let rewards = role("jupiter_sns_rewards");
@@ -464,7 +469,7 @@ prepare.framework(p, sys.argv[3], out/'sns', c['timestamp'], local_fixture=True)
     )?;
     assert_eq!(page.status_code, 200);
     let html = String::from_utf8(page.body)?;
-    assert!(html.contains("/neuron/42"));
+    assert!(html.contains(&format!("/neuron/{acceptance_neuron_id}")));
     assert!(!html.contains("11614578985374291210"));
     assert!(!html.contains("22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d"));
     let domains: HttpResponse = query_one(
@@ -483,7 +488,7 @@ prepare.framework(p, sys.argv[3], out/'sns', c['timestamp'], local_fixture=True)
     assert_eq!(domains.status_code, 200);
     assert!(domains.body.is_empty());
     let dc: DisburserConfig = query_one(&pic, disburser, operator, "debug_config", ())?;
-    assert_eq!(dc.neuron_id, 42);
+    assert_eq!(dc.neuron_id, acceptance_neuron_id);
     assert_eq!(dc.normal_recipient.owner, faucet);
     assert_eq!(dc.age_bonus_recipient_1.owner, rewards);
     assert_eq!(dc.age_bonus_recipient_2.owner, operator);
@@ -639,7 +644,7 @@ prepare.framework(p, sys.argv[3], out/'sns', c['timestamp'], local_fixture=True)
         "debug_get_claim_or_refresh_neuron_ids",
         (),
     )?;
-    assert!(observed_neurons.contains(&42));
+    assert!(observed_neurons.contains(&acceptance_neuron_id));
     assert!(!observed_neurons.contains(&11_614_578_985_374_291_210));
     assert!(support::ledger::icrc1_balance(&pic, icp, &fc.staking_account)? > 0);
     pic.advance_time(Duration::from_secs(2));
@@ -769,14 +774,20 @@ prepare.framework(p, sys.argv[3], out/'sns', c['timestamp'], local_fixture=True)
         .settings
         .controllers
         .is_empty());
-    assert!(pic
+    // Keep the denial on install_code: PocketIC's large-Wasm chunk helper
+    // unwraps denied clear_chunk_store calls before returning an upgrade error.
+    let denied = pic
         .upgrade_canister(
             child,
-            rewards_debug.clone(),
+            fs::read(built.join("jupiter_relay.debug.wasm.gz"))?,
             encode_args(())?,
-            Some(operator)
+            Some(operator),
         )
-        .is_err());
+        .expect_err("a controllerless child must reject an operator upgrade");
+    assert_eq!(
+        denied.error_code,
+        pocket_ic::ErrorCode::CanisterInvalidController
+    );
     let before_child: Vec<u64> = query_one(
         &pic,
         nns,
@@ -797,7 +808,7 @@ prepare.framework(p, sys.argv[3], out/'sns', c['timestamp'], local_fixture=True)
         after_child.len() > before_child.len(),
         "child seed must reach the acceptance neuron"
     );
-    assert!(after_child.iter().all(|id| *id == 42));
+    assert!(after_child.iter().all(|id| *id == acceptance_neuron_id));
     for subaccount in [
         neuron_subaccount(11_614_578_985_374_291_210),
         hex::decode("ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68")?
@@ -854,6 +865,20 @@ prepare.framework(p, sys.argv[3], out/'sns', c['timestamp'], local_fixture=True)
     candidate.extend([0, (1 + name.len() + content.len()) as u8, name.len() as u8]);
     candidate.extend(name);
     candidate.extend(content);
+    // SNS upgrades accept the same gzip install packages as management calls.
+    // Keep the proposal below ingress limits without changing its Wasm content.
+    let candidate_path = evidence.join("sns-rewards-upgrade.wasm");
+    fs::write(&candidate_path, &candidate)?;
+    let compressed = Command::new("gzip")
+        .args(["-n", "-c"])
+        .arg(&candidate_path)
+        .output()?;
+    anyhow::ensure!(compressed.status.success(), "compress governed upgrade");
+    let candidate = compressed.stdout;
+    assert!(
+        candidate.len() < 1_900_000,
+        "upgrade proposal needs chunking"
+    );
     let candidate_hash = sha2::Sha256::digest(&candidate).to_vec();
     let action = format!("variant {{ UpgradeSnsControlledCanister = record {{ canister_id = opt principal \"{rewards}\"; new_canister_wasm = blob \"{}\"; mode = opt (3 : int32); canister_upgrade_arg = opt blob \"\\44\\49\\44\\4c\\00\\00\" }} }}",
         candidate.iter().map(|b| format!("\\{b:02x}")).collect::<String>());

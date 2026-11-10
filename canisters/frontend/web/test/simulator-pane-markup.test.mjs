@@ -476,8 +476,12 @@ test('How it works copy is concise and links tracker, simulator, and rewards ref
   assert.match(howItWorks, /follows D-QUORUM indirectly through[\s\S]*to maximise voting rewards/);
   assert.match(howItWorks, /helps incentivise elected NNS governance reviewers who perform decentralized due diligence on proposals/);
   assert.match(howItWorks, /partnership is foundational to Jupiter Faucet because truly unstoppable canisters depend on a secure and decentralized network/);
-  assert.match(howItWorks, /memo-builder-safety-notice[\s\S]*<strong>Rewards:<\/strong>[\s\S]*jUP SNS tokens will be minted/);
-  assert.match(howItWorks, /jUP SNS tokens will be minted[\s\S]*While the Jupiter Faucet SNS rewards components are still being finalized/);
+  assert.match(howItWorks, /memo-builder-safety-notice[\s\S]*<strong>Rewards:<\/strong>[\s\S]*distributes jUP from its reserve to recognised owners/);
+  assert.match(howItWorks, /Unmatched contributions are final; historical recognition uses the launch processing snapshot/);
+  assert.match(howItWorks, /auto-stake maturity enabled are doubled; Relay rewards remain base-rate liquid/);
+  assert.match(howItWorks, /reserve pays the delivery fee separately from the quoted amount/);
+  assert.match(howItWorks, /uncertain payments are treated as paid automatically[\s\S]*not confirmed Ledger transfers/);
+  assert.match(howItWorks, /This programme is not active on production/);
   assert.match(howItWorks, /data-panel="metric-commitments"[^>]*>endowed ICP<\/a>/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/account\/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d[^>]*>staking account<\/a>/);
   assert.match(howItWorks, /dashboard\.internetcomputer\.org\/neuron\/11614578985374291210[^>]*>neuron<\/a>/);

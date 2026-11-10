@@ -8,6 +8,13 @@ mod support;
 
 use support::calls::{query_one, update_noargs, update_one};
 
+#[path = "production_launch.rs"]
+mod production_launch;
+#[path = "representative_sns.rs"]
+mod representative_sns;
+#[path = "sale_rehearsal.rs"]
+mod sale_rehearsal;
+
 static ROOT_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static GOVERNANCE_WASM: OnceLock<Vec<u8>> = OnceLock::new();
 static LEDGER_WASM: OnceLock<Vec<u8>> = OnceLock::new();
@@ -515,5 +522,172 @@ fn owner_scan_is_resumable_atomic_and_invalidated_on_root_change() -> Result<()>
         invalidated.scan_active,
         "new Root may begin repopulating staging immediately"
     );
+    Ok(())
+}
+
+static PRODUCTION_REWARDS_WASM: OnceLock<Vec<u8>> = OnceLock::new();
+
+#[test]
+#[ignore = "frozen canonical V1 package upgraded to candidate production code"]
+fn previous_production_owner_index_upgrades_without_enabling_new_features() -> Result<()> {
+    use jupiter_sns_rewards::{AutomationState, ParticipationState, ReserveTransport, Runtime};
+    use sha2::{Digest, Sha256};
+    let candidate = wasm(&PRODUCTION_REWARDS_WASM, "jupiter-sns-rewards", None)?;
+    let predecessor = include_bytes!("fixtures/sns-rewards-v1/canonical.wasm.gz");
+    assert_eq!(
+        hex::encode(Sha256::digest(predecessor)),
+        "dc60d0c80214f37f06ad42f6785cb2adc123ce1615669a9bace689538e253079"
+    );
+    let env = TimerScanEnv::new(true)?;
+    for _ in 0..100 {
+        env.pic.tick();
+    }
+    env.pic
+        .reinstall_canister(
+            env.rewards,
+            predecessor.to_vec(),
+            encode_one(InitArgs {
+                reward_sns_root_canister_id: Some(env.root),
+            })?,
+            None,
+        )
+        .map_err(|error| anyhow::anyhow!("install frozen V1: {error:?}"))?;
+    for _ in 0..100 {
+        env.pic.tick();
+    }
+    let before = env.context()?.expect("V1 complete snapshot");
+    let owner = Principal::from_slice(&[7]);
+    let args = jupiter_sns_rewards::ResolveDefaultIcpAccountsArgs {
+        snapshot_id: before.snapshot_id,
+        account_identifiers: vec![
+            jupiter_ic_clients::account_identifier::account_identifier_bytes(owner, None).to_vec(),
+        ],
+    };
+    let expected = jupiter_sns_rewards::ResolveDefaultIcpAccountsResult::Ok(vec![Some(owner)]);
+    let old_owners: jupiter_sns_rewards::ResolveDefaultIcpAccountsResult = query_one(
+        &env.pic,
+        env.rewards,
+        owner,
+        "resolve_default_icp_accounts",
+        args.clone(),
+    )?;
+    assert_eq!(old_owners, expected);
+    env.pic
+        .upgrade_canister(env.rewards, candidate.clone(), encode_args(())?, None)
+        .map_err(|error| anyhow::anyhow!("upgrade frozen V1: {error:?}"))?;
+    assert_eq!(
+        env.pic
+            .canister_status(env.rewards, None)
+            .map_err(|error| anyhow::anyhow!("candidate status: {error:?}"))?
+            .module_hash,
+        Some(Sha256::digest(&candidate).to_vec())
+    );
+    let after = env.context()?.expect("preserved V1 snapshot");
+    assert_eq!(after.snapshot_id, before.snapshot_id);
+    assert_eq!(after.sns_root_canister_id, env.root);
+    assert_eq!(
+        after.sns_governance_canister_id,
+        before.sns_governance_canister_id
+    );
+    assert_eq!(after.sns_ledger_canister_id, before.sns_ledger_canister_id);
+    assert_eq!(
+        after.scan_started_at_timestamp_nanos,
+        before.scan_started_at_timestamp_nanos
+    );
+    assert_eq!(
+        after.scan_completed_at_timestamp_nanos,
+        before.scan_completed_at_timestamp_nanos
+    );
+    let owners: jupiter_sns_rewards::ResolveDefaultIcpAccountsResult = query_one(
+        &env.pic,
+        env.rewards,
+        owner,
+        "resolve_default_icp_accounts",
+        args,
+    )?;
+    assert_eq!(owners, expected);
+    env.pic.advance_time(std::time::Duration::from_secs(86_400));
+    for _ in 0..12 {
+        env.pic.tick();
+    }
+    assert!(env.context()?.unwrap().snapshot_id > before.snapshot_id);
+    let programme: Runtime = query_one(&env.pic, env.rewards, owner, "get_programme_status", ())?;
+    assert_eq!(programme, Runtime::default());
+    let automation: AutomationState =
+        query_one(&env.pic, env.rewards, owner, "get_automation_status", ())?;
+    assert_eq!(automation, AutomationState::default());
+    let participation: ParticipationState =
+        query_one(&env.pic, env.rewards, owner, "get_participation_status", ())?;
+    assert_eq!(participation, ParticipationState::default());
+    let reserve: ReserveTransport = query_one(
+        &env.pic,
+        env.rewards,
+        owner,
+        "get_reserve_transport_status",
+        (),
+    )?;
+    assert_eq!(reserve, ReserveTransport::NotDispatched);
+    let treasury: Option<jupiter_sns_rewards::TreasuryState> =
+        query_one(&env.pic, env.rewards, owner, "get_treasury_status", ())?;
+    assert!(treasury.is_none());
+    let transfers: Vec<candid::Reserved> =
+        query_one(&env.pic, env.ledger, owner, "debug_transfer_attempts", ())?;
+    assert!(transfers.is_empty());
+    Ok(())
+}
+
+#[test]
+#[ignore = "candidate production Wasm rejects unimplemented financial activation at installation"]
+fn production_installation_rejects_general_patron_and_treasury_activation() -> Result<()> {
+    use jupiter_sns_rewards::{AutomationConfig, ProgrammeConfig};
+    let candidate = wasm(&PRODUCTION_REWARDS_WASM, "jupiter-sns-rewards", None)?;
+    let pic = support::pocketic::builder()
+        .with_application_subnet()
+        .build();
+    let principal = |n| Principal::from_slice(&[n, 1]);
+    for treasury in [false, true] {
+        let config = ProgrammeConfig {
+            version: 1,
+            jup_root: principal(1),
+            io_root: principal(2),
+            icp_ledger: principal(3),
+            icp_index: principal(4),
+            staking_account: icrc_ledger_types::icrc1::account::Account {
+                owner: principal(5),
+                subaccount: Some([1; 32]),
+            },
+            canonical_relay: principal(6),
+            protocol_governance_neuron: vec![8; 32],
+            excluded_icp_accounts: vec![],
+            excluded_jup_neurons: vec![vec![8; 32], vec![9; 32]],
+            reserve_subaccount: None,
+            reserve_transport_neuron: None,
+            launch_timestamp_seconds: Some(100),
+            patron_enabled: !treasury,
+            snapshot_max_age_seconds: 172800,
+            automation: treasury.then(|| AutomationConfig {
+                proposer_neuron: vec![9; 32],
+                targets: vec![],
+                treasury_enabled: true,
+                treasury_retain_icp_e8s: 0,
+                treasury_max_proposal_icp_e8s: 1_000_000_000,
+            }),
+        };
+        config.validate().map_err(anyhow::Error::msg)?;
+        let id = pic.create_canister();
+        pic.add_cycles(id, 5_000_000_000_000);
+        let error = pic
+            .reinstall_canister(
+                id,
+                candidate.clone(),
+                encode_one(jupiter_sns_rewards::InitArgs {
+                    reward_sns_root_canister_id: None,
+                    programme: Some(config),
+                })?,
+                None,
+            )
+            .expect_err("production financial activation must fail closed");
+        assert!(format!("{error:?}").contains("provenance"), "{error:?}");
+    }
     Ok(())
 }

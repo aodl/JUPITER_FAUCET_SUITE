@@ -53,7 +53,7 @@ The operational path is intentionally split across small canisters:
 - [`canisters/historian`](canisters/historian) indexes endowment history, target canisters, cycles samples, SNS discovery, and dashboard-facing public state.
 - [`canisters/frontend`](canisters/frontend) serves the certified public site and browser dashboard.
 - [`canisters/lifeline`](canisters/lifeline) provides minimal recovery support.
-- [`canisters/sns-rewards`](canisters/sns-rewards) maintains SNS owner snapshots and supplies snapshot-scoped reward context and account-owner lookups to Relay.
+- [`canisters/sns-rewards`](canisters/sns-rewards) maintains SNS owner snapshots and supplies snapshot-scoped reward context and account-owner lookups to Relay. Explicit programme activation adds direct patron rewards and governance automation; Relay patron attribution and production IO settlement remain gated integration work.
 
 At a high level, a participant declares a faucet target by transferring ICP to the configured staking account and placing a supported ASCII directive in `icrc1_memo`. Plain declared canister ID text is the primary cycles top-up form. The faucet also supports `canister_id.memo` for raw ICP routing to the default account, `canister_id:number.memo` for routing to a numbered destination subaccount, and decimal NNS neuron IDs, optionally with `.memo`, for neuron staking-account top-ups. Numbered subaccounts use a zero-padded 32-byte big-endian `u64`; omitted or zero means the default account, and the complete ASCII declaration must fit within 32 bytes. The exact eligibility, memo, fee, retry, and rescue rules live in the component READMEs:
 

@@ -57,6 +57,7 @@ impl Drop for ScanGuard {
 }
 
 pub(crate) fn install_timers() {
+    crate::programme::install_timer();
     install_config_log_timer();
     schedule_scan_check(Duration::ZERO, cfg!(feature = "debug_api"));
 }
@@ -328,10 +329,11 @@ fn finish_page(
         }
         return PageResult::InProgress;
     }
+    let snapshot_id = crate::programme::allocate_snapshot_id();
     let snapshot = state::with_state_mut(|st| {
         let completed = st.scan.take().expect("completed owner scan");
         let snapshot = OwnerSnapshot {
-            snapshot_id: st.next_snapshot_id,
+            snapshot_id,
             active_slot: completed.staging_slot,
             sns_root_canister_id: completed.sns_root_canister_id,
             sns_governance_canister_id: completed.sns_governance_canister_id,
@@ -342,7 +344,6 @@ fn finish_page(
             owner_count: state::slot_len(completed.staging_slot),
         };
         st.active_snapshot = Some(snapshot.clone());
-        st.next_snapshot_id = st.next_snapshot_id.saturating_add(1);
         snapshot
     });
     crate::logging::scan("completed", None, Some(&snapshot), None);

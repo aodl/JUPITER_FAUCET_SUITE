@@ -1,19 +1,33 @@
 mod clients;
+mod economics;
+pub mod generated;
+pub mod io_contract;
 mod logging;
+mod patron_math;
 mod policy;
+mod programme;
 mod scheduler;
 mod state;
 
 use candid::{CandidType, Deserialize, Principal};
+pub use programme::automation::{AutomationState, FundingOutcome, MirrorPhase, MirrorRecord};
+pub use programme::participation::State as ParticipationState;
+pub use programme::refresh::{RefreshJob, RefreshStatus};
+pub use programme::reserve::ReserveTransport;
+pub use programme::treasury::Phase as TreasuryPhase;
+pub use programme::treasury::State as TreasuryState;
+pub use programme::types::*;
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct InitArgs {
     pub reward_sns_root_canister_id: Option<Principal>,
+    pub programme: Option<programme::types::ProgrammeConfig>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Default, Debug, PartialEq, Eq)]
 pub struct UpgradeArgs {
     pub reward_sns_root_canister_id: Option<Option<Principal>>,
+    pub programme: Option<programme::types::ProgrammeConfig>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -124,6 +138,9 @@ fn init(args: InitArgs) {
         },
         "init_complete",
     );
+    if let Some(config) = args.programme {
+        programme::configure(config).unwrap_or_else(|e| ic_cdk::trap(e));
+    }
 }
 
 fn decode_post_upgrade_args_from_bytes(raw: &[u8]) -> Result<Option<UpgradeArgs>, String> {
@@ -142,15 +159,110 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     let mut restored = state::restore();
     restored.scan_lock_state_ts = Some(0);
     state::set_state(restored);
+    programme::recover_dispatch();
+    if let Some(config) = args.as_ref().and_then(|value| value.programme.clone()) {
+        programme::configure(config).unwrap_or_else(|e| ic_cdk::trap(e));
+    }
     if let Some(Some(new_root)) = args.map(|value| value.reward_sns_root_canister_id) {
         if state::with_state(|st| st.config.reward_sns_root_canister_id) != new_root {
             state::invalidate_for_root(new_root);
             ic_cdk::println!("SNS_REWARDS_LIFECYCLE event=root_changed_invalidated");
         }
     }
+    programme::bind_relay_root();
     scheduler::install_timers();
     logging::lifecycle("post_upgrade_complete");
     logging::config();
+}
+
+#[ic_cdk::query]
+fn get_programme_status() -> programme::types::Runtime {
+    programme::read()
+}
+
+#[ic_cdk::query]
+fn get_patron_record(contribution_block: u64) -> Option<programme::types::PatronRecord> {
+    programme::record(contribution_block)
+}
+
+#[ic_cdk::query]
+fn get_patron_refresh(contribution_block: u64) -> Option<RefreshJob> {
+    programme::refresh::read(contribution_block)
+}
+
+#[ic_cdk::update]
+fn retry_patron_refresh(contribution_block: u64) -> Result<(), String> {
+    programme::refresh::retry(contribution_block, ic_cdk::api::msg_caller())
+}
+
+#[ic_cdk::query]
+fn get_automation_status() -> programme::automation::AutomationState {
+    programme::automation::read()
+}
+
+#[ic_cdk::query]
+fn get_proposer_funding(created_at_time: u64) -> Option<programme::automation::Funding> {
+    programme::automation::funding_record(created_at_time)
+}
+
+#[ic_cdk::query]
+fn get_mirror_record(
+    governance: Principal,
+    proposal_id: u64,
+) -> Option<programme::automation::MirrorRecord> {
+    programme::automation::record(governance, proposal_id)
+}
+
+#[ic_cdk::query]
+fn get_participation_status() -> ParticipationState {
+    programme::participation::read()
+}
+
+#[ic_cdk::query]
+fn get_reserve_transport_status() -> ReserveTransport {
+    programme::reserve::read()
+}
+
+#[ic_cdk::query]
+fn get_treasury_status() -> Option<TreasuryState> {
+    programme::treasury::read()
+}
+
+#[ic_cdk::query]
+fn get_treasury_record(config_version: u64) -> Option<TreasuryState> {
+    programme::treasury::record(config_version)
+}
+
+#[ic_cdk::query]
+fn get_treasury_operation(operation_id: u64) -> Option<TreasuryState> {
+    programme::treasury::operation(operation_id)
+}
+
+#[ic_cdk::update]
+fn request_treasury_operation(
+    operation_id: u64,
+    expected_previous: Option<u64>,
+) -> Result<(), String> {
+    programme::treasury::request_next(operation_id, expected_previous, ic_cdk::api::msg_caller())
+}
+
+#[ic_cdk::query]
+fn quote_gross_io_share(pool_e8s: u64, owner: Principal) -> Option<candid::Nat> {
+    programme::participation::quote(pool_e8s, owner)
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+async fn debug_programme_tick() {
+    guard_debug_api_not_production();
+    programme::tick().await;
+}
+
+#[cfg(feature = "debug_api")]
+#[ic_cdk::update]
+fn debug_trap_patron_callback_once() {
+    guard_debug_api_not_production();
+    programme::trap_callback_once();
 }
 
 #[cfg(feature = "debug_api")]
@@ -214,6 +326,23 @@ mod tests {
     use candid_parser::utils::{instantiate_candid, service_equal, CandidSource};
     use jupiter_ic_clients::account_identifier::account_identifier_bytes;
     use std::path::Path;
+
+    #[test]
+    fn full_official_sns_schema_matches_reviewed_governance_pin() {
+        use sha2::{Digest, Sha256};
+        let lock: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../deploy/acceptance/sns-framework.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            hex::encode(Sha256::digest(include_bytes!(
+                "../../../candid/sns-governance/governance.did"
+            ))),
+            lock["components"]["governance"]["did_sha256"]
+                .as_str()
+                .unwrap()
+        );
+    }
 
     fn principal(byte: u8) -> Principal {
         Principal::from_slice(&[byte])
@@ -362,12 +491,15 @@ mod tests {
         for expected in [
             UpgradeArgs {
                 reward_sns_root_canister_id: None,
+                programme: None,
             },
             UpgradeArgs {
                 reward_sns_root_canister_id: Some(None),
+                programme: None,
             },
             UpgradeArgs {
                 reward_sns_root_canister_id: Some(Some(principal(9))),
+                programme: None,
             },
         ] {
             let raw = encode_args((Some(expected.clone()),)).unwrap();
@@ -378,6 +510,7 @@ mod tests {
         }
         let raw = encode_args((InitArgs {
             reward_sns_root_canister_id: Some(principal(1)),
+            programme: None,
         },))
         .unwrap();
         assert!(decode_post_upgrade_args_from_bytes(&raw)

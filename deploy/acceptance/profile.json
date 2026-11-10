@@ -3,21 +3,27 @@
   "network": "ic",
   "operator": null,
   "roles": {
-    "sns_root": null,
-    "sns_governance": null,
-    "sns_ledger": null,
-    "sns_index": null,
-    "sns_swap": null,
-    "jupiter_disburser": null,
-    "jupiter_faucet": null,
-    "jupiter_lifeline": null,
-    "jupiter_sns_rewards": null,
-    "jupiter_historian": null,
-    "jupiter_relay": null,
-    "jupiter_faucet_frontend": null
+    "sns_root": "sbmlm-rqaaa-aaaas-amypa-cai",
+    "sns_governance": "sipaq-hyaaa-aaaas-amyoq-cai",
+    "sns_ledger": "sgnny-4iaaa-aaaas-amypq-cai",
+    "sns_index": "x2wx5-xaaaa-aaaas-amyqa-cai",
+    "sns_swap": "x5xrj-2yaaa-aaaas-amyqq-cai",
+    "jupiter_disburser": "spoge-kaaaa-aaaas-amyoa-cai",
+    "jupiter_faucet": "xuu2v-mqaaa-aaaas-amyra-cai",
+    "jupiter_lifeline": "xiqae-3qaaa-aaaas-amyta-cai",
+    "jupiter_sns_rewards": "xgsnm-aaaaa-aaaas-amysa-cai",
+    "jupiter_historian": "xbtly-nyaaa-aaaas-amysq-cai",
+    "jupiter_relay": "xtv4b-biaaa-aaaas-amyrq-cai",
+    "jupiter_faucet_frontend": "xprgq-wiaaa-aaaas-amytq-cai"
   },
-  "nns_neuron": { "id": null, "memo": 0 },
-  "age_bonus_recipient_2": null,
+  "nns_neuron": {
+    "id": 2234355977000034918,
+    "memo": 0
+  },
+  "age_bonus_recipient_2": {
+    "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+    "subaccountHex": "77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f"
+  },
   "relay_surplus_neuron_recipients": null,
   "initial_main_cycles_target": 3000000000000,
   "genesis": null
