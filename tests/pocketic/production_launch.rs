@@ -30,9 +30,13 @@ fn production_allocation_passes_official_launch_validator() -> Result<()> {
     value["dapp_canisters"] = serde_json::json!([dapp.to_text()]);
     fs::write(&candidate, serde_json::to_vec_pretty(&value)?)?;
     let url = pic.make_live(None);
-    // Anonymous is explicit: no dfx credential or selected identity is loaded.
+    // The pinned CLI constructs its identity manager even for anonymous calls.
+    // Use a fresh fixture root so neither CI nor local runs use the user's store.
+    let config_root = directory.join(format!("anonymous-config-{}", std::process::id()));
+    fs::create_dir(&config_root)?;
     let run = |path: &std::path::Path| {
         Command::new(&tool)
+            .env("DFX_CONFIG_ROOT", &config_root)
             .args([
                 "--identity",
                 "anonymous",
@@ -45,6 +49,21 @@ fn production_allocation_passes_official_launch_validator() -> Result<()> {
             .arg("validate")
             .output()
     };
+    // Reproduce the fresh-runner prerequisite independently of ambient dfx setup.
+    let unconfigured = run(&candidate)?;
+    anyhow::ensure!(
+        !unconfigured.status.success()
+            && String::from_utf8_lossy(&unconfigured.stderr)
+                .contains("No identity configuration found"),
+        "expected missing anonymous manager configuration: {unconfigured:?}"
+    );
+    let config_directory = config_root.join(".config/dfx");
+    fs::create_dir_all(&config_directory)?;
+    // Non-secret manager metadata only: anonymous needs no key or identity folder.
+    fs::write(
+        config_directory.join("identity.json"),
+        br#"{"default":"anonymous"}"#,
+    )?;
     let output = run(&candidate)?;
     fs::write(directory.join("official-validation.stdout"), &output.stdout)?;
     fs::write(directory.join("official-validation.stderr"), &output.stderr)?;
