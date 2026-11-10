@@ -11,7 +11,6 @@ type Memory =
     ic_stable_structures::memory_manager::VirtualMemory<ic_stable_structures::DefaultMemoryImpl>;
 type Map = StableBTreeMap<u64, Vec<u8>, Memory>;
 thread_local! {
-    static MIGRATION: RefCell<Option<ic_stable_structures::StableCell<Vec<u8>, Memory>>> = const { RefCell::new(None) };
     static JOBS: RefCell<Option<Map>> = const { RefCell::new(None) };
     static PENDING: RefCell<Option<StableBTreeMap<u64, u8, Memory>>> = const { RefCell::new(None) };
 }
@@ -120,30 +119,7 @@ pub fn retry(block: u64, caller: candid::Principal) -> Result<(), String> {
     Ok(())
 }
 
-fn migrate() {
-    MIGRATION.with_borrow_mut(|cell| {
-        let cell = cell.get_or_insert_with(|| {
-            ic_stable_structures::StableCell::init(
-                crate::state::programme_memory(MemoryId::new(21)),
-                vec![],
-            )
-        });
-        let cursor = if cell.get().is_empty() {
-            None
-        } else {
-            Some(candid::decode_one::<u64>(cell.get()).expect("refresh migration cursor"))
-        };
-        for record in storage::records_after(cursor, 8) {
-            enqueue(&record);
-            cell.set(
-                candid::encode_one(record.contribution_block).expect("refresh migration cursor"),
-            );
-        }
-    });
-}
-
 pub async fn tick(now: u64) -> Result<(), String> {
-    migrate();
     // One bounded attempt per programme tick. The oldest job can delay later
     // jobs only through its finite retry window, never indefinitely.
     let Some(block) = pending(|map| map.first_key_value().map(|(block, _)| block)) else {
@@ -412,24 +388,6 @@ mod tests {
         assert!(matches!(stopped.status, RefreshStatus::ManualReview(_)));
         assert!(pending(|m| m.is_empty()));
         assert_eq!(storage::record(99).unwrap().outcome, record.outcome);
-    }
-    #[test]
-    fn old_settled_records_are_migrated_in_bounded_batches_without_altering_payments() {
-        jobs(|m| m.clear_new());
-        pending(|m| m.clear_new());
-        for block in 1000..1010 {
-            let mut r = record();
-            r.contribution_block = block;
-            r.refresh_result = Some("old single refresh failed".into());
-            storage::put(&r);
-        }
-        migrate();
-        assert_eq!(pending(|m| m.len()), 8);
-        assert!(read(1008).is_none());
-        migrate();
-        assert_eq!(pending(|m| m.len()), 10);
-        assert!(read(1009).is_some());
-        assert_eq!(storage::record(1009).unwrap().outcome, record().outcome);
     }
     #[test]
     fn unsupported_and_exhausted_refreshes_stop_and_require_pinned_governance() {

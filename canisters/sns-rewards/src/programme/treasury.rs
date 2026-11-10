@@ -106,12 +106,26 @@ pub fn request_next(
     if caller == Principal::anonymous() || caller != state.source.governance {
         return Err("only pinned jUP Governance may request a treasury operation".into());
     }
-    if state.operation_id != expected_previous
+    if state.operation_id.is_none()
+        || state.operation_id != expected_previous
         || !matches!(state.phase, Phase::TransferVerified { .. })
     {
         return Err(
             "previous native treasury operation must be conclusively transfer-verified".into(),
         );
+    }
+    let config = super::storage::read()
+        .config
+        .ok_or("no active programme configuration")?;
+    if !config
+        .automation
+        .as_ref()
+        .is_some_and(|a| a.treasury_enabled)
+    {
+        return Err("treasury automation is disabled".into());
+    }
+    if state.config_version != config.version {
+        return Err("previous treasury operation belongs to a stale configuration".into());
     }
     let sequence = counter(18, &SEQUENCE, |c| *c.get());
     if id == 0 || id <= sequence || operation(id).is_some() {
@@ -120,19 +134,6 @@ pub fn request_next(
     let next = next_operation();
     if next != 0 && next != id {
         return Err("a new treasury operation is already requested".into());
-    }
-    if state.operation_id.is_none() {
-        // ID zero is reserved for the frozen legacy predecessor. Do not change
-        // its optional ID/title: an old in-flight proposal binds that title.
-        if operation(0).as_ref().is_some_and(|old| old != &state) {
-            return Err("legacy treasury predecessor archive is already bound".into());
-        }
-        operations(|map| {
-            map.insert(
-                0,
-                candid::encode_one(&state).expect("archive legacy treasury predecessor"),
-            )
-        });
     }
     counter(20, &NEXT, |c| {
         c.set(id);
@@ -161,14 +162,13 @@ fn set(state: &State) {
         *reason = super::compact(reason);
     }
     let state = &bounded;
-    if let Some(id) = state.operation_id {
-        operations(|map| {
-            map.insert(
-                id,
-                candid::encode_one(state).expect("encode treasury operation"),
-            )
-        });
-    }
+    let id = state.operation_id.expect("treasury operation ID");
+    operations(|map| {
+        map.insert(
+            id,
+            candid::encode_one(state).expect("encode treasury operation"),
+        )
+    });
     let _ = read();
     CELL.with_borrow_mut(|cell| {
         cell.as_mut()
@@ -218,7 +218,7 @@ pub fn framework_limit(balance: u64, rate: u64) -> u64 {
     }
 }
 fn proposal(state: &State) -> sns::Proposal {
-    sns::Proposal { title: format!("Jupiter treasury reinvestment v{}{}", state.config_version, state.operation_id.map(|id| format!(" operation {id}")).unwrap_or_default()),
+    sns::Proposal { title: format!("Jupiter treasury reinvestment v{} operation {}", state.config_version, state.operation_id.expect("treasury operation ID")),
         summary: format!("Reinvest {} ICP e8s through the canonical Relay subaccount 1. Normal base/age-bonus economics apply; this protocol capital is excluded from patron jUP issuance.", state.amount_e8s),
         url: String::new(), action: Some(sns::Action::TransferSnsTreasuryFunds(sns::TransferSnsTreasuryFunds {
             from_treasury: 1, to_principal: Some(state.destination.owner),
@@ -623,8 +623,84 @@ mod tests {
             last_error: None,
         }
     }
+    fn config() -> ProgrammeConfig {
+        ProgrammeConfig {
+            version: 7,
+            jup_root: Principal::from_slice(&[1]),
+            io_root: Principal::from_slice(&[5]),
+            icp_ledger: Principal::from_slice(&[6]),
+            icp_index: Principal::from_slice(&[7]),
+            staking_account: Account {
+                owner: Principal::from_slice(&[8]),
+                subaccount: None,
+            },
+            canonical_relay: Principal::from_slice(&[4, 1]),
+            protocol_governance_neuron: vec![8; 32],
+            excluded_icp_accounts: vec![],
+            excluded_jup_neurons: vec![vec![8; 32], vec![9; 32]],
+            reserve_subaccount: None,
+            reserve_transport_neuron: None,
+            launch_timestamp_seconds: None,
+            patron_enabled: false,
+            snapshot_max_age_seconds: 172800,
+            automation: Some(AutomationConfig {
+                proposer_neuron: vec![9; 32],
+                targets: vec![],
+                treasury_enabled: true,
+                treasury_retain_icp_e8s: 0,
+                treasury_max_proposal_icp_e8s: 1_000_000_000,
+            }),
+        }
+    }
+    #[test]
+    fn disabled_and_stale_successor_requests_leave_reconfiguration_available() {
+        use super::super::storage;
+        crate::state::reset_for_test(crate::state::Config::default());
+        let completed = fixture(Phase::TransferVerified {
+            proposal_id: 1,
+            block: 10,
+        });
+        let governance = completed.source.governance;
+        set(&completed);
+        assert!(request_next(2, Some(1), governance)
+            .unwrap_err()
+            .contains("no active"));
+        assert!(!has_requested_operation());
+        let mut config = config();
+        storage::configure(config.clone()).unwrap();
+        config.version += 1;
+        config.automation.as_mut().unwrap().treasury_enabled = false;
+        storage::configure(config.clone()).unwrap();
+        assert!(request_next(2, Some(1), governance)
+            .unwrap_err()
+            .contains("disabled"));
+        assert!(!has_requested_operation());
+        assert!(operation(2).is_none());
+        assert_eq!(read(), Some(completed.clone()));
+        // The invalid request must not deadlock the next valid governed update.
+        config.version += 1;
+        config.automation.as_mut().unwrap().treasury_enabled = true;
+        storage::configure(config.clone()).unwrap();
+        assert!(request_next(2, Some(1), governance)
+            .unwrap_err()
+            .contains("stale"));
+        assert!(!has_requested_operation());
+        assert!(operation(2).is_none());
+        assert_eq!(operation(1), Some(completed));
+        config.version += 1;
+        config.automation = None;
+        storage::configure(config.clone()).unwrap();
+        assert!(request_next(2, Some(1), governance)
+            .unwrap_err()
+            .contains("disabled"));
+        assert!(!has_requested_operation());
+        config.version += 1;
+        storage::configure(config).unwrap();
+    }
     #[test]
     fn recurring_native_operation_requires_unique_id_exact_predecessor_and_conclusive_transfer() {
+        crate::state::reset_for_test(crate::state::Config::default());
+        super::super::storage::configure(config()).unwrap();
         let governance = Principal::from_slice(&[2]);
         counter(18, &SEQUENCE, |c| {
             c.set(1);
@@ -655,59 +731,6 @@ mod tests {
             Phase::TransferVerified { block: 10, .. }
         ));
         assert_eq!(operation(1).unwrap().config_version, 7);
-    }
-    #[test]
-    fn frozen_pre_extension_journal_decodes_and_retains_legacy_identity_on_continuation() {
-        #[derive(CandidType)]
-        struct OldState {
-            config_version: u64,
-            phase: Phase,
-            source: Source,
-            observed_balance_e8s: u64,
-            rate_permyriad: u64,
-            at_seconds: u64,
-            amount_e8s: u64,
-            actual_icp_fee_e8s: u64,
-            start_block: u64,
-            destination: Account,
-            last_error: Option<String>,
-        }
-        let old = fixture(Phase::TransferVerified {
-            proposal_id: 10,
-            block: 20,
-        });
-        let bytes = candid::encode_one(OldState {
-            config_version: old.config_version,
-            phase: old.phase,
-            source: old.source,
-            observed_balance_e8s: old.observed_balance_e8s,
-            rate_permyriad: old.rate_permyriad,
-            at_seconds: old.at_seconds,
-            amount_e8s: old.amount_e8s,
-            actual_icp_fee_e8s: old.actual_icp_fee_e8s,
-            start_block: old.start_block,
-            destination: old.destination,
-            last_error: old.last_error,
-        })
-        .unwrap();
-        let restored: State = candid::decode_one(&bytes).unwrap();
-        assert_eq!(restored.operation_id, None);
-        assert_eq!(
-            proposal(&restored).title,
-            "Jupiter treasury reinvestment v7"
-        );
-        counter(18, &SEQUENCE, |c| {
-            c.set(0);
-        });
-        counter(20, &NEXT, |c| {
-            c.set(0);
-        });
-        operations(|map| map.clear_new());
-        set(&restored);
-        request_next(1, None, restored.source.governance).unwrap();
-        assert_eq!(operation(0), Some(restored.clone()));
-        set(&fixture(Phase::Proposed { proposal_id: 11 }));
-        assert_eq!(operation(0), Some(restored));
     }
     #[test]
     fn pinned_framework_limit_boundaries_and_clamp() {

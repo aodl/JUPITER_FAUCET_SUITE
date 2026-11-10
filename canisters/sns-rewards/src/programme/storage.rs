@@ -98,18 +98,6 @@ pub fn record(block: u64) -> Option<PatronRecord> {
     })
 }
 
-/// Bounded migration of already-settled pre-refresh-journal records.
-pub fn records_after(block: Option<u64>, limit: usize) -> Vec<PatronRecord> {
-    use std::ops::Bound::{Excluded, Unbounded};
-    RECORDS.with_borrow_mut(|map| {
-        map.get_or_insert_with(|| StableBTreeMap::init(memory(6)))
-            .range((block.map_or(Unbounded, Excluded), Unbounded))
-            .take(limit)
-            .map(|entry| candid::decode_one(&entry.value()).expect("patron migration record"))
-            .collect()
-    })
-}
-
 pub fn put(record: &PatronRecord) {
     let mut record = record.clone();
     match &mut record.outcome {

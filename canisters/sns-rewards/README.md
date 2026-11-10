@@ -66,7 +66,13 @@ Optional OpenChat development verification is read-only: query OpenChat Root, co
 existing work and activates no new transfers. Legacy stable memories 0–2 remain
 unchanged; programme metadata, two owner slots, payment journals, mirror mappings,
 participation slots, reserve/treasury and proposer evidence use independent memory
-IDs 3–21. No speculative legacy migration chain or production-state reset is used.
+IDs 3–20. No speculative legacy migration chain or production-state reset is used.
+The pre-refresh-journal patron format and pre-operation-ID treasury format were
+intermediate versions of this unshipped programme. Review of the supplied history
+identified no live installation or independently required state using them; their
+backfill and legacy-ID archive paths are removed. Compatibility with the deployed
+owner-index implementation is retained through the frozen canonical V1 package
+and its real production-build upgrade test in `tests/pocketic/fixtures/sns-rewards-v1/`.
 An increasing configuration version is required for changes. In-flight batches,
 unknown financial work and pending governance operations fence reconfiguration.
 The jUP Root, protocol governance neuron, reserve Account/transport and canonical
@@ -158,8 +164,7 @@ five minutes. It first compares that neuron's cached stake with its actual Ledge
 staking balance. Typed permanent refusals or exhausted retries stop visibly for
 manual review; only the pinned jUP Governance can authorize another bounded window
 through `retry_patron_refresh`. Permission/preference changes never select a new
-neuron. Old settled records lacking a confirmed refresh are enqueued through a
-bounded migration; all payment identity fields and totals remain unchanged.
+neuron. Refresh jobs are enqueued when payments settle.
 
 The quoted amount reaches its recipient. SNS Rewards pays the actual Ledger fee
 in addition: initially a 1/2 jUP quote costs the reserve 1.1/2.1 jUP. A later fee
@@ -231,13 +236,13 @@ balance, fees, native value/seven-day limits and frozen proposal/transfer identi
 Each operation has a unique durable ID, frozen native proposal identity and
 retained history. After the prior native transfer is conclusively verified, the
 pinned jUP Governance may explicitly request a new increasing ID with the exact
-predecessor through `request_treasury_operation`, without a configuration change.
+predecessor through `request_treasury_operation`, while treasury automation remains
+enabled in that same configuration version. Disabled or stale requests persist
+no pending operation and do not block reconfiguration.
 Rejected, failed and ambiguous operations cannot use that continuation. No timer
 creates an automatic proposal loop. `get_treasury_record` retains its per-version
 query behavior; `get_treasury_operation` retains each new operation separately.
-A pre-extension journal has no operation ID and preserves its original proposal
-title/binding; operation ID zero archives that legacy predecessor when explicitly
-continuing it. TransferVerified describes the native Ledger leg, not downstream
+TransferVerified describes the native Ledger leg, not downstream
 mixed-capital reconciliation. A real-SNS test follows the actual native credit
 through real Relay code and the ICP Ledger to the exact staking Account; only
 its NNS neuron lookup/refresh is a local mock. Production treasury automation
