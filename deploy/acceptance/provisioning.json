@@ -8,7 +8,7 @@
   },
   "initial_main_cycles_target": 3000000000000,
   "actual_cycles_balances_verified": false,
-  "role_mapping_status": "Assigned explicitly in profile.json after the operator delegated arbitrary role selection; no pre-existing mapping was inferred",
+  "role_mapping_status": "Proposed explicit assignments in profile.json under repository-reported delegation; original authenticated operator record unavailable here, so final operator confirmation is required. Not observed mainnet role state.",
   "initially_unassigned_canister_ids": [
     "sipaq-hyaaa-aaaas-amyoq-cai",
     "sbmlm-rqaaa-aaaas-amypa-cai",
@@ -22,5 +22,5 @@
     "xiqae-3qaaa-aaaas-amyta-cai",
     "xprgq-wiaaa-aaaas-amytq-cai"
   ],
-  "role_assignment_authority": "Operator session clarification, 7 November 2026"
+  "role_assignment_authority": "Repository records cite operator session clarification, 7 November 2026; independently authenticated source not supplied to this integration review"
 }

@@ -54,7 +54,14 @@ actual cycles observations remain outstanding. Offline implementation and
 owned PocketIC tests proceed independently. No mainnet install, upgrade,
 controller operation, neuron modification, funding or transfer was performed.
 
-## Explicit role assignment authorized by the operator
+## Recorded role assignment; final operator confirmation required
+
+The repository records delegated arbitrary assignment in the earlier session.
+This integration review has not received the original authenticated operator
+record, so the eleven selected roles below remain proposed configuration pending
+final confirmation. They are not observed installed mainnet role assignments.
+The historical read-only observations above are retained as historical evidence;
+this review performed no mainnet calls.
 
 | Role | Principal |
 |---|---|

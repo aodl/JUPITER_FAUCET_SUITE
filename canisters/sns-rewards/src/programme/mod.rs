@@ -2,6 +2,7 @@ pub(crate) mod automation;
 mod discovery;
 mod governance_client;
 mod patron;
+pub(crate) mod refresh;
 #[cfg(feature = "debug_api")]
 pub(crate) use patron::trap_callback_once;
 pub(crate) mod participation;
@@ -58,11 +59,13 @@ pub async fn tick() {
     let result = async {
         let discovery = discovery::tick(now).await;
         let reserve = reserve::tick().await;
+        let refresh = refresh::tick(now).await;
         let patron = patron::tick(now).await;
         let governance = automation::tick(now).await;
         let participation = participation::tick().await;
         discovery
             .and(reserve)
+            .and(refresh)
             .and(patron)
             .and(governance)
             .and(participation)
@@ -87,62 +90,26 @@ pub fn recover_dispatch() {
     }
 }
 
-pub fn context() -> Option<crate::RelayRewardContext> {
-    let state = read();
-    let config = state.config?;
-    let snapshot = state.snapshot?;
-    if !snapshot.valid_for(&config, ic_cdk::api::time() / 1_000_000_000) {
-        return None;
-    }
-    let source = &snapshot.sources[0]; // Always jUP, even for an IO-only owner.
-    Some(crate::RelayRewardContext {
-        sns_root_canister_id: source.root,
-        sns_governance_canister_id: source.governance,
-        sns_ledger_canister_id: source.ledger,
-        snapshot_id: snapshot.id,
-        scan_started_at_timestamp_nanos: snapshot.started_at_seconds.saturating_mul(1_000_000_000),
-        scan_completed_at_timestamp_nanos: snapshot
-            .completed_at_seconds
-            .saturating_mul(1_000_000_000),
-    })
+/// One monotonically increasing namespace for independent Relay and patron
+/// snapshots. No await separates allocation from publication in either scanner.
+pub(crate) fn allocate_snapshot_id() -> u64 {
+    let id = crate::state::with_state(|s| s.next_snapshot_id).max(
+        read()
+            .next_snapshot
+            .checked_add(1)
+            .expect("snapshot generation exhausted"),
+    );
+    let next = id.checked_add(1).expect("snapshot generation exhausted");
+    crate::state::with_state_mut(|s| s.next_snapshot_id = next);
+    id
 }
 
-pub fn resolve(
-    args: crate::ResolveDefaultIcpAccountsArgs,
-) -> crate::ResolveDefaultIcpAccountsResult {
-    use crate::ResolveDefaultIcpAccountsResult as Reply;
-    if args.account_identifiers.len() > crate::policy::MAX_ACCOUNT_LOOKUPS_PER_CALL {
-        return Reply::TooManyAccounts;
-    }
-    for (index, account) in args.account_identifiers.iter().enumerate() {
-        if account.len() != 32 {
-            return Reply::InvalidAccountIdentifier {
-                index: index as u32,
-            };
+pub(crate) fn bind_relay_root() {
+    if let Some(config) = read().config {
+        if crate::state::with_state(|s| s.config.reward_sns_root_canister_id)
+            != Some(config.jup_root)
+        {
+            crate::state::invalidate_for_root(Some(config.jup_root));
         }
     }
-    let state = read();
-    let Some(snapshot) = state.snapshot else {
-        return Reply::SnapshotChanged;
-    };
-    let Some(config) = state.config else {
-        return Reply::SnapshotChanged;
-    };
-    if snapshot.id != args.snapshot_id
-        || !snapshot.valid_for(&config, ic_cdk::api::time() / 1_000_000_000)
-    {
-        return Reply::SnapshotChanged;
-    }
-    Reply::Ok(
-        args.account_identifiers
-            .into_iter()
-            .map(|account| {
-                storage::lookup(
-                    snapshot.slot,
-                    account.try_into().expect("validated account"),
-                )
-                .map(|owner| owner.principal)
-            })
-            .collect(),
-    )
 }

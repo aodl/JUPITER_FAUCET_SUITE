@@ -132,6 +132,8 @@ fn get_neuron(pic: &PocketIc, governance: Principal, id: Vec<u8>) -> Result<sns:
 #[ignore = "official pinned SNS-W, six SNS components and owned real NNS/ICP topology"]
 fn production_snsw_launch_success_reserve_transport_and_failed_sale_refund() -> Result<()> {
     let rewards_wasm = wasm(&REWARDS_WASM, "jupiter-sns-rewards", Some("debug_api"))?;
+    let relay_wasm = wasm(&OnceLock::new(), "jupiter-relay", Some("debug_api"))?;
+    let nns_mock_wasm = wasm(&OnceLock::new(), "mock-nns-governance", None)?;
     let dummy =
         support::wasm::build_wasm_cached_for_test(&OnceLock::new(), "mock-cycle-burner", None)?;
     let repo = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
@@ -338,6 +340,24 @@ fn production_snsw_launch_success_reserve_transport_and_failed_sale_refund() -> 
         );
         let reserved_io = pic.create_canister();
         let relay = pic.create_canister();
+        pic.add_cycles(relay, 5_000_000_000_000);
+        let forwarding_governance = pic.create_canister();
+        pic.add_cycles(forwarding_governance, 5_000_000_000_000);
+        pic.install_canister(
+            forwarding_governance,
+            nns_mock_wasm.clone(),
+            encode_args(())?,
+            None,
+        );
+        // Only the downstream NNS neuron lookup/refresh is a local mock. SNS-W,
+        // Governance, Treasury, ICP Ledger and the forwarding Relay execute real code.
+        let _: () = support::calls::update_bytes(
+            &pic,
+            forwarding_governance,
+            Principal::anonymous(),
+            "debug_set_neuron_account",
+            encode_args((11_614_578_985_374_291_210_u64, vec![42_u8; 32]))?,
+        )?;
         let config = ProgrammeConfig {
             version: 1,
             jup_root: root,
@@ -345,7 +365,7 @@ fn production_snsw_launch_success_reserve_transport_and_failed_sale_refund() -> 
             icp_ledger: support::principals::icp_ledger(),
             icp_index: support::principals::icp_index(),
             staking_account: Account {
-                owner: support::principals::nns_governance(),
+                owner: forwarding_governance,
                 subaccount: Some([42; 32]),
             },
             canonical_relay: relay,
@@ -605,7 +625,8 @@ fn production_snsw_launch_success_reserve_transport_and_failed_sale_refund() -> 
             );
             // Reinvest actual successful-sale ICP proceeds. ICP treasury limits use
             // Ledger/CMC valuation; SNS-token valuation separately needs Swap.
-            for (version, vote) in [(2, 1), (3, 2)] {
+            let mut previous_operation = None;
+            for (version, vote) in [(2, 1), (2, 2)] {
                 let mut activated = config.clone();
                 activated.version = version;
                 activated.launch_timestamp_seconds =
@@ -613,19 +634,30 @@ fn production_snsw_launch_success_reserve_transport_and_failed_sale_refund() -> 
                 let auto = activated.automation.as_mut().unwrap();
                 auto.treasury_enabled = true;
                 auto.treasury_max_proposal_icp_e8s = 10 * 100_000_000; // explicit local withdrawal fixture
-                for _ in 0..100 {
-                    pic.tick();
+                if let Some(previous) = previous_operation {
+                    let reply: Result<(), String> = support::calls::update_bytes(
+                        &pic,
+                        rewards,
+                        governance,
+                        "request_treasury_operation",
+                        encode_args((previous + 1, Some(previous)))?,
+                    )?;
+                    assert!(reply.is_ok(), "{reply:?}");
+                } else {
+                    for _ in 0..100 {
+                        pic.tick();
+                    }
+                    pic.upgrade_canister(
+                        rewards,
+                        rewards_wasm.clone(),
+                        encode_one(Some(jupiter_sns_rewards::UpgradeArgs {
+                            reward_sns_root_canister_id: None,
+                            programme: Some(activated),
+                        }))?,
+                        Some(root),
+                    )
+                    .map_err(|error| anyhow!("activate native treasury fixture: {error:?}"))?;
                 }
-                pic.upgrade_canister(
-                    rewards,
-                    rewards_wasm.clone(),
-                    encode_one(Some(jupiter_sns_rewards::UpgradeArgs {
-                        reward_sns_root_canister_id: None,
-                        programme: Some(activated),
-                    }))?,
-                    Some(root),
-                )
-                .map_err(|error| anyhow!("activate native treasury fixture: {error:?}"))?;
                 let mut proposal_id = None;
                 for _ in 0..30 {
                     let _: () = update_noargs(&pic, rewards, buyer, "debug_programme_tick")?;
@@ -708,13 +740,146 @@ fn production_snsw_launch_success_reserve_transport_and_failed_sale_refund() -> 
                     unchanged, state,
                     "terminal treasury request must not repropose itself"
                 );
-                let retained: Option<TreasuryState> =
-                    query_one(&pic, rewards, buyer, "get_treasury_record", 2_u64)?;
+                let operation_id = state.as_ref().unwrap().operation_id.unwrap();
+                if vote == 1 {
+                    previous_operation = Some(operation_id);
+                }
+                let retained: Option<TreasuryState> = query_one(
+                    &pic,
+                    rewards,
+                    buyer,
+                    "get_treasury_operation",
+                    previous_operation.unwrap(),
+                )?;
                 assert!(matches!(
                     retained.unwrap().phase,
                     TreasuryPhase::TransferVerified { .. }
                 ));
+                if vote == 2 {
+                    let rejected: Result<(), String> = support::calls::update_bytes(
+                        &pic,
+                        rewards,
+                        governance,
+                        "request_treasury_operation",
+                        encode_args((operation_id + 1, Some(operation_id)))?,
+                    )?;
+                    assert!(
+                        rejected.is_err(),
+                        "rejected operations require review; no automatic loop"
+                    );
+                }
             }
+            #[derive(CandidType)]
+            struct RelayInit {
+                managed_canisters: Vec<Principal>,
+                governance_canister_id: Option<Principal>,
+                main_interval_seconds: Option<u64>,
+                surplus_neuron_recipients: Vec<RelayNeuronRecipient>,
+            }
+            #[derive(CandidType)]
+            struct RelayNeuronRecipient {
+                neuron_id: u64,
+                memo: Vec<u8>,
+            }
+            pic.install_canister(
+                relay,
+                relay_wasm.clone(),
+                encode_one(RelayInit {
+                    managed_canisters: vec![],
+                    governance_canister_id: Some(forwarding_governance),
+                    main_interval_seconds: Some(86_400),
+                    surplus_neuron_recipients: vec![],
+                })?,
+                None,
+            );
+            for _ in 0..6 {
+                let _: () = update_noargs(&pic, relay, buyer, "debug_main_tick")?;
+                pic.tick();
+            }
+            let mut sub = [0; 32];
+            sub[31] = 1;
+            assert_eq!(
+                support::ledger::icrc1_balance(
+                    &pic,
+                    support::principals::icp_ledger(),
+                    &Account {
+                        owner: relay,
+                        subaccount: Some(sub)
+                    }
+                )?,
+                0
+            );
+            let endowment = Account {
+                owner: forwarding_governance,
+                subaccount: Some([42; 32]),
+            };
+            assert_eq!(
+                support::ledger::icrc1_balance(
+                    &pic,
+                    support::principals::icp_ledger(),
+                    &endowment
+                )?,
+                10 * 100_000_000 - 10_000
+            );
+            // Exact real Ledger/Index evidence joins native Treasury credit to
+            // the Relay forwarding leg (including its memo and fee).
+            let account = jupiter_ic_clients::account_identifier::account_identifier_text(
+                endowment.owner,
+                endowment.subaccount,
+            );
+            let mut transfers = vec![];
+            for _ in 0..60 {
+                pic.advance_time(std::time::Duration::from_secs(2));
+                pic.tick();
+                let reply: jupiter_ic_clients::index::GetAccountIdentifierTransactionsResult =
+                    query_one(
+                        &pic,
+                        support::principals::icp_index(),
+                        buyer,
+                        "get_account_identifier_transactions",
+                        jupiter_ic_clients::index::GetAccountIdentifierTransactionsArgs {
+                            account_identifier: account.clone(),
+                            start: None,
+                            max_results: 10,
+                        },
+                    )?;
+                let jupiter_ic_clients::index::GetAccountIdentifierTransactionsResult::Ok(page) =
+                    reply
+                else {
+                    anyhow::bail!("Index forwarding query rejected");
+                };
+                transfers = page.transactions;
+                if !transfers.is_empty() {
+                    break;
+                }
+            }
+            assert_eq!(transfers.len(), 1);
+            let forwarded = &transfers[0];
+            assert_eq!(
+                forwarded.transaction.icrc1_memo.as_deref(),
+                Some(format!("{}.Relay", relay.to_text().replace('-', "")).as_bytes())
+            );
+            let jupiter_ic_clients::index::IndexOperation::Transfer {
+                from,
+                to,
+                amount,
+                fee,
+                spender,
+            } = &forwarded.transaction.operation
+            else {
+                anyhow::bail!("forwarding is not a Ledger transfer");
+            };
+            assert_eq!(
+                from,
+                &jupiter_ic_clients::account_identifier::account_identifier_text(relay, Some(sub))
+            );
+            assert_eq!(to, &account);
+            assert_eq!(amount.e8s(), 10 * 100_000_000 - 10_000);
+            assert_eq!(fee.e8s(), 10_000);
+            assert!(spender.is_none());
+            let patron: Runtime = query_one(&pic, rewards, buyer, "get_programme_status", ())?;
+            assert_eq!(patron.verified_e8s, 0);
+            assert_eq!(patron.assumed_e8s, 0);
         } else {
             let _: RefundReply = update_one(
                 &pic,

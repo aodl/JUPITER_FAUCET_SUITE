@@ -1,7 +1,7 @@
 //! Direct commitment processing. Unknown Relay provenance is held, never treated
 //! as an unmatched user or rewarded under the Relay's own principal.
 use super::{discovery, storage, types::*};
-use candid::{CandidType, Deserialize, Nat};
+use candid::Nat;
 use ic_cdk::call::{Call, CallFailed};
 use icrc_ledger_types::icrc1::{
     account::Account,
@@ -27,6 +27,7 @@ pub fn finish(record: &PatronRecord) {
     ) {
         return;
     }
+    super::refresh::enqueue(record);
     storage::mutate(|s| {
         if s.pending_block != Some(record.contribution_block) {
             return;
@@ -70,6 +71,7 @@ pub async fn tick(now: u64) -> Result<(), String> {
     if !config.patron_enabled {
         return Ok(());
     }
+    config.validate_activation(cfg!(any(test, feature = "debug_api")))?;
     if config.reserve_transport_neuron.is_some()
         && !matches!(
             super::reserve::read(),
@@ -397,62 +399,7 @@ pub async fn tick(now: u64) -> Result<(), String> {
     }
     storage::put(&record);
     finish(&record);
-    if let (PatronOutcome::Verified { .. }, Some(id)) = (&record.outcome, &record.compounded_neuron)
-    {
-        record.refresh_result = Some(
-            refresh(source.governance, id.clone())
-                .await
-                .map_or_else(|e| e, |()| "confirmed stake refresh".into()),
-        );
-        storage::put(&record);
-    }
     Ok(())
-}
-
-async fn refresh(governance: candid::Principal, id: Vec<u8>) -> Result<(), String> {
-    #[derive(CandidType)]
-    struct Empty {}
-    #[derive(CandidType)]
-    enum By {
-        NeuronId(Empty),
-    }
-    #[derive(CandidType)]
-    struct Refresh {
-        by: Option<By>,
-    }
-    #[derive(CandidType)]
-    enum Command {
-        ClaimOrRefresh(Refresh),
-    }
-    #[derive(CandidType)]
-    struct Request {
-        subaccount: Vec<u8>,
-        command: Option<Command>,
-    }
-    #[derive(CandidType, Deserialize)]
-    enum Reply {
-        ClaimOrRefresh(candid::Reserved),
-        Error(candid::Reserved),
-    }
-    #[derive(CandidType, Deserialize)]
-    struct Response {
-        command: Option<Reply>,
-    }
-    let response: Response = Call::bounded_wait(governance, "manage_neuron")
-        .with_arg(Request {
-            subaccount: id,
-            command: Some(Command::ClaimOrRefresh(Refresh {
-                by: Some(By::NeuronId(Empty {})),
-            })),
-        })
-        .await
-        .map_err(|e| format!("stake refresh uncertain: {e:?}"))?
-        .candid()
-        .map_err(|e| format!("stake refresh decode: {e:?}"))?;
-    match response.command {
-        Some(Reply::ClaimOrRefresh(_)) => Ok(()),
-        _ => Err("stake refresh rejected".into()),
-    }
 }
 
 #[cfg(test)]

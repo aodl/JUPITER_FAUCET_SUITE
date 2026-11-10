@@ -41,6 +41,17 @@ pub struct AutomationConfig {
 }
 
 impl ProgrammeConfig {
+    /// General provenance is incomplete. Only the explicit debug/local fixture
+    /// build may exercise direct patron or native treasury payments.
+    pub fn validate_activation(&self, local_test_context: bool) -> Result<(), String> {
+        if !local_test_context
+            && (self.patron_enabled || self.automation.as_ref().is_some_and(|a| a.treasury_enabled))
+        {
+            return Err("patron and treasury activation blocked: Relay FIFO/splitter and mixed treasury provenance are incomplete".into());
+        }
+        Ok(())
+    }
+
     pub(super) fn preserves_financial_bindings(&self, old: &Self) -> bool {
         self.jup_root == old.jup_root
             && self.icp_ledger == old.icp_ledger

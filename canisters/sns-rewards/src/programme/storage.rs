@@ -98,6 +98,18 @@ pub fn record(block: u64) -> Option<PatronRecord> {
     })
 }
 
+/// Bounded migration of already-settled pre-refresh-journal records.
+pub fn records_after(block: Option<u64>, limit: usize) -> Vec<PatronRecord> {
+    use std::ops::Bound::{Excluded, Unbounded};
+    RECORDS.with_borrow_mut(|map| {
+        map.get_or_insert_with(|| StableBTreeMap::init(memory(6)))
+            .range((block.map_or(Unbounded, Excluded), Unbounded))
+            .take(limit)
+            .map(|entry| candid::decode_one(&entry.value()).expect("patron migration record"))
+            .collect()
+    })
+}
+
 pub fn put(record: &PatronRecord) {
     let mut record = record.clone();
     match &mut record.outcome {
@@ -119,11 +131,15 @@ pub fn put(record: &PatronRecord) {
 
 pub fn configure(config: ProgrammeConfig) -> Result<(), String> {
     config.validate()?;
+    config.validate_activation(cfg!(any(test, feature = "debug_api")))?;
     let current = read();
     if current.config.as_ref() == Some(&config) {
         return Ok(());
     }
-    if current.batch.is_some() || current.pending_block.is_some() {
+    if current.batch.is_some()
+        || current.pending_block.is_some()
+        || super::treasury::has_requested_operation()
+    {
         return Err(
             "finish the pinned patron batch before changing programme configuration".into(),
         );
@@ -157,5 +173,6 @@ pub fn configure(config: ProgrammeConfig) -> Result<(), String> {
         state.snapshot = None;
         state.scan = None;
     });
+    super::bind_relay_root();
     Ok(())
 }

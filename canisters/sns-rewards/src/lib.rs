@@ -12,6 +12,7 @@ mod state;
 use candid::{CandidType, Deserialize, Principal};
 pub use programme::automation::{AutomationState, FundingOutcome, MirrorPhase, MirrorRecord};
 pub use programme::participation::State as ParticipationState;
+pub use programme::refresh::{RefreshJob, RefreshStatus};
 pub use programme::reserve::ReserveTransport;
 pub use programme::treasury::Phase as TreasuryPhase;
 pub use programme::treasury::State as TreasuryState;
@@ -67,9 +68,6 @@ fn guard_debug_api_not_production() {
 }
 
 fn context_from_state() -> Option<RelayRewardContext> {
-    if programme::read().config.is_some() {
-        return programme::context();
-    }
     state::with_state(|st| {
         let configured_root = st.config.reward_sns_root_canister_id?;
         let snapshot = st.active_snapshot.as_ref()?;
@@ -96,9 +94,6 @@ fn get_relay_reward_context() -> Option<RelayRewardContext> {
 fn resolve_default_icp_accounts(
     args: ResolveDefaultIcpAccountsArgs,
 ) -> ResolveDefaultIcpAccountsResult {
-    if programme::read().config.is_some() {
-        return programme::resolve(args);
-    }
     if args.account_identifiers.len() > policy::MAX_ACCOUNT_LOOKUPS_PER_CALL {
         return ResolveDefaultIcpAccountsResult::TooManyAccounts;
     }
@@ -174,6 +169,7 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
             ic_cdk::println!("SNS_REWARDS_LIFECYCLE event=root_changed_invalidated");
         }
     }
+    programme::bind_relay_root();
     scheduler::install_timers();
     logging::lifecycle("post_upgrade_complete");
     logging::config();
@@ -187,6 +183,16 @@ fn get_programme_status() -> programme::types::Runtime {
 #[ic_cdk::query]
 fn get_patron_record(contribution_block: u64) -> Option<programme::types::PatronRecord> {
     programme::record(contribution_block)
+}
+
+#[ic_cdk::query]
+fn get_patron_refresh(contribution_block: u64) -> Option<RefreshJob> {
+    programme::refresh::read(contribution_block)
+}
+
+#[ic_cdk::update]
+fn retry_patron_refresh(contribution_block: u64) -> Result<(), String> {
+    programme::refresh::retry(contribution_block, ic_cdk::api::msg_caller())
 }
 
 #[ic_cdk::query]
@@ -225,6 +231,19 @@ fn get_treasury_status() -> Option<TreasuryState> {
 #[ic_cdk::query]
 fn get_treasury_record(config_version: u64) -> Option<TreasuryState> {
     programme::treasury::record(config_version)
+}
+
+#[ic_cdk::query]
+fn get_treasury_operation(operation_id: u64) -> Option<TreasuryState> {
+    programme::treasury::operation(operation_id)
+}
+
+#[ic_cdk::update]
+fn request_treasury_operation(
+    operation_id: u64,
+    expected_previous: Option<u64>,
+) -> Result<(), String> {
+    programme::treasury::request_next(operation_id, expected_previous, ic_cdk::api::msg_caller())
 }
 
 #[ic_cdk::query]

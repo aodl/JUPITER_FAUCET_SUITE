@@ -46,6 +46,7 @@ pub enum Phase {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct State {
     pub config_version: u64,
+    pub operation_id: Option<u64>,
     pub phase: Phase,
     pub source: Source,
     pub observed_balance_e8s: u64,
@@ -58,6 +59,87 @@ pub struct State {
     pub last_error: Option<String>,
 }
 type Memory = VirtualMemory<DefaultMemoryImpl>;
+thread_local! {
+    static OPERATIONS: RefCell<Option<StableBTreeMap<u64, Vec<u8>, Memory>>> = const {RefCell::new(None)};
+    static SEQUENCE: RefCell<Option<StableCell<u64, Memory>>> = const {RefCell::new(None)};
+    static NEXT: RefCell<Option<StableCell<u64, Memory>>> = const {RefCell::new(None)};
+}
+fn counter<R>(
+    id: u8,
+    cell: &'static std::thread::LocalKey<RefCell<Option<StableCell<u64, Memory>>>>,
+    f: impl FnOnce(&mut StableCell<u64, Memory>) -> R,
+) -> R {
+    cell.with_borrow_mut(|c| {
+        f(c.get_or_insert_with(|| {
+            StableCell::init(crate::state::programme_memory(MemoryId::new(id)), 0)
+        }))
+    })
+}
+pub fn has_requested_operation() -> bool {
+    next_operation() != 0
+}
+fn next_operation() -> u64 {
+    counter(20, &NEXT, |c| *c.get())
+}
+fn operations<R>(f: impl FnOnce(&mut StableBTreeMap<u64, Vec<u8>, Memory>) -> R) -> R {
+    OPERATIONS.with_borrow_mut(|map| {
+        f(map.get_or_insert_with(|| {
+            StableBTreeMap::init(crate::state::programme_memory(MemoryId::new(19)))
+        }))
+    })
+}
+pub fn operation(id: u64) -> Option<State> {
+    operations(|map| {
+        map.get(&id)
+            .map(|bytes| candid::decode_one(&bytes).expect("treasury operation"))
+    })
+}
+/// Explicit governed request, never an automatic recurring proposal loop.
+/// TransferVerified settles the native treasury leg only. Production activation
+/// remains blocked pending attribution of the downstream Relay funding credit.
+pub fn request_next(
+    id: u64,
+    expected_previous: Option<u64>,
+    caller: Principal,
+) -> Result<(), String> {
+    let state = read().ok_or("no settled treasury operation")?;
+    if caller == Principal::anonymous() || caller != state.source.governance {
+        return Err("only pinned jUP Governance may request a treasury operation".into());
+    }
+    if state.operation_id != expected_previous
+        || !matches!(state.phase, Phase::TransferVerified { .. })
+    {
+        return Err(
+            "previous native treasury operation must be conclusively transfer-verified".into(),
+        );
+    }
+    let sequence = counter(18, &SEQUENCE, |c| *c.get());
+    if id == 0 || id <= sequence || operation(id).is_some() {
+        return Err("treasury operation ID must be new and increasing".into());
+    }
+    let next = next_operation();
+    if next != 0 && next != id {
+        return Err("a new treasury operation is already requested".into());
+    }
+    if state.operation_id.is_none() {
+        // ID zero is reserved for the frozen legacy predecessor. Do not change
+        // its optional ID/title: an old in-flight proposal binds that title.
+        if operation(0).as_ref().is_some_and(|old| old != &state) {
+            return Err("legacy treasury predecessor archive is already bound".into());
+        }
+        operations(|map| {
+            map.insert(
+                0,
+                candid::encode_one(&state).expect("archive legacy treasury predecessor"),
+            )
+        });
+    }
+    counter(20, &NEXT, |c| {
+        c.set(id);
+    });
+    Ok(())
+}
+
 thread_local! { static CELL: RefCell<Option<StableCell<Vec<u8>, Memory>>> = const {RefCell::new(None)}; }
 thread_local! { static HISTORY: RefCell<Option<StableBTreeMap<u64, Vec<u8>, Memory>>> = const {RefCell::new(None)}; }
 pub fn read() -> Option<State> {
@@ -79,6 +161,14 @@ fn set(state: &State) {
         *reason = super::compact(reason);
     }
     let state = &bounded;
+    if let Some(id) = state.operation_id {
+        operations(|map| {
+            map.insert(
+                id,
+                candid::encode_one(state).expect("encode treasury operation"),
+            )
+        });
+    }
     let _ = read();
     CELL.with_borrow_mut(|cell| {
         cell.as_mut()
@@ -128,7 +218,7 @@ pub fn framework_limit(balance: u64, rate: u64) -> u64 {
     }
 }
 fn proposal(state: &State) -> sns::Proposal {
-    sns::Proposal { title: format!("Jupiter treasury reinvestment v{}", state.config_version),
+    sns::Proposal { title: format!("Jupiter treasury reinvestment v{}{}", state.config_version, state.operation_id.map(|id| format!(" operation {id}")).unwrap_or_default()),
         summary: format!("Reinvest {} ICP e8s through the canonical Relay subaccount 1. Normal base/age-bonus economics apply; this protocol capital is excluded from patron jUP issuance.", state.amount_e8s),
         url: String::new(), action: Some(sns::Action::TransferSnsTreasuryFunds(sns::TransferSnsTreasuryFunds {
             from_treasury: 1, to_principal: Some(state.destination.owner),
@@ -161,12 +251,15 @@ async fn tick_inner(
     if !auto.treasury_enabled {
         return Ok(());
     }
+    config.validate_activation(cfg!(any(test, feature = "debug_api")))?;
     let source = source_state
         .source
         .as_ref()
         .ok_or("treasury source unresolved")?;
     let ledger = IcrcLedgerCanister::new(config.icp_ledger);
-    let mut state = if let Some(state) = read().filter(|s| s.config_version == config.version) {
+    let mut state = if let Some(state) =
+        read().filter(|s| s.config_version == config.version && next_operation() == 0)
+    {
         state
     } else {
         if !proposer_ready {
@@ -198,7 +291,20 @@ async fn tick_inner(
         }
         let mut sub = [0; 32];
         sub[31] = 1;
+        // No await from selecting/consuming the requested identity to persisting
+        // the new operation. A duplicate request cannot create a successor.
+        let requested = next_operation();
+        let operation_id = counter(18, &SEQUENCE, |c| {
+            let id = if requested == 0 {
+                c.get().checked_add(1).expect("treasury identity exhausted")
+            } else {
+                requested
+            };
+            c.set(id);
+            id
+        });
         let state = State {
+            operation_id: Some(operation_id),
             config_version: config.version,
             source: source.clone(),
             observed_balance_e8s: balance,
@@ -220,6 +326,9 @@ async fn tick_inner(
             last_error: None,
         };
         set(&state);
+        counter(20, &NEXT, |c| {
+            c.set(0);
+        });
         state
     };
     match state.phase.clone() {
@@ -491,6 +600,115 @@ async fn tick_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn fixture(phase: Phase) -> State {
+        State {
+            config_version: 7,
+            operation_id: Some(1),
+            phase,
+            source: Source {
+                root: Principal::from_slice(&[1]),
+                governance: Principal::from_slice(&[2]),
+                ledger: Principal::from_slice(&[3]),
+            },
+            observed_balance_e8s: 100,
+            rate_permyriad: 10000,
+            at_seconds: 123,
+            amount_e8s: 10,
+            actual_icp_fee_e8s: 1,
+            start_block: 5,
+            destination: Account {
+                owner: Principal::from_slice(&[4]),
+                subaccount: Some([0; 32]),
+            },
+            last_error: None,
+        }
+    }
+    #[test]
+    fn recurring_native_operation_requires_unique_id_exact_predecessor_and_conclusive_transfer() {
+        let governance = Principal::from_slice(&[2]);
+        counter(18, &SEQUENCE, |c| {
+            c.set(1);
+        });
+        counter(20, &NEXT, |c| {
+            c.set(0);
+        });
+        for phase in [
+            Phase::ManualReview("rejected".into()),
+            Phase::Uncertain("ambiguous".into()),
+            Phase::Proposed { proposal_id: 1 },
+        ] {
+            set(&fixture(phase));
+            assert!(request_next(2, Some(1), governance).is_err());
+        }
+        set(&fixture(Phase::TransferVerified {
+            proposal_id: 1,
+            block: 10,
+        }));
+        assert!(request_next(2, Some(1), Principal::anonymous()).is_err());
+        assert!(request_next(1, Some(1), governance).is_err());
+        assert!(request_next(2, None, governance).is_err());
+        request_next(2, Some(1), governance).unwrap();
+        request_next(2, Some(1), governance).unwrap();
+        assert!(request_next(3, Some(1), governance).is_err());
+        assert!(matches!(
+            operation(1).unwrap().phase,
+            Phase::TransferVerified { block: 10, .. }
+        ));
+        assert_eq!(operation(1).unwrap().config_version, 7);
+    }
+    #[test]
+    fn frozen_pre_extension_journal_decodes_and_retains_legacy_identity_on_continuation() {
+        #[derive(CandidType)]
+        struct OldState {
+            config_version: u64,
+            phase: Phase,
+            source: Source,
+            observed_balance_e8s: u64,
+            rate_permyriad: u64,
+            at_seconds: u64,
+            amount_e8s: u64,
+            actual_icp_fee_e8s: u64,
+            start_block: u64,
+            destination: Account,
+            last_error: Option<String>,
+        }
+        let old = fixture(Phase::TransferVerified {
+            proposal_id: 10,
+            block: 20,
+        });
+        let bytes = candid::encode_one(OldState {
+            config_version: old.config_version,
+            phase: old.phase,
+            source: old.source,
+            observed_balance_e8s: old.observed_balance_e8s,
+            rate_permyriad: old.rate_permyriad,
+            at_seconds: old.at_seconds,
+            amount_e8s: old.amount_e8s,
+            actual_icp_fee_e8s: old.actual_icp_fee_e8s,
+            start_block: old.start_block,
+            destination: old.destination,
+            last_error: old.last_error,
+        })
+        .unwrap();
+        let restored: State = candid::decode_one(&bytes).unwrap();
+        assert_eq!(restored.operation_id, None);
+        assert_eq!(
+            proposal(&restored).title,
+            "Jupiter treasury reinvestment v7"
+        );
+        counter(18, &SEQUENCE, |c| {
+            c.set(0);
+        });
+        counter(20, &NEXT, |c| {
+            c.set(0);
+        });
+        operations(|map| map.clear_new());
+        set(&restored);
+        request_next(1, None, restored.source.governance).unwrap();
+        assert_eq!(operation(0), Some(restored.clone()));
+        set(&fixture(Phase::Proposed { proposal_id: 11 }));
+        assert_eq!(operation(0), Some(restored));
+    }
     #[test]
     fn pinned_framework_limit_boundaries_and_clamp() {
         assert_eq!(

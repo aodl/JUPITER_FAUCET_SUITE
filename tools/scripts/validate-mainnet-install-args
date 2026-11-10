@@ -1090,7 +1090,8 @@ def validate_sns_rewards() -> None:
         "get_programme_status", "get_patron_record", "get_automation_status",
         "get_proposer_funding", "get_mirror_record", "get_participation_status",
         "get_reserve_transport_status", "get_treasury_status", "get_treasury_record",
-        "quote_gross_io_share",
+        "quote_gross_io_share", "get_patron_refresh", "retry_patron_refresh",
+        "get_treasury_operation", "request_treasury_operation",
     }
     if methods != expected_methods:
         fail(

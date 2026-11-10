@@ -227,6 +227,8 @@ pub async fn tick(now: u64) -> Result<(), String> {
             storage::insert(scan.slot, p, scan.source_index == 0, bonus);
         }
     }
+    let completed_id =
+        (page.neurons.is_empty() && scan.source_index == 1).then(super::allocate_snapshot_id);
     storage::mutate(|s| {
         let scan = s.scan.as_mut().expect("fenced owner scan");
         scan.pages += 1;
@@ -237,12 +239,9 @@ pub async fn tick(now: u64) -> Result<(), String> {
                 scan.cursor = None;
             } else {
                 let scan = s.scan.take().expect("completed owner scan");
-                s.next_snapshot = s
-                    .next_snapshot
-                    .checked_add(1)
-                    .expect("snapshot generation exhausted");
+                s.next_snapshot = completed_id.expect("completed snapshot ID");
                 s.snapshot = Some(Snapshot {
-                    id: s.next_snapshot,
+                    id: completed_id.expect("completed snapshot ID"),
                     config_version: config.version,
                     sources: scan.sources,
                     started_at_seconds: scan.started_at_seconds,

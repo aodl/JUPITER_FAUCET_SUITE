@@ -66,7 +66,7 @@ Optional OpenChat development verification is read-only: query OpenChat Root, co
 existing work and activates no new transfers. Legacy stable memories 0–2 remain
 unchanged; programme metadata, two owner slots, payment journals, mirror mappings,
 participation slots, reserve/treasury and proposer evidence use independent memory
-IDs 3–15. No speculative legacy migration chain or production-state reset is used.
+IDs 3–21. No speculative legacy migration chain or production-state reset is used.
 An increasing configuration version is required for changes. In-flight batches,
 unknown financial work and pending governance operations fence reconfiguration.
 The jUP Root, protocol governance neuron, reserve Account/transport and canonical
@@ -76,8 +76,11 @@ and fee context for canonical review. Proposer readiness gates new submissions;
 existing bound ballots and treasury receipt checks continue independently.
 
 The economic source is [`economics.json`](../../deploy/acceptance/economics.json).
-Fresh acceptance can enable features explicitly. The acceptance role mapping is
-assigned; live launch timestamp and NNX authority remain unresolved reviewed inputs.
+Production and acceptance builds reject patron or native treasury activation while
+Relay/splitter and mixed-capital attribution are incomplete. The existing
+`debug_api` build is the explicit local payment-test context; it is not a launch
+configuration. The acceptance role mapping records proposed assignments; final
+operator confirmation, live launch timestamp and NNX authority remain unresolved.
 
 ### Ownership and final eligibility
 
@@ -86,16 +89,21 @@ failure defers processing; it is not an empty set or final ineligibility. A snap
 is published only after complete scans of both SNSs, with source identities,
 configuration version, generation and timestamps. The union deduplicates owners
 and derives their exact default ICP AccountIdentifiers; addresses are matched
-through known principals, never reverse-decoded. Relay consumers still receive
-the jUP Ledger even when identity was discovered through IO.
+through known principals, never reverse-decoded. This union is used only for
+patron processing. Relay's existing API uses the independent stable single-jUP
+index in memories 0–2 with its existing conservative ownership policy. Programme
+configuration binds that index to jUP Root without depending on IO resolution.
+IO-only owners never enter that Relay index. Daily Relay refreshes continue while
+patron history pins its separate union slot. Both scanners allocate from one
+monotonic snapshot-ID namespace; neither API exposes staging data.
 
 Programme economic attribution requires positive effective stake and a principal
 with Disburse permission. Among economic controllers, union distinct permissions,
 then choose the largest set and lexicographically smallest raw principal on ties.
 This documented deterministic policy cannot make unusual shared-control neurons
 have one objectively unique owner. An unrelated Vote-only principal is excluded.
-The legacy single-source policy above remains the deployed compatibility behavior
-when no programme is configured.
+The single-source Relay policy above applies independently, including when a
+programme is configured. Unconfigured OpenChat installations retain their Root.
 
 Each terminal patron record retains compact source/completeness metadata and its
 selected owner attribution; rotating owner maps does not erase its review context.
@@ -141,7 +149,17 @@ neurons are excluded. Multiple eligible destinations choose the smallest neuron
 ID. Eligibility is rechecked before freezing the transfer; this is a point-in-time
 check, not a promise that the neuron stays locked forever. Native ClaimOrRefresh
 by neuron ID works without granting the reserve arbitrary neuron permissions.
-A refresh failure never repeats a token transfer.
+A refresh failure never repeats a token transfer. A separate durable refresh
+journal pins the exact patron record, Governance and originally selected neuron.
+Both Verified and AssumedPaidUnverified compounding records enter this lane;
+refreshing stake never converts an assumed payment into a verified transfer.
+Each tick admits at most one refresh attempt, with five attempts separated by
+five minutes. It first compares that neuron's cached stake with its actual Ledger
+staking balance. Typed permanent refusals or exhausted retries stop visibly for
+manual review; only the pinned jUP Governance can authorize another bounded window
+through `retry_patron_refresh`. Permission/preference changes never select a new
+neuron. Old settled records lacking a confirmed refresh are enqueued through a
+bounded migration; all payment identity fields and totals remain unchanged.
 
 The quoted amount reaches its recipient. SNS Rewards pays the actual Ledger fee
 in addition: initially a 1/2 jUP quote costs the reserve 1.1/2.1 jUP. A later fee
@@ -154,10 +172,11 @@ reserve-size argument removes this accepted economic cost.
 **Relay integration is incomplete:** canonical Relay subaccount-1 commitments pause assessment
 pending exact FIFO/splitter/multi-hop provenance integration. The intended route
 is base-rate liquid to the original recognised contributor, never 2x or the Relay
-principal. Combined treasury/patron activation is rejected until mixed Relay
+principal. Production patron and treasury activation are rejected until mixed Relay
 batches can exclude protocol capital while preserving ordinary patrons.
 Other Relay-child and splitter routes are not recognised by this guard; keep
-general patron activation off until their attribution is integrated. Existing
+general patron activation off until their attribution is integrated. The
+production install/upgrade validator enforces this even for direct-only settings. Existing
 Relay pot distribution is a distinct service and its retry/fee policy is unchanged.
 
 ### Durable one-attempt patron policy
@@ -209,9 +228,20 @@ admission; five versus six days is not a universal guarantee.
 
 Treasury proposes native ICP transfers to canonical Relay subaccount 1 using real
 balance, fees, native value/seven-day limits and frozen proposal/transfer identity.
-It retains one operation per reviewed configuration, rejects proposal loops and
-proves the actual Ledger credit separately from adoption/execution. Relay forwarding
-and mixed provenance remain explicit limits. Treasury endowments retain normal
+Each operation has a unique durable ID, frozen native proposal identity and
+retained history. After the prior native transfer is conclusively verified, the
+pinned jUP Governance may explicitly request a new increasing ID with the exact
+predecessor through `request_treasury_operation`, without a configuration change.
+Rejected, failed and ambiguous operations cannot use that continuation. No timer
+creates an automatic proposal loop. `get_treasury_record` retains its per-version
+query behavior; `get_treasury_operation` retains each new operation separately.
+A pre-extension journal has no operation ID and preserves its original proposal
+title/binding; operation ID zero archives that legacy predecessor when explicitly
+continuing it. TransferVerified describes the native Ledger leg, not downstream
+mixed-capital reconciliation. A real-SNS test follows the actual native credit
+through real Relay code and the ICP Ledger to the exact staking Account; only
+its NNS neuron lookup/refresh is a local mock. Production treasury automation
+remains blocked pending complete provenance. Treasury endowments retain normal
 Disburser/Faucet age-bonus economics, including the exact reviewed 95/5 split.
 Protocol capital must never issue patron jUP.
 
@@ -221,3 +251,18 @@ by stake again. It publishes a complete event or waits. Its gross quote is not a
 funded IO payment. The Rust-only `io_contract` boundary double proves the exact
 funded IO receipt and duplicate behavior; no ICP-to-IO worker or IO payout economics
 is activated. See the [minimal IO handoff](../../deploy/acceptance/README.md#io-contract-handoff).
+
+### Next provenance increment
+
+Reuse the Relay owner-index/FIFO reconstruction contracts rather than copying a
+scanner. Bind each canonical/child Relay to its authenticated identity and derive
+funding credits from complete descending Ledger histories. Pin the available FIFO
+credits at each splitter default leg, consume the matched credits across both
+legs, and retain exact original contributor Accounts, amounts and commitment
+references. Unresolved ancestry must remain pending, never become a personal
+Relay contribution or a silent skip. Join native treasury proposal/credit evidence
+to those credits as protocol capital, including mixed split jobs; exclude that
+capital before patron issuance while preserving ordinary contributions. Cover
+mixed FIFO funding, inter-leg deposits, child chains, fee changes, upgrade cursors
+and conservation/no-replay before removing the activation guard. This increment
+does not implement those attribution paths or activate IO settlement/payouts.

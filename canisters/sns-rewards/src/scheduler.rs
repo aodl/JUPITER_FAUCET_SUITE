@@ -25,9 +25,6 @@ struct ScanGuard {
 
 impl ScanGuard {
     fn owns_scan(&self, root: candid::Principal, expected: Option<&OwnerScan>) -> bool {
-        if crate::programme::read().config.is_some() {
-            return false;
-        }
         state::with_state(|st| {
             self.inner.is_active()
                 && st.scan_lock_state_ts == Some(self.inner.lease_expires_at_ts())
@@ -112,9 +109,6 @@ fn schedule_continuation() {
 }
 
 pub(crate) async fn scan_tick(force: bool) {
-    if crate::programme::read().config.is_some() {
-        return;
-    }
     let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
     let Some(guard) = ScanGuard::acquire(now_secs) else {
@@ -335,10 +329,11 @@ fn finish_page(
         }
         return PageResult::InProgress;
     }
+    let snapshot_id = crate::programme::allocate_snapshot_id();
     let snapshot = state::with_state_mut(|st| {
         let completed = st.scan.take().expect("completed owner scan");
         let snapshot = OwnerSnapshot {
-            snapshot_id: st.next_snapshot_id,
+            snapshot_id,
             active_slot: completed.staging_slot,
             sns_root_canister_id: completed.sns_root_canister_id,
             sns_governance_canister_id: completed.sns_governance_canister_id,
@@ -349,7 +344,6 @@ fn finish_page(
             owner_count: state::slot_len(completed.staging_slot),
         };
         st.active_snapshot = Some(snapshot.clone());
-        st.next_snapshot_id = st.next_snapshot_id.saturating_add(1);
         snapshot
     });
     crate::logging::scan("completed", None, Some(&snapshot), None);

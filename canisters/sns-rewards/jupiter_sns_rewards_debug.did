@@ -272,6 +272,7 @@ type State = record {
   scan : opt Scan;
 };
 type State_1 = record {
+  operation_id : opt nat64;
   last_error : opt text;
   at_seconds : nat64;
   rate_permyriad : nat64;
@@ -284,7 +285,19 @@ type State_1 = record {
   observed_balance_e8s : nat64;
   start_block : nat64;
 };
+type RefreshStatus = variant { Pending; Confirmed; ManualReview : text };
+type RefreshJob = record {
+  contribution_block : nat64;
+  attempt : nat64;
+  attempts_remaining : nat8;
+  next_attempt_seconds : nat64;
+  status : RefreshStatus;
+};
 service : (InitArgs) -> {
+  get_patron_refresh : (nat64) -> (opt RefreshJob) query;
+  retry_patron_refresh : (nat64) -> (variant { Ok; Err : text });
+  get_treasury_operation : (nat64) -> (opt State_1) query;
+  request_treasury_operation : (nat64, opt nat64) -> (variant { Ok; Err : text });
   debug_programme_tick : () -> ();
   debug_scan_tick : () -> ();
   debug_state : () -> (DebugState) query;

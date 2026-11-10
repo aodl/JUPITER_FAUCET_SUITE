@@ -175,3 +175,28 @@ fn reconfiguration_cannot_retarget_existing_capital_or_commitments() {
     next.staking_account.subaccount = Some([2; 32]);
     assert!(!next.preserves_financial_bindings(&old));
 }
+
+#[test]
+fn production_activation_rejects_even_direct_only_patron_and_treasury_configs() {
+    let mut cfg = config();
+    assert!(cfg.validate().is_ok());
+    assert!(cfg
+        .validate_activation(false)
+        .unwrap_err()
+        .contains("provenance"));
+    assert!(
+        cfg.validate_activation(true).is_ok(),
+        "explicit local direct-payment fixture"
+    );
+    cfg.patron_enabled = false;
+    assert!(cfg.validate_activation(false).is_ok());
+    cfg.automation = Some(AutomationConfig {
+        proposer_neuron: vec![9; 32],
+        targets: vec![],
+        treasury_enabled: true,
+        treasury_max_proposal_icp_e8s: 1_000_000_000,
+        treasury_retain_icp_e8s: 0,
+    });
+    assert!(cfg.validate().is_ok());
+    assert!(cfg.validate_activation(false).is_err());
+}

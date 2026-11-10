@@ -20,6 +20,8 @@ struct Env {
     staking: Account,
     rewards_wasm: Vec<u8>,
     app: Principal,
+    artifacts: PathBuf,
+    constructors: PathBuf,
 }
 
 fn command(command: &mut Command) -> Result<String> {
@@ -37,6 +39,9 @@ impl Env {
         Self::setup(automation, false)
     }
     fn setup(automation: bool, fault_ledger: bool) -> Result<Self> {
+        Self::setup_sources(automation, fault_ledger, true)
+    }
+    fn setup_sources(automation: bool, fault_ledger: bool, install_io: bool) -> Result<Self> {
         // Compile every application before starting the owned server.
         let rewards_wasm = wasm(&REWARDS_WASM, "jupiter-sns-rewards", Some("debug_api"))?;
         let app_wasm =
@@ -104,6 +109,9 @@ impl Env {
                 .current_dir(&repo),
         )?;
         for (name, ids) in [("jup", &jup), ("target", &target)] {
+            if name == "target" && !install_io {
+                continue;
+            }
             for role in ["governance", "ledger", "index", "swap", "root"] {
                 if name == "jup" && role == "ledger" && fault_ledger {
                     pic.install_canister(
@@ -227,7 +235,64 @@ impl Env {
             staking,
             rewards_wasm,
             app,
+            artifacts,
+            constructors: directory,
         })
+    }
+    fn install_io(&self) -> Result<()> {
+        for role in ["governance", "ledger", "index", "swap", "root"] {
+            self.pic.install_canister(
+                self.target[role],
+                fs::read(self.artifacts.join(format!("sns_{role}.wasm")))?,
+                fs::read(self.constructors.join("target").join(format!("{role}.bin")))?,
+                None,
+            );
+        }
+        for (role, controller) in [
+            ("governance", "root"),
+            ("root", "governance"),
+            ("ledger", "root"),
+            ("index", "root"),
+            ("swap", "root"),
+        ] {
+            self.pic
+                .set_controllers(self.target[role], None, vec![self.target[controller]])
+                .map_err(|e| anyhow!("IO controller: {e:?}"))?;
+        }
+        Ok(())
+    }
+    fn relay_context(&self) -> Result<super::RelayRewardContext> {
+        let context: Option<super::RelayRewardContext> = query_one(
+            &self.pic,
+            self.rewards,
+            self.a,
+            "get_relay_reward_context",
+            (),
+        )?;
+        context.context("independent complete jUP snapshot")
+    }
+    fn assert_relay_owners(&self, context: &super::RelayRewardContext) -> Result<()> {
+        use jupiter_ic_clients::account_identifier::account_identifier_bytes;
+        let reply: ResolveDefaultIcpAccountsResult = query_one(
+            &self.pic,
+            self.rewards,
+            self.a,
+            "resolve_default_icp_accounts",
+            ResolveDefaultIcpAccountsArgs {
+                snapshot_id: context.snapshot_id,
+                account_identifiers: [self.a, self.io_only]
+                    .map(|p| account_identifier_bytes(p, None).to_vec())
+                    .to_vec(),
+            },
+        )?;
+        assert_eq!(
+            reply,
+            ResolveDefaultIcpAccountsResult::Ok(vec![Some(self.a), None]),
+            "IO-only owners must not enter the independent jUP index"
+        );
+        assert_eq!(context.sns_root_canister_id, self.jup["root"]);
+        assert_eq!(context.sns_ledger_canister_id, self.jup["ledger"]);
+        Ok(())
     }
     fn tick(&self) -> Result<()> {
         update_noargs(
@@ -1216,5 +1281,232 @@ fn upgrade_of_unresolved_dispatch_never_repeats_the_patron_transfer() -> Result<
     );
     assert_eq!(env.status()?.verified_e8s, 0);
     assert_eq!(env.status()?.assumed_e8s, 100_000_000);
+    Ok(())
+}
+
+#[test]
+#[ignore = "official jUP, delayed IO installation and a pinned historical patron batch"]
+fn relay_jup_index_is_independent_of_io_and_long_patron_history() -> Result<()> {
+    let env = Env::setup_sources(false, false, false)?;
+    let direct = env.commit(env.a)?;
+    for _ in 0..12 {
+        let _: () = update_noargs(&env.pic, env.rewards, env.a, "debug_scan_tick")?;
+        env.tick()?;
+    }
+    let first = env.relay_context()?;
+    env.assert_relay_owners(&first)?;
+    assert!(
+        env.status()?.snapshot.is_none(),
+        "uninstalled IO is not an empty source"
+    );
+    assert!(env.record(direct)?.is_none());
+    env.install_io()?;
+    for _ in 0..12 {
+        env.tick()?;
+    }
+    let both = env
+        .status()?
+        .snapshot
+        .context("two-source patron snapshot")?;
+    env.assert_relay_owners(&env.relay_context()?)?;
+    assert_ne!(both.id, env.relay_context()?.snapshot_id);
+    // A historical batch with many independently recorded contributions remains
+    // pinned across two daily refresh opportunities. No fixture changes its cursor.
+    for n in 0..24 {
+        let outsider = Principal::self_authenticating(format!("long history {n}"));
+        env.commit(outsider)?;
+    }
+    for _ in 0..120 {
+        env.pic.advance_time(std::time::Duration::from_secs(2));
+        env.pic.tick();
+        env.tick()?;
+        if env.status()?.batch.is_some() {
+            break;
+        }
+    }
+    let pinned = env
+        .status()?
+        .batch
+        .context("long patron batch did not start")?;
+    let mut prior = env.relay_context()?;
+    for _ in 0..2 {
+        env.pic.advance_time(std::time::Duration::from_secs(86_400));
+        for _ in 0..8 {
+            env.pic.tick();
+        }
+        env.tick()?;
+        assert_eq!(
+            env.status()?.batch.as_ref().map(|b| b.snapshot.id),
+            Some(pinned.snapshot.id)
+        );
+        let refreshed = env.relay_context()?;
+        assert!(refreshed.snapshot_id > prior.snapshot_id);
+        assert_ne!(refreshed.snapshot_id, pinned.snapshot.id);
+        env.assert_relay_owners(&refreshed)?;
+        let stale: ResolveDefaultIcpAccountsResult = query_one(
+            &env.pic,
+            env.rewards,
+            env.a,
+            "resolve_default_icp_accounts",
+            ResolveDefaultIcpAccountsArgs {
+                snapshot_id: prior.snapshot_id,
+                account_identifiers: vec![],
+            },
+        )?;
+        assert_eq!(stale, ResolveDefaultIcpAccountsResult::SnapshotChanged);
+        prior = refreshed;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "official SNS stake refresh after confirmed/assumed payment, failure and upgrade"]
+fn paid_compound_refresh_resumes_without_reselection_or_payment_replay() -> Result<()> {
+    for assumed in [false, true] {
+        let env = Env::new(false)?;
+        env.drive(6)?;
+        let block = env.commit(env.a)?;
+        if assumed {
+            let _: () = update_noargs(
+                &env.pic,
+                env.rewards,
+                env.a,
+                "debug_trap_patron_callback_once",
+            )?;
+        }
+        for _ in 0..100 {
+            env.pic.advance_time(std::time::Duration::from_secs(2));
+            env.pic.tick();
+            let result = env.tick();
+            if let Err(error) = result {
+                assert!(
+                    assumed && error.to_string().contains("callback trap"),
+                    "{error:?}"
+                );
+            }
+            if env.record(block)?.is_some_and(|r| {
+                matches!(
+                    r.outcome,
+                    PatronOutcome::Verified { .. } | PatronOutcome::Dispatched { .. }
+                )
+            }) {
+                break;
+            }
+        }
+        let paid = env.record(block)?.context("payment checkpoint")?;
+        let selected = paid
+            .compounded_neuron
+            .clone()
+            .context("selected compound neuron")?;
+        assert_eq!(
+            paid.to.subaccount,
+            Some(selected.clone().try_into().unwrap())
+        );
+        let actual_balance = env.balance(paid.to)?;
+        assert!(actual_balance >= paid.amount_e8s);
+        // Upgrade between the irreversible transfer and idempotent refresh.
+        for _ in 0..100 {
+            env.pic.tick();
+        }
+        env.pic
+            .upgrade_canister(
+                env.rewards,
+                env.rewards_wasm.clone(),
+                encode_args(())?,
+                Some(env.jup["root"]),
+            )
+            .map_err(|e| anyhow!("upgrade paid compound: {e:?}"))?;
+        let recovered = env.record(block)?.unwrap();
+        assert!(if assumed {
+            matches!(
+                recovered.outcome,
+                PatronOutcome::AssumedPaidUnverified { .. }
+            )
+        } else {
+            matches!(recovered.outcome, PatronOutcome::Verified { .. })
+        });
+        let job: Option<RefreshJob> =
+            query_one(&env.pic, env.rewards, env.a, "get_patron_refresh", block)?;
+        assert_eq!(
+            job.context("durable refresh job")?.status,
+            RefreshStatus::Pending
+        );
+        env.pic
+            .stop_canister(env.jup["governance"], Some(env.jup["root"]))
+            .map_err(|e| anyhow!("stop refresh target: {e:?}"))?;
+        env.tick()?;
+        let failed: Option<RefreshJob> =
+            query_one(&env.pic, env.rewards, env.a, "get_patron_refresh", block)?;
+        let failed = failed.unwrap();
+        assert_eq!(failed.status, RefreshStatus::Pending);
+        assert!(failed.attempt > 0 && failed.attempts_remaining < 5);
+        // Repeated ticks before the bounded delay do not dispatch more attempts.
+        env.drive(3)?;
+        let unchanged: Option<RefreshJob> =
+            query_one(&env.pic, env.rewards, env.a, "get_patron_refresh", block)?;
+        assert_eq!(unchanged, Some(failed));
+        for _ in 0..100 {
+            env.pic.tick();
+        }
+        env.pic
+            .upgrade_canister(
+                env.rewards,
+                env.rewards_wasm.clone(),
+                encode_args(())?,
+                Some(env.jup["root"]),
+            )
+            .map_err(|e| anyhow!("upgrade pending refresh: {e:?}"))?;
+        env.pic
+            .start_canister(env.jup["governance"], Some(env.jup["root"]))
+            .map_err(|e| anyhow!("restart refresh target: {e:?}"))?;
+        env.manage(
+            env.jup["governance"],
+            env.a,
+            &selected,
+            sns::Command::Configure(sns::Configure {
+                operation: Some(sns::Operation::ChangeAutoStakeMaturity(
+                    sns::ChangeAutoStakeMaturity {
+                        requested_setting_for_auto_stake_maturity: false,
+                    },
+                )),
+            }),
+        )?;
+        env.pic.advance_time(std::time::Duration::from_secs(301));
+        env.drive(4)?;
+        let refreshed: Option<RefreshJob> =
+            query_one(&env.pic, env.rewards, env.a, "get_patron_refresh", block)?;
+        assert_eq!(refreshed.unwrap().status, RefreshStatus::Confirmed);
+        let final_record = env.record(block)?.unwrap();
+        assert_eq!(final_record.outcome, recovered.outcome);
+        assert_eq!(final_record.to, paid.to);
+        assert_eq!(final_record.memo, paid.memo);
+        assert_eq!(
+            final_record.created_at_time_nanos,
+            paid.created_at_time_nanos
+        );
+        assert_eq!(final_record.compounded_neuron, Some(selected.clone()));
+        assert_eq!(
+            env.balance(paid.to)?,
+            actual_balance,
+            "refresh never pays again"
+        );
+        let reply: sns::GetNeuronResponse = query_one(
+            &env.pic,
+            env.jup["governance"],
+            env.a,
+            "get_neuron",
+            sns::GetNeuron {
+                neuron_id: Some(sns::NeuronId { id: selected }),
+            },
+        )?;
+        let Some(sns::Result::Neuron(neuron)) = reply.result else {
+            anyhow::bail!("refreshed neuron unavailable: {reply:?}");
+        };
+        assert_eq!(neuron.cached_neuron_stake_e8s, actual_balance);
+        assert!(!neuron.auto_stake_maturity.unwrap_or(false));
+        let state = env.status()?;
+        assert_eq!(state.verified_e8s, if assumed { 0 } else { 200_000_000 });
+        assert_eq!(state.assumed_e8s, if assumed { 200_000_000 } else { 0 });
+    }
     Ok(())
 }

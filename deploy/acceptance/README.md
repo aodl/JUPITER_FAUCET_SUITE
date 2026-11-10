@@ -12,10 +12,15 @@ contract; no build, test or script needs its checkout.
 
 ## Inputs and isolation
 
-[`profile.json`](profile.json) is the canonical acceptance identity input. It contains the confirmed Disburser
+[`profile.json`](profile.json) is the canonical acceptance identity input. It contains the operator-reported Disburser
 `spoge-kaaaa-aaaas-amyoa-cai` and exact NNS neuron `2234355977000034918`.
-The operator explicitly delegated selection of the other eleven roles; all twelve
-assignments are recorded in the profile and the [identity handoff](identity-handoff.md).
+The checked-in handoff reports delegated selection of the other eleven roles;
+all twelve assignments are recorded in the profile and the
+[identity handoff](identity-handoff.md). The original authenticated operator
+session is not available as independent evidence in this checkout. Treat the
+eleven mappings as proposed assignments requiring final operator confirmation,
+not observations of installed mainnet roles. No read-only or mutating mainnet
+calls were authorized for this integration task.
 `provisioning.json` retains the original inventory and delegation provenance.
 No existing mapping was inferred from ID ordering. Role isolation is independently
 validated with `profile.py check-roles`. Operator, production NNX authority, launch
@@ -233,7 +238,9 @@ Governance mode transition substitutes for finalization.
 The SNS Rewards [programme documentation](../../canisters/sns-rewards/README.md)
 defines discovery, final contribution assessment, fixed-point patron rewards,
 dispatch uncertainty, reserve custody, mirror bindings and participation shares.
-New installations can explicitly configure these modules. Existing installations
+Production installs reject patron and treasury activation until complete
+Relay/splitter/mixed treasury provenance is implemented. Other modules remain
+explicitly configurable; direct payment tests use the labelled debug build. Existing installations
 retain their deployed root and stable state and enable no new transfers through
 an upgrade default. Production's OpenChat installation binding is untouched.
 
@@ -262,20 +269,25 @@ and late discovery still require actual deadline admission; six days is not a
 universal guarantee. NNX's suggested four-day period is documentation only.
 
 The native treasury worker uses the same proposer, authenticated balances,
-seven-day/value limits and one durable operation per reviewed configuration.
+seven-day/value limits and uniquely identified durable operations.
 It proposes ICP to canonical Relay subaccount 1 and verifies the actual Ledger
 transfer. Rejection/failure requires reviewed reactivation; ambiguity blocks
-ordinary reactivation. This first implementation stops verification at the Relay
-credit. Endowment forwarding and mixed patron/treasury provenance are not yet
-integrated into its terminal proof. Existing Relay memo/fee behavior and the
+ordinary reactivation. Only pinned Governance may explicitly request a new
+operation after the prior native transfer is conclusively verified, using a new
+increasing ID and exact predecessor without changing configuration. Per-operation
+history preserves both results. The integration fixture follows the actual native
+Treasury credit through real Relay forwarding and the real ICP Ledger to the
+staking Account, with only NNS neuron lookup/refresh mocked. The runtime journal
+still stops at the native Relay credit: complete FIFO/splitter and mixed capital
+attribution is not implemented, so production treasury automation stays disabled. Existing Relay memo/fee behavior and the
 normal 95% SNS Rewards / 5% D-QUORUM age-bonus split remain unchanged.
 
 **Integration limits:** patron history pauses at canonical Relay subaccount-1
 commitments pending exact FIFO/splitter attribution; it does not mark those
 commitments ineligible or pay the canonical Relay principal. Other Relay-child
 and splitter routes are not recognised by this guard. General patron activation
-must remain off until those routes are integrated. Combined automatic patron and
-treasury activation is rejected until mixed-batch provenance exclusion is
+is rejected by production install/upgrade validation until those routes are
+integrated. Native treasury activation is also rejected until mixed-batch provenance exclusion is
 implemented. Direct patron processing, discovery, reserve transport, governance
 mirroring and participation collection remain independently testable. This
 branch therefore is not production activation readiness.
