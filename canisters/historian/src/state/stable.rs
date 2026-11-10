@@ -25,6 +25,7 @@ const RELAY_CREATING_KEYS_MEMORY_ID: u8 = 30;
 // 28: retired Relay payment-claims experiment from repository history -- DO NOT REUSE
 // 29: exact commitment-route cumulative roll-ups
 // 30: bounded authoritative Creating-key index (at most four keys)
+// 31: one-time predecessor Relay installation identity for user continuation
 thread_local! {
     pub(super) static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
         std::cell::RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
@@ -421,6 +422,7 @@ mod stable_memory_id_tests {
                 key,
                 RelaySetupEntry::Active {
                     relay_canister_id: Principal::from_slice(&[8]),
+                    completed: None,
                 },
             );
         });
@@ -432,4 +434,20 @@ mod stable_memory_id_tests {
         with_relay_setup_entries_map(|map| map.clear_new());
         set_relay_creating_keys(Vec::new());
     }
+}
+
+// A separate optional cell avoids changing the accounting root or memories 26/30.
+pub(crate) fn relay_legacy_identity() -> Vec<u8> {
+    MEMORY_MANAGER.with(|manager| {
+        StableCell::<Vec<u8>, Memory>::init(manager.borrow().get(MemoryId::new(31)), Vec::new())
+            .get()
+            .clone()
+    })
+}
+
+pub(crate) fn set_relay_legacy_identity(bytes: Vec<u8>) {
+    MEMORY_MANAGER.with(|manager| {
+        StableCell::<Vec<u8>, Memory>::init(manager.borrow().get(MemoryId::new(31)), Vec::new())
+            .set(bytes);
+    });
 }

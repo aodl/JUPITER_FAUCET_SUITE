@@ -4,8 +4,8 @@ pub(crate) use types::*;
 mod stable;
 use stable::*;
 pub(crate) use stable::{
-    relay_creating_keys, set_relay_creating_keys, with_relay_setup_entries_map, DIRTY_REGISTRY,
-    DIRTY_ROOT,
+    relay_creating_keys, relay_legacy_identity, set_relay_creating_keys, set_relay_legacy_identity,
+    with_relay_setup_entries_map, DIRTY_REGISTRY, DIRTY_ROOT,
 };
 mod commitments;
 use commitments::*;

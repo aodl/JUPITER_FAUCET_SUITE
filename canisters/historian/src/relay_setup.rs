@@ -1,4 +1,9 @@
 mod admission;
+mod recovery;
+#[cfg(test)]
+mod recovery_tests;
+pub(crate) use recovery::enable_legacy_continuation;
+pub(crate) use recovery::view as setup_view_with_recovery;
 mod recipient_set;
 mod setup_key;
 mod setup_spec;
@@ -94,6 +99,7 @@ pub struct RelayCreationProgress {
     pub relay_canister_id: Option<Principal>,
     pub relay_funding_transfer: Option<RelayTransferRecord>,
     pub last_error: Option<String>,
+    pub continuation: Option<recovery::RelayContinuation>,
 }
 
 impl RelayCreationProgress {
@@ -106,6 +112,7 @@ impl RelayCreationProgress {
             relay_canister_id: None,
             relay_funding_transfer: None,
             last_error: None,
+            continuation: None,
         }
     }
 }
@@ -113,8 +120,12 @@ impl RelayCreationProgress {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum RelaySetupEntry {
     Creating(RelayCreationProgress),
-    Active { relay_canister_id: Principal },
+    Active {
+        relay_canister_id: Principal,
+        completed: Option<RelayCreationProgress>,
+    },
     ManualRecoveryRequired(RelayCreationProgress),
+    Paused(RelayCreationProgress),
 }
 
 impl Storable for RelaySetupEntry {
@@ -149,6 +160,23 @@ trait ManagementClient: Send + Sync {
     ) -> Result<(), String>;
     async fn canister_status(&self, canister_id: Principal)
         -> Result<CanisterStatusResult, String>;
+    async fn recovery_canister_status(
+        &self,
+        canister_id: Principal,
+    ) -> Result<recovery::ChildStatus, String> {
+        self.canister_status(canister_id)
+            .await
+            .map(|status| recovery::ChildStatus {
+                status,
+                budget_settings_supported: true,
+            })
+    }
+    async fn recovery_historian_history(
+        &self,
+        historian: Principal,
+    ) -> Result<recovery::HistorianHistory, String> {
+        recovery::live_historian_history(historian).await
+    }
     async fn update_settings(
         &self,
         args: &jupiter_ic_clients::management::UpdateSettingsArgs,
@@ -203,6 +231,13 @@ impl ManagementClient for IcManagementClient {
         .map_err(|err| format!("{err:?}"))
     }
 
+    async fn recovery_canister_status(
+        &self,
+        canister_id: Principal,
+    ) -> Result<recovery::ChildStatus, String> {
+        recovery::live_child_status(canister_id).await
+    }
+
     async fn update_settings(
         &self,
         args: &jupiter_ic_clients::management::UpdateSettingsArgs,
@@ -219,12 +254,15 @@ fn now_nanos() -> u64 {
 }
 
 #[cfg(test)]
-static TEST_NOW_NANOS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(1_000_000_000);
+thread_local! { static TEST_NOW_NANOS: std::cell::Cell<u64> = const { std::cell::Cell::new(1_000_000_000) }; }
 
 #[cfg(test)]
 fn now_nanos() -> u64 {
-    TEST_NOW_NANOS.fetch_add(1_000_000_000, std::sync::atomic::Ordering::SeqCst)
+    TEST_NOW_NANOS.with(|clock| {
+        let now = clock.get();
+        clock.set(now + 1_000_000_000);
+        now
+    })
 }
 
 fn now_secs() -> u64 {
@@ -316,6 +354,18 @@ pub(crate) fn reconcile_interrupted_creating_entries_after_upgrade() {
         let Some(RelaySetupEntry::Creating(mut progress)) = get_entry(key) else {
             panic!("Creating-key index does not name a Creating entry");
         };
+        if progress
+            .continuation
+            .as_ref()
+            .is_some_and(|c| !c.conversions.is_empty())
+            && !matches!(
+                progress.phase,
+                RelayCreationPhase::CreateDispatched | RelayCreationPhase::RelayFundingPrepared
+            )
+        {
+            insert_entry(key, RelaySetupEntry::Paused(progress));
+            continue;
+        }
         match progress.phase {
             RelayCreationPhase::Reserved | RelayCreationPhase::ProbingTargets => {
                 remove_entry(key);
@@ -330,6 +380,19 @@ pub(crate) fn reconcile_interrupted_creating_entries_after_upgrade() {
             | RelayCreationPhase::RelayFundingPrepared
             | RelayCreationPhase::RelayFunded
             | RelayCreationPhase::FinalizationAttempted => {
+                if progress.continuation.is_some()
+                    && matches!(
+                        progress.phase,
+                        RelayCreationPhase::ChildCreated
+                            | RelayCreationPhase::CodeInstalled
+                            | RelayCreationPhase::RelayFunded
+                            | RelayCreationPhase::FinalizationAttempted
+                    )
+                {
+                    progress.last_error = Some("HistorianUpgradeInterrupted".to_string());
+                    insert_entry(key, RelaySetupEntry::Paused(progress));
+                    continue;
+                }
                 progress.last_error = Some("HistorianUpgradeInterrupted".to_string());
                 insert_entry(key, RelaySetupEntry::ManualRecoveryRequired(progress));
             }
@@ -339,13 +402,15 @@ pub(crate) fn reconcile_interrupted_creating_entries_after_upgrade() {
 
 fn notify_for_entry(entry: RelaySetupEntry) -> RelaySetupNotifyResult {
     match entry {
-        RelaySetupEntry::Creating(progress) => RelaySetupNotifyResult::InProgress {
-            phase: progress.phase,
-            relay_canister_id: progress.relay_canister_id,
-        },
-        RelaySetupEntry::Active { relay_canister_id } => {
-            RelaySetupNotifyResult::Active { relay_canister_id }
+        RelaySetupEntry::Creating(progress) | RelaySetupEntry::Paused(progress) => {
+            RelaySetupNotifyResult::InProgress {
+                phase: progress.phase,
+                relay_canister_id: progress.relay_canister_id,
+            }
         }
+        RelaySetupEntry::Active {
+            relay_canister_id, ..
+        } => RelaySetupNotifyResult::Active { relay_canister_id },
         RelaySetupEntry::ManualRecoveryRequired(progress) => {
             RelaySetupNotifyResult::ManualRecoveryRequired {
                 phase: progress.phase,
@@ -391,6 +456,9 @@ fn manual_recovery(
     match require_phase(key, expected) {
         Ok(mut progress) => {
             progress.last_error = Some(message.clone());
+            if let Some(c) = progress.continuation.as_mut() {
+                c.terminal = true;
+            }
             let phase = progress.phase;
             let relay_canister_id = progress.relay_canister_id;
             insert_entry(key, RelaySetupEntry::ManualRecoveryRequired(progress));
@@ -433,7 +501,7 @@ fn ceil_div(numerator: u128, denominator: u128) -> Option<u128> {
 
 fn cmc_conversion_e8s(config: &Config, rate: &IcpXdrConversionRate) -> Result<u64, String> {
     ceil_div(
-        config.relay_initial_cycles,
+        recovery::creation_budget(config)?,
         u128::from(rate.xdr_permyriad_per_icp),
     )
     .and_then(|value| u64::try_from(value).ok())
@@ -532,20 +600,22 @@ fn factory_blocked_reason(config: &Config) -> Option<String> {
     } else if config.relay_setup_min_e8s == 0 {
         Some("Relay singleton minimum must be positive".to_string())
     } else {
-        None
+        recovery::creation_budget(config).err()
     }
 }
 
 fn setup_state(entry: Option<RelaySetupEntry>) -> RelaySetupState {
     match entry {
         None => RelaySetupState::NotFunded,
-        Some(RelaySetupEntry::Creating(progress)) => RelaySetupState::InProgress {
-            phase: progress.phase,
-            relay_canister_id: progress.relay_canister_id,
-        },
-        Some(RelaySetupEntry::Active { relay_canister_id }) => {
-            RelaySetupState::Active { relay_canister_id }
+        Some(RelaySetupEntry::Creating(progress) | RelaySetupEntry::Paused(progress)) => {
+            RelaySetupState::InProgress {
+                phase: progress.phase,
+                relay_canister_id: progress.relay_canister_id,
+            }
         }
+        Some(RelaySetupEntry::Active {
+            relay_canister_id, ..
+        }) => RelaySetupState::Active { relay_canister_id },
         Some(RelaySetupEntry::ManualRecoveryRequired(progress)) => {
             RelaySetupState::ManualRecoveryRequired {
                 phase: progress.phase,
@@ -624,6 +694,7 @@ fn setup_view_for_historian(args: RelaySetupArgs, historian: Principal) -> Relay
             nominal_minimum_e8s,
             factory_available,
             state: setup_state,
+            recovery: None,
         })
     })
 }
@@ -779,6 +850,14 @@ fn validate_finalized_relay(
 }
 
 fn relay_init_arg(config: &Config, setup: &CanonicalRelaySetup) -> Vec<u8> {
+    relay_init_arg_with_service_defaults(config, setup, false)
+}
+
+fn relay_init_arg_with_service_defaults(
+    config: &Config,
+    setup: &CanonicalRelaySetup,
+    legacy: bool,
+) -> Vec<u8> {
     #[derive(CandidType)]
     struct SurplusCanisterRecipient {
         canister_id: Principal,
@@ -829,8 +908,8 @@ fn relay_init_arg(config: &Config, setup: &CanonicalRelaySetup) -> Vec<u8> {
         blackhole_canister_id: None,
         // The configured age-bonus recipient is this environment's SNS Rewards
         // service. Pin it and the Index rather than inheriting child defaults.
-        sns_rewards_canister_id: Some(config.rewards_account.owner),
-        icp_index_canister_id: Some(config.index_canister_id),
+        sns_rewards_canister_id: (!legacy).then_some(config.rewards_account.owner),
+        icp_index_canister_id: (!legacy).then_some(config.index_canister_id),
         main_interval_seconds: Some(config.self_service_relay_interval_seconds),
         // Leave headroom above the self-service maximum of 20 + 5 + Relay self.
         max_transfers_per_tick: Some(50),
@@ -921,7 +1000,13 @@ fn activate_relay_setup(
         }
         Err(message) => return manual_recovery(key, expected_phase, message),
     };
-    insert_entry(key, RelaySetupEntry::Active { relay_canister_id });
+    insert_entry(
+        key,
+        RelaySetupEntry::Active {
+            relay_canister_id,
+            completed: Some(progress),
+        },
+    );
     let tracked = setup
         .targets()
         .iter()
@@ -964,7 +1049,14 @@ async fn drive_relay_finalization(
         Ok(relay_canister_id) => relay_canister_id,
         Err(message) => return manual_recovery(key, initial_phase, message),
     };
-    let Some(expected_hash) = approved_relay_onchain_module_hash() else {
+    let expected_hash = initial_progress
+        .continuation
+        .as_ref()
+        .and_then(|c| <[u8; 32]>::try_from(c.identity.module_hash.as_slice()).ok())
+        .or_else(approved_relay_onchain_module_hash);
+    let Some(expected_hash) =
+        expected_hash.filter(|hash| relay_install_payload_for_hash(hash).is_some())
+    else {
         return manual_recovery(
             key,
             initial_phase,
@@ -1188,6 +1280,10 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     reclaim_abandoned_pre_spend_reservations();
     if let Some(entry) = get_entry(key) {
         return match entry {
+            RelaySetupEntry::Paused(_) | RelaySetupEntry::ManualRecoveryRequired(_) => {
+                recovery::continue_setup(key, &setup, &config, historian, ledger, cmc, management)
+                    .await
+            }
             RelaySetupEntry::Creating(RelayCreationProgress {
                 phase:
                     RelayCreationPhase::CmcTransferAccepted | RelayCreationPhase::CmcNotifySucceeded,
@@ -1197,6 +1293,18 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
                 else {
                     return RelaySetupNotifyResult::Busy;
                 };
+                if let Err(result) = recovery::pin_existing_paid_identity(
+                    key,
+                    &setup,
+                    &config,
+                    historian,
+                    management,
+                    guard.ticket(),
+                )
+                .await
+                {
+                    return result;
+                }
                 continue_paid_creation(
                     key,
                     &setup,
@@ -1217,6 +1325,18 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
                 else {
                     return RelaySetupNotifyResult::Busy;
                 };
+                if let Err(result) = recovery::pin_existing_paid_identity(
+                    key,
+                    &setup,
+                    &config,
+                    historian,
+                    management,
+                    guard.ticket(),
+                )
+                .await
+                {
+                    return result;
+                }
                 drive_relay_finalization(key, &setup, historian, management, guard.ticket()).await
             }
             entry => notify_for_entry(entry),
@@ -1367,6 +1487,7 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     if let Err(result) = update_progress(key, RelayCreationPhase::ProbingTargets, |progress| {
         progress.phase = RelayCreationPhase::CmcTransferPrepared;
         progress.cmc_transfer = Some(cmc_record.clone());
+        progress.continuation = Some(recovery::RelayContinuation::new(&config, &setup));
     }) {
         return result;
     }
@@ -1486,15 +1607,15 @@ async fn continue_paid_creation(
         {
             return result;
         }
-        if minted_cycles < config.relay_initial_cycles {
-            return manual_recovery(
-            key,
-            RelayCreationPhase::CmcTransferAccepted,
-            format!(
-                "CMC minted {minted_cycles} cycles, below the configured {} cycles required for child creation",
-                config.relay_initial_cycles
-            ),
-        );
+        let required_cycles = match recovery::creation_budget(config) {
+            Ok(cycles) => cycles,
+            Err(message) => {
+                return manual_recovery(key, RelayCreationPhase::CmcTransferAccepted, message)
+            }
+        };
+        if minted_cycles < required_cycles {
+            return recovery::pause(key, RelayCreationPhase::CmcTransferAccepted,
+                format!("CMC minted {minted_cycles} cycles, below the {required_cycles} cycles required for child creation"));
         }
         if let Err(result) =
             update_progress(key, RelayCreationPhase::CmcTransferAccepted, |progress| {
@@ -1509,9 +1630,14 @@ async fn continue_paid_creation(
         Ok(progress) => progress,
         Err(result) => return result,
     };
-    if progress
-        .cycles_minted
-        .is_none_or(|cycles| cycles < config.relay_initial_cycles)
+    let create_cycles = match recovery::creation_budget(config) {
+        Ok(cycles) => cycles,
+        Err(message) => {
+            return manual_recovery(key, RelayCreationPhase::CmcNotifySucceeded, message)
+        }
+    };
+    let credit = recovery::creation_credit(&progress);
+    if credit.is_none()
         || progress
             .cmc_transfer
             .as_ref()
@@ -1526,7 +1652,17 @@ async fn continue_paid_creation(
             "inconsistent paid creation evidence",
         );
     }
+    if credit.unwrap_or(0) < create_cycles {
+        return recovery::pause(
+            key,
+            RelayCreationPhase::CmcNotifySucceeded,
+            "Recorded conversion credit is below the remaining creation budget",
+        );
+    }
     if let Err(result) = update_progress(key, RelayCreationPhase::CmcNotifySucceeded, |progress| {
+        if let Some(continuation) = progress.continuation.as_mut() {
+            continuation.identity.original_create_cycles = create_cycles;
+        }
         progress.phase = RelayCreationPhase::CreateDispatched;
         progress.create_dispatched_at_ts = Some(now_secs());
     }) {
@@ -1540,7 +1676,7 @@ async fn continue_paid_creation(
                 status_visibility: Some(StatusVisibility::Public),
             }),
         },
-        config.relay_initial_cycles,
+        create_cycles,
     ))
     .await;
     if let Err(result) = require_phase(key, RelayCreationPhase::CreateDispatched) {
@@ -1562,35 +1698,88 @@ async fn continue_paid_creation(
     }) {
         return result;
     }
-    let wasm = approved_self_service_relay_wasm()
-        .expect("static checks require approved Relay Wasm")
-        .to_vec();
-    let expected_hash =
-        approved_relay_onchain_module_hash().expect("static checks require Relay hash");
-    let install_result = creation_call(management.install_code(
-        &jupiter_ic_clients::management::InstallCodeArgs {
+    install_and_fund(key, setup, config, historian, ledger, management, ticket).await
+}
+
+async fn install_and_fund(
+    key: RelaySetupKey,
+    setup: &CanonicalRelaySetup,
+    config: &Config,
+    historian: Principal,
+    ledger: &dyn LedgerClient,
+    management: &dyn ManagementClient,
+    ticket: admission::Ticket,
+) -> RelaySetupNotifyResult {
+    let progress = match require_phase(key, RelayCreationPhase::ChildCreated) {
+        Ok(progress) => progress,
+        Err(result) => return result,
+    };
+    let Some(relay_canister_id) = progress.relay_canister_id else {
+        return manual_recovery(key, progress.phase, "missing child identity");
+    };
+    let expected_hash: [u8; 32] = match progress.continuation.as_ref() {
+        Some(c) => match c.identity.module_hash.as_slice().try_into() {
+            Ok(hash) => hash,
+            Err(_) => return manual_recovery(key, progress.phase, "invalid pinned Relay hash"),
+        },
+        None => approved_relay_onchain_module_hash().expect("approved Relay hash"),
+    };
+    let Some(wasm) = relay_install_payload_for_hash(&expected_hash) else {
+        return manual_recovery(key, progress.phase, "pinned Relay payload is unavailable");
+    };
+    let install_result = creation_call(
+        management.install_code(&jupiter_ic_clients::management::InstallCodeArgs {
             mode: jupiter_ic_clients::management::InstallMode::Install,
             canister_id: relay_canister_id,
-            wasm_module: wasm,
-            arg: relay_init_arg(&config, &setup),
-        },
-    ))
+            wasm_module: wasm.to_vec(),
+            arg: progress
+                .continuation
+                .as_ref()
+                .map(|c| c.identity.init_arg.clone())
+                .unwrap_or_else(|| relay_init_arg(config, setup)),
+        }),
+    )
     .await;
     if let Err(result) = require_phase(key, RelayCreationPhase::ChildCreated) {
         return result;
     }
     if let Err(install_error) = install_result {
+        let funding_rejection = install_error.contains("raw_reject_code: 2")
+            && install_error.contains("is out of cycles");
         let observed = creation_call(management.canister_status(relay_canister_id)).await;
         if let Err(result) = require_phase(key, RelayCreationPhase::ChildCreated) {
             return result;
         }
         match observed {
             Ok(status) if status.module_hash.as_deref() == Some(expected_hash.as_slice()) => {}
+            Ok(status)
+                if status.module_hash.is_none()
+                    && status.settings.controllers == vec![historian]
+                    && u128::try_from(status.cycles.0.clone())
+                        .ok()
+                        .is_some_and(|cycles| {
+                            cycles < recovery::child_budget(config).unwrap_or(0)
+                        })
+                    && funding_rejection =>
+            {
+                return recovery::pause_retry(
+                    key,
+                    RelayCreationPhase::ChildCreated,
+                    format!("installation funding deficit: {install_error}"),
+                );
+            }
             Ok(_) => {
                 return manual_recovery(
                     key,
                     RelayCreationPhase::ChildCreated,
                     format!("install_code failed and the approved module is not installed: {install_error}"),
+                );
+            }
+            Err(status_error) if funding_rejection => {
+                return recovery::pause_retry(
+                    key,
+                    RelayCreationPhase::ChildCreated,
+                    format!("install_code funding rejection ({install_error}); child status must be checked before any payment or installation ({status_error})"),
                 );
             }
             Err(status_error) => {
@@ -1607,6 +1796,25 @@ async fn continue_paid_creation(
     }) {
         return result;
     }
+    fund_installed_relay(key, setup, config, historian, ledger, management, ticket).await
+}
+
+async fn fund_installed_relay(
+    key: RelaySetupKey,
+    setup: &CanonicalRelaySetup,
+    config: &Config,
+    historian: Principal,
+    ledger: &dyn LedgerClient,
+    management: &dyn ManagementClient,
+    ticket: admission::Ticket,
+) -> RelaySetupNotifyResult {
+    let progress = match require_phase(key, RelayCreationPhase::CodeInstalled) {
+        Ok(progress) => progress,
+        Err(result) => return result,
+    };
+    let Some(relay_canister_id) = progress.relay_canister_id else {
+        return manual_recovery(key, progress.phase, "missing child identity");
+    };
     let remaining_balance =
         creation_call(ledger.balance_of_e8s(setup_account_for(historian, key))).await;
     if let Err(result) = require_phase(key, RelayCreationPhase::CodeInstalled) {
@@ -1636,24 +1844,28 @@ async fn continue_paid_creation(
             );
         }
     };
-    let minimum_final_relay_funding =
-        match minimum_final_relay_funding_e8s(&config, setup.target_count()) {
-            Ok(amount) => amount,
-            Err(message) => {
-                return manual_recovery(key, RelayCreationPhase::CodeInstalled, message);
-            }
-        };
+    let minimum_final_relay_funding = match progress
+        .continuation
+        .as_ref()
+        .map(|c| Ok(c.identity.final_reserve_e8s))
+        .unwrap_or_else(|| minimum_final_relay_funding_e8s(config, setup.target_count()))
+    {
+        Ok(amount) => amount,
+        Err(message) => {
+            return manual_recovery(key, RelayCreationPhase::CodeInstalled, message);
+        }
+    };
     let funding_amount = match remaining_balance.checked_sub(funding_fee) {
         Some(amount) if amount >= minimum_final_relay_funding => amount,
         Some(_) => {
-            return manual_recovery(
+            return recovery::pause(
                 key,
                 RelayCreationPhase::CodeInstalled,
                 "post-conversion balance is below the promised minimum Relay funding",
             );
         }
         None => {
-            return manual_recovery(
+            return recovery::pause(
                 key,
                 RelayCreationPhase::CodeInstalled,
                 "post-conversion balance cannot cover the current ledger fee",
@@ -1748,9 +1960,14 @@ pub(crate) fn debug_setup_entries() -> Vec<RelaySetupDebugEntry> {
                         Some(progress.phase),
                         progress.relay_canister_id,
                     ),
-                    RelaySetupEntry::Active { relay_canister_id } => {
-                        ("Active".to_string(), None, Some(relay_canister_id))
-                    }
+                    RelaySetupEntry::Active {
+                        relay_canister_id, ..
+                    } => ("Active".to_string(), None, Some(relay_canister_id)),
+                    RelaySetupEntry::Paused(progress) => (
+                        "Paused".to_string(),
+                        Some(progress.phase),
+                        progress.relay_canister_id,
+                    ),
                     RelaySetupEntry::ManualRecoveryRequired(progress) => (
                         "ManualRecoveryRequired".to_string(),
                         Some(progress.phase),
@@ -1773,6 +1990,8 @@ pub(crate) fn clear_setup_entries_for_debug() {
     state::with_relay_setup_entries_map(|map| map.clear_new());
     state::set_relay_creating_keys(Vec::new());
     admission::reset_for_debug();
+    #[cfg(test)]
+    state::set_relay_legacy_identity(Vec::new());
 }
 
 #[cfg(test)]
@@ -1843,7 +2062,7 @@ mod tests {
         .key()
     }
 
-    fn config() -> Config {
+    pub(super) fn config() -> Config {
         Config {
             staking_account: Account {
                 owner: principal(60),
@@ -1948,6 +2167,7 @@ mod tests {
                         if n % 2 == 0 {
                             RelaySetupEntry::Active {
                                 relay_canister_id: principal(80),
+                                completed: None,
                             }
                         } else {
                             RelaySetupEntry::ManualRecoveryRequired(progress_for_phase(
@@ -2022,6 +2242,7 @@ mod tests {
                     key,
                     RelaySetupEntry::Active {
                         relay_canister_id: principal(80),
+                        completed: None,
                     },
                 ),
                 3 => insert_entry(
@@ -2066,6 +2287,7 @@ mod tests {
                 block_index: Some(u64::MAX),
             }),
             last_error: Some(bounded_message("é".repeat(MAX_DIAGNOSTIC_BYTES))),
+            continuation: None,
         }
     }
 
@@ -2229,7 +2451,7 @@ mod tests {
             _block_index: u64,
         ) -> Result<u128, jupiter_ic_clients::cmc::NotifyTopUpError> {
             self.notify_calls.fetch_add(1, Ordering::SeqCst);
-            Ok(2_000_000_000_000)
+            Ok(2_500_000_000_000)
         }
     }
 
@@ -2749,6 +2971,7 @@ mod tests {
                 self.key,
                 RelaySetupEntry::Active {
                     relay_canister_id: self.relay_canister_id,
+                    completed: None,
                 },
             );
             Err("stale validation result".to_string())
@@ -2892,7 +3115,7 @@ mod tests {
                 expire_after_notify: false,
                 rate_error: None,
                 notify_error: None,
-                minted_cycles: 2_000_000_000_000,
+                minted_cycles: 2_500_000_000_000,
             },
             MockManagement {
                 relay_id: principal(80),
@@ -2930,13 +3153,14 @@ mod tests {
         phase: RelayCreationPhase,
         relay_canister_id: Principal,
     ) -> RelaySetupKey {
-        let key = CanonicalRelaySetup::canonicalize(
+        let setup = CanonicalRelaySetup::canonicalize(
             args.target_canister_ids.clone(),
             args.surplus_recipients.clone(),
         )
-        .unwrap()
-        .key();
+        .unwrap();
+        let key = setup.key();
         let mut progress = progress_for_phase(phase);
+        progress.continuation = Some(recovery::RelayContinuation::new(&config(), &setup));
         progress.relay_canister_id = Some(relay_canister_id);
         progress.last_error = None;
         insert_entry(key, RelaySetupEntry::Creating(progress));
@@ -2995,7 +3219,7 @@ mod tests {
                     if let Some(waiter) = waiter {
                         waiter.await.unwrap();
                     }
-                    Ok(2_000_000_000_000)
+                    Ok(2_500_000_000_000)
                 }
             }
         }
@@ -3003,7 +3227,7 @@ mod tests {
         let args = setup_args(vec![principal(1)]);
         let (ledger, probe, _, management) = mocks(
             MockLedger::new(
-                [300_000_000, 292_990_000],
+                [300_000_000, 292_490_000],
                 [LedgerOutcome::Accepted(11), LedgerOutcome::Accepted(12)],
             ),
             true,
@@ -3298,11 +3522,11 @@ mod tests {
             }
         }
         for (actual_rate, deposit, active) in [
-            (50_000, 150_040_000, true),
-            (49_999, 150_040_000, true),
+            (50_000, 160_040_000, true),
+            (49_999, 160_040_000, true),
             (60_000, 300_000_000, true),
-            (40_000, 150_040_000, false),
-            (50_000, 150_039_999, false),
+            (40_000, 160_040_000, false),
+            (50_000, 160_039_999, false),
         ] {
             reset();
             state::with_state_mut(|st| st.config.relay_setup_min_e8s = 1);
@@ -3331,28 +3555,27 @@ mod tests {
                 "{actual_rate}: {result:?}"
             );
             let transfers = ledger.transfers.lock().unwrap();
-            if deposit < 150_040_000 {
+            if deposit < 160_040_000 {
                 assert!(matches!(
                     result,
                     RelaySetupNotifyResult::BelowCurrentRequirement {
-                        required_e8s: 150_040_000,
+                        required_e8s: 160_040_000,
                         ..
                     }
                 ));
                 assert!(transfers.is_empty());
             } else {
-                assert_eq!(transfers[0].amount, Nat::from(45_000_000_u64));
+                assert_eq!(transfers[0].amount, Nat::from(55_000_000_u64));
                 if active {
                     assert_eq!(transfers.len(), 2);
                     assert!(transfers[1].amount >= Nat::from(105_020_000_u64));
                     assert_eq!(*ledger.balance.lock().unwrap(), 0);
                     assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
                 } else {
-                    let Some(RelaySetupEntry::ManualRecoveryRequired(progress)) = get_entry(key)
-                    else {
+                    let Some(RelaySetupEntry::Paused(progress)) = get_entry(key) else {
                         panic!("{result:?}")
                     };
-                    assert_eq!(progress.cycles_minted, Some(1_800_000_000_000));
+                    assert_eq!(progress.cycles_minted, Some(2_200_000_000_000));
                     assert_eq!(transfers.len(), 1);
                     assert_eq!(management.create_calls.load(Ordering::SeqCst), 0);
                 }
@@ -3371,7 +3594,7 @@ mod tests {
             timestamp_seconds: 1,
             xdr_permyriad_per_icp: 1_000_000,
         };
-        assert_eq!(cmc_conversion_e8s(&cfg, &rate), Ok(7_000_000));
+        assert_eq!(cmc_conversion_e8s(&cfg, &rate), Ok(7_500_000));
         assert_eq!(minimum_final_relay_funding_e8s(&cfg, 1), Ok(105_020_000));
         assert_eq!(minimum_final_relay_funding_e8s(&cfg, 2), Ok(130_020_000));
         assert_eq!(minimum_final_relay_funding_e8s(&cfg, 20), Ok(580_020_000));
@@ -3388,8 +3611,8 @@ mod tests {
             timestamp_seconds: 1,
             xdr_permyriad_per_icp: 50_000,
         };
-        cfg.relay_initial_cycles = 2_000_000_000_001;
-        assert_eq!(cmc_conversion_e8s(&cfg, &rate), Ok(45_000_001));
+        cfg.relay_initial_cycles = 2_500_000_000_001;
+        assert_eq!(cmc_conversion_e8s(&cfg, &rate), Ok(55_000_001));
         cfg.relay_initial_cycles = u128::from(u64::MAX) * 50_000;
         cfg.relay_cycle_safety_margin_e8s = 0;
         cfg.relay_min_subaccount_one_seed_e8s = 0;
@@ -3476,9 +3699,10 @@ mod tests {
             progress.last_error.as_ref().unwrap().len(),
             MAX_DIAGNOSTIC_BYTES
         );
-        let encoded = RelaySetupEntry::ManualRecoveryRequired(progress).into_bytes();
-        assert_eq!(encoded.len(), 1_338);
+        let entry = RelaySetupEntry::ManualRecoveryRequired(progress);
+        let encoded = entry.clone().into_bytes();
         assert!(encoded.len() <= MAX_RELAY_SETUP_ENTRY_BYTES as usize);
+        assert_eq!(RelaySetupEntry::from_bytes(Cow::Owned(encoded)), entry);
     }
 
     #[test]
@@ -3535,6 +3759,7 @@ mod tests {
         let active_key = key_for_targets(&[principal(90)]);
         let active = RelaySetupEntry::Active {
             relay_canister_id: principal(91),
+            completed: None,
         };
         let active_bytes = active.to_bytes().into_owned();
         insert_entry(active_key, active);
@@ -3613,6 +3838,7 @@ mod tests {
             empty_memo_key,
             RelaySetupEntry::Active {
                 relay_canister_id: principal(73),
+                completed: None,
             },
         );
         assert!(matches!(
@@ -3671,12 +3897,14 @@ mod tests {
         let relay = principal(73);
         let entry = RelaySetupEntry::Active {
             relay_canister_id: relay,
+            completed: None,
         };
         let decoded = RelaySetupEntry::from_bytes(entry.to_bytes());
         assert_eq!(
             decoded,
             RelaySetupEntry::Active {
-                relay_canister_id: relay
+                relay_canister_id: relay,
+                completed: None,
             }
         );
     }
@@ -3703,18 +3931,21 @@ mod tests {
             a,
             RelaySetupEntry::Active {
                 relay_canister_id: relay_a,
+                completed: None,
             },
         );
         insert_entry(
             ab,
             RelaySetupEntry::Active {
                 relay_canister_id: relay_ab,
+                completed: None,
             },
         );
         insert_entry(
             bc,
             RelaySetupEntry::Active {
                 relay_canister_id: relay_bc,
+                completed: None,
             },
         );
         assert_eq!(
@@ -3790,12 +4021,19 @@ mod tests {
                 relay_canister_id: resumed_relay_canister_id,
             }
         );
-        assert_eq!(
-            get_entry(resumed_key),
-            Some(RelaySetupEntry::Active {
-                relay_canister_id: resumed_relay_canister_id,
-            })
-        );
+        let Some(RelaySetupEntry::Active {
+            relay_canister_id,
+            completed: Some(completed),
+        }) = get_entry(resumed_key)
+        else {
+            panic!("active journal")
+        };
+        assert_eq!(relay_canister_id, resumed_relay_canister_id);
+        assert!(completed
+            .relay_funding_transfer
+            .unwrap()
+            .block_index
+            .is_some());
         assert_eq!(management.status_calls.load(Ordering::SeqCst), 1);
         assert_eq!(management.update_calls.load(Ordering::SeqCst), 0);
         assert_no_pre_finalization_replay(&ledger, &probe, &cmc, &management);
@@ -3905,6 +4143,7 @@ mod tests {
                 key,
                 RelaySetupEntry::Active {
                     relay_canister_id: principal(80),
+                    completed: None,
                 },
             );
             assert!(matches!(
@@ -3946,6 +4185,7 @@ mod tests {
                 key,
                 RelaySetupEntry::Active {
                     relay_canister_id: relay,
+                    completed: None,
                 },
             );
             state::with_state_mut_sections(state::DIRTY_ROOT, |state| match protected_field {
@@ -4217,7 +4457,7 @@ mod tests {
         state::set_state(State::new(cfg, 0));
         let args = neuron_setup_args(principal(1), 42);
         let (ledger, probe, cmc, management) =
-            mocks(MockLedger::new([112_039_999], []), true, None);
+            mocks(MockLedger::new([112_539_999], []), true, None);
         let resolver = MockNeuronResolver::readable();
 
         let result = block_on(notify_with_clients_and_neuron_resolver(
@@ -4233,8 +4473,8 @@ mod tests {
         assert_eq!(
             result,
             RelaySetupNotifyResult::BelowCurrentRequirement {
-                balance_e8s: 112_039_999,
-                required_e8s: 112_040_000,
+                balance_e8s: 112_539_999,
+                required_e8s: 112_540_000,
                 shortfall_e8s: 1,
             }
         );
@@ -4321,7 +4561,7 @@ mod tests {
         cfg.relay_setup_min_e8s = 1;
         state::set_state(State::new(cfg, 0));
         let (ledger, probe, cmc, management) =
-            mocks(MockLedger::new([112_039_999], []), true, None);
+            mocks(MockLedger::new([112_539_999], []), true, None);
         let below_current = block_on(notify_with_clients_for_historian(
             args,
             principal(42),
@@ -4333,8 +4573,8 @@ mod tests {
         assert_eq!(
             below_current,
             RelaySetupNotifyResult::BelowCurrentRequirement {
-                balance_e8s: 112_039_999,
-                required_e8s: 112_040_000,
+                balance_e8s: 112_539_999,
+                required_e8s: 112_540_000,
                 shortfall_e8s: 1,
             }
         );
@@ -4393,7 +4633,7 @@ mod tests {
             expire_after_notify: false,
             rate_error: None,
             notify_error: None,
-            minted_cycles: 2_000_000_000_000,
+            minted_cycles: 2_500_000_000_000,
         };
         let management = MockManagement {
             creates: Mutex::new(Vec::new()),
@@ -4602,7 +4842,7 @@ mod tests {
             expire_after_notify: false,
             rate_error: None,
             notify_error: None,
-            minted_cycles: 2_000_000_000_000,
+            minted_cycles: 2_500_000_000_000,
         };
         let management = MockManagement {
             creates: Mutex::new(Vec::new()),
@@ -4899,7 +5139,7 @@ mod tests {
             let key = key_for_targets(&args.target_canister_ids);
             let (ledger, probe, cmc, management) = mocks(
                 MockLedger::new(
-                    [300_000_000, 292_990_000],
+                    [300_000_000, 292_490_000],
                     [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
                 ),
                 true,
@@ -5194,7 +5434,7 @@ mod tests {
         // Same-key retry must reclaim its slot as well as the other three.
         let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
-                [300_000_000, 292_990_000],
+                [300_000_000, 292_490_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
             ),
             true,
@@ -5299,7 +5539,7 @@ mod tests {
             admission::set_time_for_test(300);
             let (new_ledger, new_probe, new_cmc, new_management) = mocks(
                 MockLedger::new(
-                    [300_000_000, 292_990_000],
+                    [300_000_000, 292_490_000],
                     [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
                 ),
                 true,
@@ -5346,7 +5586,7 @@ mod tests {
         reset();
         let args = setup_args(vec![principal(1)]);
         let ledger = MockLedger::new(
-            [300_000_000, 292_990_000],
+            [300_000_000, 292_490_000],
             [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
         );
         let probe = YieldingCyclesProbe {
@@ -5577,7 +5817,7 @@ mod tests {
         reset();
         let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
-                [300_000_000, 292_990_000],
+                [300_000_000, 292_490_000],
                 [LedgerOutcome::Duplicate(10), LedgerOutcome::Accepted(11)],
             ),
             true,
@@ -5679,7 +5919,7 @@ mod tests {
         ));
         assert!(matches!(
             insufficient_cycles,
-            RelaySetupNotifyResult::ManualRecoveryRequired {
+            RelaySetupNotifyResult::InProgress {
                 phase: RelayCreationPhase::CmcTransferAccepted,
                 ..
             }
@@ -5780,7 +6020,7 @@ mod tests {
         reset();
         let (ledger, probe, cmc, mut management) = mocks(
             MockLedger::new(
-                [300_000_000, 292_990_000],
+                [300_000_000, 292_490_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
             ),
             true,
@@ -5872,6 +6112,88 @@ mod tests {
     }
 
     #[test]
+    fn a_funding_rejection_with_unavailable_status_allows_only_nonspending_rechecks() {
+        reset();
+        let args = setup_args(vec![principal(1)]);
+        let setup = CanonicalRelaySetup::canonicalize(
+            args.target_canister_ids.clone(),
+            args.surplus_recipients.clone(),
+        )
+        .unwrap();
+        let key = setup.key();
+        let (ledger, probe, cmc, mut management) = mocks(
+            MockLedger::new([300_000_000, 105_030_000], [LedgerOutcome::Accepted(10)]),
+            true,
+            None,
+        );
+        management.install_error = Some("raw_reject_code: 2; child is out of cycles".into());
+        management.status_results.lock().unwrap().extend([
+            Err("status temporarily unavailable".into()),
+            Err("status temporarily unavailable".into()),
+            Ok(AuditedCanisterStatus {
+                status: AuditedCanisterStatusKind::Running,
+                cycles: Nat::from(100_000_000_000u64),
+                module_hash: None,
+                settings: AuditedCanisterSettings {
+                    controllers: vec![principal(42)],
+                    log_visibility: LogVisibility::Public,
+                    status_visibility: StatusVisibility::Public,
+                },
+            }),
+        ]);
+        assert!(matches!(
+            block_on(notify_with_clients_for_historian(
+                args,
+                principal(42),
+                &ledger,
+                &probe,
+                &cmc,
+                &management
+            )),
+            RelaySetupNotifyResult::InProgress {
+                phase: RelayCreationPhase::ChildCreated,
+                ..
+            }
+        ));
+        assert!(state::relay_creating_keys().is_empty());
+        assert!(matches!(
+            block_on(recovery::quote_for_test(
+                key,
+                &setup,
+                &config(),
+                &ledger,
+                &cmc,
+                &management
+            )),
+            RelayRecoveryView::CheckPending(_)
+        ));
+        TEST_NOW_NANOS.with(|clock| clock.set(clock.get() + 31_000_000_000));
+        let RelayRecoveryView::FundingRequired(quote) = block_on(recovery::quote_for_test(
+            key,
+            &setup,
+            &config(),
+            &ledger,
+            &cmc,
+            &management,
+        )) else {
+            panic!("live evidence is required before quoting funding")
+        };
+        assert_eq!(quote.relay_canister_id, Some(principal(80)));
+        assert_eq!(quote.additional_e8s, 6_910_000);
+        assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
+        assert_eq!(cmc.notify_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(management.installs.lock().unwrap().len(), 1);
+        let Some(RelaySetupEntry::Paused(progress)) = get_entry(key) else {
+            panic!()
+        };
+        assert!(progress
+            .last_error
+            .unwrap()
+            .contains("status temporarily unavailable"));
+    }
+
+    #[test]
     fn relay_funding_read_transfer_and_replay_boundaries_are_fail_closed() {
         let args = setup_args(vec![principal(1)]);
 
@@ -5899,7 +6221,7 @@ mod tests {
         assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
 
         reset();
-        let ledger = MockLedger::new([300_000_000, 292_990_000], [LedgerOutcome::Accepted(10)])
+        let ledger = MockLedger::new([300_000_000, 292_490_000], [LedgerOutcome::Accepted(10)])
             .with_fee_failures([false, true]);
         let (ledger, probe, cmc, management) = mocks(ledger, true, None);
         let fee_failure = block_on(notify_with_clients_for_historian(
@@ -5922,7 +6244,7 @@ mod tests {
         reset();
         let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
-                [300_000_000, 292_990_000],
+                [300_000_000, 292_490_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Duplicate(11)],
             ),
             true,
@@ -5941,7 +6263,7 @@ mod tests {
         reset();
         let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
-                [300_000_000, 292_990_000],
+                [300_000_000, 292_490_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Rejected],
             ),
             true,
@@ -5966,7 +6288,7 @@ mod tests {
         reset();
         let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
-                [300_000_000, 292_990_000],
+                [300_000_000, 292_490_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Ambiguous],
             ),
             true,
@@ -6003,12 +6325,12 @@ mod tests {
     }
 
     #[test]
-    fn rising_final_fee_requires_manual_recovery_without_relay_funding() {
+    fn rising_final_fee_pauses_before_relay_funding() {
         clear_setup_entries_for_debug();
         let mut cfg = config();
         cfg.relay_setup_min_e8s = 1;
         state::set_state(State::new(cfg, 0));
-        let ledger = MockLedger::new([112_040_000, 105_030_000], [LedgerOutcome::Accepted(10)])
+        let ledger = MockLedger::new([112_540_000, 105_030_000], [LedgerOutcome::Accepted(10)])
             .with_fees([10_000, 10_001]);
         let (ledger, probe, cmc, management) = mocks(ledger, true, None);
         let result = block_on(notify_with_clients_for_historian(
@@ -6021,7 +6343,7 @@ mod tests {
         ));
         assert!(matches!(
             result,
-            RelaySetupNotifyResult::ManualRecoveryRequired {
+            RelaySetupNotifyResult::InProgress {
                 phase: RelayCreationPhase::CodeInstalled,
                 relay_canister_id: Some(relay_canister_id),
                 ..
@@ -6029,8 +6351,8 @@ mod tests {
         ));
         assert_eq!(ledger.transfers.lock().unwrap().len(), 1);
         let key = key_for_targets(&[principal(1)]);
-        let Some(RelaySetupEntry::ManualRecoveryRequired(progress)) = get_entry(key) else {
-            panic!("setup must require manual recovery")
+        let Some(RelaySetupEntry::Paused(progress)) = get_entry(key) else {
+            panic!("setup must wait for additional funding")
         };
         assert_eq!(progress.relay_canister_id, Some(principal(80)));
         assert_eq!(progress.relay_funding_transfer, None);
@@ -6043,7 +6365,7 @@ mod tests {
         cfg.relay_setup_min_e8s = 1;
         state::set_state(State::new(cfg, 0));
         let ledger = MockLedger::new(
-            [112_040_000, 105_030_000],
+            [112_540_000, 105_030_000],
             [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
         )
         .with_fees([10_000, 10_000]);
@@ -6111,7 +6433,7 @@ mod tests {
         assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 20);
         let transfers = ledger.transfers.lock().unwrap();
         assert_eq!(transfers.len(), 2);
-        assert_eq!(transfers[0].amount, Nat::from(7_000_000u64));
+        assert_eq!(transfers[0].amount, Nat::from(7_500_000u64));
         assert_eq!(transfers[1].to, relay_subaccount_one(principal(80)));
         assert_eq!(transfers[1].amount, Nat::from(772_980_000u64));
         assert!(
@@ -6181,11 +6503,18 @@ mod tests {
         assert_eq!(*neuron_resolver.calls.lock().unwrap(), vec![7, 42]);
         drop(installs);
 
+        let Some(RelaySetupEntry::Active {
+            relay_canister_id,
+            completed: Some(completed),
+        }) = get_entry(key)
+        else {
+            panic!("active journal")
+        };
+        assert_eq!(relay_canister_id, principal(80));
+        assert_eq!(completed.cmc_transfer.unwrap().block_index, Some(10));
         assert_eq!(
-            get_entry(key),
-            Some(RelaySetupEntry::Active {
-                relay_canister_id: principal(80),
-            })
+            completed.relay_funding_transfer.unwrap().block_index,
+            Some(11)
         );
         state::with_state(|state| {
             for target in (100..120).map(principal) {
@@ -6284,7 +6613,7 @@ mod tests {
         };
         let (ledger, probe, cmc, management) = mocks(
             MockLedger::new(
-                [112_040_000, 105_030_000],
+                [112_540_000, 105_030_000],
                 [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
             )
             .with_fees([10_000, 10_000]),
@@ -6421,7 +6750,10 @@ mod tests {
         assert_eq!(result, RelaySetupNotifyResult::Active { relay_canister_id });
         assert_eq!(
             get_entry(key),
-            Some(RelaySetupEntry::Active { relay_canister_id })
+            Some(RelaySetupEntry::Active {
+                relay_canister_id,
+                completed: None,
+            })
         );
         assert_eq!(probe.blackhole_calls.load(Ordering::SeqCst), 0);
         assert!(ledger.transfers.lock().unwrap().is_empty());
@@ -6491,7 +6823,7 @@ mod tests {
     fn create_and_final_settings_are_explicit_public_and_controllerless() {
         reset();
         let ledger = MockLedger::new(
-            [300_000_000, 292_990_000],
+            [300_000_000, 292_490_000],
             [LedgerOutcome::Accepted(10), LedgerOutcome::Accepted(11)],
         );
         let (ledger, probe, cmc, management) = mocks(ledger, true, None);
@@ -7062,7 +7394,10 @@ mod tests {
         }
 
         for entry in [
-            RelaySetupEntry::Active { relay_canister_id },
+            RelaySetupEntry::Active {
+                relay_canister_id,
+                completed: None,
+            },
             RelaySetupEntry::ManualRecoveryRequired(progress_for_phase(
                 RelayCreationPhase::RelayFunded,
             )),

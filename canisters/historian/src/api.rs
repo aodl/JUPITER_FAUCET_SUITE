@@ -51,6 +51,7 @@ pub struct InitArgs {
 
 #[derive(CandidType, Deserialize, Clone, Default)]
 pub struct UpgradeArgs {
+    pub relay_legacy_module_hash: Option<Vec<u8>>,
     pub staking_account: Option<Account>,
     pub ledger_canister_id: Option<Principal>,
     pub index_canister_id: Option<Principal>,
@@ -296,6 +297,7 @@ pub struct RelaySetupView {
     pub nominal_minimum_e8s: u64,
     pub factory_available: bool,
     pub state: RelaySetupState,
+    pub recovery: Option<RelayRecoveryView>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
@@ -303,6 +305,25 @@ pub struct RelaySetupView {
 pub enum RelaySetupViewResult {
     Ok(RelaySetupView),
     Err(String),
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
+pub enum RelayRecoveryView {
+    Ready(RelayRecoveryQuote),
+    FundingRequired(RelayRecoveryQuote),
+    CheckPending(String),
+    Unsafe(String),
+}
+
+#[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]
+pub struct RelayRecoveryQuote {
+    pub setup_account: Account,
+    pub setup_account_identifier: String,
+    pub relay_canister_id: Option<Principal>,
+    pub balance_e8s: u64,
+    pub required_e8s: u64,
+    pub additional_e8s: u64,
+    pub cycles_deficit: u128,
 }
 
 #[derive(CandidType, Deserialize, Clone, Serialize, Debug, PartialEq, Eq)]

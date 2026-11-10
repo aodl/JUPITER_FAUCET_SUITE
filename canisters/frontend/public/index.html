@@ -1223,7 +1223,7 @@
                   <p class="relay-setup-payment-warning"><strong>Check the configuration before paying.</strong> Canisters and payout settings cannot be changed after creation. Setup deposits are not automatically refundable.</p>
                   <p class="pane-status-note">Deposits are aggregate protocol funding, not attributed to an individual payer.</p>
                   <div class="relay-setup-amounts">
-                    <div><span>Setup minimum</span><strong id="relay-setup-minimum"></strong></div>
+                    <div><span id="relay-setup-minimum-label">Setup minimum</span><strong id="relay-setup-minimum"></strong></div>
                     <div><span>Received</span><strong id="relay-setup-balance"></strong></div>
                     <div><span>Still needed</span><strong id="relay-setup-shortfall"></strong></div>
                   </div>
@@ -1244,7 +1244,7 @@
                     <p>The nominal minimum can change with live conversion costs and Ledger fees.</p>
                     <p>Remaining funds after creation go toward the relay endowment in Jupiter Faucet's neuron, perpetually funding the relay instance rather than going directly to its operating account as a one-off. Funds first accumulate in the relay and are forwarded once the endowment threshold is met.</p>
                     <p>The <a href="/#metric-tracker" data-panel="metric-tracker" class="pane-external-link">memo tracker</a> should be used to monitor funding to ensure an appropriately sized endowment, which can be increased if needed.</p>
-                    <dl class="relay-setup-price-details"><div><dt>Base minimum</dt><dd id="relay-setup-base-minimum"></dd></div><div><dt>Extra canisters</dt><dd id="relay-setup-extra-count"></dd></div><div><dt>Per extra canister</dt><dd id="relay-setup-extra-unit"></dd></div><div><dt>Extra-canister total</dt><dd id="relay-setup-extra-total"></dd></div><div><dt>Current required balance</dt><dd id="relay-setup-requirement"></dd></div></dl>
+                    <dl class="relay-setup-price-details" id="relay-setup-original-pricing"><div><dt>Base minimum</dt><dd id="relay-setup-base-minimum"></dd></div><div><dt>Extra canisters</dt><dd id="relay-setup-extra-count"></dd></div><div><dt>Per extra canister</dt><dd id="relay-setup-extra-unit"></dd></div><div><dt>Extra-canister total</dt><dd id="relay-setup-extra-total"></dd></div><div><dt>Current required balance</dt><dd id="relay-setup-requirement"></dd></div></dl>
                   </details>
                 </section>
                 <section class="relay-setup-primary-action" id="relay-setup-create-panel" hidden>

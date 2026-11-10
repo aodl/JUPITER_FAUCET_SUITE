@@ -3075,3 +3075,196 @@ test('Edit cannot cancel an in-flight creation or its continuation read', async 
     assert.equal(harness.calls.notify, 1);
   });
 });
+
+
+function recoveryView(additional = 0n) {
+  const original = viewFor();
+  const account = original.setup_account[0];
+  const quote = {
+    setup_account: account,
+    setup_account_identifier: accountIdentifierHex(account),
+    relay_canister_id: [Principal.fromText(RELAY)],
+    balance_e8s: 140_000_000n,
+    required_e8s: 140_000_000n + additional,
+    additional_e8s: additional,
+    cycles_deficit: 1_000_000_000_000n,
+  };
+  return {
+    ...original,
+    setup_account: [],
+    setup_account_identifier: [],
+    state: { ManualRecoveryRequired: {
+      phase: { ChildCreated: null },
+      relay_canister_id: [Principal.fromText(RELAY)],
+      message: 'Old installation failure',
+    } },
+    recovery: [additional > 0n ? { FundingRequired: quote } : { Ready: quote }],
+  };
+}
+
+test('recovery uses the authenticated additional requirement and original account without spending on reads', async () => {
+  await withDom(async (nodes) => {
+    const view = recoveryView(23_456_789n);
+    const harness = controllerHarness({ view, balance: 900_000_000n });
+    await submit(nodes, harness);
+    assert.equal(harness.calls.notify, 0);
+    assert.equal(harness.calls.balance, 0, 'backend quote supplies the recovery balance');
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, false);
+    assert.equal(nodes.get('relay-setup-account-identifier').textContent,
+      view.recovery[0].FundingRequired.setup_account_identifier);
+    assert.equal(nodes.get('relay-setup-shortfall').textContent, '0.23456789 ICP');
+    assert.match(nodes.get('relay-setup-status-label').textContent, /already been created.*0.23456789.*wallet.*separate sending fee/u);
+    assert.match(nodes.get('relay-setup-existing-relay').innerHTML, new RegExp(RELAY, 'u'));
+    assert.equal(nodes.get('relay-setup-create').textContent, 'Continue setup');
+    assert.equal(nodes.get('relay-setup-create').disabled, true);
+    harness.setView(recoveryView());
+    harness.runPoll();
+    await flushMicrotasks(30);
+    assert.equal(nodes.get('relay-setup-create').disabled, false);
+    assert.equal(harness.calls.notify, 0, 'polling is non-spending');
+  });
+});
+
+test('zero-shortfall legacy recovery bypasses the original minimum and retains duplicate-click and edit locks', async () => {
+  await withDom(async (nodes) => {
+    const pending = deferred();
+    const harness = controllerHarness({ view: recoveryView(), notifyRelay: () => pending.promise });
+    await submit(nodes, harness);
+    assert.match(nodes.get('relay-setup-status-label').textContent, /No additional setup payment/u);
+    assert.equal(nodes.get('relay-setup-create').disabled, false);
+    const first = harness.controller.createRelay();
+    await flushMicrotasks();
+    await harness.controller.createRelay();
+    assert.equal(harness.calls.notify, 1);
+    assert.equal(nodes.get('relay-setup-edit').disabled, true);
+    pending.resolve({ Active: { relay_canister_id: Principal.fromText(RELAY) } });
+    harness.setView({ ...viewFor(), setup_account: [], state: { Active: { relay_canister_id: Principal.fromText(RELAY) } } });
+    await first;
+    assert.equal(nodes.get('relay-funding-section').hidden, false);
+    assert.equal(harness.calls.notify, 1);
+  });
+});
+
+test('unsafe or unavailable recovery checks expose no payment or continuation and permit a non-spending recheck', async () => {
+  for (const recovery of [{ Unsafe: 'Unexpected code' }, { CheckPending: 'Status unavailable' }]) {
+    await withDom(async (nodes) => {
+      const harness = controllerHarness({ view: { ...recoveryView(), recovery: [recovery] } });
+      await submit(nodes, harness);
+      assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+      assert.equal(nodes.get('relay-setup-create').disabled, true);
+      assert.equal(nodes.get('relay-setup-recheck').hidden, false);
+      assert.match(nodes.get('relay-setup-status-label').textContent, /Do not (pay again|send a payment)/u);
+      await harness.controller.createRelay();
+      assert.equal(harness.calls.notify, 0);
+    });
+  }
+});
+
+
+test('an Active continuation reply hides recovery funding even when a stale recovery read arrives later', async () => {
+  await withDom(async (nodes) => {
+    const harness = controllerHarness({ view: recoveryView() });
+    await submit(nodes, harness);
+    await harness.controller.createRelay();
+    assert.equal(nodes.get('relay-funding-section').hidden, false);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-setup-create-panel').hidden, true);
+    assert.equal(harness.hasScheduledPoll(), false);
+    await harness.controller.createRelay();
+    assert.equal(harness.calls.notify, 1);
+  });
+});
+
+test('a new frontend decodes the predecessor Candid response without authorizing recovery', async () => {
+  const service = idlFactory({ IDL });
+  const method = service._fields.find(([name]) => name === 'get_relay_configuration_view')[1];
+  const currentView = method.retTypes[0]._fields.find(([name]) => name === 'Ok')[1];
+  const oldView = IDL.Record(Object.fromEntries(currentView._fields.filter(([name]) => name !== 'recovery')));
+  const oldResult = IDL.Variant({ Ok: oldView, Err: IDL.Text });
+  const { recovery: _ignored, ...oldReply } = recoveryView();
+  const wire = IDL.encode([oldResult], [{ Ok: oldReply }]);
+  const [decoded] = IDL.decode(method.retTypes, wire);
+  assert.deepEqual(decoded.Ok.recovery, []);
+  await withDom(async (nodes) => {
+    const harness = controllerHarness({ view: decoded.Ok });
+    await submit(nodes, harness);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-setup-create').disabled, true);
+    assert.match(nodes.get('relay-setup-status-label').textContent, /Do not pay again/u);
+    await harness.controller.createRelay();
+    assert.equal(harness.calls.notify, 0);
+  });
+});
+
+
+test('explicit recovery assessments override every legacy resumable phase in rendering and action guards', async () => {
+  const states = [recoveryView().state, ...['CmcTransferAccepted', 'CmcNotifySucceeded', 'RelayFunded', 'FinalizationAttempted'].map((phase) => ({ InProgress: {
+    phase: { [phase]: null }, relay_canister_id: [Principal.fromText(RELAY)], message: [],
+  } }))];
+  for (const state of states) {
+    for (const assessment of [{ Unsafe: 'Unexpected code' }, { CheckPending: 'Status unavailable' }, recoveryView(1n).recovery[0]]) {
+      await withDom(async (nodes) => {
+        const harness = controllerHarness({ view: { ...recoveryView(), state, recovery: [assessment] } });
+        await submit(nodes, harness);
+        assert.equal(nodes.get('relay-setup-create').disabled, true);
+        await harness.controller.createRelay();
+        assert.equal(harness.calls.notify, 0);
+      });
+    }
+  }
+});
+
+test('the bound Re-check action cannot invalidate continuation or its pending follow-up read', async () => {
+  await withDom(async (nodes) => {
+    const notify = deferred();
+    const followup = deferred();
+    const active = { ...viewFor(), setup_account: [], state: { Active: { relay_canister_id: Principal.fromText(RELAY) } } };
+    let notified = false;
+    const harness = controllerHarness({
+      getView: (_args, count) => count === 1 || !notified ? { Ok: recoveryView() } : followup.promise,
+      notifyRelay: () => notify.promise,
+    });
+    harness.controller.bindPane();
+    await submit(nodes, harness);
+    const continuing = harness.controller.createRelay();
+    await flushMicrotasks();
+    const disabledDuringNotify = nodes.get('relay-setup-recheck').disabled;
+    nodes.get('relay-setup-recheck').listeners.get('click')();
+    await flushMicrotasks(30);
+    const readsDuringNotify = harness.calls.view;
+    notified = true;
+    notify.resolve({ Active: { relay_canister_id: Principal.fromText(RELAY) } });
+    await flushMicrotasks(30);
+    const disabledDuringFollowup = nodes.get('relay-setup-recheck').disabled;
+    nodes.get('relay-setup-recheck').listeners.get('click')();
+    await flushMicrotasks(30);
+    followup.resolve({ Ok: active });
+    await continuing;
+    await flushMicrotasks(30);
+    assert.equal(disabledDuringNotify, true);
+    assert.equal(disabledDuringFollowup, true);
+    assert.equal(readsDuringNotify, 1);
+    assert.equal(harness.calls.view, 2, 'only the original view and continuation follow-up');
+    assert.equal(harness.calls.notify, 1);
+    assert.equal(harness.controller.state.activeRelayId, RELAY);
+    assert.equal(nodes.get('relay-funding-section').hidden, false);
+  });
+});
+
+
+test('Ready recovery can continue from pre-creation and finalization phases while absent recovery keeps legacy rules', async () => {
+  for (const phase of ['CmcTransferAccepted', 'CmcNotifySucceeded', 'RelayFunded', 'FinalizationAttempted']) {
+    for (const recovery of [recoveryView().recovery, []]) {
+      await withDom(async (nodes) => {
+        const harness = controllerHarness({ view: { ...recoveryView(), recovery, state: { InProgress: {
+          phase: { [phase]: null }, relay_canister_id: [Principal.fromText(RELAY)], message: [],
+        } } } });
+        await submit(nodes, harness);
+        assert.equal(nodes.get('relay-setup-create').disabled, false);
+        await harness.controller.createRelay();
+        assert.equal(harness.calls.notify, 1);
+        assert.equal(harness.controller.state.activeRelayId, RELAY);
+      });
+    }
+  }
+});

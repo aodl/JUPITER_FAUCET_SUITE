@@ -99,6 +99,7 @@ type InitArgs = record {
   canonical_relay_targets : opt vec principal;
 };
 type UpgradeArgs = record {
+  relay_legacy_module_hash : opt blob;
   staking_account : opt Account;
   ledger_canister_id : opt principal;
   index_canister_id : opt principal;
@@ -304,6 +305,22 @@ type RelaySetupView = record {
   nominal_minimum_e8s : nat64;
   factory_available : bool;
   state : RelaySetupState;
+  recovery : opt RelayRecoveryView;
+};
+type RelayRecoveryQuote = record {
+  setup_account : Account;
+  setup_account_identifier : text;
+  relay_canister_id : opt principal;
+  balance_e8s : nat64;
+  required_e8s : nat64;
+  additional_e8s : nat64;
+  cycles_deficit : nat;
+};
+type RelayRecoveryView = variant {
+  Ready : RelayRecoveryQuote;
+  FundingRequired : RelayRecoveryQuote;
+  CheckPending : text;
+  Unsafe : text;
 };
 type RelaySetupViewResult = variant { Ok : RelaySetupView; Err : text };
 type RelaySetupNotifyResult = variant {
