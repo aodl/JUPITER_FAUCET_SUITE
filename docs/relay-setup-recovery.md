@@ -142,7 +142,7 @@ Historian persists one Relay setup map keyed by the 32-byte canonical configurat
 |---|---:|---|---|
 | Relay setup entries | 26 | `RelaySetupKey([u8; 32])` | current `RelaySetupEntry` |
 | In-flight creation index | 30 | one cell | at most four Creating keys |
-| Permanently reserved | 31 | — | retired installation-template cell; never reused or rewritten |
+| Permanently reserved | 31 | - | retired installation-template cell; never reused or rewritten |
 
 An absent memory-30 index is initialized only over an empty factory registry. A nonempty registry without its index fails closed. Entry and bounded-index transitions commit atomically; both memories must be preserved together. Canonical indexing/payout history is authoritative and cannot be reset as part of factory maintenance.
 
