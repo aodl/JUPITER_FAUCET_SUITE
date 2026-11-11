@@ -183,21 +183,41 @@ fn build_relay_enabled_historian_wasm(debug: bool) -> Result<Vec<u8>> {
     if let Some(bytes) = cache.get() {
         return Ok(bytes.clone());
     }
-    let relay = relay_wasm()?;
     let workspace_root = support::wasm::workspace_root_from_manifest(env!("CARGO_MANIFEST_DIR"))?;
-    let relay_path =
-        workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_relay.wasm");
-    let relay_gz_path =
-        workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_relay.wasm.gz");
-    let gzip_status = Command::new("gzip")
-        .args(["-n", "-9", "-c"])
-        .arg(&relay_path)
-        .current_dir(&workspace_root)
+    let (relay_path, relay_gz_path) = if let Some(path) =
+        std::env::var_os("JUPITER_RELAY_RELEASE_TEST_WASM")
+    {
+        let payload = std::path::PathBuf::from(path);
+        if payload.extension() != Some(std::ffi::OsStr::new("gz")) {
+            bail!("canonical Relay test override must be the compressed install package");
+        }
+        (payload.with_extension(""), payload)
+    } else {
+        let relay = relay_wasm()?;
+        assert!(!relay.is_empty(), "Relay install payload must not be empty");
+        let raw = workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_relay.wasm");
+        let payload =
+            workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_relay.wasm.gz");
+        let gzip = Command::new("gzip")
+            .args(["-n", "-9", "-c"])
+            .arg(&raw)
+            .output()?;
+        if !gzip.status.success() {
+            bail!("gzip failed for embedded test Relay");
+        }
+        // Preserve Cargo's input timestamp when the install bytes are unchanged.
+        if std::fs::read(&payload).ok().as_deref() != Some(gzip.stdout.as_slice()) {
+            std::fs::write(&payload, gzip.stdout)?;
+        }
+        (raw, payload)
+    };
+    let decoded = Command::new("gzip")
+        .args(["-d", "-c"])
+        .arg(&relay_gz_path)
         .output()?;
-    if !gzip_status.status.success() {
-        bail!("gzip failed for relay wasm embedded in historian PocketIC test");
+    if !decoded.status.success() || decoded.stdout != std::fs::read(&relay_path)? {
+        bail!("embedded Relay test payload does not match the selected raw artifact");
     }
-    std::fs::write(&relay_gz_path, gzip_status.stdout)?;
     let raw_hash = hex::encode(Sha256::digest(std::fs::read(&relay_path)?));
     let gz_hash = hex::encode(Sha256::digest(std::fs::read(&relay_gz_path)?));
     let mut command = Command::new("cargo");
@@ -226,13 +246,8 @@ fn build_relay_enabled_historian_wasm(debug: bool) -> Result<Vec<u8>> {
     let path = workspace_root.join("target/wasm32-unknown-unknown/release/jupiter_historian.wasm");
     let bytes = std::fs::read(&path)?;
     let _ = cache.set(bytes.clone());
-    assert!(
-        !relay.is_empty(),
-        "non-debug relay wasm used for embedding must not be empty"
-    );
     Ok(bytes)
 }
-
 use support::calls::{query_one, tick_n, update_bytes, update_noargs, update_one};
 use support::governance::set_controllers_exact;
 
@@ -956,6 +971,7 @@ enum FixtureRelayEntry {
     Creating(FixtureRelayProgress),
     Active { relay_canister_id: Principal },
     ManualRecoveryRequired(FixtureRelayProgress),
+    Paused(FixtureRelayProgress),
 }
 
 #[derive(CandidType, Deserialize)]
@@ -7563,16 +7579,11 @@ fn relay_provisioning_budget_installs_production_payload_on_fiduciary_subnet() -
 
 #[test]
 #[ignore]
-fn legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callback_loss(
-) -> Result<()> {
+fn current_paid_setup_recovers_across_upgrade_and_preserves_completed_journal() -> Result<()> {
     let candidate_debug = build_relay_enabled_historian_wasm(true)?;
     let candidate_prod = relay_enabled_historian_wasm()?;
-    let old = include_bytes!("fixtures/relay-setup/historian-2026-10-24.wasm.gz").to_vec();
-    assert_eq!(
-        hex::encode(Sha256::digest(&old)),
-        "8c673c582964b17c63fbcd9be496a35759f41e0e37549b6fb47ebbaf7523dd0e"
-    );
-    let env = SelfServiceTestEnv::new_for_provisioning(old, true, 2_000_000_000_000)?;
+    let env =
+        SelfServiceTestEnv::new_for_provisioning(candidate_debug.clone(), true, 5_000_000_000_000)?;
     set_provisioning_rate(&env, 20_000)?;
     set_controllers_exact(
         &env.pic,
@@ -7590,81 +7601,104 @@ fn legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callbac
             .try_into()
             .unwrap(),
     );
-    env.fund_account(account, before.nominal_minimum_e8s)?;
-    let failed: RelaySetupNotifyResult = update_one(
+    env.fund_account(account, 500_000_000)?;
+    let first = env
+        .pic
+        .submit_call(
+            env.historian,
+            Principal::anonymous(),
+            "notify_relay_configuration",
+            encode_one(args.clone())?,
+        )
+        .map_err(|e| anyhow!("{e}"))?;
+    // Change the real CMC quote after the immutable conversion transfer is
+    // prepared. This creates a proven credit shortfall with no unknown create.
+    let mut prepared = false;
+    for _ in 0..100 {
+        env.pic.tick();
+        let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
+        let manager = MemoryManager::init(memory);
+        let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+            manager.get(MemoryId::new(26)),
+        );
+        if entries.get(&key).is_some_and(|bytes| {
+            matches!(
+                candid::decode_one::<FixtureRelayEntry>(&bytes.0),
+                Ok(FixtureRelayEntry::Creating(FixtureRelayProgress {
+                    phase: RelayCreationPhase::CmcTransferPrepared,
+                    ..
+                }))
+            )
+        }) {
+            prepared = true;
+            break;
+        }
+    }
+    assert!(
+        prepared,
+        "must change the quote after transfer identity is pinned"
+    );
+    #[derive(CandidType)]
+    struct Rate {
+        data_source: String,
+        timestamp_seconds: u64,
+        xdr_permyriad_per_icp: u64,
+    }
+    env.pic.advance_time(Duration::from_secs(60));
+    let changed: Result<(), String> = update_one(
         &env.pic,
-        env.historian,
-        Principal::anonymous(),
-        "notify_relay_configuration",
-        args.clone(),
+        env.cmc,
+        env.governance,
+        "set_icp_xdr_conversion_rate",
+        Rate {
+            data_source: "current paid recovery regression".into(),
+            timestamp_seconds: env.pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000,
+            xdr_permyriad_per_icp: 10_000,
+        },
     )?;
-    let RelaySetupNotifyResult::ManualRecoveryRequired {
-        phase: RelayCreationPhase::ChildCreated,
-        relay_canister_id: Some(child),
-        message,
-    } = failed
-    else {
-        bail!("old factory must reproduce installation shortfall: {failed:?}");
-    };
-    assert!(message.contains("out of cycles"), "{message}");
-    assert!(env.pic.cycle_balance(child) < 800_000_000_000);
-    assert_eq!(env.pic.get_controllers(child), vec![env.historian]);
+    changed.map_err(anyhow::Error::msg)?;
+    let failed: RelaySetupNotifyResult =
+        candid::decode_one(&env.pic.await_call(first).map_err(|e| anyhow!("{e:?}"))?)?;
+    assert!(
+        matches!(
+            failed,
+            RelaySetupNotifyResult::InProgress {
+                phase: RelayCreationPhase::CmcTransferAccepted,
+                ..
+            }
+        ),
+        "{failed:?}"
+    );
     let controller = env.pic.get_controllers(env.historian)[0];
     env.pic.advance_time(Duration::from_secs(2));
     tick_n(&env.pic, 5);
     support::governance::stop_canister_as(&env.pic, env.historian, controller)?;
-    let original_bytes;
-    let active_key = FixtureSetupKey([254; 32]);
-    let active_bytes = FixtureSetupValue(encode_one(FixtureRelayEntry::Active {
-        relay_canister_id: env.target,
-    })?);
-    {
+    let original_bytes = {
         let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
-        {
-            let manager = MemoryManager::init(memory.clone());
-            let mut entries =
-                StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
-                    manager.get(MemoryId::new(26)),
-                );
-            original_bytes = entries.get(&key).unwrap().0;
-            let FixtureRelayEntry::ManualRecoveryRequired(progress) =
-                candid::decode_one(&original_bytes)?
-            else {
-                bail!("old journal");
-            };
-            assert!(progress
-                .cmc_transfer
-                .as_ref()
-                .and_then(|t| t.block_index)
-                .is_some());
-            assert_eq!(progress.relay_canister_id, Some(child));
-            assert!(progress.relay_funding_transfer.is_none());
-            entries.insert(active_key.clone(), active_bytes.clone());
-        }
-        env.pic.set_stable_memory(
-            env.historian,
-            memory.borrow().clone(),
-            pocket_ic::common::rest::BlobCompression::NoCompression,
+        let manager = MemoryManager::init(memory);
+        let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+            manager.get(MemoryId::new(26)),
         );
-    }
-    #[derive(CandidType)]
-    struct RecoveryUpgrade {
-        relay_initial_cycles: Option<u128>,
-        relay_legacy_module_hash: Option<Vec<u8>>,
-    }
+        entries.get(&key).unwrap().0
+    };
+    let FixtureRelayEntry::Paused(original) = candid::decode_one(&original_bytes)? else {
+        bail!("current paused journal")
+    };
+    assert!(original
+        .cmc_transfer
+        .as_ref()
+        .and_then(|t| t.block_index)
+        .is_some());
+    assert!(original.cycles_minted.is_some());
+    assert!(original.relay_canister_id.is_none());
     env.pic
         .upgrade_canister(
             env.historian,
             candidate_debug,
-            encode_one(Some(RecoveryUpgrade {
-                relay_initial_cycles: Some(5_000_000_000_000),
-                relay_legacy_module_hash: Some(hex::decode(
-                    "221765e5940e3d0721dac7677f0294e05f616a6d91385f984c59a34ceb71cde0",
-                )?),
-            }))?,
+            encode_args(())?,
             Some(controller),
         )
-        .map_err(|e| anyhow!("legacy in-place upgrade: {e:?}"))?;
+        .map_err(|e| anyhow!("current paid upgrade: {e:?}"))?;
     support::governance::start_canister_as(&env.pic, env.historian, controller)?;
     let view = relay_setup_view(&env.pic, env.historian, args.clone())?;
     let Some(RelayRecoveryView::FundingRequired(quote)) = view.recovery else {
@@ -7672,7 +7706,7 @@ fn legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callbac
     };
     assert_eq!(view.setup_key_identifier, before.setup_key_identifier);
     assert_eq!(quote.setup_account, account);
-    assert_eq!(quote.relay_canister_id, Some(child));
+    assert_eq!(quote.relay_canister_id, None);
     assert!(quote.additional_e8s > 0);
     assert!(quote.additional_e8s < before.nominal_minimum_e8s);
     let balance_before = support::ledger::icrc1_balance(&env.pic, env.ledger, &account)?;
@@ -7694,7 +7728,13 @@ fn legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callbac
     }
     #[derive(Deserialize, CandidType)]
     struct ContinuationProjection {
+        identity: InstallProjection,
         conversions: Vec<ConversionProjection>,
+    }
+    #[derive(Deserialize, CandidType, Debug, PartialEq, Eq)]
+    struct InstallProjection {
+        module_hash: Vec<u8>,
+        init_arg: Vec<u8>,
     }
     #[derive(Deserialize, CandidType)]
     struct ConversionProjection {
@@ -7745,7 +7785,7 @@ fn legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callbac
     env.pic
         .upgrade_canister(
             env.historian,
-            candidate_prod,
+            candidate_prod.clone(),
             encode_args(())?,
             Some(controller),
         )
@@ -7758,27 +7798,24 @@ fn legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callbac
         "notify_relay_configuration",
         args.clone(),
     )?;
-    assert!(
-        matches!(result, RelaySetupNotifyResult::Active { relay_canister_id } if relay_canister_id == child),
-        "{result:?}"
-    );
+    let RelaySetupNotifyResult::Active {
+        relay_canister_id: child,
+    } = result
+    else {
+        bail!("{result:?}")
+    };
     let status = env
         .pic
         .canister_status(child, None)
         .map_err(|e| anyhow!("{e:?}"))?;
-    assert_eq!(
-        status.module_hash,
-        Some(hex::decode(
-            "221765e5940e3d0721dac7677f0294e05f616a6d91385f984c59a34ceb71cde0"
-        )?)
-    );
+    assert!(status.module_hash.is_some());
     assert!(status.settings.controllers.is_empty());
     let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
     let manager = MemoryManager::init(memory);
     let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
         manager.get(MemoryId::new(26)),
     );
-    assert_eq!(entries.get(&active_key), Some(active_bytes));
+    let completed_bytes = entries.get(&key).unwrap().0;
     #[derive(CandidType, Deserialize)]
     enum CompletedProjection {
         Active {
@@ -7798,13 +7835,27 @@ fn legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callbac
     else {
         bail!("completed recovery journal was not retained")
     };
-    let FixtureRelayEntry::ManualRecoveryRequired(original) = candid::decode_one(&original_bytes)?
-    else {
-        bail!("original legacy journal")
+    let FixtureRelayEntry::Paused(original) = candid::decode_one(&original_bytes)? else {
+        bail!("original paid journal")
     };
     assert_eq!(completed.cmc_transfer, original.cmc_transfer);
     assert_eq!(completed.cycles_minted, original.cycles_minted);
-    let conversions = completed.continuation.unwrap().conversions;
+    let continuation = completed.continuation.unwrap();
+    assert_eq!(
+        status.module_hash,
+        Some(continuation.identity.module_hash.clone())
+    );
+    #[derive(CandidType, Deserialize)]
+    enum OriginalProjection {
+        Paused(ProgressProjection),
+    }
+    let OriginalProjection::Paused(original_projection) = candid::decode_one(&original_bytes)?;
+    assert_eq!(
+        continuation.identity,
+        original_projection.continuation.unwrap().identity,
+        "preserve the pinned module and exact initialization bytes across both upgrades"
+    );
+    let conversions = continuation.conversions;
     assert_eq!(conversions.len(), 1);
     assert!(conversions[0].transfer.block_index.is_some());
     assert!(conversions[0].cycles_minted.is_some());
@@ -7858,6 +7909,246 @@ fn legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callbac
         seed >= 130_020_000,
         "retain seed, margin and the original extra-target charge"
     );
-    eprintln!("legacy recovery preserved child={child} existing_balance={balance_before} additional_e8s={} original_entry_bytes={} final_seed={seed}", quote.additional_e8s, original_bytes.len());
+    // Upgrade the completed setup, then submit again: neither an upgrade nor
+    // another explicit request can repeat creation, installation or the seed.
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 20);
+    let counts_before: PublicCounts = query_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    support::governance::stop_canister_as(&env.pic, env.historian, controller)?;
+    env.pic
+        .upgrade_canister(
+            env.historian,
+            candidate_prod,
+            encode_args(())?,
+            Some(controller),
+        )
+        .map_err(|e| anyhow!("completed journal upgrade: {e:?}"))?;
+    support::governance::start_canister_as(&env.pic, env.historian, controller)?;
+    let active = relay_setup_view(&env.pic, env.historian, args.clone())?;
+    assert_eq!(active.setup_key_identifier, before.setup_key_identifier);
+    assert!(
+        matches!(active.state, RelaySetupState::Active { relay_canister_id } if relay_canister_id == child)
+    );
+    let again: RelaySetupNotifyResult = update_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        args,
+    )?;
+    assert!(
+        matches!(again, RelaySetupNotifyResult::Active { relay_canister_id } if relay_canister_id == child)
+    );
+    let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
+    let manager = MemoryManager::init(memory);
+    let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+        manager.get(MemoryId::new(26)),
+    );
+    assert_eq!(
+        entries.get(&key).unwrap().0,
+        completed_bytes,
+        "preserve the exact completed financial journal"
+    );
+    assert_eq!(entries.len(), 1, "no duplicate setup or child");
+    let counts_after: PublicCounts = query_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    assert_eq!(
+        counts_after.relay_target_canister_count,
+        counts_before.relay_target_canister_count
+    );
+    assert_eq!(
+        counts_after.relay_instance_canister_count,
+        counts_before.relay_instance_canister_count
+    );
+    assert_eq!(
+        support::ledger::icrc1_balance(&env.pic, env.ledger, &account)?,
+        0
+    );
+    assert_eq!(
+        env.pic
+            .canister_status(child, None)
+            .map_err(|e| anyhow!("{e:?}"))?
+            .module_hash,
+        status.module_hash
+    );
+    eprintln!("current recovery preserved child={child} existing_balance={balance_before} additional_e8s={} original_entry_bytes={} final_seed={seed}", quote.additional_e8s, original_bytes.len());
+    Ok(())
+}
+#[test]
+#[ignore]
+fn completed_relay_journal_from_recovery_release_survives_upgrade() -> Result<()> {
+    let candidate = relay_enabled_historian_wasm()?;
+    let writer = include_bytes!("fixtures/relay-setup/historian-recovery-release.wasm.gz");
+    assert_eq!(
+        hex::encode(Sha256::digest(writer)),
+        "176ad7c4d21b038a8c51db5b5addf19cab3051a337f211f4dbb3675ed2658c64"
+    );
+    let env = SelfServiceTestEnv::new_for_provisioning(writer.to_vec(), true, 5_000_000_000_000)?;
+    set_provisioning_rate(&env, 20_000)?;
+    let args = RelaySetupArgs {
+        target_canister_ids: vec![env.target],
+        surplus_recipients: vec![],
+    };
+    let before = relay_setup_view(&env.pic, env.historian, args.clone())?;
+    let account = before.setup_account.unwrap();
+    let key = FixtureSetupKey(
+        hex::decode(&before.setup_key_identifier)?
+            .try_into()
+            .unwrap(),
+    );
+    env.fund_account(account, 500_000_000)?;
+    let result: RelaySetupNotifyResult = update_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        args.clone(),
+    )?;
+    let RelaySetupNotifyResult::Active {
+        relay_canister_id: child,
+    } = result
+    else {
+        bail!("{result:?}")
+    };
+    let controller = env.pic.get_controllers(env.historian)[0];
+    env.pic.advance_time(Duration::from_secs(2));
+    tick_n(&env.pic, 20);
+    let counts_before: PublicCounts = query_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    support::governance::stop_canister_as(&env.pic, env.historian, controller)?;
+    let retired_bytes = b"reserved memory 31 evidence".to_vec();
+    let journal = {
+        let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
+        let journal;
+        {
+            let manager = MemoryManager::init(memory.clone());
+            let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+                manager.get(MemoryId::new(26)),
+            );
+            journal = entries.get(&key).unwrap().0;
+            // This retired cell is left intact, not decoded, reset or repurposed.
+            let mut retired = StableCell::<Vec<u8>, FixtureMemory>::init(
+                manager.get(MemoryId::new(31)),
+                Vec::new(),
+            );
+            retired.set(retired_bytes.clone());
+        }
+        env.pic.set_stable_memory(
+            env.historian,
+            memory.borrow().clone(),
+            pocket_ic::common::rest::BlobCompression::NoCompression,
+        );
+        journal
+    };
+    #[derive(CandidType, Deserialize)]
+    struct Completed {
+        cmc_transfer: Option<FixtureRelayTransfer>,
+        cycles_minted: Option<u128>,
+        relay_funding_transfer: Option<FixtureRelayTransfer>,
+        continuation: Option<IdentityProjection>,
+    }
+    #[derive(CandidType, Deserialize)]
+    struct IdentityProjection {
+        identity: InstallProjection,
+    }
+    #[derive(CandidType, Deserialize)]
+    struct InstallProjection {
+        module_hash: Vec<u8>,
+        init_arg: Vec<u8>,
+    }
+    #[derive(CandidType, Deserialize)]
+    enum ActiveProjection {
+        Active { completed: Option<Completed> },
+    }
+    let ActiveProjection::Active {
+        completed: Some(completed),
+    } = candid::decode_one(&journal)?
+    else {
+        bail!("release must retain completed journal")
+    };
+    assert!(completed.cmc_transfer.unwrap().block_index.is_some());
+    assert!(completed.cycles_minted.is_some());
+    assert!(completed
+        .relay_funding_transfer
+        .unwrap()
+        .block_index
+        .is_some());
+    let identity = completed.continuation.unwrap().identity;
+    assert!(!identity.init_arg.is_empty());
+    assert_eq!(
+        env.pic
+            .canister_status(child, None)
+            .map_err(|e| anyhow!("{e:?}"))?
+            .module_hash,
+        Some(identity.module_hash)
+    );
+    env.pic
+        .upgrade_canister(env.historian, candidate, encode_args(())?, Some(controller))
+        .map_err(|e| anyhow!("completed recovery release upgrade: {e:?}"))?;
+    support::governance::start_canister_as(&env.pic, env.historian, controller)?;
+    let after = relay_setup_view(&env.pic, env.historian, args.clone())?;
+    assert_eq!(after.setup_key_identifier, before.setup_key_identifier);
+    assert!(
+        matches!(after.state, RelaySetupState::Active { relay_canister_id } if relay_canister_id == child)
+    );
+    let again: RelaySetupNotifyResult = update_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "notify_relay_configuration",
+        args,
+    )?;
+    assert!(
+        matches!(again, RelaySetupNotifyResult::Active { relay_canister_id } if relay_canister_id == child)
+    );
+    let memory = Rc::new(RefCell::new(env.pic.get_stable_memory(env.historian)));
+    let manager = MemoryManager::init(memory);
+    let entries = StableBTreeMap::<FixtureSetupKey, FixtureSetupValue, FixtureMemory>::init(
+        manager.get(MemoryId::new(26)),
+    );
+    assert_eq!(
+        entries.get(&key).unwrap().0,
+        journal,
+        "preserve exact release-written journal bytes"
+    );
+    let retired =
+        StableCell::<Vec<u8>, FixtureMemory>::init(manager.get(MemoryId::new(31)), Vec::new());
+    assert_eq!(retired.get(), &retired_bytes);
+    let counts_after: PublicCounts = query_one(
+        &env.pic,
+        env.historian,
+        Principal::anonymous(),
+        "get_public_counts",
+        (),
+    )?;
+    assert_eq!(
+        counts_after.relay_target_canister_count,
+        counts_before.relay_target_canister_count
+    );
+    assert_eq!(
+        counts_after.relay_instance_canister_count,
+        counts_before.relay_instance_canister_count
+    );
+    assert_eq!(env.pic.get_controllers(child), Vec::<Principal>::new());
+    assert_eq!(
+        support::ledger::icrc1_balance(&env.pic, env.ledger, &account)?,
+        0
+    );
     Ok(())
 }

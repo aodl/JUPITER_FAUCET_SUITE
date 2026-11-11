@@ -10,6 +10,7 @@ const runViewer = (search) => {
   const title = { textContent: 'Protocol diagram' };
   const image = { src: '', alt: '', hidden: true };
   const error = { hidden: true };
+  const relayNote = { hidden: true };
   const document = {
     title: 'Jupiter Faucet diagram',
     querySelector(selector) {
@@ -18,6 +19,7 @@ const runViewer = (search) => {
         '#diagram-viewer-title': title,
         '#diagram-viewer-image': image,
         '#diagram-viewer-error': error,
+        '#diagram-viewer-relay-note': relayNote,
       }[selector];
     },
   };
@@ -28,7 +30,7 @@ const runViewer = (search) => {
     window: { location: { search } },
   });
 
-  return { back, document, error, image, title };
+  return { back, document, error, image, title, relayNote };
 };
 
 test('diagram viewer selects only whitelisted SVG assets', () => {
@@ -46,6 +48,7 @@ test('diagram viewer selects only whitelisted SVG assets', () => {
     assert.equal(result.back.href, backHref);
     assert.equal(result.image.hidden, false);
     assert.equal(result.error.hidden, true);
+    assert.equal(result.relayNote.hidden, diagram !== 'relay');
     assert.match(result.document.title, / · Jupiter Faucet$/);
   }
 });
@@ -54,6 +57,7 @@ test('diagram viewer rejects unknown diagrams and unsafe asset versions', () => 
   const unknown = runViewer('?diagram=unknown');
   assert.equal(unknown.image.hidden, true);
   assert.equal(unknown.error.hidden, false);
+  assert.equal(unknown.relayNote.hidden, true);
   assert.equal(unknown.title.textContent, 'Diagram unavailable');
   assert.equal(unknown.back.href, '/#intro');
 

@@ -586,9 +586,6 @@ pub(super) fn init(args: InitArgs) {
 
 pub(super) fn apply_upgrade_args(st: &mut State, args: Option<UpgradeArgs>) {
     if let Some(args) = args {
-        if let Some(hash) = &args.relay_legacy_module_hash {
-            crate::relay_setup::enable_legacy_continuation(&st.config, hash);
-        }
         let accounting_started = st.last_index_run_ts.unwrap_or(0) > 0
             || st.last_indexed_staking_tx_id.is_some()
             || st.oldest_indexed_staking_tx_id.is_some()

@@ -85,18 +85,15 @@ pub(crate) fn approved_relay_onchain_module_hash() -> Option<[u8; 32]> {
     approved_self_service_relay_wasm().map(|bytes| Sha256::digest(bytes).into())
 }
 
-// Exact predecessor payload retained for already-paid configurations. This is
-// separately approved installation identity, never an arbitrary caller module.
+// Installation uses only the reviewed embedded payload. A pinned identity from
+// another release must never silently install the new release's bytes.
 pub(crate) fn relay_install_payload_for_hash(hash: &[u8]) -> Option<&'static [u8]> {
-    if approved_relay_onchain_module_hash()
-        .as_ref()
-        .map(|h| h.as_slice())
-        == Some(hash)
-    {
-        return approved_self_service_relay_wasm();
-    }
-    (hex::encode(hash) == "221765e5940e3d0721dac7677f0294e05f616a6d91385f984c59a34ceb71cde0")
-        .then_some(include_bytes!("../relay-install/legacy-relay.wasm.gz").as_slice())
+    approved_self_service_relay_wasm().filter(|_| {
+        approved_relay_onchain_module_hash()
+            .as_ref()
+            .map(|h| h.as_slice())
+            == Some(hash)
+    })
 }
 
 ic_cdk::export_candid!();

@@ -242,25 +242,10 @@ fn fixture(balance: u64) -> (CanonicalRelaySetup, RelaySetupKey, Clients) {
     .unwrap();
     let key = setup.key();
     let child = Principal::from_slice(&[80]);
-    let mut old_config = config;
-    old_config.relay_initial_cycles = 750_000_000_000;
-    enable_legacy_continuation(&old_config, &approved_relay_onchain_module_hash().unwrap());
-    // The exact predecessor record has no continuation field.
-    #[derive(CandidType)]
-    struct OldProgress {
-        phase: RelayCreationPhase,
-        cmc_transfer: Option<RelayTransferRecord>,
-        cycles_minted: Option<u128>,
-        create_dispatched_at_ts: Option<u64>,
-        relay_canister_id: Option<Principal>,
-        relay_funding_transfer: Option<RelayTransferRecord>,
-        last_error: Option<String>,
-    }
-    #[derive(CandidType)]
-    enum OldEntry {
-        ManualRecoveryRequired(OldProgress),
-    }
-    let old = OldEntry::ManualRecoveryRequired(OldProgress {
+    // A paid current-format child paused after a proven installation shortfall.
+    let mut continuation = recovery::RelayContinuation::new(&config, &setup);
+    continuation.funding_pause = true;
+    let entry = RelaySetupEntry::ManualRecoveryRequired(RelayCreationProgress {
         phase: RelayCreationPhase::ChildCreated,
         cmc_transfer: Some(RelayTransferRecord {
             amount_e8s: 45_000_000,
@@ -268,16 +253,13 @@ fn fixture(balance: u64) -> (CanonicalRelaySetup, RelaySetupKey, Clients) {
             created_at_time_nanos: 1,
             block_index: Some(11),
         }),
-        cycles_minted: Some(1_000_000_000_000),
+        cycles_minted: Some(continuation.identity.original_create_cycles),
         create_dispatched_at_ts: Some(1),
         relay_canister_id: Some(child),
         relay_funding_transfer: None,
         last_error: Some("Retained diagnostics are not eligibility authority".into()),
+        continuation: Some(continuation),
     });
-    let entry = RelaySetupEntry::from_bytes(Cow::Owned(candid::encode_one(old).unwrap()));
-    assert!(
-        matches!(&entry, RelaySetupEntry::ManualRecoveryRequired(p) if p.continuation.is_none())
-    );
     insert_entry(key, entry);
     (
         setup,
@@ -340,7 +322,7 @@ fn resume(
 }
 
 #[test]
-fn user_funds_only_residual_and_finishes_the_same_legacy_child() {
+fn user_funds_only_residual_and_finishes_the_same_paid_child() {
     let (setup, key, clients) = fixture(10_000_000);
     let RelayRecoveryView::FundingRequired(q) = quote(&setup, key, &clients) else {
         panic!("funding quote")
@@ -375,7 +357,10 @@ fn user_funds_only_residual_and_finishes_the_same_legacy_child() {
         panic!("activation must retain the completed payment journal")
     };
     assert_eq!(completed.cmc_transfer.unwrap().block_index, Some(11));
-    assert_eq!(completed.cycles_minted, Some(1_000_000_000_000));
+    assert_eq!(
+        completed.cycles_minted,
+        Some(recovery::creation_budget(&tests::config()).unwrap())
+    );
     assert_eq!(completed.create_dispatched_at_ts, Some(1));
     let conversions = completed.continuation.unwrap().conversions;
     assert_eq!(conversions.len(), 1);
@@ -713,12 +698,12 @@ fn maximum_new_journal_preserves_the_existing_4096_byte_stable_bound() {
 }
 
 #[test]
-fn retained_predecessor_payload_has_the_installed_release_identity() {
-    use sha2::{Digest, Sha256};
-    let hash =
-        hex::decode("221765e5940e3d0721dac7677f0294e05f616a6d91385f984c59a34ceb71cde0").unwrap();
-    let payload = relay_install_payload_for_hash(&hash).unwrap();
-    assert_eq!(Sha256::digest(payload).as_slice(), hash);
+fn payload_selection_never_substitutes_bytes_for_a_different_pinned_hash() {
+    let hash = approved_relay_onchain_module_hash().unwrap();
+    assert_eq!(
+        relay_install_payload_for_hash(&hash),
+        approved_self_service_relay_wasm()
+    );
     assert!(relay_install_payload_for_hash(&[99; 32]).is_none());
 }
 
@@ -777,6 +762,7 @@ fn precreate_mint_deficit_credits_original_cycles_and_only_funds_remaining_creat
     let Some(RelaySetupEntry::ManualRecoveryRequired(mut progress)) = get_entry(key) else {
         panic!()
     };
+    progress.cycles_minted = Some(1_000_000_000_000);
     progress.phase = RelayCreationPhase::CmcTransferAccepted;
     progress.relay_canister_id = None;
     progress.create_dispatched_at_ts = None;
@@ -833,36 +819,6 @@ fn final_reserve_deficit_requests_only_missing_seed_and_dispatches_it_once() {
     assert!(w.notifications.is_empty());
     assert_eq!(w.installs, 0);
     assert_eq!(w.final_funding, 105_020_000);
-}
-
-#[test]
-fn legacy_initialization_retains_predecessor_service_defaults_and_exact_memo() {
-    #[derive(CandidType, Deserialize)]
-    struct Inputs {
-        ledger_canister_id: Option<Principal>,
-        sns_rewards_canister_id: Option<Principal>,
-        icp_index_canister_id: Option<Principal>,
-        managed_canisters: Vec<Principal>,
-    }
-    let (setup, _, _) = fixture(0);
-    let bytes = relay_init_arg_with_service_defaults(&tests::config(), &setup, true);
-    let old: Inputs = candid::decode_one(&bytes).unwrap();
-    assert_eq!(
-        old.ledger_canister_id,
-        Some(tests::config().ledger_canister_id)
-    );
-    assert_eq!(old.managed_canisters, setup.targets());
-    assert_eq!(old.sns_rewards_canister_id, None);
-    assert_eq!(old.icp_index_canister_id, None);
-    let fresh: Inputs = candid::decode_one(&relay_init_arg(&tests::config(), &setup)).unwrap();
-    assert_eq!(
-        fresh.sns_rewards_canister_id,
-        Some(tests::config().rewards_account.owner)
-    );
-    assert_eq!(
-        fresh.icp_index_canister_id,
-        Some(tests::config().index_canister_id)
-    );
 }
 
 #[test]
@@ -971,6 +927,7 @@ fn known_shortfall_in_the_notify_succeeded_phase_pauses_before_dispatch() {
     let Some(RelaySetupEntry::ManualRecoveryRequired(mut progress)) = get_entry(key) else {
         panic!()
     };
+    progress.cycles_minted = Some(1_000_000_000_000);
     progress.phase = RelayCreationPhase::CmcNotifySucceeded;
     progress.relay_canister_id = None;
     progress.create_dispatched_at_ts = None;
@@ -1004,17 +961,14 @@ fn known_shortfall_in_the_notify_succeeded_phase_pauses_before_dispatch() {
 }
 
 #[test]
-fn a_larger_new_default_does_not_make_an_adequately_funded_legacy_failure_recoverable() {
+fn a_larger_budget_does_not_authorize_retry_after_an_unproven_installation_failure() {
     let (setup, key, clients) = fixture(600_000_000);
-    state::set_relay_legacy_identity(Vec::new());
-    let old = tests::config(); // 2T on a 13-node subnet already covers upfront install.
-    enable_legacy_continuation(&old, &approved_relay_onchain_module_hash().unwrap());
     let Some(RelaySetupEntry::ManualRecoveryRequired(mut progress)) = get_entry(key) else {
         panic!()
     };
-    progress.cycles_minted = Some(old.relay_initial_cycles);
+    progress.continuation.as_mut().unwrap().funding_pause = false;
     insert_entry(key, RelaySetupEntry::ManualRecoveryRequired(progress));
-    let mut current = old;
+    let mut current = tests::config();
     current.relay_initial_cycles = 5_000_000_000_000;
     let result = block_on(recovery::quote_for_test(
         key, &setup, &current, &clients, &clients, &clients,
@@ -1029,6 +983,7 @@ fn a_rejected_precreate_conversion_remains_reconcilable_through_a_later_final_re
     let Some(RelaySetupEntry::ManualRecoveryRequired(mut progress)) = get_entry(key) else {
         panic!()
     };
+    progress.cycles_minted = Some(1_000_000_000_000);
     progress.phase = RelayCreationPhase::CmcNotifySucceeded;
     progress.relay_canister_id = None;
     progress.create_dispatched_at_ts = None;
@@ -1130,91 +1085,39 @@ fn contradictory_recovery_operation_evidence_never_authorizes_payment_or_dispatc
 }
 
 #[test]
-fn predecessor_paid_cmc_lane_pins_the_frozen_template_or_refuses_before_spending() {
+fn current_paid_identity_and_accepted_operations_survive_changed_global_defaults() {
     let (setup, key, clients) = fixture(200_000_000);
-    let Some(RelaySetupEntry::ManualRecoveryRequired(mut progress)) = get_entry(key) else {
+    let Some(RelaySetupEntry::ManualRecoveryRequired(original)) = get_entry(key) else {
         panic!()
     };
-    progress.phase = RelayCreationPhase::CmcNotifySucceeded;
-    progress.relay_canister_id = None;
-    progress.create_dispatched_at_ts = None;
-    let original = progress.clone();
-    insert_entry(key, RelaySetupEntry::Creating(progress));
     let mut changed = tests::config();
     changed.relay_initial_cycles = 5_000_000_000_000;
     changed.self_service_relay_interval_seconds = 123_456;
-    {
-        let guard = admission::Guard::acquire(key, admission::Lane::Completion).unwrap();
-        assert!(block_on(recovery::pin_existing_paid_identity(
-            key,
-            &setup,
-            &changed,
-            self_canister_id(),
-            &clients,
-            guard.ticket()
-        ))
-        .is_ok());
-    }
-    let Some(RelaySetupEntry::Creating(pinned)) = get_entry(key) else {
-        panic!()
-    };
-    assert_eq!(pinned.cmc_transfer, original.cmc_transfer);
-    assert_eq!(pinned.cycles_minted, original.cycles_minted);
-    let identity = pinned.continuation.unwrap().identity;
-    let mut old = tests::config();
-    old.relay_initial_cycles = 750_000_000_000;
-    assert_eq!(identity.init_arg, relay_init_arg(&old, &setup));
-    assert_ne!(identity.init_arg, relay_init_arg(&changed, &setup));
-    assert_eq!(identity.original_create_cycles, old.relay_initial_cycles);
-
-    state::set_relay_legacy_identity(Vec::new());
-    insert_entry(key, RelaySetupEntry::Creating(original));
-    let guard = admission::Guard::acquire(key, admission::Lane::Completion).unwrap();
-    assert!(matches!(
-        block_on(recovery::pin_existing_paid_identity(
-            key,
-            &setup,
-            &changed,
-            self_canister_id(),
-            &clients,
-            guard.ticket()
-        )),
-        Err(RelaySetupNotifyResult::ManualRecoveryRequired { .. })
+    let result = block_on(recovery::quote_for_test(
+        key, &setup, &changed, &clients, &clients, &clients,
     ));
-    assert!(state::relay_creating_keys().is_empty());
-}
-
-#[test]
-fn predecessor_active_mapping_decodes_without_a_completed_journal() {
-    #[derive(CandidType)]
-    enum OldEntry {
-        Active { relay_canister_id: Principal },
-    }
-    let child = Principal::from_slice(&[99]);
-    let old = candid::encode_one(OldEntry::Active {
-        relay_canister_id: child,
-    })
-    .unwrap();
+    assert!(matches!(
+        result,
+        RelayRecoveryView::Ready(_) | RelayRecoveryView::FundingRequired(_)
+    ));
     assert_eq!(
-        RelaySetupEntry::from_bytes(Cow::Owned(old)),
-        RelaySetupEntry::Active {
-            relay_canister_id: child,
-            completed: None
-        }
+        get_entry(key),
+        Some(RelaySetupEntry::ManualRecoveryRequired(original.clone()))
     );
+    assert_ne!(
+        original.continuation.unwrap().identity.init_arg,
+        relay_init_arg(&changed, &setup)
+    );
+    assert!(clients.0.lock().unwrap().transfers.is_empty());
 }
 
 #[test]
-fn a_legacy_payment_outside_the_verified_writer_period_is_not_a_funding_request() {
+fn missing_paid_identity_fails_closed_without_reconstructing_global_defaults() {
     let (setup, key, clients) = fixture(200_000_000);
     let Some(RelaySetupEntry::ManualRecoveryRequired(mut progress)) = get_entry(key) else {
         panic!()
     };
-    progress
-        .cmc_transfer
-        .as_mut()
-        .unwrap()
-        .created_at_time_nanos = 0;
+    progress.continuation = None;
     insert_entry(key, RelaySetupEntry::ManualRecoveryRequired(progress));
     assert!(matches!(
         quote(&setup, key, &clients),
@@ -1552,5 +1455,139 @@ fn saturated_retry_diagnostics_cannot_prevent_safe_reconciliation() {
         assert_eq!(w.notifications.len(), if ledger_loss { 1 } else { 2 });
         assert_eq!(w.installs, 1);
         assert_eq!(w.balance, 0);
+    }
+}
+
+#[test]
+fn unavailable_pinned_payload_blocks_new_spending_but_installed_code_can_finish() {
+    for (has_child, installed) in [(false, false), (true, false), (true, true)] {
+        let (setup, key, clients) = fixture(200_000_000);
+        let Some(RelaySetupEntry::ManualRecoveryRequired(mut progress)) = get_entry(key) else {
+            panic!()
+        };
+        let pinned_hash = vec![77; 32];
+        progress.continuation.as_mut().unwrap().identity.module_hash = pinned_hash.clone();
+        if !has_child {
+            progress.phase = RelayCreationPhase::CmcNotifySucceeded;
+            progress.relay_canister_id = None;
+            progress.create_dispatched_at_ts = None;
+        }
+        if installed {
+            clients.0.lock().unwrap().module = Some(pinned_hash);
+        }
+        insert_entry(key, RelaySetupEntry::Paused(progress));
+        if installed {
+            assert!(matches!(
+                quote(&setup, key, &clients),
+                RelayRecoveryView::Ready(_)
+            ));
+            assert!(matches!(
+                resume(&setup, key, &clients),
+                RelaySetupNotifyResult::Active { .. }
+            ));
+            let world = clients.0.lock().unwrap();
+            assert_eq!(world.installs, 0);
+            assert!(world.notifications.is_empty());
+            assert_eq!(world.transfers.len(), 1, "only the final seed");
+        } else {
+            assert!(matches!(
+                quote(&setup, key, &clients),
+                RelayRecoveryView::Unsafe(_)
+            ));
+            assert!(matches!(
+                resume(&setup, key, &clients),
+                RelaySetupNotifyResult::ManualRecoveryRequired { .. }
+            ));
+            let world = clients.0.lock().unwrap();
+            assert!(world.transfer_requests.is_empty());
+            assert!(world.notifications.is_empty());
+            assert_eq!(world.installs, 0);
+        }
+    }
+}
+
+#[test]
+fn paid_steps_never_reconstruct_missing_or_invalid_installation_identity() {
+    for (phase, malformed) in [
+        (RelayCreationPhase::ChildCreated, false),
+        (RelayCreationPhase::CodeInstalled, false),
+        (RelayCreationPhase::RelayFunded, false),
+        (RelayCreationPhase::RelayFunded, true),
+    ] {
+        let (setup, key, clients) = fixture(200_000_000);
+        let config = tests::config();
+        let Some(RelaySetupEntry::ManualRecoveryRequired(mut progress)) = get_entry(key) else {
+            panic!()
+        };
+        progress.phase = phase;
+        if malformed {
+            progress.continuation.as_mut().unwrap().identity.module_hash = vec![77];
+        } else {
+            progress.continuation = None;
+        }
+        {
+            let mut world = clients.0.lock().unwrap();
+            world.cycles = recovery::child_budget(&config).unwrap();
+            if phase != RelayCreationPhase::ChildCreated {
+                world.module = approved_relay_onchain_module_hash().map(|hash| hash.to_vec());
+            }
+        }
+        if phase == RelayCreationPhase::RelayFunded {
+            progress.relay_funding_transfer = Some(RelayTransferRecord {
+                amount_e8s: 105_020_000,
+                fee_e8s: 10_000,
+                created_at_time_nanos: 1,
+                block_index: Some(21),
+            });
+        }
+        let original = progress.cmc_transfer.clone();
+        insert_entry(key, RelaySetupEntry::Creating(progress));
+        let guard = admission::Guard::acquire(key, admission::Lane::Completion).unwrap();
+        let result = match phase {
+            RelayCreationPhase::ChildCreated => block_on(install_and_fund(
+                key,
+                &setup,
+                &config,
+                self_canister_id(),
+                &clients,
+                &clients,
+                guard.ticket(),
+            )),
+            RelayCreationPhase::CodeInstalled => block_on(fund_installed_relay(
+                key,
+                &setup,
+                &config,
+                self_canister_id(),
+                &clients,
+                &clients,
+                guard.ticket(),
+            )),
+            _ => block_on(drive_relay_finalization(
+                key,
+                &setup,
+                self_canister_id(),
+                &clients,
+                guard.ticket(),
+            )),
+        };
+        assert!(
+            matches!(
+                result,
+                RelaySetupNotifyResult::ManualRecoveryRequired { .. }
+            ),
+            "{phase:?}: {result:?}"
+        );
+        let Some(RelaySetupEntry::ManualRecoveryRequired(progress)) = get_entry(key) else {
+            panic!()
+        };
+        assert_eq!(progress.cmc_transfer, original);
+        if !malformed {
+            assert_eq!(recovery::creation_credit(&progress), None);
+        }
+        let world = clients.0.lock().unwrap();
+        assert_eq!(world.installs, 0);
+        assert!(world.transfer_requests.is_empty());
+        assert!(world.notifications.is_empty());
+        assert_eq!(world.controllers, vec![self_canister_id()]);
     }
 }

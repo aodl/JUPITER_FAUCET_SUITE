@@ -1,5 +1,16 @@
 [
   {
+    "name": "active self-service Relay direct Faucet endowment",
+    "memo_text": "xsan5-rqaaa-aaaar-qciza-cai.",
+    "expected_directive": {
+      "kind": "raw_icp",
+      "canister_id": "xsan5-rqaaa-aaaar-qciza-cai",
+      "destination_subaccount_hex": null,
+      "memo_text": ""
+    },
+    "builder": null
+  },
+  {
     "name": "direct Historian subscription is exactly 32 ASCII bytes",
     "memo_text": "E.j5gs6uiaaaaaaarqb5cqcai@D.n0:1",
     "expected_directive": {

@@ -22,9 +22,10 @@ import { accountIdentifierHex } from '../src/data/dashboard-transforms.js';
 import {
   deriveRelayFundingDestinations,
   relayFundingSubaccount,
-  relayMemoBuilderHash,
+  relayEndowmentMemo,
 } from '../src/data/relay-funding.js';
-import { buildAdvancedMemo } from '../src/advanced-memo-builder.js';
+import { parseJupiterMemo } from '../src/memo-policy.js';
+import { JUPITER_STAKING_ACCOUNT } from '../src/app/config.js';
 
 const TARGET_A = '22255-zqaaa-aaaas-qf6uq-cai';
 const TARGET_B = 'qaa6y-5yaaa-aaaaa-aaafa-cai';
@@ -135,12 +136,15 @@ const DOM_IDS = [
   'relay-setup-recipient-editor', 'relay-setup-surplus-mode',
   'relay-setup-surplus-mode-summary',
   'relay-funding-section', 'relay-funding-owner', 'relay-funding-destinations',
-  'relay-funding-copy-status', 'relay-funding-memo-builder-link',
+  'relay-funding-copy-status', 'relay-funding-endowment-memo', 'relay-funding-staking-account',
+  'relay-funding-copy-endowment-memo', 'relay-funding-copy-staking-account',
+  'relay-funding-direct-endowment', 'relay-funding-operating-note', 'relay-funding-future-flow',
+  'relay-funding-split-controls', 'relay-funding-split-note',
   'relay-setup-review', 'relay-setup-edit', 'relay-setup-shortfall',
   'relay-setup-recheck', 'relay-setup-copy-status', 'relay-setup-equal-split',
   'relay-funding-operating', 'relay-funding-future', 'relay-funding-split',
   'relay-funding-percentage', 'relay-funding-staging-alternative', 'relay-funding-options',
-  'relay-funding-add',
+  'relay-funding-add', 'relay-setup-another',
 ];
 
 async function withDom(run) {
@@ -210,7 +214,7 @@ function seedRecipientRow(nodes, value = '') {
   memoModeLabel.dataset.relayRecipientMemoModeLabel = 'true';
   memoModeLabel.setAttribute('for', memoMode.id);
   const memoLabel = new FakeElement('', 'label');
-  memoLabel.textContent = 'Memo';
+  memoLabel.textContent = 'Surplus recipient memo';
   memoLabel.dataset.relayRecipientMemoLabel = 'true';
   const memoInput = new FakeElement('relay-setup-recipient-memo-1', 'input');
   memoInput.type = 'text';
@@ -896,7 +900,7 @@ test('added recipient rows contain visible memo labels in the intended grid orde
     assert.equal(memoModeLabel.textContent, 'Memo format');
     assert.equal(memoModeLabel.hidden, false);
     assert.equal(memoLabel.tagName, 'label');
-    assert.equal(memoLabel.textContent, 'Memo');
+    assert.equal(memoLabel.textContent, 'Surplus recipient memo');
     assert.equal(memoLabel.hidden, false);
     const memoControls = memoModeLabel.parentElement;
     assert.deepEqual(memoControls.children.map((child) => child.dataset), [
@@ -996,7 +1000,7 @@ test('static and added recipient rows expose the same memo field semantics', asy
     for (const row of rows) {
       assert.equal(row.querySelector('[data-relay-recipient-memo-mode-label]').textContent, 'Memo format');
       assert.ok(row.querySelector('[data-relay-recipient-memo-mode]'));
-      assert.equal(row.querySelector('[data-relay-recipient-memo-label]').textContent, 'Memo');
+      assert.equal(row.querySelector('[data-relay-recipient-memo-label]').textContent, 'Surplus recipient memo');
       assert.ok(row.querySelector('[data-relay-recipient-memo-input]'));
       assert.ok(row.querySelector('[data-relay-recipient-memo-count]'));
       assert.ok(row.querySelector('[data-relay-recipient-memo-error]'));
@@ -2077,7 +2081,7 @@ test('existing Active neuron configuration remains visible when the neuron loade
     assert.equal(harness.calls.governanceActors, 0);
     assert.deepEqual(harness.calls.neurons, []);
     assert.equal(harness.calls.balance, 0);
-    assert.equal(nodes.get('relay-setup-status').textContent, 'Relay created');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Active');
     assert.match(nodes.get('relay-setup-existing-relay').innerHTML, /br5f7/);
     assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
   });
@@ -2216,7 +2220,8 @@ test('BelowMinimum renders balance, requirement, and shortfall while retaining c
     const harness = controllerHarness({ notify: { BelowMinimum: { balance_e8s: 200_000_000n, required_e8s: 300_000_000n, shortfall_e8s: 100_000_000n } } });
     await submit(nodes, harness);
     await harness.controller.createRelay();
-    assert.match(nodes.get('relay-setup-status-label').textContent, /Balance 2 ICP; required 3 ICP; shortfall 1 ICP/);
+    assert.match(nodes.get('relay-setup-status-label').textContent, /balance is sufficient.*Select Create relay/u);
+    assert.equal(nodes.get('relay-setup-create').disabled, false);
     assert.equal(nodes.get('relay-setup-payment-details').hidden, false);
   });
 });
@@ -2226,8 +2231,8 @@ test('Busy message survives the immediate setup-view refresh', async () => {
     const harness = controllerHarness({ notify: { Busy: null } });
     await submit(nodes, harness);
     await harness.controller.createRelay();
-    assert.equal(nodes.get('relay-setup-status').textContent, 'Busy');
-    assert.match(nodes.get('relay-setup-status-label').textContent, /admission is busy or rate-limited/);
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Setup temporarily busy');
+    assert.match(nodes.get('relay-setup-status-label').textContent, /No new payment is needed.*Wait a little/u);
   });
 });
 
@@ -2424,7 +2429,7 @@ test('funded finalization phases expose an explicit resume action without fundin
       assert.equal(nodes.get('relay-setup-finalization-resume-note').hidden, false);
       assert.match(
         nodes.get('relay-setup-finalization-resume-note').textContent,
-        /does not repeat ICP, CMC, creation, installation, or Relay-funding operations/i,
+        /No additional setup payment is needed/u,
       );
       assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
       assert.equal(harness.calls.balance, 0);
@@ -2473,13 +2478,13 @@ test('paid CMC phases expose one explicit creation resume without another paymen
       assert.equal(nodes.get('relay-setup-create').textContent, 'Resume creation');
       assert.equal(nodes.get('relay-setup-create').disabled, false);
       assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
-      assert.match(nodes.get('relay-setup-finalization-resume-note').textContent, /no additional conversion payment/i);
+      assert.match(nodes.get('relay-setup-finalization-resume-note').textContent, /no additional setup payment is needed/i);
       nodes.get('relay-setup-create').listeners.get('click')();
       nodes.get('relay-setup-create').listeners.get('click')();
       while (harness.calls.notify === 0) await Promise.resolve();
       assert.equal(harness.calls.notify, 1);
       assert.equal(nodes.get('relay-setup-create').disabled, true);
-      assert.equal(nodes.get('relay-setup-status').textContent, 'Resuming creation…');
+      assert.equal(nodes.get('relay-setup-status').textContent, 'Processing setup…');
       assert.deepEqual(harness.calls.notifyArgs, [{
         target_canister_ids: [Principal.fromText(TARGET_A)],
         surplus_recipients: [{ Principal: { principal: Principal.fromText(RECIPIENT_A), memo: [] } }],
@@ -2515,7 +2520,7 @@ test('Resume finalization submits the canonical configuration once and polling r
     nodes.get('relay-setup-create').listeners.get('click')();
     while (harness.calls.notify === 0) await Promise.resolve();
     assert.equal(nodes.get('relay-setup-create').disabled, true);
-    assert.equal(nodes.get('relay-setup-status').textContent, 'Resuming finalization…');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Processing setup…');
     assert.deepEqual(harness.calls.notifyArgs, [{
       target_canister_ids: [Principal.fromText(TARGET_A)],
       surplus_recipients: [{
@@ -2557,7 +2562,7 @@ test('Active notification suppresses resume after a stale FinalizationAttempted 
     await harness.controller.createRelay();
 
     assert.equal(harness.calls.notify, 1);
-    assert.equal(nodes.get('relay-setup-status').textContent, 'Relay created');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Active');
     assert.match(nodes.get('relay-setup-existing-relay').innerHTML, /br5f7/);
     assert.equal(nodes.get('relay-setup-existing-relay').hidden, false);
     assert.equal(nodes.get('relay-setup-create-panel').hidden, true);
@@ -2737,6 +2742,19 @@ test('all eleven Relay funding destinations use protocol subaccount bytes and in
 
 test('all Relay funding ICRC texts are canonical fixtures and independently round-trip', () => {
   const fixtures = new Map([
+    ['xsan5-rqaaa-aaaar-qciza-cai', [
+      'xsan5-rqaaa-aaaar-qciza-cai',
+      'xsan5-rqaaa-aaaar-qciza-cai-moxotui.1',
+      'xsan5-rqaaa-aaaar-qciza-cai-6r6dawi.a',
+      'xsan5-rqaaa-aaaar-qciza-cai-bzzq2oq.14',
+      'xsan5-rqaaa-aaaar-qciza-cai-52toija.1e',
+      'xsan5-rqaaa-aaaar-qciza-cai-eeohdpi.28',
+      'xsan5-rqaaa-aaaar-qciza-cai-3r7irry.32',
+      'xsan5-rqaaa-aaaar-qciza-cai-hpdklqa.3c',
+      'xsan5-rqaaa-aaaar-qciza-cai-rmld3yq.46',
+      'xsan5-rqaaa-aaaar-qciza-cai-p7birmy.50',
+      'xsan5-rqaaa-aaaar-qciza-cai-t4lwdli.5a',
+    ]],
     ['u2qkp-aqaaa-aaaar-qb7ea-cai', [
       'u2qkp-aqaaa-aaaar-qb7ea-cai',
       'u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1',
@@ -2768,6 +2786,17 @@ test('all Relay funding ICRC texts are canonical fixtures and independently roun
   for (const [ownerText, expectedTexts] of fixtures) {
     const destinations = deriveRelayFundingDestinations(ownerText);
     assert.deepEqual(destinations.map(({ icrcAccountText: text }) => text), expectedTexts);
+    if (ownerText === 'u2qkp-aqaaa-aaaar-qb7ea-cai') {
+      const readme = readFileSync(new URL('../../../../canisters/relay/README.md', import.meta.url), 'utf8');
+      const table = readme.split('### Canonical ICP funding accounts')[1];
+      const rows = table.split('\n').filter((line) => /^\| (Default|Subaccount 1|Splitter \d+) \|/.test(line));
+      assert.equal(rows.length, expectedTexts.length);
+      rows.forEach((row, index) => {
+        const columns = row.split('|');
+        assert.equal(columns[3].trim(), `\`${expectedTexts[index]}\``);
+        assert.equal(columns[4].trim(), `\`${destinations[index].legacyAccountIdentifier}\``);
+      });
+    }
     destinations.forEach((destination, index) => {
       const decoded = decodeCanonicalIcrcAccountText(destination.icrcAccountText);
       assert.equal(decoded.owner.toText(), ownerText);
@@ -2815,9 +2844,9 @@ test('Active query remains operational when factory creation is unavailable', as
       }),
     });
     await submit(nodes, harness);
-    assert.equal(nodes.get('relay-setup-status').textContent, 'Relay created');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Active');
     assert.equal(nodes.get('relay-funding-section').hidden, false);
-    assert.match(nodes.get('relay-funding-destinations').innerHTML, /Default \/ subaccount 0/);
+    assert.match(nodes.get('relay-funding-destinations').innerHTML, /Operating funds/);
     assert.equal((nodes.get('relay-funding-destinations').innerHTML.match(/class="relay-funding-card"/g) || []).length, 1);
     assert.doesNotMatch(nodes.get('relay-funding-destinations').innerHTML, /Subaccount 90/);
   });
@@ -2839,20 +2868,8 @@ test('Active notify exposes funding before a stale InProgress query catches up',
     await harness.controller.createRelay();
     assert.equal(nodes.get('relay-funding-section').hidden, false);
     assert.equal(harness.controller.state.activeRelayId, RELAY);
-    const href = nodes.get('relay-funding-memo-builder-link').href;
-    assert.equal(href, relayMemoBuilderHash(RELAY));
-    const params = new URLSearchParams(href.split('?')[1]);
-    assert.equal(params.get('canister'), RELAY);
-    assert.equal(params.get('mode'), 'rawIcp');
-    assert.equal(params.get('title'), 'Relay Canister');
-    assert.equal(params.get('label'), 'Optional Donor Name');
-    const memo = buildAdvancedMemo({
-      mode: params.get('mode'),
-      canisterText: params.get('canister'),
-      optionalMemoText: '',
-    });
-    assert.equal(memo.ok, true);
-    assert.equal(memo.output, `${RELAY.replaceAll('-', '')}.`);
+    assert.equal(nodes.get('relay-funding-endowment-memo').textContent, `${RELAY}.`);
+    assert.equal(nodes.get('relay-funding-staking-account').textContent, JUPITER_STAKING_ACCOUNT.address);
   });
 });
 
@@ -2873,7 +2890,8 @@ test('non-Active states and form changes clear every derived funding action', as
     nodes.get('relay-setup-recipient-list').listeners.get('input')({ target: recipient.input });
     assert.equal(nodes.get('relay-funding-section').hidden, true);
     assert.equal(nodes.get('relay-funding-destinations').innerHTML, '');
-    assert.equal(nodes.get('relay-funding-memo-builder-link').href, '');
+    assert.equal(nodes.get('relay-funding-endowment-memo').textContent, '');
+    assert.equal(nodes.get('relay-funding-staking-account').textContent, '');
     assert.equal(harness.controller.state.activeRelayId, '');
     assert.deepEqual(harness.controller.state.fundingDestinations, []);
   });
@@ -2971,7 +2989,7 @@ test('changing funding outcomes fences old copy actions and delayed feedback', a
     assert.equal(nodes.get('relay-funding-copy-status').textContent, '');
     await click({ target: oldButton });
     assert.equal(harness.calls.copied.length, 1);
-    assert.match(nodes.get('relay-funding-destinations').innerHTML, /Subaccount 50/);
+    assert.match(nodes.get('relay-funding-destinations').innerHTML, /50% operating \/ 50% endowment/);
     nodes.get('relay-funding-percentage').value = '55';
     nodes.get('relay-funding-percentage').listeners.get('change')();
     assert.equal(nodes.get('relay-funding-destinations').innerHTML, '', 'unsupported splits have no account');
@@ -3003,12 +3021,13 @@ test('setup clipboard failure offers manual copying and late feedback is discard
 
 test('funding card rendering escapes values and narrow-screen CSS keeps cards stacked', () => {
   const html = renderRelayFundingCards([{
-    name: '<img src=x onerror=alert(1)>',
+    subaccountNumber: null,
+    name: 'Operating funds',
     purpose: '<script>bad()</script>',
     owner: Principal.fromText(RELAY),
     semanticSubaccount: 'null',
     subaccountHex: '00'.repeat(32),
-    icrcAccountText: RELAY,
+    icrcAccountText: '<img src=x onerror=alert(1)>',
     legacyAccountIdentifier: 'ab'.repeat(32),
   }]);
   assert.doesNotMatch(html, /<script>|<img/);
@@ -3096,7 +3115,7 @@ function recoveryView(additional = 0n) {
     state: { ManualRecoveryRequired: {
       phase: { ChildCreated: null },
       relay_canister_id: [Principal.fromText(RELAY)],
-      message: 'Old installation failure',
+      message: 'Installation funding rejection',
     } },
     recovery: [additional > 0n ? { FundingRequired: quote } : { Ready: quote }],
   };
@@ -3125,7 +3144,7 @@ test('recovery uses the authenticated additional requirement and original accoun
   });
 });
 
-test('zero-shortfall legacy recovery bypasses the original minimum and retains duplicate-click and edit locks', async () => {
+test('zero-shortfall paid recovery bypasses the original minimum and retains duplicate-click and edit locks', async () => {
   await withDom(async (nodes) => {
     const pending = deferred();
     const harness = controllerHarness({ view: recoveryView(), notifyRelay: () => pending.promise });
@@ -3153,7 +3172,7 @@ test('unsafe or unavailable recovery checks expose no payment or continuation an
       assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
       assert.equal(nodes.get('relay-setup-create').disabled, true);
       assert.equal(nodes.get('relay-setup-recheck').hidden, false);
-      assert.match(nodes.get('relay-setup-status-label').textContent, /Do not (pay again|send a payment)/u);
+      assert.match(nodes.get('relay-setup-status-label').textContent, /Do not (pay again|send another payment)/u);
       await harness.controller.createRelay();
       assert.equal(harness.calls.notify, 0);
     });
@@ -3175,29 +3194,7 @@ test('an Active continuation reply hides recovery funding even when a stale reco
   });
 });
 
-test('a new frontend decodes the predecessor Candid response without authorizing recovery', async () => {
-  const service = idlFactory({ IDL });
-  const method = service._fields.find(([name]) => name === 'get_relay_configuration_view')[1];
-  const currentView = method.retTypes[0]._fields.find(([name]) => name === 'Ok')[1];
-  const oldView = IDL.Record(Object.fromEntries(currentView._fields.filter(([name]) => name !== 'recovery')));
-  const oldResult = IDL.Variant({ Ok: oldView, Err: IDL.Text });
-  const { recovery: _ignored, ...oldReply } = recoveryView();
-  const wire = IDL.encode([oldResult], [{ Ok: oldReply }]);
-  const [decoded] = IDL.decode(method.retTypes, wire);
-  assert.deepEqual(decoded.Ok.recovery, []);
-  await withDom(async (nodes) => {
-    const harness = controllerHarness({ view: decoded.Ok });
-    await submit(nodes, harness);
-    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
-    assert.equal(nodes.get('relay-setup-create').disabled, true);
-    assert.match(nodes.get('relay-setup-status-label').textContent, /Do not pay again/u);
-    await harness.controller.createRelay();
-    assert.equal(harness.calls.notify, 0);
-  });
-});
-
-
-test('explicit recovery assessments override every legacy resumable phase in rendering and action guards', async () => {
+test('explicit recovery assessments override every resumable phase in rendering and action guards', async () => {
   const states = [recoveryView().state, ...['CmcTransferAccepted', 'CmcNotifySucceeded', 'RelayFunded', 'FinalizationAttempted'].map((phase) => ({ InProgress: {
     phase: { [phase]: null }, relay_canister_id: [Principal.fromText(RELAY)], message: [],
   } }))];
@@ -3252,7 +3249,7 @@ test('the bound Re-check action cannot invalidate continuation or its pending fo
 });
 
 
-test('Ready recovery can continue from pre-creation and finalization phases while absent recovery keeps legacy rules', async () => {
+test('Ready recovery can continue from pre-creation and finalization phases while absent recovery keeps the phase rules', async () => {
   for (const phase of ['CmcTransferAccepted', 'CmcNotifySucceeded', 'RelayFunded', 'FinalizationAttempted']) {
     for (const recovery of [recoveryView().recovery, []]) {
       await withDom(async (nodes) => {
@@ -3267,4 +3264,207 @@ test('Ready recovery can continue from pre-creation and finalization phases whil
       });
     }
   }
+});
+
+test('pending continuation and its follow-up read never invite a disabled action or another payment', async () => {
+  await withDom(async (nodes) => {
+    const notify = deferred();
+    const followup = deferred();
+    const harness = controllerHarness({
+      getView: (_args, count) => count === 1 ? { Ok: recoveryView() } : followup.promise,
+      notifyRelay: () => notify.promise,
+    });
+    await submit(nodes, harness);
+    const continuing = harness.controller.createRelay();
+    await flushMicrotasks();
+    assert.equal(nodes.get('relay-setup-create').disabled, true);
+    assert.equal(nodes.get('relay-setup-recheck').disabled, true);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.match(nodes.get('relay-setup-status-label').textContent, /No action is needed/u);
+    assert.doesNotMatch(nodes.get('relay-setup-status-label').textContent, /Continue setup to|check again/iu);
+    notify.resolve({ InProgress: { phase: { ChildCreated: null }, relay_canister_id: [Principal.fromText(RELAY)] } });
+    await flushMicrotasks(30);
+    assert.equal(nodes.get('relay-setup-create').disabled, true);
+    assert.match(nodes.get('relay-setup-status-label').textContent, /Checking.*No action is needed/u);
+    followup.resolve({ Ok: { ...recoveryView(), recovery: [{ CheckPending: 'Recovery check is busy; check again' }] } });
+    await continuing;
+    assert.equal(nodes.get('relay-setup-recheck').disabled, false);
+    assert.match(nodes.get('relay-setup-status-label').textContent, /check again automatically/u);
+    assert.equal(harness.hasScheduledPoll(), true);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+  });
+});
+
+test('CheckPending distinguishes scheduled checks, a manual check and an operation lock', async () => {
+  for (const automatic of [false, true]) {
+    await withDom(async (nodes) => {
+      const pendingView = { ...recoveryView(),
+        state: automatic ? { InProgress: { phase: { ChildCreated: null }, relay_canister_id: [Principal.fromText(RELAY)] } } : recoveryView().state,
+        recovery: [{ CheckPending: 'internal diagnostic: check again' }],
+      };
+      const harness = controllerHarness({ view: pendingView });
+      await submit(nodes, harness);
+      assert.equal(nodes.get('relay-setup-recheck').disabled, false);
+      assert.equal(harness.hasScheduledPoll(), automatic);
+      assert.match(nodes.get('relay-setup-status-label').textContent,
+        automatic ? /check again automatically/u : /Select Re-check this setup/u);
+      assert.doesNotMatch(nodes.get('relay-setup-status-label').textContent, /internal diagnostic/u);
+      assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+      assert.equal(nodes.get('relay-setup-create').disabled, true);
+    });
+  }
+});
+
+test('an automatic assessment read locks stale funding and continuation until the new quote arrives', async () => {
+  await withDom(async (nodes) => {
+    const pending = deferred();
+    const harness = controllerHarness({ getView: (_args, count) => count === 1 ? { Ok: recoveryView(1n) } : pending.promise });
+    await submit(nodes, harness);
+    harness.runPoll();
+    await flushMicrotasks();
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+    assert.equal(nodes.get('relay-setup-recheck').disabled, true);
+    assert.equal(nodes.get('relay-setup-edit').disabled, false, 'a non-spending check can be discarded safely');
+    assert.match(nodes.get('relay-setup-status-label').textContent, /Checking.*No action is needed/u);
+    pending.resolve({ Ok: recoveryView() });
+    await flushMicrotasks(30);
+    assert.equal(nodes.get('relay-setup-create').disabled, false);
+    assert.match(nodes.get('relay-setup-status-label').textContent, /No additional setup payment.*Continue setup/u);
+  });
+});
+
+test('an authoritative resumable phase replaces an old processing notification with an enabled next step', async () => {
+  await withDom(async (nodes) => {
+    const phase = { InProgress: { phase: { CmcTransferAccepted: null }, relay_canister_id: [] } };
+    const harness = controllerHarness({ view: viewFor({ account: null, state: phase }), notify: phase });
+    await submit(nodes, harness);
+    await harness.controller.createRelay();
+    assert.equal(nodes.get('relay-setup-create').disabled, false);
+    assert.equal(nodes.get('relay-setup-create').textContent, 'Resume creation');
+    assert.equal(nodes.get('relay-setup-status').textContent, 'Ready to resume');
+    assert.match(nodes.get('relay-setup-status-label').textContent, /Select Resume creation/u);
+    assert.doesNotMatch(nodes.get('relay-setup-status-label').textContent, /being processed/u);
+    assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+  });
+});
+
+test('an uncertain assessment overrides even a funding account in a NotFunded view', async () => {
+  for (const assessment of [{ Unsafe: 'Unexpected code' }, { CheckPending: 'Status unavailable' }, { Unsafe: '' }, { CheckPending: '' }]) {
+    await withDom(async (nodes) => {
+      const harness = controllerHarness({ view: { ...viewFor(), recovery: [assessment] } });
+      await submit(nodes, harness);
+      assert.equal(nodes.get('relay-setup-payment-details').hidden, true);
+      assert.equal(nodes.get('relay-setup-create').disabled, true);
+      assert.doesNotMatch(nodes.get('relay-setup-status-label').textContent, /Add .*ICP|Select Create relay/u);
+      await harness.controller.createRelay();
+      assert.equal(harness.calls.notify, 0);
+    });
+  }
+});
+
+
+test('direct endowment memo uses the exact Active principal and shared Rust/frontend policy fixture', () => {
+  const cases = JSON.parse(readFileSync(new URL('../../../../crates/memo-policy/fixtures/memo-policy-cases.json', import.meta.url), 'utf8'));
+  for (const relay of ['xsan5-rqaaa-aaaar-qciza-cai', RELAY]) {
+    const memo = relayEndowmentMemo(relay);
+    assert.equal(memo, `${relay}.`);
+    const parsed = parseJupiterMemo(memo);
+    assert.equal(parsed.kind, 'rawIcpCanister');
+    assert.equal(parsed.canisterId.toText(), relay);
+    assert.equal(parsed.destinationSubaccount, null);
+    assert.equal(parsed.outgoingMemoText, '');
+    if (relay === 'xsan5-rqaaa-aaaar-qciza-cai') {
+      const fixture = cases.find((item) => item.memo_text === memo);
+      assert.deepEqual(fixture.expected_directive, { kind: 'raw_icp', canister_id: relay, destination_subaccount_hex: null, memo_text: '' });
+    }
+  }
+});
+
+test('live Relay 50 percent account retains byte 0x32 and explains its hexadecimal suffix', () => {
+  const destinations = deriveRelayFundingDestinations('xsan5-rqaaa-aaaar-qciza-cai');
+  const index = destinations.findIndex((item) => item.subaccountNumber === 50);
+  assert.equal(destinations[index].icrcAccountText, 'xsan5-rqaaa-aaaar-qciza-cai-3r7irry.32');
+  assert.equal(destinations[index].subaccountHex, `${'00'.repeat(31)}32`);
+  const html = renderRelayFundingCards(destinations, index);
+  assert.match(html, /50% operating \/ 50% endowment/);
+  assert.match(html, /Complete payment account/);
+  assert.match(html, /hexadecimal: .32 means subaccount 50/);
+  assert.match(html, /Other wallet formats/);
+  assert.doesNotMatch(html, /<dt>Route<\/dt>|32%/);
+});
+
+test('Relay diagram and canonical account docs distinguish decimal percentages from hexadecimal suffixes', () => {
+  const markup = readFileSync(new URL('../../public/index.html', import.meta.url), 'utf8');
+  assert.match(markup, /id="diagram-relay"[\s\S]*?<\/figure>\s*<p[^>]*id="relay-splitter-account-note"/);
+  const note = markup.match(/<p[^>]*id="relay-splitter-account-note"[^>]*>([\s\S]*?)<\/p>/)[0];
+  assert.doesNotMatch(note, /hidden|<details/);
+  assert.match(note, /decimal percentages/);
+  assert.match(note, /hexadecimal/);
+  assert.match(note, /\.32<\/code>, not <code>\.50/);
+  assert.match(note, /copy the complete funding address/);
+  const readme = readFileSync(new URL('../../../../canisters/relay/README.md', import.meta.url), 'utf8');
+  assert.match(readme, /\.1`, \*\*not `\.01`/);
+  assert.match(readme, /\.50` represents decimal subaccount 80/);
+  assert.match(readme, /changing the subaccount also changes its checksum/);
+});
+
+test('direct endowment copies trusted staking account and complete memo, while staging stays separate', async () => {
+  await withDom(async (nodes) => {
+    const harness = controllerHarness({ view: viewFor({ account: null, state: { Active: { relay_canister_id: Principal.fromText(RELAY) } } }) });
+    harness.controller.bindPane();
+    await submit(nodes, harness);
+    nodes.get('relay-funding-future').listeners.get('change')();
+    assert.equal(nodes.get('relay-funding-direct-endowment').hidden, false);
+    assert.equal(nodes.get('relay-funding-destinations').hidden, true);
+    assert.equal(nodes.get('relay-funding-operating-note').hidden, true);
+    await nodes.get('relay-funding-copy-endowment-memo').listeners.get('click')();
+    await nodes.get('relay-funding-copy-staking-account').listeners.get('click')();
+    assert.deepEqual(harness.calls.copied, [`${RELAY}.`, JUPITER_STAKING_ACCOUNT.address]);
+    assert.equal(nodes.get('relay-funding-copy-status').textContent, 'Copied.');
+    nodes.get('relay-funding-staging-alternative').open = true;
+    nodes.get('relay-funding-staging-alternative').listeners.get('toggle')();
+    assert.equal(nodes.get('relay-funding-direct-endowment').hidden, true);
+    assert.equal(nodes.get('relay-funding-destinations').hidden, false);
+    assert.match(nodes.get('relay-funding-destinations').innerHTML, /Endowment via Relay staging/);
+    await nodes.get('relay-funding-copy-endowment-memo').listeners.get('click')();
+    assert.equal(harness.calls.copied.length, 2, 'hidden direct route cannot copy');
+    const button = new FakeElement('', 'button');
+    button.dataset.relayFundingCopy = 'icrcAccountText';
+    button.dataset.relayFundingIndex = '1';
+    await nodes.get('relay-funding-destinations').listeners.get('click')({ target: button });
+    assert.equal(harness.calls.copied.at(-1), harness.controller.state.fundingDestinations[1].icrcAccountText);
+    assert.notEqual(harness.calls.copied.at(-1), JUPITER_STAKING_ACCOUNT.address);
+  });
+});
+
+test('direct endowment clipboard failures are announced and late feedback cannot cross route or configuration changes', async () => {
+  await withDom(async (nodes) => {
+    let clipboard = null;
+    const harness = controllerHarness({
+      view: viewFor({ account: null, state: { Active: { relay_canister_id: Principal.fromText(RELAY) } } }),
+      copyTextToClipboard: () => clipboard ? clipboard.promise : Promise.reject(new Error('denied')),
+    });
+    harness.controller.bindPane();
+    await submit(nodes, harness);
+    nodes.get('relay-funding-future').listeners.get('change')();
+    const copy = nodes.get('relay-funding-copy-endowment-memo').listeners.get('click');
+    await copy();
+    assert.match(nodes.get('relay-funding-copy-status').textContent, /Copy failed.*manually/);
+    clipboard = deferred();
+    const pending = copy();
+    nodes.get('relay-funding-operating').listeners.get('change')();
+    clipboard.resolve();
+    await pending;
+    assert.equal(nodes.get('relay-funding-copy-status').textContent, '');
+    nodes.get('relay-funding-future').listeners.get('change')();
+    clipboard = deferred();
+    const stale = copy();
+    nodes.get('relay-setup-edit').listeners.get('click')();
+    clipboard.resolve();
+    await stale;
+    assert.equal(nodes.get('relay-funding-endowment-memo').textContent, '');
+    assert.equal(nodes.get('relay-funding-staking-account').textContent, '');
+    assert.equal(nodes.get('relay-funding-copy-status').textContent, '');
+    assert.equal(nodes.get('relay-funding-section').hidden, true);
+  });
 });

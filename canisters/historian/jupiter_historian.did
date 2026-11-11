@@ -99,7 +99,6 @@ type InitArgs = record {
   canonical_relay_targets : opt vec principal;
 };
 type UpgradeArgs = record {
-  relay_legacy_module_hash : opt blob;
   staking_account : opt Account;
   ledger_canister_id : opt principal;
   index_canister_id : opt principal;
