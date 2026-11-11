@@ -2,7 +2,6 @@ mod admission;
 mod recovery;
 #[cfg(test)]
 mod recovery_tests;
-pub(crate) use recovery::enable_legacy_continuation;
 pub(crate) use recovery::view as setup_view_with_recovery;
 mod recipient_set;
 mod setup_key;
@@ -170,12 +169,6 @@ trait ManagementClient: Send + Sync {
                 status,
                 budget_settings_supported: true,
             })
-    }
-    async fn recovery_historian_history(
-        &self,
-        historian: Principal,
-    ) -> Result<recovery::HistorianHistory, String> {
-        recovery::live_historian_history(historian).await
     }
     async fn update_settings(
         &self,
@@ -850,14 +843,6 @@ fn validate_finalized_relay(
 }
 
 fn relay_init_arg(config: &Config, setup: &CanonicalRelaySetup) -> Vec<u8> {
-    relay_init_arg_with_service_defaults(config, setup, false)
-}
-
-fn relay_init_arg_with_service_defaults(
-    config: &Config,
-    setup: &CanonicalRelaySetup,
-    legacy: bool,
-) -> Vec<u8> {
     #[derive(CandidType)]
     struct SurplusCanisterRecipient {
         canister_id: Principal,
@@ -908,8 +893,8 @@ fn relay_init_arg_with_service_defaults(
         blackhole_canister_id: None,
         // The configured age-bonus recipient is this environment's SNS Rewards
         // service. Pin it and the Index rather than inheriting child defaults.
-        sns_rewards_canister_id: (!legacy).then_some(config.rewards_account.owner),
-        icp_index_canister_id: (!legacy).then_some(config.index_canister_id),
+        sns_rewards_canister_id: Some(config.rewards_account.owner),
+        icp_index_canister_id: Some(config.index_canister_id),
         main_interval_seconds: Some(config.self_service_relay_interval_seconds),
         // Leave headroom above the self-service maximum of 20 + 5 + Relay self.
         max_transfers_per_tick: Some(50),
@@ -1052,15 +1037,12 @@ async fn drive_relay_finalization(
     let expected_hash = initial_progress
         .continuation
         .as_ref()
-        .and_then(|c| <[u8; 32]>::try_from(c.identity.module_hash.as_slice()).ok())
-        .or_else(approved_relay_onchain_module_hash);
-    let Some(expected_hash) =
-        expected_hash.filter(|hash| relay_install_payload_for_hash(hash).is_some())
-    else {
+        .and_then(|c| <[u8; 32]>::try_from(c.identity.module_hash.as_slice()).ok());
+    let Some(expected_hash) = expected_hash else {
         return manual_recovery(
             key,
             initial_phase,
-            "approved Relay module hash is unavailable; finalization cannot be audited safely",
+            "pinned Relay module hash is missing or invalid; finalization cannot be audited safely",
         );
     };
 
@@ -1280,6 +1262,22 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
     reclaim_abandoned_pre_spend_reservations();
     if let Some(entry) = get_entry(key) {
         return match entry {
+            RelaySetupEntry::Creating(ref progress)
+                if progress.continuation.is_none()
+                    && matches!(
+                        progress.phase,
+                        RelayCreationPhase::CmcTransferAccepted
+                            | RelayCreationPhase::CmcNotifySucceeded
+                            | RelayCreationPhase::RelayFunded
+                            | RelayCreationPhase::FinalizationAttempted
+                    ) =>
+            {
+                manual_recovery(
+                    key,
+                    progress.phase,
+                    "The paid setup has no pinned installation identity",
+                )
+            }
             RelaySetupEntry::Paused(_) | RelaySetupEntry::ManualRecoveryRequired(_) => {
                 recovery::continue_setup(key, &setup, &config, historian, ledger, cmc, management)
                     .await
@@ -1293,18 +1291,6 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
                 else {
                     return RelaySetupNotifyResult::Busy;
                 };
-                if let Err(result) = recovery::pin_existing_paid_identity(
-                    key,
-                    &setup,
-                    &config,
-                    historian,
-                    management,
-                    guard.ticket(),
-                )
-                .await
-                {
-                    return result;
-                }
                 continue_paid_creation(
                     key,
                     &setup,
@@ -1325,18 +1311,6 @@ async fn notify_with_clients_and_neuron_resolver<C: CyclesProbeClient>(
                 else {
                     return RelaySetupNotifyResult::Busy;
                 };
-                if let Err(result) = recovery::pin_existing_paid_identity(
-                    key,
-                    &setup,
-                    &config,
-                    historian,
-                    management,
-                    guard.ticket(),
-                )
-                .await
-                {
-                    return result;
-                }
                 drive_relay_finalization(key, &setup, historian, management, guard.ticket()).await
             }
             entry => notify_for_entry(entry),
@@ -1717,28 +1691,28 @@ async fn install_and_fund(
     let Some(relay_canister_id) = progress.relay_canister_id else {
         return manual_recovery(key, progress.phase, "missing child identity");
     };
-    let expected_hash: [u8; 32] = match progress.continuation.as_ref() {
-        Some(c) => match c.identity.module_hash.as_slice().try_into() {
-            Ok(hash) => hash,
-            Err(_) => return manual_recovery(key, progress.phase, "invalid pinned Relay hash"),
-        },
-        None => approved_relay_onchain_module_hash().expect("approved Relay hash"),
+    let Some(continuation) = progress.continuation.as_ref() else {
+        return manual_recovery(
+            key,
+            progress.phase,
+            "missing pinned Relay installation identity",
+        );
+    };
+    let expected_hash: [u8; 32] = match continuation.identity.module_hash.as_slice().try_into() {
+        Ok(hash) => hash,
+        Err(_) => return manual_recovery(key, progress.phase, "invalid pinned Relay hash"),
     };
     let Some(wasm) = relay_install_payload_for_hash(&expected_hash) else {
         return manual_recovery(key, progress.phase, "pinned Relay payload is unavailable");
     };
-    let install_result = creation_call(
-        management.install_code(&jupiter_ic_clients::management::InstallCodeArgs {
+    let install_result = creation_call(management.install_code(
+        &jupiter_ic_clients::management::InstallCodeArgs {
             mode: jupiter_ic_clients::management::InstallMode::Install,
             canister_id: relay_canister_id,
             wasm_module: wasm.to_vec(),
-            arg: progress
-                .continuation
-                .as_ref()
-                .map(|c| c.identity.init_arg.clone())
-                .unwrap_or_else(|| relay_init_arg(config, setup)),
-        }),
-    )
+            arg: continuation.identity.init_arg.clone(),
+        },
+    ))
     .await;
     if let Err(result) = require_phase(key, RelayCreationPhase::ChildCreated) {
         return result;
@@ -1802,7 +1776,7 @@ async fn install_and_fund(
 async fn fund_installed_relay(
     key: RelaySetupKey,
     setup: &CanonicalRelaySetup,
-    config: &Config,
+    _config: &Config,
     historian: Principal,
     ledger: &dyn LedgerClient,
     management: &dyn ManagementClient,
@@ -1814,6 +1788,13 @@ async fn fund_installed_relay(
     };
     let Some(relay_canister_id) = progress.relay_canister_id else {
         return manual_recovery(key, progress.phase, "missing child identity");
+    };
+    let Some(minimum_final_relay_funding) = progress
+        .continuation
+        .as_ref()
+        .map(|c| c.identity.final_reserve_e8s)
+    else {
+        return manual_recovery(key, progress.phase, "missing pinned Relay funding reserve");
     };
     let remaining_balance =
         creation_call(ledger.balance_of_e8s(setup_account_for(historian, key))).await;
@@ -1842,17 +1823,6 @@ async fn fund_installed_relay(
                 RelayCreationPhase::CodeInstalled,
                 format!("cannot read ledger fee before Relay funding: {error}"),
             );
-        }
-    };
-    let minimum_final_relay_funding = match progress
-        .continuation
-        .as_ref()
-        .map(|c| Ok(c.identity.final_reserve_e8s))
-        .unwrap_or_else(|| minimum_final_relay_funding_e8s(config, setup.target_count()))
-    {
-        Ok(amount) => amount,
-        Err(message) => {
-            return manual_recovery(key, RelayCreationPhase::CodeInstalled, message);
         }
     };
     let funding_amount = match remaining_balance.checked_sub(funding_fee) {
@@ -1990,8 +1960,6 @@ pub(crate) fn clear_setup_entries_for_debug() {
     state::with_relay_setup_entries_map(|map| map.clear_new());
     state::set_relay_creating_keys(Vec::new());
     admission::reset_for_debug();
-    #[cfg(test)]
-    state::set_relay_legacy_identity(Vec::new());
 }
 
 #[cfg(test)]

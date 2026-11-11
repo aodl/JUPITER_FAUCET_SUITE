@@ -199,6 +199,33 @@ async function assertRelayFits(page, width) {
   }
 }
 
+for (const width of [320, 1440]) {
+  test(`Relay account notation note is visible beside its diagram and fits ${width}px`, async () => {
+    await withBrowser(async ({ openPage }) => {
+      const { page } = await openPage({ width, height: 1000 });
+      await page.locator('#page-loading-overlay').waitFor({ state: 'detached', timeout: 15000 });
+      await page.evaluate(() => { window.location.hash = '#how-it-works:3?focus=diagram-relay'; });
+      const note = page.locator('#relay-splitter-account-note');
+      await note.waitFor({ state: 'visible' });
+      assert.equal(await note.evaluate((node) => node.previousElementSibling.id), 'diagram-relay');
+      assert.match(await note.textContent(), /50\/50.*\.32, not \.50/);
+      const box = await note.boundingBox();
+      assert.ok(box.x >= 0 && box.x + box.width <= width + 1);
+      await captureRelay(page, width, 'relay-diagram-note', '#relay-splitter-account-note');
+      await page.goto(new URL('/diagram-viewer.html?diagram=relay&v=browser-test', page.url()).href);
+      const viewerNote = page.locator('#diagram-viewer-relay-note');
+      await viewerNote.waitFor({ state: 'visible' });
+      await page.waitForFunction(() => document.querySelector('#diagram-viewer-image').naturalWidth > 0);
+      assert.match(await viewerNote.textContent(), /50\/50.*\.32, not \.50/);
+      const viewerBox = await viewerNote.boundingBox();
+      assert.ok(viewerBox.x >= 0 && viewerBox.x + viewerBox.width <= width + 1);
+      await captureRelay(page, width, 'relay-viewer-note', '#diagram-viewer-relay-note');
+      await page.goto(new URL('/diagram-viewer.html?diagram=faucet', page.url()).href);
+      assert.equal(await page.locator('#diagram-viewer-relay-note').isVisible(), false);
+    });
+  });
+}
+
 for (const width of [390, 1440]) {
   test(`Relay journey preserves binary memos, explicit creation and outcome funding at ${width}px`, async () => {
     await withBrowser(async ({ openRelay }) => {
@@ -270,18 +297,27 @@ for (const width of [390, 1440]) {
       await captureRelay(page, width, 'active-overview');
       await page.locator('#relay-funding-add').click();
       assert.equal(await page.locator('.relay-funding-card:visible').count(), 1);
-      assert.match(await page.locator('.relay-funding-card h4').textContent(), /Operating payment account/);
+      assert.match(await page.locator('.relay-funding-card h4').textContent(), /Operating funds/);
       await captureRelay(page, width, 'fund-operating', '.relay-funding-card');
       await page.locator('#relay-funding-future').check();
       assert.equal(await page.locator('.relay-funding-card:visible').count(), 0);
-      const link = await page.locator('#relay-funding-memo-builder-link').getAttribute('href');
-      assert.equal(new URLSearchParams(link.split('?')[1]).get('mode'), 'rawIcp');
-      assert.equal(new URLSearchParams(link.split('?')[1]).get('canister'), 'br5f7-7uaaa-aaaaa-qaaca-cai');
-      await captureRelay(page, width, 'fund-future', '#relay-funding-memo-builder-link');
+      assert.equal(await page.locator('#relay-funding-endowment-memo').textContent(), 'br5f7-7uaaa-aaaaa-qaaca-cai.');
+      assert.equal(await page.locator('#relay-funding-staking-account').textContent(), 'rrkah-fqaaa-aaaaa-aaaaq-cai-h7evq5y.ff0c0b36afefffd0c7a4d85c0bcea366acd6d74f45f7703d0783cc6448899c68');
+      await page.locator('#relay-funding-copy-endowment-memo').focus();
+      await page.keyboard.press('Enter');
+      assert.equal(await page.evaluate(() => window.relayFixture.calls.copied.at(-1)), 'br5f7-7uaaa-aaaaa-qaaca-cai.');
+      assert.equal(await page.locator('#relay-funding-copy-status').getAttribute('aria-live'), 'polite');
+      assert.equal(await page.locator('#relay-funding-copy-status').textContent(), 'Copied.');
+      await page.locator('#relay-funding-copy-staking-account').click();
+      assert.equal(await page.evaluate(() => window.relayFixture.calls.copied.at(-1)), await page.locator('#relay-funding-staking-account').textContent());
+      assert.equal(await page.locator('#relay-funding-memo-builder-link').count(), 0);
+      await assertRelayFits(page, width);
+      await captureRelay(page, width, 'fund-future', '#relay-funding-copy-endowment-memo');
       await page.locator('#relay-funding-staging-alternative summary').click();
       await page.locator('.relay-funding-card').waitFor({ state: 'visible' });
       assert.equal(await page.locator('.relay-funding-card:visible').count(), 1);
-      assert.match(await page.locator('.relay-funding-card h4').textContent(), /Relay staging account/);
+      assert.equal(await page.locator('#relay-funding-direct-endowment').isVisible(), false);
+      assert.match(await page.locator('.relay-funding-card h4').textContent(), /Endowment via Relay staging/);
       await captureRelay(page, width, 'fund-staging', '.relay-funding-card');
       await page.locator('#relay-funding-split').check();
       for (const percentage of [10, 20, 30, 40, 50, 60, 70, 80, 90]) {
@@ -291,7 +327,12 @@ for (const width of [390, 1440]) {
         assert.equal(await page.evaluate(() => window.relayFixture.calls.copied.at(-1)), await page.evaluate((p) => window.relayFixture.controller.state.fundingDestinations.find((d) => d.subaccountNumber === p).icrcAccountText, percentage));
       }
       await page.locator('#relay-funding-percentage').selectOption('50');
+      assert.equal(await page.locator('#relay-funding-direct-endowment').isVisible(), false);
+      assert.match(await page.locator('.relay-funding-card').textContent(), /hexadecimal: .32 means subaccount 50/);
+      await assertRelayFits(page, width);
       await captureRelay(page, width, 'fund-split-50', '#relay-funding-percentage');
+      const configuration = page.locator('#relay-funding-section details').filter({ has: page.locator('#relay-funding-configuration') });
+      await configuration.locator('summary').click();
       await page.locator('#relay-setup-another').click();
       assert.equal(await page.locator('[data-relay-target-input]').count(), 1);
       assert.equal(await page.locator('[data-relay-target-input]').inputValue(), '');
@@ -345,7 +386,9 @@ for (const width of [390, 1440]) {
       await captureRelay(page, width, 'failed-before-spend');
       await page.evaluate(() => window.relayFixture.setNotify({ Busy: null }));
       await page.locator('#relay-setup-create').click();
-      await page.waitForFunction(() => document.querySelector('#relay-setup-status').textContent === 'Busy');
+      await page.waitForFunction(() => document.querySelector('#relay-setup-status').textContent === 'Setup temporarily busy');
+      assert.match(await page.locator('#relay-setup-status-label').textContent(), /No new payment is needed.*Wait a little/u);
+      assert.equal(await page.locator('#relay-setup-create').isDisabled(), false);
       await captureRelay(page, width, 'busy');
       assert.equal(await page.evaluate(() => window.relayFixture.calls.notifications), 2);
     });
@@ -469,6 +512,8 @@ test('Relay late response cannot restore an edited payment account or regress Ac
     await page.evaluate(() => window.relayFixture.holdQuery());
     await page.locator('#relay-setup-submit').click();
     await page.waitForFunction(() => window.relayFixture.calls.views === 1);
+    assert.equal(await page.locator('#relay-setup-edit').isDisabled(), false, 'editing may cancel a non-spending check');
+    assert.equal(await page.locator('#relay-setup-payment-details').isVisible(), false);
     await page.locator('#relay-setup-edit').click();
     await page.locator('[data-relay-target-input]').fill('qaa6y-5yaaa-aaaaa-aaafa-cai');
     await page.evaluate(() => window.relayFixture.setState('Active'));

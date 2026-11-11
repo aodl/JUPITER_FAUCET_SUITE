@@ -751,6 +751,7 @@
                 </a>
                 <figcaption>Relay allocation loop · <a href="/diagram-viewer.html?diagram=relay&amp;v=__ASSET_VERSION__">Open full size</a></figcaption>
               </figure>
+              <p class="nav-panel-content" id="relay-splitter-account-note"><strong>Important:</strong> Splitter numbers are decimal percentages, but ICRC account addresses display subaccounts in hexadecimal. The 50/50 splitter’s address ends in <code>.32</code>, not <code>.50</code>. Always copy the complete funding address rather than editing its suffix.</p>
             </div>
 
             <div class="nav-panel-page" data-page="4">
@@ -1124,7 +1125,7 @@
               <p class="nav-panel-subtitle">Automatically route ICP to efficiently service your canisters’ and community's needs. Read more → <a href="/#how-it-works:3" data-panel="how-it-works" class="pane-external-link">How relays work</a>.</p>
             </div>
             <p class="pane-status-note" id="relay-setup-edit-notice" role="status" hidden></p>
-            <p class="pane-status-note" id="relay-setup-operation-notice" role="status" hidden>Wait for this request to finish before editing. Closing this page does not cancel creation.</p>
+            <p class="pane-status-note" id="relay-setup-operation-notice" role="status" hidden>Wait for this request to finish before editing. Closing this page does not cancel a submitted setup request.</p>
             <form class="tracker-form relay-setup-form" id="relay-setup-form">
               <fieldset class="relay-setup-principal-fieldset">
                 <legend class="tracker-label">Canisters</legend>
@@ -1173,14 +1174,14 @@
                     </div>
                     <p class="relay-setup-principal-error" id="relay-setup-recipient-error-1" data-relay-recipient-error="true" hidden></p>
                     <details class="relay-setup-memo" data-relay-recipient-memo="true">
-                      <summary data-relay-recipient-memo-summary="true">Add memo</summary>
+                      <summary data-relay-recipient-memo-summary="true">Optional surplus recipient memo</summary>
                     <div class="relay-setup-memo-controls">
                       <label for="relay-setup-recipient-memo-mode-1">Memo format</label>
                       <select class="tracker-input relay-setup-memo-mode" id="relay-setup-recipient-memo-mode-1" aria-label="Surplus recipient 1 memo format" data-relay-recipient-memo-mode="true">
                         <option value="Text" selected>Text</option>
                         <option value="Hex">Hexadecimal</option>
                       </select>
-                      <label for="relay-setup-recipient-memo-1">Memo</label>
+                      <label for="relay-setup-recipient-memo-1">Surplus recipient memo</label>
                       <input class="tracker-input mono relay-setup-memo-input" id="relay-setup-recipient-memo-1" type="text" autocomplete="off" spellcheck="false" aria-label="Surplus recipient 1 memo" aria-describedby="relay-setup-recipient-memo-count-1 relay-setup-recipient-memo-error-1 relay-setup-recipient-memo-notice-1" data-relay-recipient-memo-input="true" />
                       <span class="relay-setup-memo-count" id="relay-setup-recipient-memo-count-1" role="status" aria-live="polite" data-relay-recipient-memo-count="true">0/32 bytes</span>
                     </div>
@@ -1200,7 +1201,7 @@
               <div class="relay-setup-primary-action">
                 <button class="pane-page-button relay-setup-submit" id="relay-setup-submit" type="submit" aria-describedby="relay-setup-submit-reason" disabled>Review setup</button>
                 <p class="pane-status-note" id="relay-setup-submit-reason">Add a canister and choose how funding should be used.</p>
-                <p class="pane-status-note">Canisters and payout settings cannot be changed after creation.</p>
+                <p class="pane-status-note">The same canisters, recipients and exact surplus memo bytes identify the same Relay. Input order and equivalent Text/Hex memos do not change it.</p>
               </div>
             </form>
             <p class="pane-status-note tracker-status-note--error" id="relay-setup-warning" role="alert" tabindex="-1" hidden></p>
@@ -1220,8 +1221,8 @@
                   <div id="relay-setup-reviewed-recipients"><dt>Recipients <span id="relay-setup-recipient-count"></span></dt><dd class="mono preserve-lines" id="relay-setup-canonical-recipients"></dd></div>
                 </dl>
                 <section id="relay-setup-payment-details" hidden>
-                  <p class="relay-setup-payment-warning"><strong>Check the configuration before paying.</strong> Canisters and payout settings cannot be changed after creation. Setup deposits are not automatically refundable.</p>
-                  <p class="pane-status-note">Deposits are aggregate protocol funding, not attributed to an individual payer.</p>
+                  <p class="relay-setup-payment-warning"><strong>Check the configuration before paying.</strong> The configuration is fixed after creation. Changing a recipient memo creates a separate setup; it does not edit an existing Relay. Setup deposits are not automatically refundable.</p>
+                  <p class="pane-status-note">The setup amount, later funding route and Faucet endowment memo do not change this configuration. Deposits are aggregate protocol funding, not attributed to an individual payer.</p>
                   <div class="relay-setup-amounts">
                     <div><span id="relay-setup-minimum-label">Setup minimum</span><strong id="relay-setup-minimum"></strong></div>
                     <div><span>Received</span><strong id="relay-setup-balance"></strong></div>
@@ -1255,30 +1256,34 @@
               </div>
             </section>
             <section class="relay-funding-section" id="relay-funding-section" hidden aria-labelledby="relay-funding-title">
-              <div class="relay-funding-heading"><div><p class="pane-eyebrow">Your relay</p><h3 id="relay-funding-title" tabindex="-1">Relay created</h3></div><button class="pane-page-button" id="relay-setup-another" type="button">Configure another relay</button></div>
+              <div class="relay-funding-heading"><h3 id="relay-funding-title" tabindex="-1">Active</h3></div>
               <div class="relay-funding-overview"><p class="mono" id="relay-funding-owner"></p><p id="relay-funding-config-summary"></p><div id="relay-funding-activity"></div></div>
-              <details class="relay-funding-details"><summary>View configuration</summary><p class="mono preserve-lines" id="relay-funding-configuration"></p></details>
+              <details class="relay-funding-details"><summary>View configuration</summary><p class="mono preserve-lines" id="relay-funding-configuration"></p><p>This configuration is fixed. Different settings use a separate setup.</p><button class="pane-page-button" id="relay-setup-another" type="button">Check another configuration</button></details>
               <button class="pane-page-button" id="relay-funding-add" type="button" aria-expanded="false" aria-controls="relay-funding-options">Add funds</button>
               <section id="relay-funding-options" hidden>
                 <fieldset class="relay-setup-principal-fieldset relay-funding-choices">
                   <legend class="tracker-label">What would you like your funding to do?</legend>
                   <label class="relay-setup-mode-option"><input id="relay-funding-operating" name="relay-funding-outcome" type="radio" value="operating" checked /><span>Add operating funds</span></label>
-                  <label class="relay-setup-mode-option"><input id="relay-funding-future" name="relay-funding-outcome" type="radio" value="future" /><span>Create future funding</span></label>
-                  <label class="relay-setup-mode-option"><input id="relay-funding-split" name="relay-funding-outcome" type="radio" value="split" /><span>Split operating and future funding</span></label>
+                  <label class="relay-setup-mode-option"><input id="relay-funding-future" name="relay-funding-outcome" type="radio" value="future" /><span>Endow through Faucet</span></label>
+                  <label class="relay-setup-mode-option"><input id="relay-funding-split" name="relay-funding-outcome" type="radio" value="split" /><span>Split operating funds and endowment</span></label>
                 </fieldset>
-                <p class="pane-status-note" id="relay-funding-operating-note">Direct ICP is finite funding for later eligible cycles allocation and configured surplus payments. The first complete cycles sample establishes a burn baseline: a new relay is not an instant rescue service.</p>
+                <p class="pane-status-note" id="relay-funding-operating-note">Funds support later cycles top-ups and configured surplus payments. The first cycles assessment establishes a baseline; keep your canisters funded until later assessments can act.</p>
                 <div id="relay-funding-future-flow" hidden>
-                  <h4>Endow through Jupiter Faucet</h4>
-                  <p>Build and copy the exact raw-ICP memo for this Relay, then send the qualifying endowment to the <strong>Faucet neuron’s staking account</strong>. Future Faucet payouts return to the Relay’s default account.</p>
-                  <a class="pane-page-button" id="relay-funding-memo-builder-link">Open endowment memo builder</a>
-                  <p class="pane-status-note">This link prepares a memo; it makes no payment. Do not send the endowment to the Relay’s default or setup account.</p>
-                  <details class="relay-funding-details" id="relay-funding-staging-alternative"><summary>Fund via Relay without a Faucet memo</summary><p>Subaccount 1 accumulates deposits until at least 1 ICP can be forwarded after the Ledger fee. Relay creates its own later Faucet endowment; individual donor memos are not forwarded. Processing is scheduled, and more deposits may be needed.</p></details>
+                  <div id="relay-funding-direct-endowment">
+                    <p>Send ICP to the <strong>Faucet staking account</strong> with the exact memo below. Future Faucet payouts go to this Relay’s default account.</p>
+                    <p><strong>Faucet staking account</strong></p>
+                    <div class="relay-funding-value"><code class="mono pane-inline-code" id="relay-funding-staking-account"></code><button class="pane-copy-button" id="relay-funding-copy-staking-account" type="button">Copy account</button></div>
+                    <p><strong>Faucet endowment memo</strong></p>
+                    <div class="relay-funding-value"><code class="mono pane-inline-code" id="relay-funding-endowment-memo"></code><button class="pane-copy-button" id="relay-funding-copy-endowment-memo" type="button">Copy memo</button></div>
+                    <p class="pane-status-note">Include the final full stop. Pay the Faucet staking account, not a Relay operating or setup account. Endowments below 1 ICP are ineligible; processing is scheduled and future payouts vary.</p>
+                  </div>
+                  <details class="relay-funding-details" id="relay-funding-staging-alternative"><summary>Wallet cannot attach this memo?</summary><p>Instead, pay the Relay staging account below. Deposits accumulate until at least 1 ICP can be forwarded after the Ledger fee. Forwarding is scheduled and may need more deposits; individual donor memos are not forwarded.</p></details>
                 </div>
                 <div id="relay-funding-split-controls" hidden>
                   <label class="tracker-label" for="relay-funding-percentage">Gross operating share</label>
-                  <select class="tracker-input" id="relay-funding-percentage"><option value="10">10% operating / 90% future</option><option value="20">20% operating / 80% future</option><option value="30">30% operating / 70% future</option><option value="40">40% operating / 60% future</option><option value="50" selected>50% operating / 50% future</option><option value="60">60% operating / 40% future</option><option value="70">70% operating / 30% future</option><option value="80">80% operating / 20% future</option><option value="90">90% operating / 10% future</option></select>
+                  <select class="tracker-input" id="relay-funding-percentage"><option value="10">10% operating / 90% endowment</option><option value="20">20% operating / 80% endowment</option><option value="30">30% operating / 70% endowment</option><option value="40">40% operating / 60% endowment</option><option value="50" selected>50% operating / 50% endowment</option><option value="60">60% operating / 40% endowment</option><option value="70">70% operating / 30% endowment</option><option value="80">80% operating / 20% endowment</option><option value="90">90% operating / 10% endowment</option></select>
                   <p class="pane-status-note" id="relay-funding-split-note"></p>
-                  <details class="relay-funding-details"><summary>How the split works</summary><p>For balance B, planning fee F and operating percentage p: B − F must be at least 1 ICP; D = floor(B × p / 100), S = B − D, and D and S must each exceed F. Initial receipts are D − F to operating and S − F to staging. Later staging forwarding pays another fee and needs at least 1 ICP net. Staged future funding may wait for more deposits.</p></details>
+                  <details class="relay-funding-details"><summary>Fees and processing</summary><p>Splitting requires at least 1 ICP after one Ledger fee, and both shares must exceed their transfer fee. Each transfer deducts a fee, so net receipts differ from the selected percentages. Endowment staging forwards only when at least 1 ICP remains after its forwarding fee. Smaller balances wait for more deposits; processing is scheduled.</p></details>
                 </div>
                 <div id="relay-funding-destinations"></div>
                 <p class="pane-status-note" id="relay-funding-copy-status" role="status" aria-live="polite"></p>

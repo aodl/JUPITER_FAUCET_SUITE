@@ -106,48 +106,6 @@ impl RelayContinuation {
     }
 }
 
-#[derive(CandidType, Deserialize, Serialize, Clone)]
-struct LegacyIdentity {
-    config: Config,
-    module_hash: Vec<u8>,
-    pinned_upgrade_version: u64,
-    funded_after_nanos: Option<u64>,
-}
-
-pub(crate) fn enable_legacy_continuation(config: &Config, module_hash: &[u8]) {
-    #[cfg(not(test))]
-    assert_eq!(
-        hex::encode(module_hash),
-        "221765e5940e3d0721dac7677f0294e05f616a6d91385f984c59a34ceb71cde0",
-        "legacy continuation supports only the retained predecessor writer"
-    );
-    assert!(
-        relay_install_payload_for_hash(module_hash).is_some(),
-        "legacy Relay payload must equal a reviewed retained payload"
-    );
-    assert!(
-        state::relay_legacy_identity().is_empty(),
-        "legacy Relay identity is already pinned"
-    );
-    state::set_relay_legacy_identity(
-        candid::encode_one(LegacyIdentity {
-            config: config.clone(),
-            module_hash: module_hash.to_vec(),
-            #[cfg(not(test))]
-            pinned_upgrade_version: ic_cdk::api::canister_version(),
-            #[cfg(test)]
-            pinned_upgrade_version: 1,
-            // Native journal fixtures supply an explicit frozen period. Real
-            // canisters must establish it from replicated management history.
-            #[cfg(test)]
-            funded_after_nanos: Some(1),
-            #[cfg(not(test))]
-            funded_after_nanos: None,
-        })
-        .expect("encode legacy identity"),
-    );
-}
-
 pub(super) fn pause(
     key: RelaySetupKey,
     phase: RelayCreationPhase,
@@ -188,110 +146,6 @@ fn progress_for_recovery(key: RelaySetupKey) -> Option<RelayCreationProgress> {
         RelaySetupEntry::Paused(p) | RelaySetupEntry::ManualRecoveryRequired(p) => Some(p),
         _ => None,
     }
-}
-
-fn identity_for(
-    progress: &RelayCreationProgress,
-    setup: &CanonicalRelaySetup,
-    config: &Config,
-) -> Result<RelayContinuation, String> {
-    if let Some(continuation) = &progress.continuation {
-        return Ok(continuation.clone());
-    }
-    // Only the coordinated upgrade may attest the old installation template.
-    // This snapshots the predecessor's persisted config before upgrade args apply.
-    let legacy: LegacyIdentity =
-        candid::decode_one(&state::relay_legacy_identity()).map_err(|_| {
-            "The previous Relay installation identity has not been verified for this upgrade"
-        })?;
-    if relay_install_payload_for_hash(&legacy.module_hash).is_none() {
-        return Err("The previous Relay installation payload is unavailable".into());
-    }
-    let cutoff = legacy
-        .funded_after_nanos
-        .ok_or("The predecessor writer period is unverified")?;
-    if progress
-        .cmc_transfer
-        .as_ref()
-        .is_none_or(|op| op.created_at_time_nanos < cutoff)
-    {
-        return Err(
-            "This payment predates the verified predecessor configuration; do not pay".into(),
-        );
-    }
-    creation_budget(config)?;
-    let mut continuation = RelayContinuation::new(&legacy.config, setup);
-    if hex::encode(&legacy.module_hash)
-        == "221765e5940e3d0721dac7677f0294e05f616a6d91385f984c59a34ceb71cde0"
-    {
-        continuation.identity.init_arg =
-            relay_init_arg_with_service_defaults(&legacy.config, setup, true);
-    }
-    continuation.identity.module_hash = legacy.module_hash;
-    continuation.identity.original_create_cycles = legacy.config.relay_initial_cycles;
-    // The legacy empty-child case is eligible because its journaled creation
-    // allocation is below the supported provisioning policy, not its error text.
-    continuation.funding_pause =
-        legacy_allocation_cannot_cover_install(legacy.config.relay_initial_cycles);
-    Ok(continuation)
-}
-
-// Paid predecessor entries in the existing CMC/finalization lane also need the
-// frozen identity before they can continue. They must not inherit a new global
-// payload merely because they have not reached a paused state.
-pub(super) async fn pin_existing_paid_identity(
-    key: RelaySetupKey,
-    setup: &CanonicalRelaySetup,
-    config: &Config,
-    historian: Principal,
-    management: &dyn ManagementClient,
-    ticket: admission::Ticket,
-) -> Result<(), RelaySetupNotifyResult> {
-    let Some(RelaySetupEntry::Creating(mut progress)) = get_entry(key) else {
-        return Err(notify_for_entry(get_entry(key).expect("existing setup")));
-    };
-    if progress.continuation.is_some() {
-        return Ok(());
-    }
-    let proof = verify_legacy_period(historian, management, ticket).await;
-    if require_phase(key, progress.phase).ok().as_ref() != Some(&progress) {
-        return Err(notify_for_entry(get_entry(key).expect("existing setup")));
-    }
-    match proof {
-        Ok(()) => (),
-        Err(CheckError::Pending(_)) => return Err(notify_for_entry(get_entry(key).unwrap())),
-        Err(CheckError::Unsafe(message)) => {
-            return Err(manual_recovery(key, progress.phase, message))
-        }
-    }
-    let continuation =
-        match identity_for(&progress, setup, config) {
-            Ok(c)
-                if c.identity.ledger_id == config.ledger_canister_id
-                    && Some(c.identity.cmc_id) == config.cmc_canister_id =>
-            {
-                c
-            }
-            _ => return Err(manual_recovery(
-                key,
-                progress.phase,
-                "The predecessor Relay installation identity must be verified before continuing",
-            )),
-        };
-    progress.continuation = Some(continuation);
-    insert_entry(key, RelaySetupEntry::Creating(progress));
-    Ok(())
-}
-
-// A legacy diagnostic is not authority. Even ignoring freezing/memory costs,
-// creation plus the 300B-instruction prepayment exceeds this allocation. Both
-// costs scale by subnet size, so 300B / 500B gives the 3/5 ratio below.
-fn legacy_allocation_cannot_cover_install(initial_cycles: u128) -> bool {
-    let cost = creation_cost();
-    cost.checked_mul(3)
-        .and_then(|n| ceil_div(n, 5))
-        .and_then(|n| n.checked_add(cost))
-        .is_some_and(|minimum| initial_cycles < minimum)
 }
 
 fn paid_evidence(progress: &RelayCreationProgress) -> Result<(), String> {
@@ -398,116 +252,6 @@ enum CheckError {
     Pending(String),
 }
 
-#[derive(Clone, CandidType, Deserialize)]
-pub(super) struct HistorianHistory {
-    recent_changes: Vec<HistoryChange>,
-}
-#[derive(Clone, CandidType, Deserialize)]
-struct HistoryChange {
-    canister_version: u64,
-    timestamp_nanos: u64,
-    details: HistoryDetails,
-}
-#[derive(Clone, CandidType, Deserialize)]
-struct IgnoredRecord {}
-#[derive(Clone, CandidType, Deserialize)]
-enum HistoryDetails {
-    #[serde(rename = "creation")]
-    Creation(IgnoredRecord),
-    #[serde(rename = "code_uninstall")]
-    Uninstall,
-    #[serde(rename = "code_deployment")]
-    Deployment { module_hash: Vec<u8> },
-    #[serde(rename = "controllers_change")]
-    Controllers(IgnoredRecord),
-    #[serde(rename = "load_snapshot")]
-    Snapshot(IgnoredRecord),
-    #[serde(rename = "settings_change")]
-    Settings(IgnoredRecord),
-    #[serde(rename = "rename_canister")]
-    Rename(IgnoredRecord),
-}
-
-pub(super) async fn live_historian_history(
-    historian: Principal,
-) -> Result<HistorianHistory, String> {
-    ic_cdk::call::Call::bounded_wait(Principal::management_canister(), "canister_info")
-        .with_arg(&jupiter_ic_clients::management::CanisterInfoArgs {
-            canister_id: historian,
-            num_requested_changes: Some(20),
-        })
-        .change_timeout(60)
-        .await
-        .map_err(|e| format!("{e:?}"))?
-        .candid()
-        .map_err(|e| format!("{e:?}"))
-}
-
-fn predecessor_period(history: &HistorianHistory, pinned_version: u64) -> Result<u64, String> {
-    let changes = &history.recent_changes;
-    let candidate = changes
-        .iter()
-        .position(|c| c.canister_version == pinned_version)
-        .ok_or("The release upgrade history is unavailable; do not pay")?;
-    if !matches!(
-        &changes[candidate].details,
-        HistoryDetails::Deployment { .. }
-    ) {
-        return Err("The recorded release version is not a code upgrade; do not pay".into());
-    }
-    let predecessor = changes[..candidate]
-        .iter()
-        .rposition(|c| {
-            matches!(
-                &c.details,
-                HistoryDetails::Deployment { .. }
-                    | HistoryDetails::Uninstall
-                    | HistoryDetails::Snapshot(_)
-            )
-        })
-        .ok_or("The predecessor deployment history was pruned; do not pay")?;
-    match &changes[predecessor].details {
-        HistoryDetails::Deployment { module_hash }
-            if hex::encode(module_hash)
-                == "8c673c582964b17c63fbcd9be496a35759f41e0e37549b6fb47ebbaf7523dd0e" =>
-        {
-            Ok(changes[predecessor].timestamp_nanos)
-        }
-        _ => Err("The predecessor writer or restored state is unexpected; do not pay".into()),
-    }
-}
-
-async fn verify_legacy_period(
-    historian: Principal,
-    management: &dyn ManagementClient,
-    ticket: admission::Ticket,
-) -> Result<(), CheckError> {
-    let bytes = state::relay_legacy_identity();
-    let mut legacy: LegacyIdentity = candid::decode_one(&bytes).map_err(|_| {
-        "The previous Relay installation identity has not been verified".to_string()
-    })?;
-    if legacy.funded_after_nanos.is_some() {
-        return Ok(());
-    }
-    let history = ticket
-        .call(management.recovery_historian_history(historian))
-        .await
-        .map_err(|_| pending("Predecessor history check is busy; check again"))?
-        .map_err(|e| {
-            pending(format!(
-                "Predecessor history is unavailable; do not pay: {e}"
-            ))
-        })?;
-    let cutoff = predecessor_period(&history, legacy.pinned_upgrade_version)?;
-    if state::relay_legacy_identity() != bytes {
-        return Err(pending("Predecessor evidence changed; check again"));
-    }
-    legacy.funded_after_nanos = Some(cutoff);
-    state::set_relay_legacy_identity(
-        candid::encode_one(legacy).expect("encode verified predecessor"),
-    );
-    Ok(())
-}
 impl From<String> for CheckError {
     fn from(message: String) -> Self {
         Self::Unsafe(message)
@@ -520,7 +264,7 @@ fn pending(message: impl Into<String>) -> CheckError {
 
 async fn inspect(
     key: RelaySetupKey,
-    setup: &CanonicalRelaySetup,
+    _setup: &CanonicalRelaySetup,
     config: &Config,
     historian: Principal,
     ledger: &dyn LedgerClient,
@@ -531,13 +275,15 @@ async fn inspect(
     let progress =
         progress_for_recovery(key).ok_or_else(|| pending("Setup state changed; check again"))?;
     paid_evidence(&progress)?;
-    if progress.continuation.is_none() {
-        verify_legacy_period(historian, management, ticket).await?;
-    }
-    let continuation = identity_for(&progress, setup, config)?;
+    let continuation = progress
+        .continuation
+        .clone()
+        .ok_or_else(|| "The paid setup has no pinned installation identity".to_string())?;
     if continuation.identity.ledger_id != config.ledger_canister_id
         || Some(continuation.identity.cmc_id) != config.cmc_canister_id
-        || relay_install_payload_for_hash(&continuation.identity.module_hash).is_none()
+        || continuation.identity.module_hash.len() != 32
+        || (progress.relay_canister_id.is_none()
+            && relay_install_payload_for_hash(&continuation.identity.module_hash).is_none())
     {
         return Err(CheckError::Unsafe(
             "The recorded Ledger, CMC or Relay payload differs from this release".into(),
@@ -600,6 +346,13 @@ async fn inspect(
             && continuation.funding_pause
             && !continuation.terminal
         {
+            if relay_install_payload_for_hash(&continuation.identity.module_hash).is_none() {
+                return Err(
+                    "The pinned Relay installation payload is unavailable; do not pay"
+                        .to_string()
+                        .into(),
+                );
+            }
             let cycles =
                 u128::try_from(status.cycles.0).map_err(|_| "child cycles overflow".to_string())?;
             child_budget(config)?.saturating_sub(cycles)
@@ -875,9 +628,7 @@ pub(super) async fn continue_setup(
 ) -> RelaySetupNotifyResult {
     // Cheap refusals precede admission/outcalls, including ambiguous old spending.
     if let Some(progress) = progress_for_recovery(key) {
-        if paid_evidence(&progress).is_err()
-            || (progress.continuation.is_none() && state::relay_legacy_identity().is_empty())
-        {
+        if paid_evidence(&progress).is_err() || progress.continuation.is_none() {
             return notify_for_entry(get_entry(key).expect("existing entry"));
         }
     }
@@ -1174,15 +925,12 @@ pub(super) async fn continue_setup(
 pub(super) fn creation_credit(progress: &RelayCreationProgress) -> Option<u128> {
     progress
         .continuation
-        .as_ref()
-        .map(|c| {
-            c.conversions
-                .iter()
-                .filter(|op| op.for_creation)
-                .filter_map(|op| op.cycles_minted)
-                .try_fold(progress.cycles_minted?, |n, amount| n.checked_add(amount))
-        })
-        .unwrap_or(progress.cycles_minted)
+        .as_ref()?
+        .conversions
+        .iter()
+        .filter(|op| op.for_creation)
+        .filter_map(|op| op.cycles_minted)
+        .try_fold(progress.cycles_minted?, |n, amount| n.checked_add(amount))
 }
 
 #[cfg(test)]
@@ -1219,51 +967,6 @@ pub(super) async fn quote_for_test(
 #[cfg(test)]
 mod policy_tests {
     use super::*;
-    #[test]
-    fn legacy_writer_period_requires_the_immediate_unrestored_predecessor() {
-        let writer =
-            hex::decode("8c673c582964b17c63fbcd9be496a35759f41e0e37549b6fb47ebbaf7523dd0e")
-                .unwrap();
-        let deployed = |version, timestamp, hash| HistoryChange {
-            canister_version: version,
-            timestamp_nanos: timestamp,
-            details: HistoryDetails::Deployment { module_hash: hash },
-        };
-        let base = HistorianHistory {
-            recent_changes: vec![
-                deployed(10, 100, writer.clone()),
-                HistoryChange {
-                    canister_version: 11,
-                    timestamp_nanos: 110,
-                    details: HistoryDetails::Controllers(IgnoredRecord {}),
-                },
-                deployed(12, 120, vec![1; 32]),
-            ],
-        };
-        assert_eq!(predecessor_period(&base, 12).unwrap(), 100);
-        for details in [
-            HistoryDetails::Snapshot(IgnoredRecord {}),
-            HistoryDetails::Uninstall,
-            HistoryDetails::Deployment {
-                module_hash: vec![2; 32],
-            },
-        ] {
-            let mut changed = base.clone();
-            changed.recent_changes[1].details = details;
-            assert!(predecessor_period(&changed, 12).is_err());
-        }
-        let mut same_writer_upgrade = base.clone();
-        same_writer_upgrade.recent_changes[1] = deployed(11, 110, writer);
-        assert_eq!(predecessor_period(&same_writer_upgrade, 12).unwrap(), 110);
-        assert!(predecessor_period(&base, 13).is_err());
-        assert!(predecessor_period(
-            &HistorianHistory {
-                recent_changes: base.recent_changes[2..].to_vec()
-            },
-            12
-        )
-        .is_err());
-    }
     #[test]
     fn budget_covers_upfront_reservation_and_supported_memory_at_34_nodes() {
         let config = super::super::tests::config();

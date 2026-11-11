@@ -51,7 +51,6 @@ pub struct InitArgs {
 
 #[derive(CandidType, Deserialize, Clone, Default)]
 pub struct UpgradeArgs {
-    pub relay_legacy_module_hash: Option<Vec<u8>>,
     pub staking_account: Option<Account>,
     pub ledger_canister_id: Option<Principal>,
     pub index_canister_id: Option<Principal>,

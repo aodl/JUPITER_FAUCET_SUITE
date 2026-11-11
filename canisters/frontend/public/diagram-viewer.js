@@ -37,6 +37,8 @@ const back = document.querySelector('#diagram-viewer-back');
 const title = document.querySelector('#diagram-viewer-title');
 const image = document.querySelector('#diagram-viewer-image');
 const error = document.querySelector('#diagram-viewer-error');
+const relayNote = document.querySelector('#diagram-viewer-relay-note');
+relayNote.hidden = params.get('diagram') !== 'relay';
 
 if (!diagram) {
   title.textContent = 'Diagram unavailable';

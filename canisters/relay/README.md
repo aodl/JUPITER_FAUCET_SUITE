@@ -163,7 +163,7 @@ ICP sent there is immediately available to the allocation loop. It is finite fun
 
 ### Direct Jupiter Faucet endowment
 
-After activation, the frontend provides a **Build a perpetual raw-ICP memo** link for the actual child Relay. If the sender can make a normal qualifying Faucet endowment and attach an ICRC memo, use:
+After activation, the frontend displays the actual child Relay’s **Faucet endowment memo** with Copy memo, alongside the trusted Faucet staking account with Copy account. If the sender can make a normal qualifying Faucet endowment and attach an ICRC memo, use:
 
 ```text
 <relay-canister-id>.
@@ -171,7 +171,7 @@ After activation, the frontend provides a **Build a perpetual raw-ICP memo** lin
 
 The trailing `.` matters. Under [`jupiter-memo-policy`](../../crates/memo-policy), `canister_id.memo` requests **raw ICP** to that canister rather than a direct cycles top-up; an empty right-hand segment means no outgoing raw-ICP memo.
 
-Send that endowment ICP to the **Faucet neuron's staking account**, not to the Relay. The link only builds the memo; it does not deposit or transfer ICP. Jupiter Faucet then sends future payout ICP directly to Relay's default account. Faucet produces the recurring ICP; Relay decides how to allocate it.
+Send that endowment ICP to the **Faucet neuron's staking account**, not to the Relay. Copying the account or memo does not deposit or transfer ICP. Jupiter Faucet then sends future payout ICP directly to Relay's default account. Faucet produces the recurring ICP; Relay decides how to allocate it.
 
 ### Subaccount 1
 
@@ -213,7 +213,9 @@ Every Relay intrinsically recognizes subaccounts `10, 20, ... 90`. The number is
 | 80 | 80% | 20% |
 | 90 | 90% | 10% |
 
-A numbered subaccount is 32 bytes with 31 zero bytes and the number in the final byte (`50` is byte `0x32`; `90` is byte `0x5a`). The funding account selects the behavior: putting `50` in a transaction memo does not select subaccount 50. Unsupported subaccounts are not swept automatically and may be unrecoverable.
+**Important: splitter numbers are decimal percentages; ICRC account suffixes are hexadecimal.** The 50/50 splitter uses decimal subaccount 50 (`0x32`), so its complete account address ends in `.32`, not `.50`. **Copy the entire funding address**, including its checksum, from the [canonical account table](#canonical-icp-funding-accounts) or the active Relay screen.
+
+A numbered subaccount is 32 bytes with 31 zero bytes followed by the number. The funding account selects the behavior; putting `50` in a transaction memo does not select splitter 50. Unsupported subaccounts are not swept automatically and may be unrecoverable.
 
 For balance `B`, current planning fee `F`, and splitter percentage `p`, initial planning requires:
 
@@ -422,23 +424,23 @@ u2qkp-aqaaa-aaaar-qb7ea-cai
 
 ### Canonical ICP funding accounts
 
-For the canonical Relay, the following are the **legacy ICP Ledger account identifiers** (the 64-character hexadecimal addresses), rather than only the ICRC owner/subaccount notation. These are the Relay-owned ICP accounts used for immediate funding, Faucet-endowment staging, and the fixed splitter routes.
+Copy the **entire canonical ICRC account address** for the selected route; do not construct one from a percentage. The legacy ICP account identifiers are equivalent alternatives for wallets that require them. These addresses belong to the canonical Relay, not a self-service child Relay.
 
-| Relay account | Purpose | Subaccount byte | ICP Ledger account identifier |
-|---|---|---:|---|
-| Default | ICP available for managed-canister top-ups and eventual surplus | `00` (ICRC default / `null`) | `ffe4e010416d894b2a973fa46212c14c9c83363fa886f7216c3b1c9fa50a30cd` |
-| Subaccount 1 | Jupiter Faucet endowment staging | `01` | `9fffa5e0762fd8be8e4c3078d4101926fb8d3c15aa3fa077b981ea779ded42ee` |
-| Splitter 10 | 10% default / 90% subaccount 1 | `0a` | `888cbe557e118986bfdd515c6d7622dc54a0a83b6bff17287134fa514a805594` |
-| Splitter 20 | 20% default / 80% subaccount 1 | `14` | `4f74f3f8320540a1998c4ff4da9264f166ba8546cbaef9650177c573cb913619` |
-| Splitter 30 | 30% default / 70% subaccount 1 | `1e` | `a6b8c79aad7424c51f566db0781060404a1e13f2c9b96531fbd8664759967c84` |
-| Splitter 40 | 40% default / 60% subaccount 1 | `28` | `75b0acc13f98dd766111e510682c4038b32f4e165d60f26457ebf741e119cff8` |
-| Splitter 50 | 50% default / 50% subaccount 1 | `32` | `ddc112cd674286bc5342c933ad70b94d5a6f956f08283a9cfc2dacc7346df034` |
-| Splitter 60 | 60% default / 40% subaccount 1 | `3c` | `98394d5d6d5438c1629b9801574478c63170c115df9ae2c02b223e8b501b8fd5` |
-| Splitter 70 | 70% default / 30% subaccount 1 | `46` | `3d27e1558913c4771959af6119e9758c79e548c75ee6951da7f1fc726a0760e7` |
-| Splitter 80 | 80% default / 20% subaccount 1 | `50` | `1f2e1e0d228cda21e9bb2852554362739a8c955755c2034ee04893d38a47442a` |
-| Splitter 90 | 90% default / 10% subaccount 1 | `5a` | `7dd38b0e9fa61ec7075d730fa3fe6026fb128b816e36d4007bcd937a3cd52f3e` |
+| Relay account | Purpose | Complete canonical ICRC account address | Alternative legacy ICP account identifier |
+|---|---|---|---|
+| Default | ICP available for managed-canister top-ups and eventual surplus | `u2qkp-aqaaa-aaaar-qb7ea-cai` | `ffe4e010416d894b2a973fa46212c14c9c83363fa886f7216c3b1c9fa50a30cd` |
+| Subaccount 1 | Jupiter Faucet endowment staging | `u2qkp-aqaaa-aaaar-qb7ea-cai-66ym2xq.1` | `9fffa5e0762fd8be8e4c3078d4101926fb8d3c15aa3fa077b981ea779ded42ee` |
+| Splitter 10 | 10% default / 90% subaccount 1 | `u2qkp-aqaaa-aaaar-qb7ea-cai-mbrbjvq.a` | `888cbe557e118986bfdd515c6d7622dc54a0a83b6bff17287134fa514a805594` |
+| Splitter 20 | 20% default / 80% subaccount 1 | `u2qkp-aqaaa-aaaar-qb7ea-cai-tjwstni.14` | `4f74f3f8320540a1998c4ff4da9264f166ba8546cbaef9650177c573cb913619` |
+| Splitter 30 | 30% default / 70% subaccount 1 | `u2qkp-aqaaa-aaaar-qb7ea-cai-pk4mbky.1e` | `a6b8c79aad7424c51f566db0781060404a1e13f2c9b96531fbd8664759967c84` |
+| Splitter 40 | 40% default / 60% subaccount 1 | `u2qkp-aqaaa-aaaar-qb7ea-cai-wubfkmq.28` | `75b0acc13f98dd766111e510682c4038b32f4e165d60f26457ebf741e119cff8` |
+| Splitter 50 | 50% default / 50% subaccount 1 | `u2qkp-aqaaa-aaaar-qb7ea-cai-jbqkysa.32` | `ddc112cd674286bc5342c933ad70b94d5a6f956f08283a9cfc2dacc7346df034` |
+| Splitter 60 | 60% default / 40% subaccount 1 | `u2qkp-aqaaa-aaaar-qb7ea-cai-v7micty.3c` | `98394d5d6d5438c1629b9801574478c63170c115df9ae2c02b223e8b501b8fd5` |
+| Splitter 70 | 70% default / 30% subaccount 1 | `u2qkp-aqaaa-aaaar-qb7ea-cai-d4ebs3i.46` | `3d27e1558913c4771959af6119e9758c79e548c75ee6951da7f1fc726a0760e7` |
+| Splitter 80 | 80% default / 20% subaccount 1 | `u2qkp-aqaaa-aaaar-qb7ea-cai-5pokypa.50` | `1f2e1e0d228cda21e9bb2852554362739a8c955755c2034ee04893d38a47442a` |
+| Splitter 90 | 90% default / 10% subaccount 1 | `u2qkp-aqaaa-aaaar-qb7ea-cai-bmeukiq.5a` | `7dd38b0e9fa61ec7075d730fa3fe6026fb128b816e36d4007bcd937a3cd52f3e` |
 
-For the numbered accounts, the full subaccount is 32 bytes: 31 zero bytes followed by the byte shown above. The default ICRC account is `Account { owner = u2qkp-aqaaa-aaaar-qb7ea-cai; subaccount = null }`; the legacy account-identifier derivation uses the canonical all-zero default subaccount.
+ICRC account text omits leading hexadecimal zeros: staging subaccount 1 ends in `.1`, **not `.01`**. An address ending in `.50` represents decimal subaccount 80, **not splitter 50**. The checksum is bound to the complete account; changing the subaccount also changes its checksum. Never edit an address suffix. See the [splitter percentage explanation](#splitter-subaccounts-1090) for the 50/50 example.
 
 Its checked-in configuration is [`mainnet-install-args.did`](mainnet-install-args.did). It manages the suite canisters plus the two production blackholes, with Relay itself auto-included:
 

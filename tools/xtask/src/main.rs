@@ -6538,7 +6538,8 @@ fn cmd_historian_relay_setup_pocketic() -> Result<()> {
     let mut outcomes = Vec::new();
     for test in [
         "relay_provisioning_budget_installs_production_payload_on_fiduciary_subnet",
-        "legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callback_loss",
+        "current_paid_setup_recovers_across_upgrade_and_preserves_completed_journal",
+        "completed_relay_journal_from_recovery_release_survives_upgrade",
     ] {
         run_cargo_test_suite(
             &mut outcomes,
@@ -6615,7 +6616,12 @@ fn cmd_release_artifact_validation() -> Result<()> {
         (
             "jupiter-historian",
             "jupiter_historian_integration",
-            "legacy_underfunded_child_recovers_in_place_after_upgrade_and_recovery_callback_loss",
+            "current_paid_setup_recovers_across_upgrade_and_preserves_completed_journal",
+        ),
+        (
+            "jupiter-historian",
+            "jupiter_historian_integration",
+            "completed_relay_journal_from_recovery_release_survives_upgrade",
         ),
         (
             "jupiter-faucet",
@@ -6708,7 +6714,7 @@ fn main() -> Result<()> {
                  Utility commands:
                  - acceptance_sns (real official SNS on an owned PocketIC topology)
                  - release_artifact_validation (requires canonical artifacts)
-                 - historian_relay_setup_pocketic (provisioning and legacy continuation)
+                 - historian_relay_setup_pocketic (provisioning and paid continuation)
                  - setup
                  - teardown
                  - frontend_setup

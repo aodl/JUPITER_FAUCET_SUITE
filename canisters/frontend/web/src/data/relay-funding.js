@@ -44,6 +44,7 @@ export function deriveRelayFundingDestinations(relayCanisterId) {
     return {
       ...destination,
       owner,
+      ownerText: owner.toText(),
       account,
       icrcAccountText: icrcAccountText(account),
       legacyAccountIdentifier: accountIdentifierHex(account),
@@ -55,15 +56,9 @@ export function deriveRelayFundingDestinations(relayCanisterId) {
   });
 }
 
-export function relayMemoBuilderHash(relayCanisterId) {
-  const canister = typeof relayCanisterId === 'string'
-    ? Principal.fromText(relayCanisterId).toText()
-    : relayCanisterId.toText();
-  const params = new URLSearchParams({
-    canister,
-    mode: 'rawIcp',
-    title: 'Relay Canister',
-    label: 'Optional Donor Name',
-  });
-  return `#memo-builder?${params}`;
+// A trailing full stop selects raw ICP to the default account with no outgoing memo.
+export function relayEndowmentMemo(relayCanisterId) {
+  const owner = typeof relayCanisterId === 'string'
+    ? Principal.fromText(relayCanisterId) : relayCanisterId;
+  return `${owner.toText()}.`;
 }

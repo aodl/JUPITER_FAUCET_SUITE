@@ -2,7 +2,7 @@ import { Principal } from '@icp-sdk/core/principal';
 import { createActor as createLedgerActor } from '../../declarations/icp_ledger/index.js';
 import { createActor as createGovernanceActor } from '../../declarations/nns_governance/index.js';
 import { createHistorianClient, normalizeError } from './agent.js';
-import { GOVERNANCE_CANISTER_ID, ICP_LEDGER_CANISTER_ID } from './config.js';
+import { GOVERNANCE_CANISTER_ID, ICP_LEDGER_CANISTER_ID, JUPITER_STAKING_ACCOUNT } from './config.js';
 import {
   accountIdentifierHex,
   bytesToHex,
@@ -11,7 +11,7 @@ import {
 } from '../data/dashboard-transforms.js';
 import {
   deriveRelayFundingDestinations,
-  relayMemoBuilderHash,
+  relayEndowmentMemo,
 } from '../data/relay-funding.js';
 import { loadPublicNeuronStakingAccount } from '../data/nns-neurons.js';
 import { DASH, formatIcpE8s, renderCanisterTrackerLink } from './view-formatters.js';
@@ -250,19 +250,20 @@ function fundingCopyButton(index, field, label) {
 export function renderRelayFundingCards(destinations, index = 0) {
   const destination = destinations[index];
   if (!destination) return '';
-  const title = destination.subaccountNumber === null ? 'Operating payment account'
-    : destination.subaccountNumber === 1 ? 'Relay staging account'
-      : `${destination.subaccountNumber}% operating / ${100 - destination.subaccountNumber}% future account`;
+  const title = destination.subaccountNumber === null ? 'Operating funds'
+    : destination.subaccountNumber === 1 ? 'Endowment via Relay staging'
+      : `${destination.subaccountNumber}% operating / ${100 - destination.subaccountNumber}% endowment`;
   const explorer = `https://dashboard.internetcomputer.org/account/${encodeURIComponent(destination.legacyAccountIdentifier)}`;
   return `<article class="relay-funding-card">
     <h4>${escapeHtml(title)}</h4>
+    <p class="pane-status-note">Complete payment account</p>
     <div class="relay-funding-value"><code class="mono">${escapeHtml(destination.icrcAccountText)}</code>${fundingCopyButton(index, 'icrcAccountText', 'Copy account')}</div>
-    <details class="relay-funding-details"><summary>Account details</summary><dl>
-      <div><dt>Route</dt><dd>${escapeHtml(destination.name)}</dd></div>
-      <div><dt>Owner</dt><dd class="mono">${escapeHtml(destination.owner.toText())}</dd></div>
+    <details class="relay-funding-details"><summary>Other wallet formats</summary><dl>
+      <div><dt>Owner</dt><dd class="mono">${escapeHtml(destination.owner.toText())} ${fundingCopyButton(index, 'ownerText', 'Copy owner')}</dd></div>
       <div><dt>Full 32-byte subaccount</dt><dd class="mono relay-funding-value">${escapeHtml(destination.subaccountHex)} ${fundingCopyButton(index, 'subaccountHex', 'Copy subaccount')}</dd></div>
       <div><dt>Legacy ICP account identifier</dt><dd class="mono relay-funding-value"><a class="pane-external-link" href="${explorer}" target="_blank" rel="noopener noreferrer">${escapeHtml(destination.legacyAccountIdentifier)}</a> ${fundingCopyButton(index, 'legacyAccountIdentifier', 'Copy identifier')}</dd></div>
     </dl></details>
+    ${destination.subaccountNumber !== null && destination.subaccountNumber !== 1 ? `<p class="pane-status-note">The account suffix is hexadecimal: .${destination.subaccountNumber.toString(16)} means subaccount ${destination.subaccountNumber}, selecting ${destination.subaccountNumber}% operating funds.</p>` : ''}
   </article>`;
 }
 
@@ -476,7 +477,7 @@ export function createRelaySetupController({
     setMemoError(row, message);
     const summary = row?.querySelector?.('[data-relay-recipient-memo-summary]');
     if (summary) summary.textContent = message ? 'Edit memo - check its bytes'
-      : count ? `Memo added · ${count} bytes - edit` : 'Add memo';
+      : count ? `Memo added · ${count} bytes - edit` : 'Optional surplus recipient memo';
     return message;
   }
 
@@ -797,7 +798,7 @@ export function createRelaySetupController({
       memoMode.append(textOption, hexOption);
       memoMode.value = 'Text';
       const memoLabel = document.createElement('label');
-      memoLabel.textContent = 'Memo';
+      memoLabel.textContent = 'Surplus recipient memo';
       memoLabel.dataset.relayRecipientMemoLabel = 'true';
       const memoInput = document.createElement('input');
       memoInput.className = 'tracker-input mono relay-setup-memo-input';
@@ -826,7 +827,7 @@ export function createRelaySetupController({
       disclosure.dataset.relayRecipientMemo = 'true';
       const summary = document.createElement('summary');
       summary.dataset.relayRecipientMemoSummary = 'true';
-      summary.textContent = 'Add memo';
+      summary.textContent = 'Optional surplus recipient memo';
       const removeMemo = document.createElement('button');
       removeMemo.type = 'button';
       removeMemo.className = 'pane-page-button';
@@ -929,7 +930,10 @@ export function createRelaySetupController({
   }
 
   function shouldPoll(view = state.view) {
+    if (viewState(view) === 'Active' || variantName(state.notifyResult) === 'Active') return false;
+    if (variantName(recoveryState(view)) === 'Unsafe') return false;
     if (recoveryQuote(view)) return true;
+    if (variantName(recoveryState(view)) === 'CheckPending' && variantName(state.notifyResult) === 'InProgress') return true;
     if (['Active', 'ManualRecoveryRequired'].includes(variantName(state.notifyResult))) return false;
     const kind = viewState(view);
     return kind === 'InProgress'
@@ -1032,8 +1036,8 @@ export function createRelaySetupController({
         };
       case 'Busy':
         return {
-          status: 'Busy',
-          message: 'Relay factory admission is busy or rate-limited, or funded setup capacity is full. Try again shortly; an existing setup may still be progressing.',
+          status: 'Setup temporarily busy',
+          message: 'Your request could not start right now. No new payment is needed. Wait a little before trying again.',
         };
       case 'InProgress':
         return {
@@ -1062,9 +1066,16 @@ export function createRelaySetupController({
       invalidateCurrentConfiguration();
       return;
     }
+    const operationLocked = creationRequestInFlight || state.loading;
+    // Editing can discard a non-spending check through the generation fence.
+    // A submitted creation/continuation stays locked through its follow-up read.
     for (const id of ['relay-setup-edit', 'relay-setup-another']) {
       const button = document.getElementById(id);
       if (button) button.disabled = creationRequestInFlight;
+    }
+    for (const id of ['copy-relay-setup-icrc-account', 'copy-relay-setup-account-identifier']) {
+      const button = document.getElementById(id);
+      if (button) button.disabled = operationLocked;
     }
     const view = state.view;
     const kind = viewState(view);
@@ -1072,13 +1083,17 @@ export function createRelaySetupController({
     const relayId = relayIdFromState(view?.state);
     const recovery = recoveryState(view);
     const quote = recoveryQuote(view);
+    const recoveryKind = variantName(recovery);
+    const recoveryBlocksSpending = ['Unsafe', 'CheckPending'].includes(recoveryKind);
     const manualWarning = 'Keep this exact configuration for support. Do not pay again or restart creation.';
     const recoveryNotice = quote
       ? (BigInt(quote.additional_e8s) > 0n
         ? `Additional setup funding needed.${quote.relay_canister_id.length ? ' Your Relay has already been created.' : ''} Add ${formatIcpE8s(quote.additional_e8s)} to the setup account below, then continue setup. This amount must arrive in the account; your wallet may charge a separate sending fee.`
         : 'No additional setup payment is needed. Continue setup to check and finish the remaining steps.')
-      : recovery?.CheckPending ? `${recovery.CheckPending} Do not send a payment while this check is unavailable.`
-        : recovery?.Unsafe ? `${recovery.Unsafe} ${manualWarning}` : '';
+      : recoveryKind === 'CheckPending' ? (pollHandle !== null
+        ? "Your setup is still being checked. We'll check again automatically. Do not send another payment until the check succeeds."
+        : "We couldn't check your setup right now. Select Re-check this setup to try again. Do not send another payment until the check succeeds.")
+        : recoveryKind === 'Unsafe' ? `We couldn't confirm that it is safe to continue this setup. ${manualWarning}` : '';
     const recoveryMessage = kind === 'ManualRecoveryRequired'
       ? `${stateDetails?.message || ''} ${manualWarning}` : '';
     const phase = stateDetails?.phase ? variantName(stateDetails.phase) : '';
@@ -1106,20 +1121,20 @@ export function createRelaySetupController({
     const resumableSetup = isResumableSetup(view);
     const resumesCreation = ['CmcTransferAccepted', 'CmcNotifySucceeded'].includes(phase);
     const resumeLabel = quote ? 'Continue setup' : resumesCreation ? 'Resume creation' : 'Resume finalization';
-    const resumeStatus = resumesCreation ? 'Resuming creation…' : 'Resuming finalization…';
     const createButton = document.getElementById('relay-setup-create');
     const balance = state.balanceE8s === null ? 0n : state.balanceE8s;
     const effectiveRequirement = quote ? BigInt(quote.required_e8s) : requiredBalance(view, state.requiredBalanceOverride);
-    const canCreate = Boolean(view && account && !activeOrBlocked && !state.error
-      && balance >= effectiveRequirement && !state.creating);
+    const canCreate = Boolean(view && account && !activeOrBlocked && !recoveryBlocksSpending && !state.error
+      && balance >= effectiveRequirement && !operationLocked);
     const fundingNotice = ['BelowMinimum', 'BelowCurrentRequirement'].includes(notifyKind);
     const notificationStatus = fundingNotice
-      ? (canCreate ? 'Ready to create' : 'Waiting for funding') : notification?.status;
+      ? (canCreate ? 'Ready to create' : 'Waiting for funding')
+      : resumableSetup ? 'Ready to resume' : notification?.status;
     const status = {
       NotFunded: !view?.factory_available ? 'Creation unavailable' : canCreate ? 'Ready to create' : 'Waiting for funding',
       InProgress: resumableSetup ? 'Ready to resume' : 'Creation in progress',
       ManualRecoveryRequired: 'Manual recovery required',
-      Active: 'Relay created',
+      Active: 'Active',
     }[kind] || DASH;
 
     setHidden('relay-setup-operation-notice', !creationRequestInFlight);
@@ -1127,19 +1142,29 @@ export function createRelaySetupController({
     setHidden('relay-setup-form', state.reviewing || Boolean(activeRelayId));
     setHidden('relay-setup-intro', state.reviewing || Boolean(activeRelayId));
     setHidden('relay-setup-review', !reviewStage);
-    setText('relay-setup-title', activeRelayId ? 'Relay overview' : state.reviewing ? 'Review your setup' : 'Create a relay');
-    setHidden('relay-setup-recheck', (!state.error && !recovery) || state.loading || Boolean(activeRelayId));
+    setText('relay-setup-title', activeRelayId ? 'Relay' : state.reviewing ? 'Review your setup' : 'Create a relay');
+    setHidden('relay-setup-recheck', (!state.error && !recovery) || Boolean(activeRelayId));
     const recheckButton = document.getElementById('relay-setup-recheck');
-    if (recheckButton) recheckButton.disabled = creationRequestInFlight;
+    if (recheckButton) recheckButton.disabled = operationLocked;
     setHidden('relay-setup-summary', !view);
-    setText('relay-setup-status', state.error ? state.error
-      : state.loading ? 'Checking setup…'
-        : state.creating ? (resumableSetup ? resumeStatus : 'Creating relay…')
+    // Instructions and controls share the same operation lock. Assessments are
+    // non-spending; continuation may spend and stays locked through its next read.
+    const operationMessage = state.creating
+      ? 'Continuing your Relay setup. No action is needed right now. Do not send another setup payment.'
+      : 'Checking your Relay setup. No action is needed right now. Do not send another setup payment.';
+    setText('relay-setup-status', activeRelayId ? 'Active'
+      : operationLocked ? (state.creating ? 'Processing setup…' : 'Checking setup…')
+        : state.error ? state.error
           : quote ? (BigInt(quote.additional_e8s) > 0n ? 'Additional setup funding needed' : 'Ready to continue setup')
-            : recovery?.CheckPending ? 'Recovery check unavailable'
-              : recovery?.Unsafe ? 'Manual recovery required' : notificationStatus || status);
-    setText('relay-setup-status-label', state.error || recoveryNotice || (fundingNotice ? `Last creation check: ${notification.message}` : notification?.message) || recoveryMessage
-      || (kind === 'InProgress' ? 'Your setup is being processed. Do not send another setup deposit.' : ''));
+            : recoveryKind === 'CheckPending' ? 'Setup check temporarily unavailable'
+              : recoveryKind === 'Unsafe' ? 'Setup needs review' : notificationStatus || status);
+    setText('relay-setup-status-label', activeRelayId ? '' : operationLocked ? operationMessage
+      : state.error || recoveryNotice || (resumableSetup ? `No additional setup payment is needed. Select ${resumeLabel} to continue.` : '') || (fundingNotice ? (canCreate
+        ? 'Your setup balance is sufficient. Select Create relay to continue.'
+        : `Last creation check: ${notification.message}`) : notification?.message) || recoveryMessage
+      || (kind === 'InProgress' ? (resumableSetup
+        ? `No additional setup payment is needed. Select ${resumeLabel} to continue.`
+        : 'Your setup is being processed. Do not send another setup deposit.') : ''));
     setHidden('relay-setup-reviewed-recipients', Number(view?.surplus_recipient_count || 0) === 0);
     setText('relay-setup-target-count', view ? String(view.target_count) : DASH);
     setText('relay-setup-canonical-targets', view ? view.canonical_target_canister_ids.map(principalText).join('\n') : DASH);
@@ -1179,18 +1204,18 @@ export function createRelaySetupController({
     setText('relay-setup-account-identifier', identifier || DASH);
     setAccountLink('relay-setup-icrc-account-link', accountText, identifier);
     setAccountLink('relay-setup-account-identifier-link', identifier, identifier);
-    setHidden('relay-setup-payment-details', !account || (activeOrBlocked && !quote) || Boolean(state.error));
-    setHidden('relay-setup-create-panel', Boolean(state.error) || (quote || resumableSetup ? false : (!account || activeOrBlocked)));
+    setHidden('relay-setup-payment-details', operationLocked || recoveryBlocksSpending || !account || (activeOrBlocked && !quote) || Boolean(state.error));
+    setHidden('relay-setup-create-panel', recoveryBlocksSpending || Boolean(state.error) || (quote || resumableSetup ? false : (!account || activeOrBlocked)));
     setText(
       'relay-setup-finalization-resume-note',
       resumesCreation
-        ? 'Your conversion payment is recorded. Resume checks its result and continues creation when confirmed. No additional conversion payment is made.'
-        : 'Funding is complete. Resume performs only authoritative Relay status checks and, when the Relay is still in the exact Historian-controlled state, may retry the controller-removal settings update. It does not repeat ICP, CMC, creation, installation, or Relay-funding operations.',
+        ? 'Your setup payment is recorded. Resuming creation checks its result and finishes setup when confirmed. No additional setup payment is needed.'
+        : 'Setup funding is complete. Resume finalization checks your Relay and finishes activation. No additional setup payment is needed.',
     );
-    setHidden('relay-setup-finalization-resume-note', !resumableSetup || Boolean(quote));
+    setHidden('relay-setup-finalization-resume-note', operationLocked || !resumableSetup || Boolean(quote));
     if (createButton) {
       createButton.textContent = quote ? 'Continue setup' : resumableSetup ? resumeLabel : 'Create relay';
-      createButton.disabled = state.error || state.loading ? true
+      createButton.disabled = state.error || operationLocked ? true
         : quote ? state.creating || BigInt(quote.additional_e8s) > 0n
           : resumableSetup ? state.creating : !canCreate;
     }
@@ -1201,11 +1226,8 @@ export function createRelaySetupController({
     setText('relay-funding-configuration', view ? `${view.canonical_target_canister_ids.map(principalText).join('\n')}\n\n${document.getElementById('relay-setup-canonical-recipients')?.textContent || ''}` : '');
     setHtml('relay-funding-activity', activeRelayId ? renderCanisterTrackerLink(activeRelayId, { label: 'View Relay activity' }) : '');
     setText('relay-funding-copy-status', '');
-    const memoBuilderLink = document.getElementById('relay-funding-memo-builder-link');
-    if (memoBuilderLink) {
-      if (activeRelayId) memoBuilderLink.href = relayMemoBuilderHash(activeRelayId);
-      else memoBuilderLink.removeAttribute('href');
-    }
+    setText('relay-funding-endowment-memo', activeRelayId ? relayEndowmentMemo(activeRelayId) : '');
+    setText('relay-funding-staking-account', activeRelayId ? JUPITER_STAKING_ACCOUNT.address : '');
     setHidden('relay-funding-section', !activeRelayId);
     if (activeChanged && activeRelayId) document.getElementById('relay-funding-title')?.focus?.();
     renderFundingChoice();
@@ -1247,64 +1269,72 @@ export function createRelaySetupController({
   } = {}) {
     if (!state.targets.length) return;
     const sequence = ++refreshSequence;
-    const { agent, historian } = await historianBundle();
-    if (!ensureConfigurationContinuationIsCurrent(
-      expectedConfiguration,
-      requestGeneration,
-      staleMessage,
-    )) return;
-    const result = await historian.get_relay_configuration_view(setupArgs());
-    if (!ensureConfigurationContinuationIsCurrent(
-      expectedConfiguration,
-      requestGeneration,
-      staleMessage,
-    )) return;
-    const view = unwrapView(result);
-    if (sequence !== refreshSequence) return;
-    const kind = viewState(view);
-    const account = readOptional(view.setup_account);
-    const isNewConfiguration = kind === 'NotFunded' && Boolean(account);
-    if (preflightNeurons && isNewConfiguration) {
-      await preflightNeuronRecipients(agent);
-      if (!ensureConfigurationContinuationIsCurrent(
-        expectedConfiguration,
-        requestGeneration,
-        staleMessage,
-      )) return;
-    }
-    let balance = recoveryQuote(view) ? BigInt(recoveryQuote(view).balance_e8s) : null;
-    if (isNewConfiguration) {
-      const ledger = loadLedger({ agent });
-      if (!ensureConfigurationContinuationIsCurrent(
-        expectedConfiguration,
-        requestGeneration,
-        staleMessage,
-      )) return;
-      balance = BigInt(await ledger.icrc1_balance_of(account));
-      if (!ensureConfigurationContinuationIsCurrent(
-        expectedConfiguration,
-        requestGeneration,
-        staleMessage,
-      )) return;
-    }
-    if (sequence !== refreshSequence) return;
-    // An immutable authenticated Active mapping must not regress to a funding
-    // account when an older snapshot or continuation completes later.
-    if (viewState(state.view) === 'Active' && kind !== 'Active') return;
-    state.view = view;
-    state.checkedConfigurationFingerprint = expectedConfiguration;
-    state.requestFingerprint = '';
-    state.balanceE8s = balance;
-    state.error = '';
-    state.loading = false;
-    if (kind === 'Active' || kind === 'ManualRecoveryRequired') {
-      state.requiredBalanceOverride = null;
-    }
+    state.loading = true;
     render();
-    if (shouldPoll(view)) {
-      if (pollHandle === null) startPolling();
-    } else {
-      stopPolling();
+    try {
+      const { agent, historian } = await historianBundle();
+      if (!ensureConfigurationContinuationIsCurrent(
+        expectedConfiguration,
+        requestGeneration,
+        staleMessage,
+      )) return;
+      const result = await historian.get_relay_configuration_view(setupArgs());
+      if (!ensureConfigurationContinuationIsCurrent(
+        expectedConfiguration,
+        requestGeneration,
+        staleMessage,
+      )) return;
+      const view = unwrapView(result);
+      if (sequence !== refreshSequence) return;
+      const kind = viewState(view);
+      const account = readOptional(view.setup_account);
+      const isNewConfiguration = kind === 'NotFunded' && Boolean(account);
+      if (preflightNeurons && isNewConfiguration) {
+        await preflightNeuronRecipients(agent);
+        if (!ensureConfigurationContinuationIsCurrent(
+          expectedConfiguration,
+          requestGeneration,
+          staleMessage,
+        )) return;
+      }
+      let balance = recoveryQuote(view) ? BigInt(recoveryQuote(view).balance_e8s) : null;
+      if (isNewConfiguration) {
+        const ledger = loadLedger({ agent });
+        if (!ensureConfigurationContinuationIsCurrent(
+          expectedConfiguration,
+          requestGeneration,
+          staleMessage,
+        )) return;
+        balance = BigInt(await ledger.icrc1_balance_of(account));
+        if (!ensureConfigurationContinuationIsCurrent(
+          expectedConfiguration,
+          requestGeneration,
+          staleMessage,
+        )) return;
+      }
+      if (sequence !== refreshSequence) return;
+      // An immutable authenticated Active mapping must not regress to a funding
+      // account when an older snapshot or continuation completes later.
+      if (viewState(state.view) === 'Active' && kind !== 'Active') return;
+      state.view = view;
+      state.checkedConfigurationFingerprint = expectedConfiguration;
+      state.requestFingerprint = '';
+      state.balanceE8s = balance;
+      state.error = '';
+      state.loading = false;
+      if (kind === 'Active' || kind === 'ManualRecoveryRequired') {
+        state.requiredBalanceOverride = null;
+      }
+      if (shouldPoll(view)) {
+        if (pollHandle === null) startPolling();
+      } else {
+        stopPolling();
+      }
+    } finally {
+      if (sequence === refreshSequence && generation === requestGeneration) {
+        state.loading = false;
+        if (ensureConfigurationContinuationIsCurrent(expectedConfiguration, requestGeneration, staleMessage)) render();
+      }
     }
   }
 
@@ -1314,7 +1344,7 @@ export function createRelaySetupController({
     const expectedConfiguration = state.checkedConfigurationFingerprint;
     const requestGeneration = generation;
     pollHandle = setIntervalFn(() => {
-      if (pollInFlight) return;
+      if (pollInFlight || creationRequestInFlight || state.loading) return;
       pollInFlight = true;
       const sequence = refreshSequence + 1;
       void refresh({ expectedConfiguration, requestGeneration }).catch((error) => {
@@ -1392,7 +1422,7 @@ export function createRelaySetupController({
   async function createRelay() {
     const assessment = recoveryState();
     if (assessment && !assessment.Ready) return;
-    if (creationRequestInFlight || state.creating || state.activeRelayId
+    if (creationRequestInFlight || state.loading || state.creating || state.activeRelayId
       || (variantName(state.notifyResult) === 'ManualRecoveryRequired' && !recoveryState()?.Ready)) return;
     const resumableSetup = isResumableSetup();
     if (variantName(state.notifyResult) === 'InProgress' && !resumableSetup) return;
@@ -1521,7 +1551,8 @@ export function createRelaySetupController({
         rejectStaleCheckedConfiguration('The Relay configuration changed. Check it again.');
         return;
       }
-      if (state.error || (viewState(state.view) !== 'NotFunded' && !recoveryQuote())
+      if (creationRequestInFlight || state.loading || ['Unsafe', 'CheckPending'].includes(variantName(recoveryState()))
+        || state.error || (viewState(state.view) !== 'NotFunded' && !recoveryQuote())
         || variantName(state.notifyResult) === 'Active') return;
       const expected = state.checkedConfigurationFingerprint;
       const requestGeneration = generation;
@@ -1553,13 +1584,13 @@ export function createRelaySetupController({
     const split = fundingOutcome === 'split';
     const staging = document.getElementById('relay-funding-staging-alternative')?.open === true;
     setHidden('relay-funding-operating-note', future || split);
+    setHidden('relay-funding-direct-endowment', !future || staging);
     setHidden('relay-funding-future-flow', !future);
     setHidden('relay-funding-split-controls', !split);
     setHidden('relay-funding-destinations', future && !staging);
     setHtml('relay-funding-destinations', state.activeRelayId
       ? renderRelayFundingCards(state.fundingDestinations, selectedFundingIndex()) : '');
-    const percentage = Number(document.getElementById('relay-funding-percentage')?.value || 50);
-    setText('relay-funding-split-note', `${percentage}% gross operating funding and ${100 - percentage}% future funding. Ledger fees reduce net receipts. Processing and fee thresholds apply; staging may need more deposits. The full recipient account selects the split, not a numeric memo.`);
+    setText('relay-funding-split-note', 'Pay this complete account without a routing memo. Fees reduce both shares; the endowment share may wait for more deposits.');
   }
 
   function editConfiguration() {
@@ -1599,6 +1630,29 @@ export function createRelaySetupController({
     listInputs('target')[0]?.focus?.();
   }
 
+  function bindEndowmentCopy(buttonId, valueId) {
+    document.getElementById(buttonId)?.addEventListener('click', async () => {
+      if (!checkedConfigurationStillMatchesVisibleForm() || !state.activeRelayId
+        || fundingOutcome !== 'future'
+        || document.getElementById('relay-funding-staging-alternative')?.open) return;
+      const activeRelayId = state.activeRelayId;
+      const selection = fundingSelection;
+      const value = valueId === 'relay-funding-endowment-memo'
+        ? relayEndowmentMemo(activeRelayId) : JUPITER_STAKING_ACCOUNT.address;
+      let message = 'Copied.';
+      try {
+        if (typeof copyTextToClipboard !== 'function') throw new Error('Clipboard unavailable');
+        await copyTextToClipboard(value);
+      } catch {
+        message = 'Copy failed. Select and copy the value manually.';
+      }
+      if (state.activeRelayId === activeRelayId && selection === fundingSelection
+        && document.getElementById(valueId)?.textContent === value) {
+        setText('relay-funding-copy-status', message);
+      }
+    });
+  }
+
   function bindFundingCopies() {
     const container = document.getElementById('relay-funding-destinations');
     if (!container || container.dataset.bound === 'true') return;
@@ -1612,7 +1666,9 @@ export function createRelaySetupController({
       }
       const index = Number.parseInt(button.dataset.relayFundingIndex || '', 10);
       const field = button.dataset.relayFundingCopy;
-      if (index !== selectedFundingIndex()) return;
+      if (index !== selectedFundingIndex()
+        || (fundingOutcome === 'future'
+          && !document.getElementById('relay-funding-staging-alternative')?.open)) return;
       const selection = fundingSelection;
       const destination = state.fundingDestinations[index];
       const value = destination?.[field];
@@ -1629,7 +1685,7 @@ export function createRelaySetupController({
           || state.fundingDestinations[index] !== destination
           || destination[field] !== value
         ) return;
-        setText('relay-funding-copy-status', `${destination.name}: copied.`);
+        setText('relay-funding-copy-status', 'Copied.');
       } catch {
         if (
           fundingSelection !== selection
@@ -1717,7 +1773,7 @@ export function createRelaySetupController({
       form.dataset.bound = 'true';
       form.addEventListener('submit', (event) => {
         event.preventDefault();
-        if (!creationRequestInFlight) void submitConfiguration();
+        if (!creationRequestInFlight && !state.loading) void submitConfiguration();
       });
     }
     const createButton = document.getElementById('relay-setup-create');
@@ -1728,10 +1784,12 @@ export function createRelaySetupController({
     bindCopy('copy-relay-setup-icrc-account', 'relay-setup-icrc-account');
     bindCopy('copy-relay-setup-account-identifier', 'relay-setup-account-identifier');
     bindFundingCopies();
+    bindEndowmentCopy('relay-funding-copy-endowment-memo', 'relay-funding-endowment-memo');
+    bindEndowmentCopy('relay-funding-copy-staking-account', 'relay-funding-staking-account');
     document.getElementById('relay-setup-edit')?.addEventListener('click', editConfiguration);
     document.getElementById('relay-setup-another')?.addEventListener('click', configureAnotherRelay);
     document.getElementById('relay-setup-recheck')?.addEventListener('click', () => {
-      if (!creationRequestInFlight) void submitConfiguration();
+      if (!creationRequestInFlight && !state.loading) void submitConfiguration();
     });
     document.getElementById('relay-setup-error-focus')?.addEventListener('click', () => {
       const { firstInvalidInput } = validateVisibleConfiguration({ includeIncomplete: true });

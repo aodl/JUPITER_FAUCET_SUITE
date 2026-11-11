@@ -179,7 +179,6 @@ mod tests {
     #[test]
     fn decode_post_upgrade_args_decodes_upgrade_record() {
         let raw = encode_args((Some(UpgradeArgs {
-            relay_legacy_module_hash: None,
             staking_account: Some(alternate_account()),
             ledger_canister_id: None,
             index_canister_id: None,
