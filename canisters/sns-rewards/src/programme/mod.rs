@@ -3,6 +3,7 @@ mod discovery;
 mod governance_client;
 mod patron;
 pub(crate) mod refresh;
+mod relay;
 #[cfg(feature = "debug_api")]
 pub(crate) use patron::trap_callback_once;
 pub(crate) mod participation;
@@ -14,7 +15,7 @@ pub(crate) mod treasury;
 pub mod types;
 
 use std::cell::Cell;
-pub use storage::{configure, read, record};
+pub use storage::{configure, lookup, read, record};
 
 /// Keep durable review evidence bounded even if a remote reject/decode message
 /// contains a full response dump. Preserve a UTF-8 prefix and full-message hash.
@@ -90,8 +91,8 @@ pub fn recover_dispatch() {
     }
 }
 
-/// One monotonically increasing namespace for independent Relay and patron
-/// snapshots. No await separates allocation from publication in either scanner.
+/// One monotonically increasing namespace for legacy and programme publications.
+/// The configured jUP programme shares one scan/result between both consumers.
 pub(crate) fn allocate_snapshot_id() -> u64 {
     let id = crate::state::with_state(|s| s.next_snapshot_id).max(
         read()
@@ -106,10 +107,8 @@ pub(crate) fn allocate_snapshot_id() -> u64 {
 
 pub(crate) fn bind_relay_root() {
     if let Some(config) = read().config {
-        if crate::state::with_state(|s| s.config.reward_sns_root_canister_id)
-            != Some(config.jup_root)
-        {
-            crate::state::invalidate_for_root(Some(config.jup_root));
-        }
+        // The programme scan now owns both consumers. Retire any legacy map,
+        // even when its Root already equals jUP; the frozen batch is separate.
+        crate::state::invalidate_for_root(Some(config.jup_root));
     }
 }

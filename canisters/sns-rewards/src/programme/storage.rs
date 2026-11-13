@@ -1,4 +1,4 @@
-//! New, disjoint memories. Existing V1 metadata/owner slots (0..=2) are untouched.
+//! Disjoint programme memories; the deployed V1 layout in slots 0..=2 is retained.
 use super::types::*;
 use candid::Principal;
 use ic_stable_structures::{
@@ -13,6 +13,7 @@ type Owners = StableBTreeMap<[u8; 32], Vec<u8>, Memory>;
 thread_local! {
     static META: RefCell<Option<StableCell<Vec<u8>, Memory>>> = const {RefCell::new(None)};
     static OWNERS_A: RefCell<Option<Owners>> = const {RefCell::new(None)};
+    static OWNERS_C: RefCell<Option<Owners>> = const {RefCell::new(None)};
     static OWNERS_B: RefCell<Option<Owners>> = const {RefCell::new(None)};
     static RECORDS: RefCell<Option<StableBTreeMap<u64, Vec<u8>, Memory>>> = const {RefCell::new(None)};
 }
@@ -48,6 +49,7 @@ fn owners<R>(slot: u8, f: impl FnOnce(&mut Owners) -> R) -> R {
     let (map, id) = match slot {
         0 => (&OWNERS_A, 4),
         1 => (&OWNERS_B, 5),
+        2 => (&OWNERS_C, 21),
         _ => panic!("owner slot"),
     };
     map.with_borrow_mut(|map| f(map.get_or_insert_with(|| StableBTreeMap::init(memory(id)))))
@@ -65,7 +67,7 @@ pub fn lookup(slot: u8, account: [u8; 32]) -> Option<Owner> {
             .map(|v| candid::decode_one(&v).expect("owner record"))
     })
 }
-pub fn insert(slot: u8, principal: Principal, jup: bool, neuron: Option<Vec<u8>>) {
+pub fn insert(slot: u8, principal: Principal, neuron: Option<Vec<u8>>) {
     let key = account_identifier_bytes(principal, None);
     owners(slot, |map| {
         let mut value: Owner = map
@@ -73,17 +75,11 @@ pub fn insert(slot: u8, principal: Principal, jup: bool, neuron: Option<Vec<u8>>
             .map(|v| candid::decode_one(&v).expect("owner record"))
             .unwrap_or(Owner {
                 principal,
-                jup: false,
-                io: false,
                 compound_neuron: None,
             });
-        value.jup |= jup;
-        value.io |= !jup;
-        if jup {
-            if let Some(id) = neuron {
-                if value.compound_neuron.as_ref().is_none_or(|old| &id < old) {
-                    value.compound_neuron = Some(id);
-                }
+        if let Some(id) = neuron {
+            if value.compound_neuron.as_ref().is_none_or(|old| &id < old) {
+                value.compound_neuron = Some(id);
             }
         }
         map.insert(key, candid::encode_one(value).expect("encode owner"));
@@ -119,7 +115,6 @@ pub fn put(record: &PatronRecord) {
 
 pub fn configure(config: ProgrammeConfig) -> Result<(), String> {
     config.validate()?;
-    config.validate_activation(cfg!(any(test, feature = "debug_api")))?;
     let current = read();
     if current.config.as_ref() == Some(&config) {
         return Ok(());
@@ -153,6 +148,7 @@ pub fn configure(config: ProgrammeConfig) -> Result<(), String> {
     }
     clear(0);
     clear(1);
+    clear(2);
     mutate(|state| {
         state.next_snapshot = state
             .next_snapshot

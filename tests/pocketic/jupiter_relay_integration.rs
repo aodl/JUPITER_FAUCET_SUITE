@@ -3613,7 +3613,7 @@ impl RealSplitterRewardEnv {
                 }),
                 permissions: vec![SnsNeuronPermission {
                     principal: Some(*owner),
-                    permission_type: vec![1, 2, 3],
+                    permission_type: vec![1, 2, 3, 5],
                 }],
                 cached_neuron_stake_e8s: 100_000_000,
                 neuron_fees_e8s: 0,

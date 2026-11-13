@@ -16,12 +16,20 @@ def load():
     return value
 
 
+def minimum_supported_buyer_e8s(value):
+    """Pinned SNS Init basket inequality, rounded up at the ICP e8s boundary."""
+    required = (value['sale_basket_count'] *
+                (value['minimum_neuron_stake_e8s'] + value['transfer_fee_e8s']) *
+                value['sale_max_icp_e8s'])
+    return (required + value['sale_allocation_e8s'] - 1) // value['sale_allocation_e8s']
+
+
 def launch_candidate(governance_fixture, reserve_controller, proposer_controller, dapp, logo):
     """Official SNS CLI v2 input. All principals here are labelled local fixtures.
 
     Does not create/install canisters or select a production NNX principal.
     The basket is 0/one-year; only its one-year member meets Jupiter bonus policy.
-    Equal framework minimum/maximum delay is validated by the official CLI;
+    Native voting starts at six months; the maximum delay is one year.
     Jupiter eligibility independently requires exactly one non-dissolving year.
     """
     e = load()
@@ -39,11 +47,11 @@ def launch_candidate(governance_fixture, reserve_controller, proposer_controller
                       'initial_voting_period': seconds(e['jupiter_voting_seconds']),
                       'maximum_wait_for_quiet_deadline_extension': seconds(e['wait_for_quiet_seconds'])},
         'Neurons': {'minimum_creation_stake': tokens(e['minimum_neuron_stake_e8s'])},
-        'Voting': {'minimum_dissolve_delay': seconds(e['year_seconds']),
+        'Voting': {'minimum_dissolve_delay': seconds(e['minimum_voting_dissolve_delay_seconds']),
                    'MaximumVotingPowerBonuses': {
-                       'DissolveDelay': {'duration': seconds(e['year_seconds']), 'bonus': '0%'},
-                       'Age': {'duration': seconds(e['year_seconds'] * 4), 'bonus': '0%'}},
-                   'RewardRate': {'initial': str(e['native_initial_reward_basis_points'] // 100) + '%', 'final': str(e['native_final_reward_basis_points'] // 100) + '%', 'transition_duration': '0 seconds'}},
+                       'DissolveDelay': {'duration': seconds(e['max_dissolve_delay_seconds']), 'bonus': str(e['dissolve_bonus_percentage']) + '%'},
+                       'Age': {'duration': seconds(e['max_neuron_age_for_age_bonus']), 'bonus': str(e['age_bonus_percentage']) + '%'}},
+                   'RewardRate': {'initial': str(e['native_initial_reward_basis_points'] // 100) + '%', 'final': str(e['native_final_reward_basis_points'] // 100) + '%', 'transition_duration': seconds(e['native_reward_transition_seconds'])}},
         'Distribution': {'Neurons': [
             {'principal': controller, 'memo': memo, 'stake': tokens(e[key]),
              'dissolve_delay': seconds(delay), 'vesting_period': '0 seconds'}

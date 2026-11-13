@@ -3,3 +3,6 @@
 use candid::{CandidType, Deserialize, Principal};
 use serde::Serialize;
 include!("sns.rs");
+
+mod permissions;
+pub use permissions::{NeuronPermissionType, GOVERNANCE_ERROR_NOT_FOUND};

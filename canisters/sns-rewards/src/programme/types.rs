@@ -6,11 +6,13 @@ use serde::Serialize;
 pub struct ProgrammeConfig {
     pub version: u64,
     pub jup_root: Principal,
-    pub io_root: Principal,
+    /// Trusted Historian factory; None supports only the canonical Relay.
+    pub relay_factory: Option<Principal>,
     pub icp_ledger: Principal,
     pub icp_index: Principal,
     pub staking_account: Account,
     pub canonical_relay: Principal,
+    pub treasury_stake: Option<TreasuryStakeBinding>,
     pub protocol_governance_neuron: Vec<u8>,
     pub excluded_icp_accounts: Vec<Vec<u8>>,
     pub excluded_jup_neurons: Vec<Vec<u8>>,
@@ -20,6 +22,14 @@ pub struct ProgrammeConfig {
     pub patron_enabled: bool,
     pub snapshot_max_age_seconds: u64,
     pub automation: Option<AutomationConfig>,
+}
+
+/// Reviewed Disburser/NNS identity. The staking bytes come from staking_account,
+/// and must match the public full neuron; never derive them from the neuron ID.
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct TreasuryStakeBinding {
+    pub disburser: Principal,
+    pub neuron_id: u64,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -41,19 +51,14 @@ pub struct AutomationConfig {
 }
 
 impl ProgrammeConfig {
-    /// General provenance is incomplete. Only the explicit debug/local fixture
-    /// build may exercise direct patron or native treasury payments.
-    pub fn validate_activation(&self, local_test_context: bool) -> Result<(), String> {
-        if !local_test_context
-            && (self.patron_enabled || self.automation.as_ref().is_some_and(|a| a.treasury_enabled))
-        {
-            return Err("patron and treasury activation blocked: Relay FIFO/splitter and mixed treasury provenance are incomplete".into());
-        }
-        Ok(())
-    }
-
     pub(super) fn preserves_financial_bindings(&self, old: &Self) -> bool {
         self.jup_root == old.jup_root
+            && self.canonical_relay == old.canonical_relay
+            && self.relay_factory == old.relay_factory
+            && old
+                .treasury_stake
+                .as_ref()
+                .is_none_or(|old| self.treasury_stake.as_ref() == Some(old))
             && self.icp_ledger == old.icp_ledger
             && self.icp_index == old.icp_index
             && self.staking_account == old.staking_account
@@ -64,7 +69,6 @@ impl ProgrammeConfig {
     pub fn validate(&self) -> Result<(), String> {
         for id in [
             self.jup_root,
-            self.io_root,
             self.icp_ledger,
             self.icp_index,
             self.staking_account.owner,
@@ -74,13 +78,32 @@ impl ProgrammeConfig {
                 return Err("unsafe programme principal".into());
             }
         }
+        if self.icp_ledger != jupiter_ic_clients::constants::icp_ledger_id()
+            || self.icp_index != jupiter_ic_clients::constants::icp_index_id()
+        {
+            return Err("programme requires the canonical ICP Ledger and Index".into());
+        }
+        if self.staking_account.owner != jupiter_ic_clients::constants::nns_governance_id()
+            || self.staking_account.subaccount.is_none()
+        {
+            return Err("programme requires a canonical NNS Governance staking subaccount".into());
+        }
+        if self.treasury_stake.as_ref().is_some_and(|b| {
+            b.neuron_id == 0
+                || b.disburser == Principal::anonymous()
+                || b.disburser == Principal::management_canister()
+        }) {
+            return Err("unsafe treasury Disburser/neuron binding".into());
+        }
         if let Some(auto) = &self.automation {
             if auto.proposer_neuron.len() != 32
                 || auto.proposer_neuron == self.protocol_governance_neuron
                 || auto.targets.len() > 4
                 || self.reserve_transport_neuron.as_ref() == Some(&auto.proposer_neuron)
                 || (auto.treasury_enabled
-                    && (self.patron_enabled || auto.treasury_max_proposal_icp_e8s == 0))
+                    && (auto.treasury_max_proposal_icp_e8s == 0
+                        || self.treasury_stake.is_none()
+                        || self.staking_account.subaccount.is_none()))
                 || !self.excluded_jup_neurons.contains(&auto.proposer_neuron)
                 || auto.targets.iter().any(|t| {
                     t.neuron.len() != 32
@@ -100,7 +123,6 @@ impl ProgrammeConfig {
             }
         }
         if self.version == 0
-            || self.jup_root == self.io_root
             || !(86_400..=604_800).contains(&self.snapshot_max_age_seconds)
             || self.excluded_jup_neurons.len() > 16
             || self.protocol_governance_neuron.len() != 32
@@ -120,6 +142,12 @@ impl ProgrammeConfig {
                 || *id == self.protocol_governance_neuron
         }) {
             return Err("reserve transport must be a distinct explicitly excluded neuron".into());
+        }
+        if self
+            .relay_factory
+            .is_some_and(|p| p == Principal::anonymous() || p == Principal::management_canister())
+        {
+            return Err("unsafe Relay factory principal".into());
         }
         Ok(())
     }
@@ -144,11 +172,13 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    pub fn valid_for(&self, config: &ProgrammeConfig, now: u64) -> bool {
+    pub(crate) fn matches_configuration(&self, config: &ProgrammeConfig) -> bool {
         self.config_version == config.version
-            && self.sources.len() == 2
+            && self.sources.len() == 1
             && self.sources[0].root == config.jup_root
-            && self.sources[1].root == config.io_root
+    }
+    pub fn valid_for(&self, config: &ProgrammeConfig, now: u64) -> bool {
+        self.matches_configuration(config)
             && self.completed_at_seconds <= now
             && now - self.completed_at_seconds <= config.snapshot_max_age_seconds
     }
@@ -157,15 +187,12 @@ impl Snapshot {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct Owner {
     pub principal: Principal,
-    pub jup: bool,
-    pub io: bool,
     pub compound_neuron: Option<Vec<u8>>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct Scan {
     pub sources: Vec<Source>,
-    pub source_index: u8,
     pub cursor: Option<Vec<u8>>,
     pub pages: u32,
     pub started_at_seconds: u64,
@@ -179,6 +206,27 @@ pub struct Batch {
     pub previous_end: Option<u64>,
     pub cursor: Option<u64>,
     pub oldest: Option<u64>,
+}
+
+/// Relay funding establishes aggregate delivery to the intermediary only.
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum PatronRoute {
+    Direct,
+    UnsupportedRelay {
+        claimed_relay: Principal,
+    },
+    RelayPot {
+        relay: Principal,
+        factory_setup_key: Option<Vec<u8>>,
+    },
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct RelayLookup {
+    pub block: u64,
+    pub relay: Principal,
+    pub cursor: Vec<u8>,
+    pub revision: u64,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -197,6 +245,12 @@ pub struct PatronRecord {
     pub snapshot_id: u64,
     pub ownership_snapshot: Snapshot,
     pub recognition: Option<Owner>,
+    pub route: PatronRoute,
+    pub icp_ledger: Principal,
+    pub staking_account: Account,
+    pub relay_factory: Option<Principal>,
+    pub source_spender: Option<Vec<u8>>,
+    pub commitment_memo: Vec<u8>,
     pub config_version: u64,
     pub contributor_icp_account: Vec<u8>,
     pub commitment_timestamp_seconds: u64,
@@ -223,6 +277,7 @@ pub struct Runtime {
     pub batch: Option<Batch>,
     pub completed_end_block: Option<u64>,
     pub pending_block: Option<u64>,
+    pub relay_lookup: Option<RelayLookup>,
     pub last_error: Option<String>,
     pub verified_e8s: u128,
     pub assumed_e8s: u128,

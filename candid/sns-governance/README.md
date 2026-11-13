@@ -24,3 +24,17 @@ binding digest. A framework upgrade needs explicit schema/artifact review.
 Launch CLI and SNS-W source/artifact pins are separate in
 `deploy/acceptance/launch-tools.json`; the six installed SNS components need not
 share one upstream revision.
+
+Permission integers use separately generated `NeuronPermissionType` constants from
+that same revision's `rs/sns/governance/proto/ic_sns_governance/pb/v1/governance.proto`.
+`tools/acceptance/generate-permissions.py <verified-proto> <output.rs>` checks the
+whole source SHA-256 before generation. Candid itself carries these as `int32`.
+The ownership allowlist follows `Neuron::PERMISSIONS_RELATED_TO_VOTING` and
+`check_principal_authorized_to_change_permissions` in that revision's
+`rs/sns/governance/src/neuron.rs`: ManageVotingPermission can grant Vote,
+SubmitProposal and itself, but cannot grant economic rights. SubmitProposal can
+incur rejection fees; normal voting delegation remains supported. Competing
+dissolve, permission-management, disbursement, split and maturity rights, as well
+as unknown permission codes, make the individual neuron unsafe for attribution.
+The named `Unspecified` value (0) is explicitly unused in this protobuf. Official
+sale neurons include it; it grants no authority and is ignored.

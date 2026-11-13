@@ -1246,7 +1246,7 @@ mod tests {
         assert!(!staking_poke_is_relevant(&Nat::from(99_999_999u64)));
         assert!(staking_poke_is_relevant(&Nat::from(100_000_000u64)));
         let huge: Nat = format!("1{}", "0".repeat(100)).parse().unwrap();
-        assert!(huge > Nat::from(u128::MAX));
+        assert!(huge > u128::MAX);
         assert!(staking_poke_is_relevant(&huge));
     }
 

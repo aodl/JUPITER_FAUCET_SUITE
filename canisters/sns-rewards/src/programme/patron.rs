@@ -1,5 +1,5 @@
-//! Direct commitment processing. Unknown Relay provenance is held, never treated
-//! as an unmatched user or rewarded under the Relay's own principal.
+//! One canonical commitment cursor and one-attempt journal for direct rewards
+//! and authenticated aggregate Relay pots.
 use super::{discovery, storage, types::*};
 use candid::Nat;
 use ic_cdk::call::{Call, CallFailed};
@@ -18,6 +18,10 @@ thread_local! { static TRAP_CALLBACK: std::cell::Cell<bool> = const { std::cell:
 #[cfg(feature = "debug_api")]
 pub(crate) fn trap_callback_once() {
     TRAP_CALLBACK.with(|flag| flag.set(true));
+}
+
+fn is_minting_destination(account: Account, governance: candid::Principal) -> bool {
+    account.owner == governance && account.subaccount.is_none_or(|bytes| bytes == [0; 32])
 }
 
 pub fn finish(record: &PatronRecord) {
@@ -71,7 +75,6 @@ pub async fn tick(now: u64) -> Result<(), String> {
     if !config.patron_enabled {
         return Ok(());
     }
-    config.validate_activation(cfg!(any(test, feature = "debug_api")))?;
     if config.reserve_transport_neuron.is_some()
         && !matches!(
             super::reserve::read(),
@@ -103,7 +106,7 @@ pub async fn tick(now: u64) -> Result<(), String> {
     if state.batch.is_none() {
         let snapshot = state
             .snapshot
-            .ok_or("waiting for both required ownership sources")?;
+            .ok_or("waiting for complete jUP recognition")?;
         if !snapshot.valid_for(&config, now) {
             return Err("waiting for a complete fresh ownership snapshot".into());
         }
@@ -151,6 +154,9 @@ pub async fn tick(now: u64) -> Result<(), String> {
         });
     }
     let batch = storage::read().batch.ok_or("batch unavailable")?;
+    if !batch.snapshot.matches_configuration(&config) {
+        return Err("pinned batch does not bind a complete single-source jUP generation".into());
+    }
     if batch.cursor.is_some_and(|id| {
         Some(id) == batch.oldest || batch.previous_end.is_some_and(|old| id <= old)
     }) {
@@ -201,7 +207,11 @@ pub async fn tick(now: u64) -> Result<(), String> {
         return Ok(());
     }
     let IndexOperation::Transfer {
-        from, to, amount, ..
+        from,
+        to,
+        amount,
+        spender,
+        ..
     } = &tx.transaction.operation
     else {
         advance(tx.id);
@@ -222,14 +232,16 @@ pub async fn tick(now: u64) -> Result<(), String> {
         .map_err(|_| "invalid canonical sender")?
         .try_into()
         .map_err(|_| "invalid canonical sender length")?;
-    let relay_one = {
-        let mut sub = [0; 32];
-        sub[31] = 1;
-        account_identifier_bytes(config.canonical_relay, Some(sub))
+    let relay_candidate = super::relay::candidate(sender, memo);
+    let route = if let Some(relay) = relay_candidate {
+        if spender.is_some() {
+            None
+        } else {
+            super::relay::classify(&config, tx.id, relay).await?
+        }
+    } else {
+        Some(PatronRoute::Direct)
     };
-    if sender == relay_one {
-        return Err(format!("Relay contribution {} awaits complete original-contributor provenance; not classified or paid", tx.id));
-    }
     let timestamp = tx
         .transaction
         .timestamp
@@ -250,7 +262,11 @@ pub async fn tick(now: u64) -> Result<(), String> {
         || [reserve.owner, source.governance, config.canonical_relay]
             .into_iter()
             .any(|p| account_identifier_bytes(p, None) == sender);
-    let skip = if excluded {
+    let skip = if relay_candidate.is_some() && route.is_none() {
+        Some("unsupported Relay sender or spender")
+    } else if matches!(route, Some(PatronRoute::RelayPot { .. })) {
+        None
+    } else if excluded {
         Some("protocol capital excluded")
     } else if owner.is_none() {
         Some("absent from the pinned complete ownership snapshot; final")
@@ -261,7 +277,22 @@ pub async fn tick(now: u64) -> Result<(), String> {
         contribution_block: tx.id,
         snapshot_id: batch.snapshot.id,
         ownership_snapshot: batch.snapshot.clone(),
-        recognition: owner.clone(),
+        recognition: if matches!(route, Some(PatronRoute::Direct)) {
+            owner.clone()
+        } else {
+            None
+        },
+        route: route.unwrap_or_else(|| PatronRoute::UnsupportedRelay {
+            claimed_relay: relay_candidate.expect("unsupported Relay candidate"),
+        }),
+        relay_factory: config.relay_factory,
+        icp_ledger: config.icp_ledger,
+        staking_account: config.staking_account,
+        source_spender: spender
+            .as_ref()
+            .map(|s| hex::decode(s).map_err(|_| "invalid canonical spender"))
+            .transpose()?,
+        commitment_memo: memo.to_vec(),
         config_version: config.version,
         contributor_icp_account: sender.to_vec(),
         commitment_timestamp_seconds: timestamp,
@@ -290,7 +321,8 @@ pub async fn tick(now: u64) -> Result<(), String> {
             reason: reason.into(),
         };
     } else {
-        let owner = owner.expect("recognised owner");
+        let direct_owner =
+            matches!(record.route, PatronRoute::Direct).then(|| owner.expect("recognised owner"));
         let ledger = IcrcLedgerCanister::new(source.ledger);
         let fee = ledger.fee_e8s().await.map_err(|e| e.to_string())?;
         let balance = ledger
@@ -299,9 +331,19 @@ pub async fn tick(now: u64) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         // Last external prerequisite: recheck the selected jUP neuron immediately
         // before freezing the payment. A revoked preference receives base liquid.
-        let compound = if let Some(id) = owner.compound_neuron {
-            let neuron = discovery::get_neuron(source.governance, id.clone()).await?;
-            discovery::compound_eligible(&neuron, owner.principal, &config).then_some(id)
+        let compound = if let Some((owner, id)) = direct_owner
+            .as_ref()
+            .and_then(|o| o.compound_neuron.clone().map(|id| (o, id)))
+        {
+            match discovery::lookup_neuron(source.governance, id.clone()).await? {
+                Some(neuron) => {
+                    if neuron.id.as_ref().map(|n| &n.id) != Some(&id) {
+                        return Err("selected neuron lookup returned a different identity".into());
+                    }
+                    discovery::compound_eligible(&neuron, owner.principal, &config).then_some(id)
+                }
+                None => None, // a canonical NotFound is a definitive loss of bonus eligibility
+            }
         } else {
             None
         };
@@ -319,10 +361,24 @@ pub async fn tick(now: u64) -> Result<(), String> {
             }
         } else {
             Account {
-                owner: owner.principal,
+                owner: match &record.route {
+                    PatronRoute::Direct => {
+                        direct_owner
+                            .as_ref()
+                            .expect("recognised direct owner")
+                            .principal
+                    }
+                    PatronRoute::RelayPot { relay, .. } => *relay,
+                    PatronRoute::UnsupportedRelay { .. } => {
+                        return Err("unsupported Relay cannot be dispatched".into())
+                    }
+                },
                 subaccount: None,
             }
         };
+        if is_minting_destination(record.to, source.governance) {
+            return Err("Governance default/minting Account cannot receive patron rewards".into());
+        }
         record.compounded_neuron = compound;
         if record.amount_e8s == 0 {
             record.outcome = PatronOutcome::Skipped {
@@ -404,6 +460,27 @@ pub async fn tick(now: u64) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn governance_default_and_zero_alias_are_never_reward_destinations() {
+        use icrc_ledger_types::icrc1::account::Account;
+        let governance = candid::Principal::from_slice(&[1, 1]);
+        for subaccount in [None, Some([0; 32])] {
+            assert!(super::is_minting_destination(
+                Account {
+                    owner: governance,
+                    subaccount
+                },
+                governance
+            ));
+        }
+        assert!(!super::is_minting_destination(
+            Account {
+                owner: governance,
+                subaccount: Some([1; 32])
+            },
+            governance
+        ));
+    }
     #[test]
     fn a_later_first_transfer_does_not_strand_an_empty_pinned_prefix() {
         assert!(super::canonical_empty_prefix(10, None));

@@ -96,7 +96,7 @@ pub fn operation(id: u64) -> Option<State> {
 }
 /// Explicit governed request, never an automatic recurring proposal loop.
 /// TransferVerified settles the native treasury leg only. Production activation
-/// remains blocked pending attribution of the downstream Relay funding credit.
+/// describes the staking Ledger credit, not a successful NNS cached-stake refresh.
 pub fn request_next(
     id: u64,
     expected_previous: Option<u64>,
@@ -217,9 +217,62 @@ pub fn framework_limit(balance: u64, rate: u64) -> u64 {
             .expect("large-treasury cap fits ICP u64")
     }
 }
+async fn verify_staking_binding(config: &ProgrammeConfig) -> Result<(), String> {
+    #[derive(CandidType)]
+    struct Request {
+        neuron_ids: Vec<u64>,
+        include_neurons_readable_by_caller: bool,
+        include_public_neurons_in_full_neurons: Option<bool>,
+    }
+    #[derive(CandidType, Deserialize)]
+    struct Id {
+        id: u64,
+    }
+    #[derive(CandidType, Deserialize)]
+    struct Neuron {
+        id: Option<Id>,
+        account: Vec<u8>,
+        controller: Option<Principal>,
+    }
+    #[derive(CandidType, Deserialize)]
+    struct Reply {
+        full_neurons: Vec<Neuron>,
+    }
+    let binding = config
+        .treasury_stake
+        .as_ref()
+        .ok_or("treasury needs reviewed Disburser/neuron binding")?;
+    let response: Reply =
+        ic_cdk::call::Call::bounded_wait(config.staking_account.owner, "list_neurons")
+            .with_arg(Request {
+                neuron_ids: vec![binding.neuron_id],
+                include_neurons_readable_by_caller: false,
+                include_public_neurons_in_full_neurons: Some(true),
+            })
+            .await
+            .map_err(|e| format!("treasury NNS binding unavailable: {e:?}"))?
+            .candid()
+            .map_err(|e| format!("treasury NNS binding decode: {e:?}"))?;
+    let [neuron] = response.full_neurons.as_slice() else {
+        return Err("treasury requires exactly the reviewed NNS neuron".into());
+    };
+    if neuron.id.as_ref().map(|id| id.id) != Some(binding.neuron_id)
+        || neuron.controller != Some(binding.disburser)
+        || Some(neuron.account.as_slice())
+            != config
+                .staking_account
+                .subaccount
+                .as_ref()
+                .map(|s| s.as_slice())
+    {
+        return Err("treasury Disburser controller/neuron/staking Account mismatch".into());
+    }
+    Ok(())
+}
+
 fn proposal(state: &State) -> sns::Proposal {
     sns::Proposal { title: format!("Jupiter treasury reinvestment v{} operation {}", state.config_version, state.operation_id.expect("treasury operation ID")),
-        summary: format!("Reinvest {} ICP e8s through the canonical Relay subaccount 1. Normal base/age-bonus economics apply; this protocol capital is excluded from patron jUP issuance.", state.amount_e8s),
+        summary: format!("Reinvest {} ICP e8s directly into the reviewed Disburser neuron staking Account, without a routing memo. Normal base/age-bonus economics apply; this protocol capital is excluded from patron jUP issuance.", state.amount_e8s),
         url: String::new(), action: Some(sns::Action::TransferSnsTreasuryFunds(sns::TransferSnsTreasuryFunds {
             from_treasury: 1, to_principal: Some(state.destination.owner),
             to_subaccount: state.destination.subaccount.map(|subaccount| sns::Subaccount { subaccount: subaccount.to_vec() }),
@@ -251,7 +304,6 @@ async fn tick_inner(
     if !auto.treasury_enabled {
         return Ok(());
     }
-    config.validate_activation(cfg!(any(test, feature = "debug_api")))?;
     let source = source_state
         .source
         .as_ref()
@@ -289,8 +341,10 @@ async fn tick_inner(
         if quote.timestamp_seconds > now || now - quote.timestamp_seconds > 86_400 {
             return Err("native ICP treasury valuation quote is not fresh".into());
         }
-        let mut sub = [0; 32];
-        sub[31] = 1;
+        verify_staking_binding(config).await?;
+        if super::storage::read().config.as_ref() != Some(config) {
+            return Err("treasury configuration changed before operation admission".into());
+        }
         // No await from selecting/consuming the requested identity to persisting
         // the new operation. A duplicate request cannot create a successor.
         let requested = next_operation();
@@ -313,10 +367,7 @@ async fn tick_inner(
             amount_e8s: 0,
             actual_icp_fee_e8s: fee,
             start_block: 0,
-            destination: Account {
-                owner: config.canonical_relay,
-                subaccount: Some(sub),
-            },
+            destination: config.staking_account,
             phase: Phase::Scanning {
                 before: None,
                 spent_e8s: 0,
@@ -395,16 +446,24 @@ async fn tick_inner(
                 let amount = allowance
                     .min(available)
                     .min(u128::from(auto.treasury_max_proposal_icp_e8s));
-                let minimum = crate::economics::get()
-                    .minimum_faucet_commitment_e8s
-                    .checked_add(state.actual_icp_fee_e8s)
-                    .ok_or("Relay endowment minimum overflow")?;
+                let minimum = crate::economics::get().minimum_faucet_commitment_e8s;
                 if amount < u128::from(minimum) {
-                    state.phase = Phase::ManualReview("no feasible native treasury amount after seven-day limits, other commitments, retained buffer and both route fees; reviewed reactivation required".into());
+                    state.phase = Phase::ManualReview("no feasible native treasury amount after seven-day limits, other commitments, retained buffer and native transfer fee; reviewed reactivation required".into());
                 } else {
                     state.amount_e8s =
                         u64::try_from(amount).map_err(|_| "treasury amount overflow")?;
                     state.start_block = ledger.chain_length().await.map_err(|e| e.to_string())?;
+                    verify_staking_binding(config).await?;
+                    if super::storage::read().config.as_ref() != Some(config) {
+                        return Err(
+                            "treasury configuration changed before proposal dispatch".into()
+                        );
+                    }
+                    if state.destination != config.staking_account {
+                        return Err(
+                            "frozen treasury destination does not match staking Account".into()
+                        );
+                    }
                     state.phase = Phase::Submitting {
                         search_before: None,
                     };
@@ -559,6 +618,8 @@ async fn tick_inner(
                             && amount.e8s() == state.amount_e8s
                             && fee.e8s() == state.actual_icp_fee_e8s
                             && spender.is_none()
+                            && tx.transaction.memo == 0
+                            && tx.transaction.icrc1_memo.is_none()
                             && found.replace(tx.id).is_some()
                         {
                             state.phase = Phase::Uncertain(
@@ -627,14 +688,18 @@ mod tests {
         ProgrammeConfig {
             version: 7,
             jup_root: Principal::from_slice(&[1]),
-            io_root: Principal::from_slice(&[5]),
-            icp_ledger: Principal::from_slice(&[6]),
-            icp_index: Principal::from_slice(&[7]),
+            relay_factory: None,
+            icp_ledger: jupiter_ic_clients::constants::icp_ledger_id(),
+            icp_index: jupiter_ic_clients::constants::icp_index_id(),
             staking_account: Account {
-                owner: Principal::from_slice(&[8]),
-                subaccount: None,
+                owner: jupiter_ic_clients::constants::nns_governance_id(),
+                subaccount: Some([42; 32]),
             },
             canonical_relay: Principal::from_slice(&[4, 1]),
+            treasury_stake: Some(TreasuryStakeBinding {
+                disburser: Principal::from_slice(&[9]),
+                neuron_id: 42,
+            }),
             protocol_governance_neuron: vec![8; 32],
             excluded_icp_accounts: vec![],
             excluded_jup_neurons: vec![vec![8; 32], vec![9; 32]],

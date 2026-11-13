@@ -68,6 +68,26 @@ fn guard_debug_api_not_production() {
 }
 
 fn context_from_state() -> Option<RelayRewardContext> {
+    let programme = programme::read();
+    if let Some(config) = programme.config {
+        let snapshot = programme.snapshot?;
+        if !snapshot.matches_configuration(&config) {
+            return None;
+        }
+        let source = &snapshot.sources[0];
+        return Some(RelayRewardContext {
+            sns_root_canister_id: source.root,
+            sns_governance_canister_id: source.governance,
+            sns_ledger_canister_id: source.ledger,
+            snapshot_id: snapshot.id,
+            scan_started_at_timestamp_nanos: snapshot
+                .started_at_seconds
+                .saturating_mul(1_000_000_000),
+            scan_completed_at_timestamp_nanos: snapshot
+                .completed_at_seconds
+                .saturating_mul(1_000_000_000),
+        });
+    }
     state::with_state(|st| {
         let configured_root = st.config.reward_sns_root_canister_id?;
         let snapshot = st.active_snapshot.as_ref()?;
@@ -104,6 +124,24 @@ fn resolve_default_icp_accounts(
             };
         }
     }
+    let programme = programme::read();
+    if let Some(config) = &programme.config {
+        let Some(snapshot) = programme
+            .snapshot
+            .filter(|s| s.id == args.snapshot_id && s.matches_configuration(config))
+        else {
+            return ResolveDefaultIcpAccountsResult::SnapshotChanged;
+        };
+        return ResolveDefaultIcpAccountsResult::Ok(
+            args.account_identifiers
+                .into_iter()
+                .map(|id| {
+                    programme::lookup(snapshot.slot, id.try_into().expect("validated identifier"))
+                        .map(|owner| owner.principal)
+                })
+                .collect(),
+        );
+    }
     let Some(snapshot) = state::with_state(|st| st.active_snapshot.clone()) else {
         return ResolveDefaultIcpAccountsResult::SnapshotChanged;
     };
@@ -125,6 +163,7 @@ fn resolve_default_icp_accounts(
 
 fn initialize(config: state::Config, event: &str) {
     state::initialize(config);
+    state::adopt_secure_owner_policy();
     scheduler::install_timers();
     logging::lifecycle(event);
     logging::config();
@@ -159,6 +198,8 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
     let mut restored = state::restore();
     restored.scan_lock_state_ts = Some(0);
     state::set_state(restored);
+    // Old permission-count snapshots must never be exposed as secure ownership.
+    state::adopt_secure_owner_policy();
     programme::recover_dispatch();
     if let Some(config) = args.as_ref().and_then(|value| value.programme.clone()) {
         programme::configure(config).unwrap_or_else(|e| ic_cdk::trap(e));

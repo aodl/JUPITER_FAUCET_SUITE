@@ -7542,7 +7542,7 @@ fn relay_provisioning_budget_installs_production_payload_on_fiduciary_subnet() -
     };
     assert_eq!(status.module_hash, Some(expected));
     assert!(status.settings.controllers.is_empty());
-    assert!(status.memory_size <= Nat::from(256 * 1024 * 1024u64));
+    assert!(status.memory_size <= 256 * 1024 * 1024u64);
     assert!(
         env.pic.cycle_balance(child) >= 1_000_000_000_000,
         "post-install operating balance"

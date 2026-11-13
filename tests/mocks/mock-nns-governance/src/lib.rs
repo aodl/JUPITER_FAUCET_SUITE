@@ -20,6 +20,7 @@ struct GovState {
     claim_or_refresh_fails: bool,
     hidden_neuron_ids: BTreeSet<u64>,
     neuron_accounts: BTreeMap<u64, Vec<u8>>,
+    neuron_controllers: BTreeMap<u64, candid::Principal>,
 }
 
 thread_local! {
@@ -63,6 +64,7 @@ fn get_full_neuron(neuron_id: u64) -> NeuronResult {
     NeuronResult::Ok(Neuron {
         id: Some(NeuronId { id: neuron_id }),
         account: neuron_account(neuron_id),
+        controller: ST.with(|s| s.borrow().neuron_controllers.get(&neuron_id).copied()),
         aging_since_timestamp_seconds: aging_since,
         maturity_disbursements_in_progress: disb,
         ..Default::default()
@@ -80,6 +82,7 @@ fn list_neurons(req: ListNeurons) -> ListNeuronsResponse {
             .map(|id| Neuron {
                 id: Some(NeuronId { id }),
                 account: neuron_account(id),
+                controller: ST.with(|s| s.borrow().neuron_controllers.get(&id).copied()),
                 aging_since_timestamp_seconds: 0,
                 maturity_disbursements_in_progress: Some(vec![]),
                 ..Default::default()
@@ -262,4 +265,11 @@ mod tests {
         debug_reset();
         assert_eq!(neuron_account(42), original);
     }
+}
+
+#[ic_cdk::update]
+fn debug_set_neuron_controller(neuron_id: u64, controller: candid::Principal) {
+    ST.with_borrow_mut(|s| {
+        s.neuron_controllers.insert(neuron_id, controller);
+    });
 }

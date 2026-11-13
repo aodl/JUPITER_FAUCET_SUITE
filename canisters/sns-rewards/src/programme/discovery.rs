@@ -2,7 +2,7 @@ use super::{storage, types::*};
 use candid::{CandidType, Deserialize, Principal};
 use ic_cdk::call::Call;
 use jupiter_ic_clients::sns::SnsRootCanister;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum DissolveState {
@@ -26,9 +26,7 @@ struct Neurons {
     neurons: Vec<Neuron>,
 }
 
-/// Economic attribution requires Disburse authority. Vote-only delegates cannot
-/// redirect rewards. Multiple economic controllers use the existing distinct-
-/// permission count / lexicographic tie policy, restricted to those controllers.
+/// Shared economic-control predicate for recognition, compounding and participation.
 pub fn economic_owner(neuron: &Neuron) -> Option<Principal> {
     if neuron
         .cached_neuron_stake_e8s
@@ -38,26 +36,7 @@ pub fn economic_owner(neuron: &Neuron) -> Option<Principal> {
     {
         return None;
     }
-    let mut permissions: BTreeMap<Principal, BTreeSet<i32>> = BTreeMap::new();
-    for entry in &neuron.permissions {
-        if let Some(p) = entry.principal {
-            if p != Principal::anonymous() && p != Principal::management_canister() {
-                permissions
-                    .entry(p)
-                    .or_default()
-                    .extend(&entry.permission_type);
-            }
-        }
-    }
-    permissions
-        .into_iter()
-        .filter(|(_, codes)| codes.contains(&5))
-        .max_by(|(a, ac), (b, bc)| {
-            ac.len()
-                .cmp(&bc.len())
-                .then_with(|| b.as_slice().cmp(a.as_slice()))
-        })
-        .map(|(p, _)| p)
+    crate::policy::select_owner(&neuron.permissions)
 }
 
 pub fn compound_eligible(neuron: &Neuron, owner: Principal, config: &ProgrammeConfig) -> bool {
@@ -74,6 +53,12 @@ pub fn compound_eligible(neuron: &Neuron, owner: Principal, config: &ProgrammeCo
 }
 
 pub async fn get_neuron(governance: Principal, id: Vec<u8>) -> Result<Neuron, String> {
+    lookup_neuron(governance, id)
+        .await?
+        .ok_or("neuron definitively absent".into())
+}
+
+pub async fn lookup_neuron(governance: Principal, id: Vec<u8>) -> Result<Option<Neuron>, String> {
     #[derive(CandidType)]
     struct Request {
         neuron_id: Option<crate::clients::NeuronId>,
@@ -81,7 +66,7 @@ pub async fn get_neuron(governance: Principal, id: Vec<u8>) -> Result<Neuron, St
     #[derive(CandidType, Deserialize)]
     enum Reply {
         Neuron(Neuron),
-        Error(candid::Reserved),
+        Error(crate::generated::GovernanceError),
     }
     #[derive(CandidType, Deserialize)]
     struct Response {
@@ -96,7 +81,10 @@ pub async fn get_neuron(governance: Principal, id: Vec<u8>) -> Result<Neuron, St
         .candid()
         .map_err(|e| format!("get_neuron decode: {e:?}"))?;
     match response.result {
-        Some(Reply::Neuron(n)) => Ok(n),
+        Some(Reply::Neuron(n)) => Ok(Some(n)),
+        Some(Reply::Error(e)) if e.error_type == crate::generated::GOVERNANCE_ERROR_NOT_FOUND => {
+            Ok(None)
+        }
         _ => Err("neuron unavailable".into()),
     }
 }
@@ -130,9 +118,6 @@ pub async fn tick(now: u64) -> Result<(), String> {
     let Some(config) = state.config else {
         return Ok(());
     };
-    if state.batch.is_some() {
-        return Ok(());
-    } // its snapshot/slot stays frozen through history
     if state.scan.is_none() {
         if state
             .snapshot
@@ -141,10 +126,7 @@ pub async fn tick(now: u64) -> Result<(), String> {
         {
             return Ok(());
         }
-        let sources = vec![
-            resolve(config.jup_root).await?,
-            resolve(config.io_root).await?,
-        ];
+        let sources = vec![resolve(config.jup_root).await?];
         let decimals: u8 = Call::bounded_wait(sources[0].ledger, "icrc1_decimals")
             .await
             .map_err(|e| format!("jUP decimals unavailable: {e:?}"))?
@@ -153,24 +135,38 @@ pub async fn tick(now: u64) -> Result<(), String> {
         if decimals != crate::economics::get().decimals {
             return Err("jUP Ledger must use exactly eight decimals".into());
         }
-        if sources
-            .iter()
-            .flat_map(|s| [s.root, s.governance, s.ledger])
-            .collect::<BTreeSet<_>>()
-            .len()
-            != 6
+        let minting: Option<icrc_ledger_types::icrc1::account::Account> =
+            Call::bounded_wait(sources[0].ledger, "icrc1_minting_account")
+                .await
+                .map_err(|e| format!("jUP minting binding: {e:?}"))?
+                .candid()
+                .map_err(|e| format!("jUP minting binding decode: {e:?}"))?;
+        if minting
+            != Some(icrc_ledger_types::icrc1::account::Account {
+                owner: sources[0].governance,
+                subaccount: None,
+            })
         {
-            return Err("the two configured SNS sources must have distinct components".into());
+            return Err(
+                "jUP Ledger minting Account must be Root-resolved Governance default".into(),
+            );
         }
         if storage::read().config.as_ref() != Some(&config) {
             return Ok(());
         }
-        let slot = state.snapshot.as_ref().map_or(0, |s| 1 - s.slot);
+        let slot = (0..3)
+            .find(|slot| {
+                state.snapshot.as_ref().is_none_or(|s| s.slot != *slot)
+                    && state
+                        .batch
+                        .as_ref()
+                        .is_none_or(|b| b.snapshot.slot != *slot)
+            })
+            .expect("three slots cover active, staging and one pinned batch");
         storage::clear(slot);
         storage::mutate(|s| {
             s.scan = Some(Scan {
                 sources,
-                source_index: 0,
                 cursor: None,
                 pages: 0,
                 started_at_seconds: now,
@@ -182,7 +178,7 @@ pub async fn tick(now: u64) -> Result<(), String> {
     if scan.pages >= 10_000 {
         return Err("owner scan page cap: no complete snapshot published".into());
     }
-    let source = &scan.sources[scan.source_index as usize];
+    let source = &scan.sources[0];
     let request = crate::clients::ListNeurons {
         of_principal: None,
         limit: 100,
@@ -214,42 +210,35 @@ pub async fn tick(now: u64) -> Result<(), String> {
         cursor = Some(id.clone());
     }
     for n in &page.neurons {
-        if scan.source_index == 0
-            && n.id
-                .as_ref()
-                .is_some_and(|id| config.excluded_jup_neurons.contains(&id.id))
+        if n.id
+            .as_ref()
+            .is_some_and(|id| config.excluded_jup_neurons.contains(&id.id))
         {
             continue;
         }
-        if let Some(p) = economic_owner(n) {
-            let bonus = (scan.source_index == 0 && compound_eligible(n, p, &config))
+        if let Some(p) = economic_owner(n).filter(|p| *p != source.governance) {
+            let bonus = compound_eligible(n, p, &config)
                 .then(|| n.id.as_ref().expect("validated ID").id.clone());
-            storage::insert(scan.slot, p, scan.source_index == 0, bonus);
+            storage::insert(scan.slot, p, bonus);
         }
     }
-    let completed_id =
-        (page.neurons.is_empty() && scan.source_index == 1).then(super::allocate_snapshot_id);
+    let completed_id = page.neurons.is_empty().then(super::allocate_snapshot_id);
     storage::mutate(|s| {
         let scan = s.scan.as_mut().expect("fenced owner scan");
         scan.pages += 1;
         scan.cursor = cursor;
         if page.neurons.is_empty() {
-            if scan.source_index == 0 {
-                scan.source_index = 1;
-                scan.cursor = None;
-            } else {
-                let scan = s.scan.take().expect("completed owner scan");
-                s.next_snapshot = completed_id.expect("completed snapshot ID");
-                s.snapshot = Some(Snapshot {
-                    id: completed_id.expect("completed snapshot ID"),
-                    config_version: config.version,
-                    sources: scan.sources,
-                    started_at_seconds: scan.started_at_seconds,
-                    completed_at_seconds: now,
-                    slot: scan.slot,
-                    owners: storage::len(scan.slot),
-                });
-            }
+            let scan = s.scan.take().expect("completed owner scan");
+            s.next_snapshot = completed_id.expect("completed snapshot ID");
+            s.snapshot = Some(Snapshot {
+                id: completed_id.expect("completed snapshot ID"),
+                config_version: config.version,
+                sources: scan.sources,
+                started_at_seconds: scan.started_at_seconds,
+                completed_at_seconds: now,
+                slot: scan.slot,
+                owners: storage::len(scan.slot),
+            });
         }
     });
     Ok(())

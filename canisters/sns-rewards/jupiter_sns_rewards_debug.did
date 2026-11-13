@@ -95,8 +95,6 @@ type MirrorTarget = record {
   delivery_margin_seconds : nat64;
 };
 type Owner = record {
-  io : bool;
-  jup : bool;
   "principal" : principal;
   compound_neuron : opt blob;
 };
@@ -123,6 +121,12 @@ type PatronOutcome = variant {
 type PatronRecord = record {
   to : Account;
   recognition : opt Owner;
+  route : PatronRoute;
+  icp_ledger : principal;
+  staking_account : Account;
+  relay_factory : opt principal;
+  source_spender : opt blob;
+  commitment_memo : blob;
   refresh_result : opt text;
   created_at_time_nanos : nat64;
   launch_timestamp_seconds : nat64;
@@ -160,12 +164,14 @@ type Phase = variant {
   Submitting : record { search_before : opt nat64 };
   Proposed : record { proposal_id : nat64 };
 };
+type TreasuryStakeBinding = record { disburser : principal; neuron_id : nat64 };
 type ProgrammeConfig = record {
+  treasury_stake : opt TreasuryStakeBinding;
   reserve_subaccount : opt blob;
   protocol_governance_neuron : blob;
   launch_timestamp_seconds : opt nat64;
   staking_account : Account;
-  io_root : principal;
+  relay_factory : opt principal;
   excluded_icp_accounts : vec blob;
   jup_root : principal;
   excluded_jup_neurons : vec blob;
@@ -230,7 +236,10 @@ type ResolveDefaultIcpAccountsResult = variant {
   InvalidAccountIdentifier : record { index : nat32 };
   TooManyAccounts;
 };
+type PatronRoute = variant { Direct; UnsupportedRelay : record { claimed_relay : principal }; RelayPot : record { relay : principal; factory_setup_key : opt blob } };
+type RelayLookup = record { block : nat64; relay : principal; cursor : blob; revision : nat64 };
 type Runtime = record {
+  relay_lookup : opt RelayLookup;
   last_error : opt text;
   assumed_e8s : nat;
   snapshot : opt Snapshot;
@@ -247,7 +256,6 @@ type Scan = record { cursor : opt blob; event : Event; pages : nat32 };
 type Scan_1 = record {
   cursor : opt blob;
   slot : nat8;
-  source_index : nat8;
   started_at_seconds : nat64;
   sources : vec Source;
   pages : nat32;

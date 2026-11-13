@@ -184,10 +184,14 @@ a successful command alone is insufficient deployment evidence.
 
 [`economics.json`](economics.json) is consumed by the launch renderer, operational
 fixtures, Rust programme and economic tests. It conserves exactly 100 million
-jUP at eight decimals: 10 million governance, 10 thousand sale, 100 operational
-proposer and 89,989,900 reserve transport; built-in SNS treasury starts at zero.
-The transfer fee is 0.1 jUP, rejection charge 1 jUP, and native reward rates and
-voting-power age/delay bonuses are zero. Native participation events remain active.
+jUP at eight decimals: 10 million governance, 20 thousand sale, 100 operational
+proposer and 89,979,900 reserve transport; built-in SNS treasury starts at zero.
+The initial transfer fee is 0.01 jUP and the rejection charge is 1 jUP. Native
+reward rates remain zero. The native age bonus reaches an additional 200% after
+four years; the delay bonus reaches an additional 100% at one year. Voting starts
+at six months, while direct 2x compounding still requires exactly one year.
+Native participation events remain active. These weights determine relative
+shares of externally funded inventory, not an income rate.
 The Julian year is 31,557,600 seconds; four years is 1,461 days.
 
 The 10-million neuron is intended for NNX authority, whose implementation and
@@ -208,10 +212,12 @@ IO Wasm is a dependency.
 `production_launch.rs` validates the exact production allocation with the official
 NNS/SNS configuration converter. The large developer neurons are accepted by
 this pinned path; the historical developer-versus-swap restriction is not
-present. Equal one-year minimum/maximum voting delays are accepted. An initial
-10 ICP minimum buyer is authentically rejected for the two-neuron basket and
-1 jUP minimum stake plus fees. The supported minimum is 22 ICP. This buyer
-minimum does not change the 10,000–100,000 ICP total sale range.
+present. The six-month voting minimum and one-year maximum use native SNS
+parameters. The intended minimum buyer is 11 ICP. The exact basket inequality
+gives a 10.1 ICP lower bound at the maximum raise, with a 1 jUP minimum stake
+and 0.01 jUP fee. The real validator checks the adjacent e8s boundary. The
+10,000–100,000 ICP total sale range is unchanged. See [economic review](economic-review.md)
+for all parameters, native upgrade-policy limitations and reproducible stress assumptions.
 
 `sale_rehearsal.rs` deploys through real SNS-W, opens the real Swap, pays local ICP,
 and finalizes successful and failed sales. It verifies participant neurons,
@@ -238,13 +244,14 @@ Governance mode transition substitutes for finalization.
 The SNS Rewards [programme documentation](../../canisters/sns-rewards/README.md)
 defines discovery, final contribution assessment, fixed-point patron rewards,
 dispatch uncertainty, reserve custody, mirror bindings and participation shares.
-Production installs reject patron and treasury activation until complete
-Relay/splitter/mixed treasury provenance is implemented. Other modules remain
-explicitly configurable; direct payment tests use the labelled debug build. Existing installations
-retain their deployed root and stable state and enable no new transfers through
-an upgrade default. Production's OpenChat installation binding is untouched.
+Patron and treasury work require explicit reviewed configuration; upgrade defaults
+activate neither. Existing installations retain their deployed Root and durable
+financial state. The old permission-count snapshot is rebuilt before it can be
+used under the secure economic-control policy. Production's OpenChat binding is
+untouched. jUP-only snapshots serve both direct patron history and the existing
+Relay resolver, independently of IO availability.
 
-Two real official SNS instances exercise union ownership, direct liquid and
+Real official SNS instances exercise jUP-only ownership, direct liquid and
 compounded patron transfers, permissionless refresh, canonical Yes/No mirror
 ballots and observable target application settings. A deliberate Ledger fault
 boundary covers uncertain transfers that actually paid and actually did not pay.
@@ -270,27 +277,33 @@ universal guarantee. NNX's suggested four-day period is documentation only.
 
 The native treasury worker uses the same proposer, authenticated balances,
 seven-day/value limits and uniquely identified durable operations.
-It proposes ICP to canonical Relay subaccount 1 and verifies the actual Ledger
-transfer. Rejection/failure requires reviewed reactivation; ambiguity blocks
-ordinary reactivation. Only pinned Governance may explicitly request a new
-operation after the prior native transfer is conclusively verified, using a new
-increasing ID and exact predecessor without changing configuration. Per-operation
-history preserves both results. The integration fixture follows the actual native
-Treasury credit through real Relay forwarding and the real ICP Ledger to the
-staking Account, with only NNS neuron lookup/refresh mocked. The runtime journal
-still stops at the native Relay credit: complete FIFO/splitter and mixed capital
-attribution is not implemented, so production treasury automation stays disabled. Existing Relay memo/fee behavior and the
-normal 95% SNS Rewards / 5% D-QUORUM age-bonus split remain unchanged.
+It proposes ICP directly to the reviewed Disburser NNS neuron staking Account,
+with no routing memo, and verifies the canonical Ledger credit including its fee.
+Before dispatch, the NNS neuron ID, staking bytes and Disburser controller must
+match the explicit binding. Acceptance keeps Disburser
+`spoge-kaaaa-aaaas-amyoa-cai` and neuron `2234355977000034918`; staking bytes
+come from the reviewed profile, never from treating that ID as a memo.
 
-**Integration limits:** patron history pauses at canonical Relay subaccount-1
-commitments pending exact FIFO/splitter attribution; it does not mark those
-commitments ineligible or pay the canonical Relay principal. Other Relay-child
-and splitter routes are not recognised by this guard. General patron activation
-is rejected by production install/upgrade validation until those routes are
-integrated. Native treasury activation is also rejected until mixed-batch provenance exclusion is
-implemented. Direct patron processing, discovery, reserve transport, governance
-mirroring and participation collection remain independently testable. This
-branch therefore is not production activation readiness.
+Rejection/failure requires review; ambiguity blocks ordinary reactivation. Only
+pinned Governance can explicitly request a successor after verified transfer,
+using a new increasing ID and exact predecessor. No automatic proposal loop is
+introduced. Ledger credit does not prove cached stake refresh; the existing
+Disburser ClaimOrRefresh supplies that step. Local mocked NNS evidence must be
+labelled separately from real NNS execution.
+
+Direct memo-less treasury principal remains staked. It generates no patron jUP
+and no Relay pot, and Faucet's IgnoreBadMemo treatment excludes it from the valid
+beneficiary denominator. Normal later maturity allocations and unallocated base
+remainder to canonical Relay's default ICP Account are preserved. The 95% SNS
+Rewards / 5% D-QUORUM age-bonus split is unchanged.
+
+Genuine canonical or finalised factory Relay subaccount-1 endowments earn one
+base-rate reserve-funded jUP pot from their actual net staking credit. Relay needs
+no neuron; its unchanged distributor selects eligible contributors under its own
+historical cutoff, fee and retry policy. SNS Rewards performs no central FIFO or
+mixed-beneficiary reconstruction and promises no exact per-person Relay rate.
+A direct human commitment naming Relay in its memo still earns only the direct
+patron reward. IO settlement/distribution and NNX integration remain separate.
 
 ## IO contract handoff
 

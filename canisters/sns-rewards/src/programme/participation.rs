@@ -103,7 +103,10 @@ async fn tick_inner() -> Result<(), String> {
         .ok_or("no settled native participation event")?;
     let mut state = read();
     if state.active.as_ref().is_some_and(|e| {
-        e.source == source && e.round == event.round && e.config_version == config.version
+        e.source == source
+            && e.round == event.round
+            && e.end_timestamp_seconds == end
+            && e.config_version == config.version
     }) {
         return Ok(());
     }
@@ -190,7 +193,8 @@ async fn tick_inner() -> Result<(), String> {
         let narrow: discovery::Neuron =
             candid::decode_one(&candid::encode_one(n).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
-        if let Some(owner) = discovery::economic_owner(&narrow) {
+        if let Some(owner) = discovery::economic_owner(&narrow).filter(|p| *p != source.governance)
+        {
             entries.push((owner, shares));
         }
     }

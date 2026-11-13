@@ -387,7 +387,10 @@ type CanisterModuleHash = record {
   stable_memory_bytes : opt nat64;
   total_memory_bytes : opt nat64;
 };
+type RelayMembershipArgs = record { relay : principal; ledger : principal; staking_account : Account; cursor : opt blob; revision : opt nat64 };
+type RelayMembership = variant { Active : record { setup_key : blob }; Pending; Unsupported; Page : record { cursor : blob; revision : nat64 }; RegistryChanged; InvalidBinding };
 service : (InitArgs) -> {
+  get_relay_factory_membership : (RelayMembershipArgs) -> (RelayMembership) query;
   list_canister_aliases : (ListCanisterAliasesArgs) -> (ListCanisterAliasesResponse) query;
   get_canister_module_hashes : () -> (vec CanisterModuleHash) query;
   list_canisters : (ListCanistersArgs) -> (ListCanistersResponse) query;

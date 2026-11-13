@@ -114,6 +114,12 @@ jobs:
           python3 tools/acceptance/launch.py --sns-wasm --fetch
           cargo run --locked -p nns-bindgen-check --example sns -- candid/sns-governance/governance.did "$RUNNER_TEMP/sns.rs"
           cmp canisters/sns-rewards/src/generated/sns.rs "$RUNNER_TEMP/sns.rs"
+          curl --proto '=https' --tlsv1.2 --fail --show-error --silent --location \
+            https://raw.githubusercontent.com/dfinity/ic/98c898f8de068a1fc0e97ebc805f9fa7f315d862/rs/sns/governance/proto/ic_sns_governance/pb/v1/governance.proto \
+            -o "$RUNNER_TEMP/governance.proto"
+          printf '%s  %s\n' c8135574513ec10a9542079655b3fc85e0033f7c7b689bf0ab33a527927179f8 "$RUNNER_TEMP/governance.proto" | sha256sum --check --strict
+          python3 tools/acceptance/generate-permissions.py "$RUNNER_TEMP/governance.proto" "$RUNNER_TEMP/permissions.rs"
+          cmp canisters/sns-rewards/src/generated/permissions.rs "$RUNNER_TEMP/permissions.rs"
 
       - name: Prepare verified real blackhole fixture
         if: matrix.suite == 'historian_pocketic_integration'

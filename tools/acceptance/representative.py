@@ -24,15 +24,15 @@ def prepare(context, artifacts, output, target=False):
       max_proposals_to_keep_per_action = opt 100;
       initial_voting_period_seconds = opt {period}; wait_for_quiet_deadline_increase_seconds = opt {e['wait_for_quiet_seconds']};
       default_followees = opt record {{ followees = vec {{}} }}; max_number_of_neurons = opt 1000;
-      neuron_minimum_dissolve_delay_to_vote_seconds = opt {e['year_seconds']};
-      max_followees_per_function = opt 15; max_dissolve_delay_seconds = opt {e['year_seconds']};
-      max_neuron_age_for_age_bonus = opt {e['year_seconds'] * 4}; max_number_of_proposals_with_ballots = opt 700;
+      neuron_minimum_dissolve_delay_to_vote_seconds = opt {e['minimum_voting_dissolve_delay_seconds']};
+      max_followees_per_function = opt 15; max_dissolve_delay_seconds = opt {e['max_dissolve_delay_seconds']};
+      max_neuron_age_for_age_bonus = opt {e['max_neuron_age_for_age_bonus']}; max_number_of_proposals_with_ballots = opt 700;
       neuron_claimer_permissions = opt record {{ permissions = vec {{ 1;2;3;4;5;6;7;8;9;10 }} }};
       neuron_grantable_permissions = opt record {{ permissions = vec {{ 1;2;3;4;5;6;7;8;9;10 }} }};
       max_number_of_principals_per_neuron = opt 5;
       voting_rewards_parameters = opt record {{ initial_reward_rate_basis_points = opt 0;
-       final_reward_rate_basis_points = opt 0; reward_rate_transition_duration_seconds = opt 0; round_duration_seconds = opt 86400 }};
-      max_dissolve_delay_bonus_percentage = opt 0; max_age_bonus_percentage = opt 0;
+       final_reward_rate_basis_points = opt 0; reward_rate_transition_duration_seconds = opt {e['native_reward_transition_seconds']}; round_duration_seconds = opt {e['native_reward_round_seconds']} }};
+      max_dissolve_delay_bonus_percentage = opt {e['dissolve_bonus_percentage']}; max_age_bonus_percentage = opt {e['age_bonus_percentage']};
       maturity_modulation_disabled = opt true; automatically_advance_target_version = opt false;
     }}'''
     all_permissions = list(range(1, 11))
@@ -42,7 +42,8 @@ def prepare(context, artifacts, output, target=False):
         definitions += [('external', context['rewards'], 3, 1000, [4]),
                         ('io_only', context['io_only'], 4, 1000, all_permissions)]
     else:
-        definitions += [('nnx_fixture', context['nnx_fixture'], 3, 1000, [4]),
+        governance_stake = e['governance_stake_e8s'] // 10**8 if context.get('native_economics') else 1000
+        definitions += [('nnx_fixture', context['nnx_fixture'], 3, governance_stake, [4]),
                         ('proposer', context['rewards'], 4, context['proposer_stake'], [3]),
                         ('a_second', context['a'], 5, 1, all_permissions)]
     genesis['neurons'] = [{'controller': controller, 'memo': memo, 'stake': stake * 10**8,
