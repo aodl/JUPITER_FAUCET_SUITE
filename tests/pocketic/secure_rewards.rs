@@ -17,8 +17,11 @@ struct RelayInit {
 }
 impl Env {
     fn install_relay(&self) -> Result<()> {
+        self.install_relay_at(self.relay)
+    }
+    fn install_relay_at(&self, relay: Principal) -> Result<()> {
         self.pic.install_canister(
-            self.relay,
+            relay,
             self.relay_wasm.clone(),
             encode_one(RelayInit {
                 managed_canisters: vec![],
@@ -818,5 +821,425 @@ fn archived_relay_staking_credit_is_funded_once_at_its_original_timestamp() -> R
         })?,
         200_000_000
     );
+    Ok(())
+}
+
+// The factory replies below are a controlled dependency boundary. Actual
+// Historian Creating/Paused/ManualRecoveryRequired semantics are tested in its
+// native membership test; Governance, both Ledgers/Indices and Relay code here
+// are real. No mock status is presented as production factory provenance.
+#[derive(CandidType)]
+enum MembershipFixture {
+    Pending,
+    Active { setup_key: Vec<u8> },
+    Page { cursor: Vec<u8>, revision: u64 },
+    RegistryChanged,
+}
+impl Env {
+    fn membership_fixture(&self, relay: Principal, reply: MembershipFixture) -> Result<()> {
+        support::calls::update_bytes(
+            &self.pic,
+            self.factory.context("factory fixture")?,
+            self.a,
+            "debug_set_relay_membership",
+            encode_args((relay, reply))?,
+        )
+    }
+    fn factory_child_fixture(&self) -> Result<Principal> {
+        let child = self.pic.create_canister();
+        self.pic.add_cycles(child, 5_000_000_000_000);
+        self.install_relay_at(child)?;
+        Ok(child)
+    }
+    fn actual_relay_endowment(&self, relay: Principal, net: u64) -> Result<u64> {
+        self.icp_send(
+            Principal::anonymous(),
+            None,
+            Account {
+                owner: relay,
+                subaccount: jupiter_memo_policy::numbered_subaccount(1),
+            },
+            net + 10_000,
+            None,
+        )?;
+        let _: () = update_noargs(&self.pic, relay, self.a, "debug_main_tick")?;
+        let source = jupiter_ic_clients::account_identifier::account_identifier_text(
+            relay,
+            jupiter_memo_policy::numbered_subaccount(1),
+        );
+        for _ in 0..60 {
+            self.pic.advance_time(Duration::from_secs(2));
+            self.pic.tick();
+            if let Some(tx) = self.staking_transfers()?.into_iter().find(|tx| {
+                matches!(
+                    &tx.transaction.operation, IndexOperation::Transfer { from, amount, .. }
+                    if *from == source && amount.e8s() == net
+                )
+            }) {
+                return Ok(tx.id);
+            }
+        }
+        anyhow::bail!("missing actual Relay staking credit: {relay}")
+    }
+    fn enable_factory_patron(&self) -> Result<()> {
+        self.drive(12)?;
+        let mut config = self.status()?.config.unwrap();
+        assert!(config.relay_factory.is_some() && !config.patron_enabled);
+        config.version += 1;
+        config.patron_enabled = true;
+        for _ in 0..100 {
+            self.pic.tick();
+        }
+        self.pic
+            .upgrade_canister(
+                self.rewards,
+                self.rewards_wasm.clone(),
+                encode_one(Some(jupiter_sns_rewards::UpgradeArgs {
+                    reward_sns_root_canister_id: None,
+                    programme: Some(config),
+                }))?,
+                Some(self.jup["root"]),
+            )
+            .map_err(|e| anyhow!("enable isolated factory fixture: {e:?}"))?;
+        Ok(())
+    }
+    fn await_verified(&self, block: u64) -> Result<PatronRecord> {
+        for _ in 0..120 {
+            self.pic.advance_time(Duration::from_secs(2));
+            self.pic.tick();
+            self.tick()?;
+            if let Some(record) = self
+                .record(block)?
+                .filter(|r| matches!(r.outcome, PatronOutcome::Verified { .. }))
+            {
+                return Ok(record);
+            }
+        }
+        anyhow::bail!(
+            "unverified {block}: {:?}; {:?}",
+            self.record(block)?,
+            self.status()?
+        )
+    }
+}
+
+#[test]
+#[ignore = "official SNS/ICP and real Relay endowments with bounded pending-factory isolation"]
+fn pending_factory_membership_cannot_block_history_or_another_child_recovery() -> Result<()> {
+    let env = Env::setup_with_factory(false, false, false, false, false, true)?;
+    env.install_relay()?;
+    let permanent = env.factory_child_fixture()?;
+    let recoverable = env.factory_child_fixture()?;
+    // Descending primary history encounters the unresolved children first.
+    let direct = env.commit(env.b)?;
+    let canonical = env.actual_relay_endowment(env.relay, 1_000_000_000)?;
+    let permanent_block = env.actual_relay_endowment(permanent, 2_000_000_000)?;
+    let recoverable_block = env.actual_relay_endowment(recoverable, 3_000_000_000)?;
+    env.membership_fixture(permanent, MembershipFixture::Pending)?;
+    env.membership_fixture(
+        recoverable,
+        MembershipFixture::Page {
+            cursor: vec![7; 32],
+            revision: 1,
+        },
+    )?;
+    env.enable_factory_patron()?;
+    assert_eq!(env.await_verified(direct)?.route, PatronRoute::Direct);
+    assert_eq!(env.await_verified(canonical)?.amount_e8s, 100_000_000);
+    env.drive(24)?;
+    let before = env
+        .record(recoverable_block)?
+        .context("deferred canonical source proof")?;
+    assert!(
+        matches!(&before.outcome, PatronOutcome::AwaitingRelayMembership { lookup: Some(l), .. } if l.cursor == vec![7; 32])
+    );
+    assert_eq!(before.qualifying_icp_e8s, 3_000_000_000);
+    assert_eq!(before.amount_e8s, 0, "membership is not funded eligibility");
+    assert_eq!(env.status()?.relay_retries.unwrap().outstanding, 2);
+    assert!(env
+        .status()?
+        .completed_end_block
+        .is_some_and(|n| n >= recoverable_block));
+    for _ in 0..100 {
+        env.pic.tick();
+    }
+    env.pic
+        .upgrade_canister(
+            env.rewards,
+            env.rewards_wasm.clone(),
+            encode_args(())?,
+            Some(env.jup["root"]),
+        )
+        .map_err(|e| anyhow!("deferred source/lookup upgrade: {e:?}"))?;
+    assert_eq!(env.record(recoverable_block)?.unwrap(), before);
+    assert_eq!(env.status()?.relay_retries.unwrap().outstanding, 2);
+
+    // An unavailable registry also cannot suppress a new independent batch.
+    let factory = env.factory.unwrap();
+    env.pic
+        .stop_canister(factory, None)
+        .map_err(|e| anyhow!("stop factory fixture: {e:?}"))?;
+    let later_direct = env.commit(env.b)?;
+    env.await_verified(later_direct)?;
+    env.pic
+        .start_canister(factory, None)
+        .map_err(|e| anyhow!("start factory fixture: {e:?}"))?;
+    env.membership_fixture(recoverable, MembershipFixture::RegistryChanged)?;
+    env.drive(24)?;
+    assert!(matches!(
+        env.record(recoverable_block)?.unwrap().outcome,
+        PatronOutcome::AwaitingRelayMembership { lookup: None, .. }
+    ));
+    env.membership_fixture(recoverable, MembershipFixture::Pending)?;
+    env.drive(24)?;
+    assert!(env.status()?.batch.is_none());
+    // An unresolved, undispatched opportunity does not prevent a governed
+    // configuration change. Its original launch/rate inputs remain frozen.
+    let mut next = env.status()?.config.unwrap();
+    next.version += 1;
+    next.launch_timestamp_seconds = Some(0);
+    for _ in 0..100 {
+        env.pic.tick();
+    }
+    env.pic
+        .upgrade_canister(
+            env.rewards,
+            env.rewards_wasm.clone(),
+            encode_one(Some(jupiter_sns_rewards::UpgradeArgs {
+                reward_sns_root_canister_id: None,
+                programme: Some(next),
+            }))?,
+            Some(env.jup["root"]),
+        )
+        .map_err(|e| anyhow!("deferred configuration/rate preservation: {e:?}"))?;
+    env.drive(12)?;
+    let reserve = Account {
+        owner: env.rewards,
+        subaccount: None,
+    };
+    let escrow = Account {
+        owner: env.io_only,
+        subaccount: None,
+    };
+    assert_eq!(env.balance(escrow)?, 0);
+    let available = env.balance(reserve)?;
+    // Controlled Ledger balance fixture, not a production transfer endpoint.
+    support::ledger::icrc1_transfer(
+        &env.pic,
+        env.jup["ledger"],
+        env.rewards,
+        TransferArg {
+            from_subaccount: None,
+            to: escrow,
+            amount: (available - 1_000_000).into(),
+            fee: Some(1_000_000_u64.into()),
+            memo: None,
+            created_at_time: None,
+        },
+    )?;
+    env.membership_fixture(
+        recoverable,
+        MembershipFixture::Active {
+            setup_key: vec![8; 32],
+        },
+    )?;
+    env.drive(12)?;
+    let unfunded = env.record(recoverable_block)?.unwrap();
+    assert!(
+        matches!(unfunded.outcome, PatronOutcome::AwaitingRelayMembership { ref reason, .. }
+        if reason.contains("reserve funds unavailable"))
+    );
+    assert!(env.status()?.pending_block.is_none());
+    assert_eq!(env.status()?.relay_retries.unwrap().outstanding, 2);
+    assert_eq!(
+        env.balance(Account {
+            owner: recoverable,
+            subaccount: None
+        })?,
+        0
+    );
+    let returnable = env.balance(escrow)?;
+    support::ledger::icrc1_transfer(
+        &env.pic,
+        env.jup["ledger"],
+        env.io_only,
+        TransferArg {
+            from_subaccount: None,
+            to: reserve,
+            amount: (returnable - 1_000_000).into(),
+            fee: Some(1_000_000_u64.into()),
+            memo: None,
+            created_at_time: None,
+        },
+    )?;
+    let reserve_before = env.balance(Account {
+        owner: env.rewards,
+        subaccount: None,
+    })?;
+    env.membership_fixture(
+        recoverable,
+        MembershipFixture::Active {
+            setup_key: vec![8; 32],
+        },
+    )?;
+    let funded = env.await_verified(recoverable_block)?;
+    assert_eq!(
+        funded.route,
+        PatronRoute::RelayPot {
+            relay: recoverable,
+            factory_setup_key: Some(vec![8; 32])
+        }
+    );
+    assert_eq!(funded.qualifying_icp_e8s, before.qualifying_icp_e8s);
+    assert_eq!(
+        funded.commitment_timestamp_seconds,
+        before.commitment_timestamp_seconds
+    );
+    assert_eq!(
+        funded.launch_timestamp_seconds,
+        before.launch_timestamp_seconds
+    );
+    assert_ne!(
+        funded.launch_timestamp_seconds,
+        env.status()?
+            .config
+            .unwrap()
+            .launch_timestamp_seconds
+            .unwrap()
+    );
+    assert_eq!(funded.commitment_memo, before.commitment_memo);
+    assert_eq!(funded.amount_e8s, 300_000_000);
+    assert_eq!(funded.fee_e8s, 1_000_000);
+    assert_eq!(
+        env.balance(Account {
+            owner: env.rewards,
+            subaccount: None
+        })?,
+        reserve_before - 301_000_000
+    );
+    assert_eq!(
+        env.balance(Account {
+            owner: recoverable,
+            subaccount: None
+        })?,
+        300_000_000
+    );
+    assert_eq!(env.status()?.relay_retries.unwrap().outstanding, 1);
+    assert!(matches!(
+        env.record(permanent_block)?.unwrap().outcome,
+        PatronOutcome::AwaitingRelayMembership { .. }
+    ));
+    assert_eq!(
+        env.balance(Account {
+            owner: permanent,
+            subaccount: None
+        })?,
+        0
+    );
+    let completed = env.status()?.completed_end_block;
+    for _ in 0..100 {
+        env.pic.tick();
+    }
+    env.pic
+        .upgrade_canister(
+            env.rewards,
+            env.rewards_wasm.clone(),
+            encode_args(())?,
+            Some(env.jup["root"]),
+        )
+        .map_err(|e| anyhow!("confirmed retry no-replay upgrade: {e:?}"))?;
+    env.drive(60)?;
+    assert_eq!(env.record(recoverable_block)?.unwrap(), funded);
+    assert_eq!(env.status()?.completed_end_block, completed);
+    assert_eq!(env.status()?.verified_e8s, 600_000_000);
+    assert_eq!(
+        env.balance(Account {
+            owner: recoverable,
+            subaccount: None
+        })?,
+        300_000_000
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "official token Ledger callback trap on a recovered Relay opportunity survives upgrade without replay"]
+fn deferred_relay_dispatch_checkpoint_recovers_without_rewinding_or_repaying() -> Result<()> {
+    let env = Env::setup_with_factory(false, false, false, false, false, true)?;
+    let child = env.factory_child_fixture()?;
+    let block = env.actual_relay_endowment(child, 1_000_000_000)?;
+    env.membership_fixture(child, MembershipFixture::Pending)?;
+    env.enable_factory_patron()?;
+    let deferred = env.await_record(block)?;
+    assert!(matches!(
+        deferred.outcome,
+        PatronOutcome::AwaitingRelayMembership { .. }
+    ));
+    env.drive(12)?;
+    env.membership_fixture(
+        child,
+        MembershipFixture::Active {
+            setup_key: vec![9; 32],
+        },
+    )?;
+    let _: () = update_noargs(
+        &env.pic,
+        env.rewards,
+        env.a,
+        "debug_trap_patron_callback_once",
+    )?;
+    for _ in 0..100 {
+        if let Err(error) = env.tick() {
+            assert!(error.to_string().contains("callback trap"), "{error:?}");
+            break;
+        }
+    }
+    let checkpoint = env.record(block)?.unwrap();
+    assert!(
+        matches!(checkpoint.outcome, PatronOutcome::Dispatched { .. }),
+        "{checkpoint:?}"
+    );
+    assert_eq!(
+        env.status()?.relay_retries.unwrap().dispatching_block,
+        Some(block)
+    );
+    assert_eq!(
+        env.balance(Account {
+            owner: child,
+            subaccount: None
+        })?,
+        100_000_000
+    );
+    for _ in 0..100 {
+        env.pic.tick();
+    }
+    env.pic
+        .upgrade_canister(
+            env.rewards,
+            env.rewards_wasm.clone(),
+            encode_args(())?,
+            Some(env.jup["root"]),
+        )
+        .map_err(|e| anyhow!("retry dispatch callback upgrade: {e:?}"))?;
+    let recovered = env.record(block)?.unwrap();
+    assert!(matches!(
+        recovered.outcome,
+        PatronOutcome::AssumedPaidUnverified { .. }
+    ));
+    assert_eq!(env.status()?.relay_retries.unwrap().outstanding, 0);
+    assert_eq!(env.status()?.assumed_e8s, 100_000_000);
+    assert_eq!(env.status()?.verified_e8s, 0);
+    let direct = env.commit(env.b)?;
+    env.await_verified(direct)?;
+    env.drive(20)?;
+    assert_eq!(env.record(block)?.unwrap(), recovered);
+    assert_eq!(
+        env.balance(Account {
+            owner: child,
+            subaccount: None
+        })?,
+        100_000_000
+    );
+    assert_eq!(env.status()?.verified_e8s, 100_000_000);
     Ok(())
 }

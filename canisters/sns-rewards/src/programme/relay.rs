@@ -1,6 +1,6 @@
 //! Authenticate only the Relay-to-stake boundary; contributor allocation remains
 //! exclusively in the existing immutable Relay distributor.
-use super::{storage, types::*};
+use super::types::*;
 use candid::{CandidType, Deserialize, Principal};
 use ic_cdk::call::Call;
 use icrc_ledger_types::icrc1::account::Account;
@@ -22,6 +22,14 @@ enum RelayMembership {
     Page { cursor: Vec<u8>, revision: u64 },
     RegistryChanged,
     InvalidBinding,
+}
+
+pub(super) enum Classification {
+    Ready(Option<PatronRoute>),
+    Awaiting {
+        lookup: Option<RelayLookup>,
+        reason: String,
+    },
 }
 
 pub(super) fn candidate(sender: [u8; 32], memo: &[u8]) -> Option<Principal> {
@@ -47,22 +55,33 @@ pub(super) async fn classify(
     config: &ProgrammeConfig,
     block: u64,
     relay: Principal,
-) -> Result<Option<PatronRoute>, String> {
+    lookup: Option<RelayLookup>,
+) -> Classification {
+    match classify_inner(config, block, relay, lookup.clone()).await {
+        Ok(result) => result,
+        Err(reason) => Classification::Awaiting { lookup, reason },
+    }
+}
+
+async fn classify_inner(
+    config: &ProgrammeConfig,
+    block: u64,
+    relay: Principal,
+    lookup: Option<RelayLookup>,
+) -> Result<Classification, String> {
     if relay == config.canonical_relay {
-        return Ok(Some(PatronRoute::RelayPot {
+        return Ok(Classification::Ready(Some(PatronRoute::RelayPot {
             relay,
             factory_setup_key: None,
-        }));
+        })));
     }
     let Some(factory) = config.relay_factory else {
         // An explicitly canonical-only configuration supports no other Relay.
         // This is a policy decision, not an unavailable/incomplete registry read.
         // A copied memo must not strand its shared commitment cursor forever.
-        return Ok(None);
+        return Ok(Classification::Ready(None));
     };
-    let lookup = storage::read()
-        .relay_lookup
-        .filter(|s| s.block == block && s.relay == relay);
+    let lookup = lookup.filter(|s| s.block == block && s.relay == relay);
     let response: RelayMembership = Call::bounded_wait(factory, "get_relay_factory_membership")
         .with_arg(RelayMembershipArgs {
             relay,
@@ -77,34 +96,31 @@ pub(super) async fn classify(
         .map_err(|e| format!("Relay factory membership decode: {e:?}"))?;
     match response {
         RelayMembership::Active { setup_key } if setup_key.len() == 32 => {
-            storage::mutate(|s| s.relay_lookup = None);
-            Ok(Some(PatronRoute::RelayPot {
+            Ok(Classification::Ready(Some(PatronRoute::RelayPot {
                 relay,
                 factory_setup_key: Some(setup_key),
-            }))
+            })))
         }
         RelayMembership::Page { cursor, revision } if cursor.len() == 32 => {
-            storage::mutate(|s| {
-                s.relay_lookup = Some(RelayLookup {
+            Ok(Classification::Awaiting {
+                lookup: Some(RelayLookup {
                     block,
                     relay,
                     cursor,
                     revision,
-                })
-            });
-            Err("Relay membership pagination incomplete".into())
+                }),
+                reason: "Relay membership pagination incomplete".into(),
+            })
         }
-        RelayMembership::RegistryChanged => {
-            storage::mutate(|s| s.relay_lookup = None);
-            Err("Relay factory changed; restart bounded membership proof".into())
-        }
-        RelayMembership::Pending => {
-            Err("Relay finalisation requires authoritative Active membership".into())
-        }
-        RelayMembership::Unsupported => {
-            storage::mutate(|s| s.relay_lookup = None);
-            Ok(None)
-        }
+        RelayMembership::RegistryChanged => Ok(Classification::Awaiting {
+            lookup: None,
+            reason: "Relay factory changed; restart bounded membership proof".into(),
+        }),
+        RelayMembership::Pending => Ok(Classification::Awaiting {
+            lookup: None,
+            reason: "Relay finalisation requires authoritative Active membership".into(),
+        }),
+        RelayMembership::Unsupported => Ok(Classification::Ready(None)),
         _ => Err("invalid Relay factory binding or membership response".into()),
     }
 }
@@ -121,15 +137,16 @@ mod tests {
         let config = crate::programme::tests::config();
         assert!(config.relay_factory.is_none());
         let mut context = Context::from_waker(Waker::noop());
-        let mut unsupported = std::pin::pin!(classify(&config, 1, Principal::from_slice(&[99])));
+        let mut unsupported =
+            std::pin::pin!(classify(&config, 1, Principal::from_slice(&[99]), None));
         assert!(matches!(
             unsupported.as_mut().poll(&mut context),
-            Poll::Ready(Ok(None))
+            Poll::Ready(Classification::Ready(None))
         ));
-        let mut canonical = std::pin::pin!(classify(&config, 1, config.canonical_relay));
+        let mut canonical = std::pin::pin!(classify(&config, 1, config.canonical_relay, None));
         assert!(matches!(
             canonical.as_mut().poll(&mut context),
-            Poll::Ready(Ok(Some(PatronRoute::RelayPot {
+            Poll::Ready(Classification::Ready(Some(PatronRoute::RelayPot {
                 factory_setup_key: None,
                 ..
             })))

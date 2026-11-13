@@ -39,11 +39,16 @@ pub fn economic_owner(neuron: &Neuron) -> Option<Principal> {
     crate::policy::select_owner(&neuron.permissions)
 }
 
-pub fn compound_eligible(neuron: &Neuron, owner: Principal, config: &ProgrammeConfig) -> bool {
+pub fn compound_eligible(
+    neuron: &Neuron,
+    owner: Principal,
+    config: &ProgrammeConfig,
+    rewards: Principal,
+) -> bool {
     neuron
         .id
         .as_ref()
-        .is_some_and(|id| id.id.len() == 32 && !config.excluded_jup_neurons.contains(&id.id))
+        .is_some_and(|id| id.id.len() == 32 && !config.excludes_neuron(&id.id, rewards))
         && economic_owner(neuron) == Some(owner)
         && neuron.dissolve_state
             == Some(DissolveState::DissolveDelaySeconds(
@@ -212,12 +217,12 @@ pub async fn tick(now: u64) -> Result<(), String> {
     for n in &page.neurons {
         if n.id
             .as_ref()
-            .is_some_and(|id| config.excluded_jup_neurons.contains(&id.id))
+            .is_some_and(|id| config.excludes_neuron(&id.id, ic_cdk::api::canister_self()))
         {
             continue;
         }
         if let Some(p) = economic_owner(n).filter(|p| *p != source.governance) {
-            let bonus = compound_eligible(n, p, &config)
+            let bonus = compound_eligible(n, p, &config, ic_cdk::api::canister_self())
                 .then(|| n.id.as_ref().expect("validated ID").id.clone());
             storage::insert(scan.slot, p, bonus);
         }

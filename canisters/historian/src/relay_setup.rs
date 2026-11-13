@@ -7680,3 +7680,54 @@ fn get_relay_factory_membership(args: RelayMembershipArgs) -> RelayMembership {
         }
     })
 }
+
+#[cfg(test)]
+mod membership_review_tests {
+    use super::*;
+
+    #[test]
+    fn paused_and_manual_recovery_children_remain_pending_until_authoritative_active() {
+        clear_setup_entries_for_debug();
+        state::set_state(State::new(super::tests::config(), 0));
+        let relay = Principal::from_slice(&[202]);
+        let key = RelaySetupKey::from_bytes(Cow::Owned(vec![7; 32]));
+        let args = RelayMembershipArgs {
+            relay,
+            ledger: super::tests::config().ledger_canister_id,
+            staking_account: super::tests::config().staking_account,
+            cursor: None,
+            revision: None,
+        };
+        let mut progress = RelayCreationProgress::reserved();
+        progress.relay_canister_id = Some(relay);
+        progress.phase = RelayCreationPhase::FinalizationAttempted;
+        for entry in [
+            RelaySetupEntry::Creating(progress.clone()),
+            RelaySetupEntry::Paused(progress.clone()),
+            RelaySetupEntry::ManualRecoveryRequired(progress),
+        ] {
+            insert_entry(key, entry);
+            assert_eq!(
+                get_relay_factory_membership(args.clone()),
+                RelayMembership::Pending
+            );
+            assert_eq!(
+                get_relay_factory_membership(args.clone()),
+                RelayMembership::Pending
+            );
+        }
+        insert_entry(
+            key,
+            RelaySetupEntry::Active {
+                relay_canister_id: relay,
+                completed: None,
+            },
+        );
+        assert_eq!(
+            get_relay_factory_membership(args),
+            RelayMembership::Active {
+                setup_key: vec![7; 32]
+            }
+        );
+    }
+}

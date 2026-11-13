@@ -211,6 +211,7 @@ fn post_upgrade(args: Option<UpgradeArgs>) {
         }
     }
     programme::bind_relay_root();
+    programme::participation::invalidate_after_upgrade();
     scheduler::install_timers();
     logging::lifecycle("post_upgrade_complete");
     logging::config();

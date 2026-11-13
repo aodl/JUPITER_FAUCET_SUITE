@@ -6,6 +6,9 @@ use std::path::Path;
 #[derive(CandidType, Deserialize, Debug, PartialEq)]
 enum PotRoute {
     Direct,
+    PendingRelay {
+        relay: Principal,
+    },
     RelayPot {
         relay: Principal,
         factory_setup_key: Option<Vec<u8>>,
@@ -16,12 +19,34 @@ enum PotRoute {
 }
 #[derive(CandidType, Deserialize, Debug)]
 enum Outcome {
+    AwaitingRelayMembership {
+        lookup: Option<RelayLookup>,
+        reason: String,
+    },
     Prepared,
-    Dispatched { at_nanos: u64 },
-    Verified { block: Nat, duplicate: bool },
-    AssumedPaidUnverified { reason: String },
-    Failed { error: String },
-    Skipped { reason: String },
+    Dispatched {
+        at_nanos: u64,
+    },
+    Verified {
+        block: Nat,
+        duplicate: bool,
+    },
+    AssumedPaidUnverified {
+        reason: String,
+    },
+    Failed {
+        error: String,
+    },
+    Skipped {
+        reason: String,
+    },
+}
+#[derive(CandidType, Deserialize, Debug)]
+struct RelayLookup {
+    block: u64,
+    relay: Principal,
+    cursor: Vec<u8>,
+    revision: u64,
 }
 #[derive(CandidType, Deserialize, Debug)]
 struct Pot {

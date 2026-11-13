@@ -110,6 +110,41 @@ staging is never visible. Upgrading the old permission-count owner index retains
 its Root and generation counter but invalidates the incompatible snapshot for a
 secure rebuild. An unconfigured OpenChat deployment is never retargeted.
 
+### Deployed V1 ownership-policy transition
+
+An upgrade with omitted Root/programme arguments preserves the temporary OpenChat
+Root `3e3x2-xyaaa-aaaaq-aaalq-cai`, its resolved Governance and CHAT Ledger. It
+invalidates the old permission-count publication, retains the monotonic snapshot
+namespace and publishes only after a complete secure rebuild. It activates no
+reserve transfers, treasury proposals or IO distribution. The frozen canonical
+V1 upgrade test uses owned local mocks at the exact historical OpenChat IDs and
+compares old and new resolver results; it does not query live OpenChat.
+
+The policy deliberately changes eligibility. Previous count winners without
+Disburse, including voting-only or permission-manager-only principals, become
+ineligible. Neurons with a different principal holding any economic authority
+(ConfigureDissolveState, ManagePrincipals, Disburse, Split or maturity rights) are
+unsafe; unknown permission codes, exhausted stake and invalid beneficiaries fail
+closed. Root-resolved Governance itself is excluded as an ordinary recipient.
+A sole Disburse beneficiary remains eligible without any permission
+manager; ordinary voting delegates remain allowed. A voting delegate that won the
+old count contest loses that attribution and the secure Disburse beneficiary can
+become recognised instead. Genuine transferred control can qualify after all
+competing economic authority is relinquished. Rejection is per neuron: another
+independently valid neuron still recognises the same principal.
+
+Preserving Root/token identities prevents cross-SNS retargeting; it does **not**
+preserve the old mistaken recipient cohort. An existing immutable Relay can use a
+later owner snapshot to allocate its remaining CHAT pot. Before an actual V1
+upgrade, review its bound Relays' remaining token inventory and rehearse the
+old/new default-Account eligibility differences from reviewed state. Defer the
+live transition while an outstanding pot has unreviewed exposure, or explicitly
+accept the documented policy change through the authorised governance process.
+Do not reinstall/modify controllerless Relays or preserve the unsafe count rule.
+Use the normal state-preserving upgrade with omitted financial activation inputs;
+review any later explicit jUP Root/programme activation separately. This task
+performs no live inventory reads or deployment.
+
 Each terminal patron record retains compact source/completeness metadata and its
 selected owner attribution; rotating owner maps does not erase its review context.
 Mirror records retain their actual source SNS and configuration version. No raw
@@ -201,6 +236,35 @@ A user who names Relay in a valid memo remains a direct patron only. Liquidity,
 setup deposits and memo-less treasury staking credits do not independently earn
 a pot. Payment records preserve the classification and canonical source proof.
 
+An unresolved factory candidate is recorded as `PendingRelay` /
+`AwaitingRelayMembership` in that same per-block journal before the primary cursor
+advances. This includes Pending (Creating, Paused or ManualRecoveryRequired),
+unavailable/malformed dependencies and incomplete membership pagination. These
+are neither eligibility decisions nor payment attempts. Original canonical
+source, net amount, timestamp, launch rate inputs and complete snapshot metadata
+are retained; no historical owner map is pinned for a Relay intermediary.
+
+A separate optional retry cursor/count and finite journal end use at most 32
+record decodes, one end-key lookup and one factory-membership page per tick. Each pass freezes its upper block boundary
+so continuous arrivals cannot postpone revisiting older entries. It advances round-robin, so a permanent
+pending entry cannot prevent another child's recovery or unrelated primary
+history. A fresh complete jUP snapshot with unchanged financial source bindings,
+authoritative Active membership and real reserve/fee readiness are required before
+freezing the payment. Pagination resumes per record and restarts on registry
+revision changes. No canonical Ledger scan is duplicated. The existing one-attempt
+payment checkpoint also marks a retry dispatch, so confirmed/assumed outcomes and
+upgrades consume one opportunity without rewinding the primary batch.
+
+The explicit trade-off is retained journal storage and recovery latency: there is
+one patron-journal record per qualifying canonical commitment, no additional
+unbounded queue/index, and no capacity threshold that drops or stalls uncertain
+opportunities. Additional retry-control storage is constant size; total journal
+storage remains proportional to retained commitments. A strict total-space cap
+would require expiration, backpressure or canonical-history rescanning. Scanning terminal records can delay recovery as history grows;
+each invocation remains bounded. Unresolved opportunities have no expiry or
+invented payment entitlement. Disabling patron issuance pauses both lanes without
+erasing them. Changes to a later launch setting do not rewrite retained rate inputs.
+
 Relay's distribution implementation is unchanged. It selects eligible historical
 cohorts under its existing cutoffs, fees, economical threshold and bounded retries.
 Funding proves delivery to Relay, not exact individual receipt or a guaranteed
@@ -240,7 +304,9 @@ and canonical open/rejected charges. A confirmed transfer is refreshed separatel
 unknown funding requires canonical review and is never assumed paid or replayed.
 Funding evidence survives successful refresh. Designated protocol-voting, reserve-transport and proposer neurons are excluded
 by exact ID; that does not blacklist a principal's independently valid external
-neuron. NNX is a labelled local fixture until its actual authority is supplied.
+neuron. Reserve/proposer IDs are also derived unconditionally from the reviewed
+native SNS genesis controller (SNS Rewards) and nonces 2/3, even if optional
+transport/automation settings and explicit exclusions are omitted. NNX is a labelled local fixture until its actual authority is supplied.
 
 Mirrors bind the configured Root/Governance, designated target neuron, proposal ID
 and complete official action digest. An installed Governance hash outside the
@@ -275,7 +341,10 @@ the reviewed gross 95/5 age-bonus split, and creates no patron jUP opportunity.
 
 Participation collection uses complete official event shares with zero native
 inflation, excluding protocol neurons before the denominator and without multiplying
-by stake again. It publishes a complete event or waits. Its gross quote is not a
+by stake again. It publishes a complete event or waits. An upgrade invalidates
+published participation quotes for a native-event rebuild under the installed
+exclusion policy; stored aggregates cannot establish their own policy provenance.
+Unconfigured deployed V1 retains empty participation state. A gross quote is not a
 funded IO payment. The Rust-only `io_contract` boundary double proves the exact
 funded IO receipt and duplicate behavior; no ICP-to-IO worker or IO payout economics
 is activated. See the [minimal IO handoff](../../deploy/acceptance/README.md#io-contract-handoff).

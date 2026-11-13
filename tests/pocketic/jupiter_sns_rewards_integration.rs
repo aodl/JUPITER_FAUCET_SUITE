@@ -127,12 +127,27 @@ struct TimerScanEnv {
 
 impl TimerScanEnv {
     fn new(valid_initial_resolution: bool) -> Result<Self> {
+        Self::with_openchat_ids(valid_initial_resolution, false)
+    }
+
+    fn with_openchat_ids(valid_initial_resolution: bool, openchat: bool) -> Result<Self> {
         let pic = support::pocketic::builder()
             .with_application_subnet()
             .build();
-        let root = pic.create_canister();
-        let governance = pic.create_canister();
-        let ledger = pic.create_canister();
+        let allocate = |id: &str| -> Result<Principal> {
+            if openchat {
+                let id = Principal::from_text(id)?;
+                pic.create_canister_with_id(None, None, id)
+                    .map_err(anyhow::Error::msg)?;
+                Ok(id)
+            } else {
+                Ok(pic.create_canister())
+            }
+        };
+        // Owned local mocks at the historical public IDs; no live IC calls.
+        let root = allocate("3e3x2-xyaaa-aaaaq-aaalq-cai")?;
+        let governance = allocate("2jvtu-yqaaa-aaaaq-aaama-cai")?;
+        let ledger = allocate("2ouva-viaaa-aaaaq-aaamq-cai")?;
         let rewards = pic.create_canister();
         for canister in [root, governance, ledger, rewards] {
             pic.add_cycles(canister, 5_000_000_000_000);
@@ -538,7 +553,83 @@ fn previous_production_owner_index_upgrades_without_enabling_new_features() -> R
         hex::encode(Sha256::digest(predecessor)),
         "dc60d0c80214f37f06ad42f6785cb2adc123ce1615669a9bace689538e253079"
     );
-    let env = TimerScanEnv::new(true)?;
+    let env = TimerScanEnv::with_openchat_ids(true, true)?;
+    use jupiter_sns_rewards::generated::NeuronPermissionType as P;
+    let who = |n: u8| Principal::from_slice(&[n]);
+    let entry = |n, permissions: &[P]| NeuronPermission {
+        principal: Some(who(n)),
+        permission_type: permissions.iter().map(|p| *p as i32).collect(),
+    };
+    let make = |id, permissions| Neuron {
+        id: Some(NeuronId { id: neuron_id(id) }),
+        permissions,
+        cached_neuron_stake_e8s: 1000,
+        neuron_fees_e8s: 0,
+    };
+    let _: () = update_one(
+        &env.pic,
+        env.governance,
+        Principal::anonymous(),
+        "debug_set_neurons",
+        vec![
+            make(1, vec![entry(7, &[P::Disburse])]),
+            make(2, vec![entry(8, &[P::ManagePrincipals, P::Vote])]),
+            make(
+                3,
+                vec![
+                    entry(
+                        9,
+                        &[
+                            P::Disburse,
+                            P::ConfigureDissolveState,
+                            P::Vote,
+                            P::Split,
+                            P::ManagePrincipals,
+                        ],
+                    ),
+                    entry(10, &[P::ManagePrincipals]),
+                ],
+            ),
+            make(
+                4,
+                vec![
+                    entry(13, &[P::Disburse]),
+                    entry(11, &[P::Vote, P::SubmitProposal, P::ManageVotingPermission]),
+                ],
+            ),
+            make(
+                5,
+                vec![
+                    entry(14, &[P::Disburse, P::ConfigureDissolveState]),
+                    entry(15, &[P::Vote]),
+                ],
+            ),
+            make(
+                6,
+                vec![
+                    entry(
+                        16,
+                        &[P::Disburse, P::ManagePrincipals, P::ConfigureDissolveState],
+                    ),
+                    entry(17, &[P::Vote]),
+                ],
+            ),
+            make(
+                7,
+                vec![
+                    entry(18, &[P::Disburse, P::Vote]),
+                    entry(19, &[P::StakeMaturity]),
+                ],
+            ),
+            make(
+                8,
+                vec![NeuronPermission {
+                    principal: Some(env.governance),
+                    permission_type: vec![P::Disburse as i32],
+                }],
+            ),
+        ],
+    )?;
     for _ in 0..100 {
         env.pic.tick();
     }
@@ -556,14 +647,39 @@ fn previous_production_owner_index_upgrades_without_enabling_new_features() -> R
         env.pic.tick();
     }
     let before = env.context()?.expect("V1 complete snapshot");
-    let owner = Principal::from_slice(&[7]);
+    let owner = who(7);
+    let principals = [7, 8, 9, 10, 13, 11, 14, 15, 16, 17, 18, 19];
     let args = jupiter_sns_rewards::ResolveDefaultIcpAccountsArgs {
         snapshot_id: before.snapshot_id,
-        account_identifiers: vec![
-            jupiter_ic_clients::account_identifier::account_identifier_bytes(owner, None).to_vec(),
-        ],
+        account_identifiers: principals
+            .into_iter()
+            .map(who)
+            .chain([env.governance])
+            .map(|p| {
+                jupiter_ic_clients::account_identifier::account_identifier_bytes(p, None).to_vec()
+            })
+            .collect(),
     };
-    let expected = jupiter_sns_rewards::ResolveDefaultIcpAccountsResult::Ok(vec![Some(owner)]);
+    let expected = jupiter_sns_rewards::ResolveDefaultIcpAccountsResult::Ok(
+        [
+            Some(7),
+            Some(8),
+            Some(9),
+            None,
+            None,
+            Some(11),
+            Some(14),
+            None,
+            Some(16),
+            None,
+            Some(18),
+            None,
+        ]
+        .into_iter()
+        .map(|n| n.map(who))
+        .chain([Some(env.governance)])
+        .collect(),
+    );
     let old_owners: jupiter_sns_rewards::ResolveDefaultIcpAccountsResult = query_one(
         &env.pic,
         env.rewards,
@@ -590,7 +706,7 @@ fn previous_production_owner_index_upgrades_without_enabling_new_features() -> R
         env.rewards,
         owner,
         "resolve_default_icp_accounts",
-        args,
+        args.clone(),
     )?;
     assert_eq!(
         stale,
@@ -600,7 +716,54 @@ fn previous_production_owner_index_upgrades_without_enabling_new_features() -> R
     for _ in 0..12 {
         env.pic.tick();
     }
-    assert!(env.context()?.unwrap().snapshot_id > before.snapshot_id);
+    let rebuilt = env.context()?.unwrap();
+    assert!(rebuilt.snapshot_id > before.snapshot_id);
+    assert_eq!(rebuilt.sns_root_canister_id, before.sns_root_canister_id);
+    assert_eq!(
+        rebuilt.sns_governance_canister_id,
+        before.sns_governance_canister_id
+    );
+    assert_eq!(
+        rebuilt.sns_ledger_canister_id,
+        before.sns_ledger_canister_id
+    );
+    assert_eq!(
+        rebuilt.sns_root_canister_id.to_text(),
+        "3e3x2-xyaaa-aaaaq-aaalq-cai"
+    );
+    let new_owners: jupiter_sns_rewards::ResolveDefaultIcpAccountsResult = query_one(
+        &env.pic,
+        env.rewards,
+        owner,
+        "resolve_default_icp_accounts",
+        jupiter_sns_rewards::ResolveDefaultIcpAccountsArgs {
+            snapshot_id: rebuilt.snapshot_id,
+            ..args
+        },
+    )?;
+    assert_eq!(
+        new_owners,
+        jupiter_sns_rewards::ResolveDefaultIcpAccountsResult::Ok(
+            [
+                Some(7),
+                None,
+                None,
+                None,
+                Some(13),
+                None,
+                Some(14),
+                None,
+                Some(16),
+                None,
+                None,
+                None
+            ]
+            .into_iter()
+            .map(|n| n.map(who))
+            .chain([None])
+            .collect()
+        )
+    );
     let programme: Runtime = query_one(&env.pic, env.rewards, owner, "get_programme_status", ())?;
     assert_eq!(programme, Runtime::default());
     let automation: AutomationState =

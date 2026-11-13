@@ -99,10 +99,13 @@ fn create(env: &Env, caller: Principal, memo: u64, amount: u64, delay: u64) -> R
     Ok(id)
 }
 fn proposal(env: &Env) -> Result<sns::ProposalData> {
+    proposal_by(env, env.rewards, &env.jup_neurons["proposer"])
+}
+fn proposal_by(env: &Env, caller: Principal, neuron: &[u8]) -> Result<sns::ProposalData> {
     let reply = env.manage(
         env.jup["governance"],
-        env.rewards,
-        &env.jup_neurons["proposer"],
+        caller,
+        neuron,
         sns::Command::MakeProposal(sns::Proposal {
             title: "Native economic regression".into(),
             summary: "Local canonical voting-power and participation evidence".into(),
@@ -552,5 +555,179 @@ fn native_stake_weighted_age_split_and_genuine_transfer() -> Result<()> {
     );
     vote(&env, &p, env.io_only, &child, 2)?;
     assert!(vote(&env, &p, env.b, &child, 1).is_err());
+    Ok(())
+}
+
+#[test]
+#[ignore = "official SNS protocol neurons manually vote with automation both enabled and absent"]
+fn protocol_genesis_shares_are_excluded_without_automation_or_explicit_lists() -> Result<()> {
+    let env = Env::setup_with_economics(false, false, false, false, true)?;
+    env.drive(40)?;
+    advance(&env, 1); // pass the official zero-vesting genesis timestamp boundary
+    let reserve = &env.jup_neurons["reserve_transport"];
+    let proposer = &env.jup_neurons["proposer"];
+    let protocol = &env.jup_neurons["nnx_fixture"];
+    let protocol_owner = neuron(&env, protocol)?.permissions[0].principal.unwrap();
+    for (id, nonce) in [(reserve, 2_u64), (proposer, 3)] {
+        let expected = Sha256::digest(
+            [
+                b"\x0cneuron-stake".as_slice(),
+                env.rewards.as_slice(),
+                &nonce.to_be_bytes(),
+            ]
+            .concat(),
+        );
+        assert_eq!(
+            id.as_slice(),
+            expected.as_slice(),
+            "reviewed native genesis ID"
+        );
+    }
+    configure(
+        &env,
+        env.rewards,
+        reserve,
+        sns::Operation::IncreaseDissolveDelay(sns::IncreaseDissolveDelay {
+            additional_dissolve_delay_seconds: YEAR as u32,
+        }),
+    )?;
+    // An ordinary neuron of the same principal must retain external shares.
+    let ordinary = create(&env, env.rewards, 9, 100 * E8, YEAR)?;
+    env.manage(
+        env.jup["governance"],
+        protocol_owner,
+        protocol,
+        sns::Command::AddNeuronPermissions(sns::AddNeuronPermissions {
+            principal_id: Some(env.a),
+            permissions_to_add: Some(sns::NeuronPermissionList {
+                permissions: vec![sns::NeuronPermissionType::Vote as i32],
+            }),
+        }),
+    )?;
+    for automated in [false, true] {
+        let mut config = env.status()?.config.unwrap();
+        config.version += 1;
+        config.patron_enabled = false;
+        config.reserve_transport_neuron = None;
+        config.excluded_jup_neurons = vec![protocol.clone()];
+        config.automation = if automated {
+            config.excluded_jup_neurons.push(proposer.clone());
+            Some(AutomationConfig {
+                proposer_neuron: proposer.clone(),
+                targets: vec![],
+                treasury_enabled: false,
+                treasury_retain_icp_e8s: 0,
+                treasury_max_proposal_icp_e8s: 0,
+            })
+        } else {
+            None
+        };
+        config.validate().map_err(anyhow::Error::msg)?;
+        for _ in 0..100 {
+            env.pic.tick();
+        }
+        env.pic
+            .upgrade_canister(
+                env.rewards,
+                env.rewards_wasm.clone(),
+                encode_one(Some(jupiter_sns_rewards::UpgradeArgs {
+                    reward_sns_root_canister_id: None,
+                    programme: Some(config),
+                }))?,
+                Some(env.jup["root"]),
+            )
+            .map_err(|e| anyhow!("exclusion fixture configuration: {e:?}"))?;
+        env.drive(12)?;
+        let p = if automated {
+            proposal(&env)? // manually submit with the normally narrowed proposer
+        } else {
+            proposal_by(&env, env.a, &env.jup_neurons["a"])?
+        };
+        if automated {
+            vote(&env, &p, env.a, &env.jup_neurons["a"], 1)?;
+        } else {
+            vote(&env, &p, env.rewards, proposer, 1)?; // actual manual RegisterVote
+        }
+        vote(&env, &p, env.b, &env.jup_neurons["b"], 2)?;
+        vote(&env, &p, env.rewards, reserve, 1)?;
+        vote(&env, &p, env.rewards, &ordinary, 2)?;
+        vote(&env, &p, protocol_owner, protocol, 1)?;
+        let event = settle(&env, &p)?;
+        let end = event.end_timestamp_seconds.unwrap();
+        for id in [protocol, reserve, proposer] {
+            assert!(
+                shares(&env, id, end)? > 0_u8,
+                "protocol voting power/participation is retained"
+            );
+            let recoverable = neuron(&env, id)?.permissions.iter().any(|p| {
+                p.permission_type
+                    .contains(&(sns::NeuronPermissionType::Disburse as i32))
+            });
+            assert_eq!(
+                recoverable,
+                !automated || id != proposer,
+                "native automation retains its SubmitProposal-only narrowing"
+            );
+        }
+        let a = shares(&env, &env.jup_neurons["a"], end)?;
+        let b = shares(&env, &env.jup_neurons["b"], end)?;
+        let ordinary_weight = shares(&env, &ordinary, end)?;
+        let status: ParticipationState =
+            query_one(&env.pic, env.rewards, env.a, "get_participation_status", ())?;
+        let active = status.active.context("complete native event")?;
+        assert_eq!(active.eligible_shares.0, &a.0 + &b.0 + &ordinary_weight.0);
+        for (owner, weight) in [(env.a, &a), (env.b, &b), (env.rewards, &ordinary_weight)] {
+            let quote: Option<Nat> = support::calls::update_bytes(
+                &env.pic,
+                env.rewards,
+                env.a,
+                "quote_gross_io_share",
+                encode_args((1_000_000_u64, owner))?,
+            )?;
+            assert_eq!(
+                quote.unwrap().0,
+                Nat::from(1_000_000_u64).0 * &weight.0 / &active.eligible_shares.0
+            );
+        }
+        let excluded: Option<Nat> = support::calls::update_bytes(
+            &env.pic,
+            env.rewards,
+            env.a,
+            "quote_gross_io_share",
+            encode_args((1_000_000_u64, protocol_owner))?,
+        )?;
+        assert!(excluded.is_none());
+        assert_eq!(event.distributed_e8s_equivalent, 0);
+        // A same-configuration upgrade must not expose an aggregate collected
+        // under a previous implementation's exclusion policy.
+        for _ in 0..100 {
+            env.pic.tick();
+        }
+        env.pic
+            .upgrade_canister(
+                env.rewards,
+                env.rewards_wasm.clone(),
+                encode_args(())?,
+                Some(env.jup["root"]),
+            )
+            .map_err(|e| anyhow!("participation policy rebuild upgrade: {e:?}"))?;
+        let reset: ParticipationState =
+            query_one(&env.pic, env.rewards, env.a, "get_participation_status", ())?;
+        assert!(reset.active.is_none() && reset.scan.is_none());
+        let unavailable: Option<Nat> = support::calls::update_bytes(
+            &env.pic,
+            env.rewards,
+            env.a,
+            "quote_gross_io_share",
+            encode_args((1_000_000_u64, env.a))?,
+        )?;
+        assert!(unavailable.is_none());
+        env.drive(12)?;
+        let rebuilt: ParticipationState =
+            query_one(&env.pic, env.rewards, env.a, "get_participation_status", ())?;
+        let rebuilt = rebuilt.active.context("recollected native event")?;
+        assert_eq!(rebuilt.end_timestamp_seconds, active.end_timestamp_seconds);
+        assert_eq!(rebuilt.eligible_shares, active.eligible_shares);
+    }
     Ok(())
 }

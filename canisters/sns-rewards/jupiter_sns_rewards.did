@@ -89,6 +89,7 @@ type Owner = record {
   compound_neuron : opt blob;
 };
 type PatronOutcome = variant {
+  AwaitingRelayMembership : record { lookup : opt RelayLookup; reason : text };
   Skipped : record { reason : text };
   Failed : record { error : text };
   Dispatched : record { at_nanos : nat64 };
@@ -214,10 +215,11 @@ type ResolveDefaultIcpAccountsResult = variant {
   InvalidAccountIdentifier : record { index : nat32 };
   TooManyAccounts;
 };
-type PatronRoute = variant { Direct; UnsupportedRelay : record { claimed_relay : principal }; RelayPot : record { relay : principal; factory_setup_key : opt blob } };
+type PatronRoute = variant { Direct; PendingRelay : record { relay : principal }; UnsupportedRelay : record { claimed_relay : principal }; RelayPot : record { relay : principal; factory_setup_key : opt blob } };
 type RelayLookup = record { block : nat64; relay : principal; cursor : blob; revision : nat64 };
+type RelayRetries = record { cursor : opt nat64; end_block : opt nat64; outstanding : nat64; dispatching_block : opt nat64 };
 type Runtime = record {
-  relay_lookup : opt RelayLookup;
+  relay_retries : opt RelayRetries;
   last_error : opt text;
   assumed_e8s : nat;
   snapshot : opt Snapshot;

@@ -28,6 +28,7 @@ struct Env {
     staking: Account,
     rewards_wasm: Vec<u8>,
     app: Principal,
+    factory: Option<Principal>,
 }
 
 fn command(command: &mut Command) -> Result<String> {
@@ -65,6 +66,23 @@ impl Env {
         production: bool,
         native_economics: bool,
     ) -> Result<Self> {
+        Self::setup_with_factory(
+            automation,
+            fault_ledger,
+            install_io,
+            production,
+            native_economics,
+            false,
+        )
+    }
+    fn setup_with_factory(
+        automation: bool,
+        fault_ledger: bool,
+        install_io: bool,
+        production: bool,
+        native_economics: bool,
+        factory_fixture: bool,
+    ) -> Result<Self> {
         // Compile every application before starting the owned server.
         let rewards_wasm = if production {
             wasm(&PRODUCTION_REWARDS_WASM, "jupiter-sns-rewards", None)?
@@ -86,6 +104,11 @@ impl Env {
             support::wasm::build_wasm_cached_for_test(&OnceLock::new(), "mock-cycle-burner", None)?;
         let fault_wasm = if fault_ledger {
             Some(wasm(&LEDGER_WASM, "mock-icrc-ledger", None)?)
+        } else {
+            None
+        };
+        let factory_wasm = if factory_fixture {
+            Some(wasm(&ROOT_WASM, "mock-sns-root", None)?)
         } else {
             None
         };
@@ -111,6 +134,11 @@ impl Env {
         let rewards = allocate();
         let app = allocate();
         let relay = allocate();
+        let factory = factory_wasm.map(|module| {
+            let id = allocate();
+            pic.install_canister(id, module, encode_args(()).unwrap(), None);
+            id
+        });
         let forwarding_governance = support::principals::nns_governance();
         pic.create_canister_with_id(None, None, forwarding_governance)
             .map_err(anyhow::Error::msg)?;
@@ -241,7 +269,7 @@ impl Env {
         let config = ProgrammeConfig {
             version: 1,
             jup_root: jup["root"],
-            relay_factory: None,
+            relay_factory: factory,
             icp_ledger: support::principals::icp_ledger(),
             icp_index: support::principals::icp_index(),
             staking_account: staking,
@@ -256,7 +284,7 @@ impl Env {
             reserve_subaccount: None,
             reserve_transport_neuron: None,
             launch_timestamp_seconds: Some(u64::MAX / 1_000_000_000),
-            patron_enabled: !automation,
+            patron_enabled: !automation && !factory_fixture,
             snapshot_max_age_seconds: 172_800,
             automation: automation.then(|| AutomationConfig {
                 proposer_neuron: jup_neurons["proposer"].clone(),
@@ -301,6 +329,7 @@ impl Env {
             staking,
             rewards_wasm,
             app,
+            factory,
         })
     }
     fn relay_context(&self) -> Result<super::RelayRewardContext> {

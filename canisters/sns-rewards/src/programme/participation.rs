@@ -68,6 +68,16 @@ fn set(state: &State) {
             .set(candid::encode_one(state).expect("encode participation state"));
     });
 }
+
+/// A stored aggregate cannot prove which policy excluded its neuron shares.
+/// Rebuild from native events after an upgrade before exposing any quote. This
+/// touches no funded IO entitlement and leaves participation data untouched for
+/// deployed V1 without an explicitly configured programme.
+pub(crate) fn invalidate_after_upgrade() {
+    if storage::read().config.is_some() {
+        set(&State::default());
+    }
+}
 fn weights<R>(slot: u8, f: impl FnOnce(&mut Weights) -> R) -> R {
     let (map, id) = match slot {
         0 => (&A, 10),
@@ -165,7 +175,7 @@ async fn tick_inner() -> Result<(), String> {
             return Err("non-progressing participation page".into());
         }
         scan.cursor = Some(id.clone());
-        if config.excluded_jup_neurons.contains(id) {
+        if config.excludes_neuron(id, ic_cdk::api::canister_self()) {
             continue;
         }
         let Some(participation) = &n.latest_reward_event_participation else {

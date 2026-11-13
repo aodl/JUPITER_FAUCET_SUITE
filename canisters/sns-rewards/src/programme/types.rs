@@ -51,6 +51,31 @@ pub struct AutomationConfig {
 }
 
 impl ProgrammeConfig {
+    /// Native genesis staking IDs, not principal-wide financial exclusions.
+    /// The reviewed launch assigns SNS Rewards nonce 2 (reserve) and 3 (proposer).
+    pub(crate) fn excludes_neuron(&self, id: &[u8], rewards: Principal) -> bool {
+        self.excluded_jup_neurons.iter().any(|n| n == id)
+            || self.protocol_governance_neuron == id
+            || self.reserve_transport_neuron.as_deref() == Some(id)
+            || self
+                .automation
+                .as_ref()
+                .is_some_and(|a| a.proposer_neuron == id)
+            || [2_u64, 3].into_iter().any(|nonce| {
+                use sha2::{Digest, Sha256};
+                Sha256::digest(
+                    [
+                        b"\x0cneuron-stake".as_slice(),
+                        rewards.as_slice(),
+                        &nonce.to_be_bytes(),
+                    ]
+                    .concat(),
+                )
+                .as_slice()
+                    == id
+            })
+    }
+
     pub(super) fn preserves_financial_bindings(&self, old: &Self) -> bool {
         self.jup_root == old.jup_root
             && self.canonical_relay == old.canonical_relay
@@ -212,6 +237,10 @@ pub struct Batch {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum PatronRoute {
     Direct,
+    /// Source bytes qualify, but authoritative factory membership is unresolved.
+    PendingRelay {
+        relay: Principal,
+    },
     UnsupportedRelay {
         claimed_relay: Principal,
     },
@@ -231,12 +260,27 @@ pub struct RelayLookup {
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum PatronOutcome {
+    AwaitingRelayMembership {
+        lookup: Option<RelayLookup>,
+        reason: String,
+    },
     Prepared,
-    Dispatched { at_nanos: u64 },
-    Verified { block: candid::Nat, duplicate: bool },
-    AssumedPaidUnverified { reason: String },
-    Failed { error: String },
-    Skipped { reason: String },
+    Dispatched {
+        at_nanos: u64,
+    },
+    Verified {
+        block: candid::Nat,
+        duplicate: bool,
+    },
+    AssumedPaidUnverified {
+        reason: String,
+    },
+    Failed {
+        error: String,
+    },
+    Skipped {
+        reason: String,
+    },
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -277,9 +321,18 @@ pub struct Runtime {
     pub batch: Option<Batch>,
     pub completed_end_block: Option<u64>,
     pub pending_block: Option<u64>,
-    pub relay_lookup: Option<RelayLookup>,
+    pub relay_retries: Option<RelayRetries>,
     pub last_error: Option<String>,
     pub verified_e8s: u128,
     pub assumed_e8s: u128,
     pub failed_items: u64,
+}
+
+/// Retry discovery uses the existing per-block journal, not another queue/index.
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct RelayRetries {
+    pub cursor: Option<u64>,
+    pub end_block: Option<u64>,
+    pub outstanding: u64,
+    pub dispatching_block: Option<u64>,
 }

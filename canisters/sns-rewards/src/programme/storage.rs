@@ -94,12 +94,52 @@ pub fn record(block: u64) -> Option<PatronRecord> {
     })
 }
 
+/// At most `limit` journal records, in ascending exclusive-key order. A caller
+/// persists its cursor even when these records are all terminal.
+pub(super) fn retry_page(after: Option<u64>, end: u64, limit: usize) -> Vec<PatronRecord> {
+    use std::ops::Bound::{Excluded, Included, Unbounded};
+    RECORDS.with_borrow_mut(|map| {
+        map.get_or_insert_with(|| StableBTreeMap::init(memory(6)))
+            .range((after.map_or(Unbounded, Excluded), Included(end)))
+            .take(limit)
+            .map(|entry| candid::decode_one(&entry.value()).expect("patron record"))
+            .collect()
+    })
+}
+
+pub(super) fn last_record_block() -> Option<u64> {
+    RECORDS.with_borrow_mut(|map| {
+        map.get_or_insert_with(|| StableBTreeMap::init(memory(6)))
+            .last_key_value()
+            .map(|(key, _)| key)
+    })
+}
+
+pub(super) fn defer_relay(record: &PatronRecord) {
+    assert!(matches!(
+        record.outcome,
+        PatronOutcome::AwaitingRelayMembership { .. }
+    ));
+    let already_deferred = self::record(record.contribution_block)
+        .is_some_and(|r| matches!(r.outcome, PatronOutcome::AwaitingRelayMembership { .. }));
+    put(record);
+    if !already_deferred {
+        mutate(|s| {
+            let retry = s.relay_retries.get_or_insert_with(RelayRetries::default);
+            retry.outstanding = retry
+                .outstanding
+                .checked_add(1)
+                .expect("deferred count overflow");
+        });
+    }
+}
+
 pub fn put(record: &PatronRecord) {
     let mut record = record.clone();
     match &mut record.outcome {
-        PatronOutcome::AssumedPaidUnverified { reason } | PatronOutcome::Skipped { reason } => {
-            *reason = super::compact(reason)
-        }
+        PatronOutcome::AssumedPaidUnverified { reason }
+        | PatronOutcome::Skipped { reason }
+        | PatronOutcome::AwaitingRelayMembership { reason, .. } => *reason = super::compact(reason),
         PatronOutcome::Failed { error } => *error = super::compact(error),
         _ => {}
     }
@@ -159,4 +199,12 @@ pub fn configure(config: ProgrammeConfig) -> Result<(), String> {
     });
     super::bind_relay_root();
     Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn clear_records_for_test() {
+    RECORDS.with_borrow_mut(|map| {
+        map.get_or_insert_with(|| StableBTreeMap::init(memory(6)))
+            .clear_new();
+    });
 }

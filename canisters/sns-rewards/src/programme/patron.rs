@@ -27,7 +27,9 @@ fn is_minting_destination(account: Account, governance: candid::Principal) -> bo
 pub fn finish(record: &PatronRecord) {
     if matches!(
         record.outcome,
-        PatronOutcome::Prepared | PatronOutcome::Dispatched { .. }
+        PatronOutcome::Prepared
+            | PatronOutcome::Dispatched { .. }
+            | PatronOutcome::AwaitingRelayMembership { .. }
     ) {
         return;
     }
@@ -45,8 +47,24 @@ pub fn finish(record: &PatronRecord) {
             _ => {}
         }
         s.pending_block = None;
-        let batch = s.batch.as_mut().expect("pinned patron batch");
-        batch.cursor = Some(record.contribution_block);
+        if let Some(retry) = s
+            .relay_retries
+            .as_mut()
+            .filter(|r| r.dispatching_block == Some(record.contribution_block))
+        {
+            retry.dispatching_block = None;
+            retry.outstanding = retry
+                .outstanding
+                .checked_sub(1)
+                .expect("deferred count underflow");
+            if retry.outstanding == 0 {
+                retry.cursor = None;
+                retry.end_block = None;
+            }
+        } else {
+            let batch = s.batch.as_mut().expect("pinned patron batch");
+            batch.cursor = Some(record.contribution_block);
+        }
     });
 }
 
@@ -103,6 +121,14 @@ pub async fn tick(now: u64) -> Result<(), String> {
         finish(&record);
         return Ok(());
     }
+    // A retry failure must not prevent the primary history lane from advancing.
+    let retry = retry_relay(&config, now).await;
+    let history = history_tick(config, now).await;
+    retry.and(history)
+}
+
+async fn history_tick(config: ProgrammeConfig, now: u64) -> Result<(), String> {
+    let state = storage::read();
     if state.batch.is_none() {
         let snapshot = state
             .snapshot
@@ -206,6 +232,12 @@ pub async fn tick(now: u64) -> Result<(), String> {
         complete_batch();
         return Ok(());
     }
+    if storage::record(tx.id).is_some_and(|r| !matches!(r.outcome, PatronOutcome::Prepared)) {
+        // Retained deferred/terminal identities cannot be assessed twice, even if
+        // canonical history is observed again. Prepared has never been sent.
+        advance(tx.id);
+        return Ok(());
+    }
     let IndexOperation::Transfer {
         from,
         to,
@@ -233,11 +265,18 @@ pub async fn tick(now: u64) -> Result<(), String> {
         .try_into()
         .map_err(|_| "invalid canonical sender length")?;
     let relay_candidate = super::relay::candidate(sender, memo);
+    let mut awaiting = None;
     let route = if let Some(relay) = relay_candidate {
         if spender.is_some() {
             None
         } else {
-            super::relay::classify(&config, tx.id, relay).await?
+            match super::relay::classify(&config, tx.id, relay, None).await {
+                super::relay::Classification::Ready(route) => route,
+                super::relay::Classification::Awaiting { lookup, reason } => {
+                    awaiting = Some(PatronOutcome::AwaitingRelayMembership { lookup, reason });
+                    Some(PatronRoute::PendingRelay { relay })
+                }
+            }
         }
     } else {
         Some(PatronRoute::Direct)
@@ -264,7 +303,10 @@ pub async fn tick(now: u64) -> Result<(), String> {
             .any(|p| account_identifier_bytes(p, None) == sender);
     let skip = if relay_candidate.is_some() && route.is_none() {
         Some("unsupported Relay sender or spender")
-    } else if matches!(route, Some(PatronRoute::RelayPot { .. })) {
+    } else if matches!(
+        route,
+        Some(PatronRoute::RelayPot { .. } | PatronRoute::PendingRelay { .. })
+    ) {
         None
     } else if excluded {
         Some("protocol capital excluded")
@@ -320,82 +362,119 @@ pub async fn tick(now: u64) -> Result<(), String> {
         record.outcome = PatronOutcome::Skipped {
             reason: reason.into(),
         };
+    } else if let Some(outcome) = awaiting {
+        if storage::read().config.as_ref() != Some(&config) {
+            return Ok(());
+        }
+        record.outcome = outcome;
+        storage::defer_relay(&record);
+        advance(record.contribution_block);
+        return Ok(());
     } else {
-        let direct_owner =
-            matches!(record.route, PatronRoute::Direct).then(|| owner.expect("recognised owner"));
-        let ledger = IcrcLedgerCanister::new(source.ledger);
-        let fee = ledger.fee_e8s().await.map_err(|e| e.to_string())?;
-        let balance = ledger
-            .balance_of_e8s(reserve)
-            .await
-            .map_err(|e| e.to_string())?;
-        // Last external prerequisite: recheck the selected jUP neuron immediately
-        // before freezing the payment. A revoked preference receives base liquid.
-        let compound = if let Some((owner, id)) = direct_owner
-            .as_ref()
-            .and_then(|o| o.compound_neuron.clone().map(|id| (o, id)))
-        {
-            match discovery::lookup_neuron(source.governance, id.clone()).await? {
-                Some(neuron) => {
-                    if neuron.id.as_ref().map(|n| &n.id) != Some(&id) {
-                        return Err("selected neuron lookup returned a different identity".into());
-                    }
-                    discovery::compound_eligible(&neuron, owner.principal, &config).then_some(id)
-                }
-                None => None, // a canonical NotFound is a definitive loss of bonus eligibility
-            }
-        } else {
-            None
-        };
-        record.amount_e8s = crate::patron_math::reward_e8s(
-            amount.e8s(),
-            timestamp,
-            record.launch_timestamp_seconds,
-            compound.is_some(),
-        );
-        record.fee_e8s = fee;
-        record.to = if let Some(id) = &compound {
-            Account {
-                owner: source.governance,
-                subaccount: Some(id.clone().try_into().map_err(|_| "neuron ID length")?),
-            }
-        } else {
-            Account {
-                owner: match &record.route {
-                    PatronRoute::Direct => {
-                        direct_owner
-                            .as_ref()
-                            .expect("recognised direct owner")
-                            .principal
-                    }
-                    PatronRoute::RelayPot { relay, .. } => *relay,
-                    PatronRoute::UnsupportedRelay { .. } => {
-                        return Err("unsupported Relay cannot be dispatched".into())
-                    }
-                },
-                subaccount: None,
-            }
-        };
-        if is_minting_destination(record.to, source.governance) {
-            return Err("Governance default/minting Account cannot receive patron rewards".into());
-        }
-        record.compounded_neuron = compound;
-        if record.amount_e8s == 0 {
-            record.outcome = PatronOutcome::Skipped {
-                reason: "final eight-decimal amount rounds to zero".into(),
-            };
-        } else if balance
-            < crate::patron_math::reserve_cost(record.amount_e8s, fee)
-                .ok_or("patron cost overflow")?
-        {
-            return Err("reserve funds unavailable; contribution has not been dispatched".into());
-        }
+        prepare_payment(&config, &mut record).await?;
     }
     if storage::read().config.as_ref() != Some(&config) {
         return Ok(());
     }
+    dispatch(record, false).await
+}
+
+async fn prepare_payment(
+    config: &ProgrammeConfig,
+    record: &mut PatronRecord,
+) -> Result<(), String> {
+    let direct_owner = matches!(record.route, PatronRoute::Direct)
+        .then(|| record.recognition.clone().expect("recognised owner"));
+    let source = &record.ownership_snapshot.sources[0];
+    let reserve = record.from;
+    let ledger = IcrcLedgerCanister::new(source.ledger);
+    let fee = ledger.fee_e8s().await.map_err(|e| e.to_string())?;
+    let balance = ledger
+        .balance_of_e8s(reserve)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Last external prerequisite: recheck the selected jUP neuron immediately
+    // before freezing the payment. A revoked preference receives base liquid.
+    let compound = if let Some((owner, id)) = direct_owner
+        .as_ref()
+        .and_then(|o| o.compound_neuron.clone().map(|id| (o, id)))
+    {
+        match discovery::lookup_neuron(source.governance, id.clone()).await? {
+            Some(neuron) => {
+                if neuron.id.as_ref().map(|n| &n.id) != Some(&id) {
+                    return Err("selected neuron lookup returned a different identity".into());
+                }
+                discovery::compound_eligible(
+                    &neuron,
+                    owner.principal,
+                    config,
+                    ic_cdk::api::canister_self(),
+                )
+                .then_some(id)
+            }
+            None => None, // a canonical NotFound is a definitive loss of bonus eligibility
+        }
+    } else {
+        None
+    };
+    record.amount_e8s = crate::patron_math::reward_e8s(
+        record.qualifying_icp_e8s,
+        record.commitment_timestamp_seconds,
+        record.launch_timestamp_seconds,
+        compound.is_some(),
+    );
+    record.fee_e8s = fee;
+    record.to = if let Some(id) = &compound {
+        Account {
+            owner: source.governance,
+            subaccount: Some(id.clone().try_into().map_err(|_| "neuron ID length")?),
+        }
+    } else {
+        Account {
+            owner: match &record.route {
+                PatronRoute::Direct => {
+                    direct_owner
+                        .as_ref()
+                        .expect("recognised direct owner")
+                        .principal
+                }
+                PatronRoute::RelayPot { relay, .. } => *relay,
+                PatronRoute::UnsupportedRelay { .. } | PatronRoute::PendingRelay { .. } => {
+                    return Err("unsupported Relay cannot be dispatched".into())
+                }
+            },
+            subaccount: None,
+        }
+    };
+    if is_minting_destination(record.to, source.governance) {
+        return Err("Governance default/minting Account cannot receive patron rewards".into());
+    }
+    record.compounded_neuron = compound;
+    record.outcome = PatronOutcome::Prepared;
+    record.created_at_time_nanos = ic_cdk::api::time();
+    if record.amount_e8s == 0 {
+        record.outcome = PatronOutcome::Skipped {
+            reason: "final eight-decimal amount rounds to zero".into(),
+        };
+    } else if balance
+        < crate::patron_math::reserve_cost(record.amount_e8s, fee).ok_or("patron cost overflow")?
+    {
+        return Err("reserve funds unavailable; contribution has not been dispatched".into());
+    }
+    Ok(())
+}
+
+async fn dispatch(mut record: PatronRecord, retry: bool) -> Result<(), String> {
     storage::put(&record);
-    storage::mutate(|s| s.pending_block = Some(record.contribution_block));
+    storage::mutate(|s| {
+        s.pending_block = Some(record.contribution_block);
+        if retry {
+            s.relay_retries
+                .as_mut()
+                .expect("relay retry state")
+                .dispatching_block = Some(record.contribution_block);
+        }
+    });
     if matches!(record.outcome, PatronOutcome::Skipped { .. }) {
         finish(&record);
         return Ok(());
@@ -422,10 +501,26 @@ pub async fn tick(now: u64) -> Result<(), String> {
         &reply,
         Err(CallFailed::InsufficientLiquidCycleBalance(_) | CallFailed::CallPerformFailed(_))
     ) {
-        record.outcome = PatronOutcome::Prepared;
+        let reason = format!("patron call was not dispatched: {:?}", reply.err());
+        record.outcome = if retry {
+            PatronOutcome::AwaitingRelayMembership {
+                lookup: None,
+                reason: reason.clone(),
+            }
+        } else {
+            PatronOutcome::Prepared
+        };
         storage::put(&record);
-        storage::mutate(|s| s.pending_block = None);
-        return Err(format!("patron call was not dispatched: {:?}", reply.err()));
+        storage::mutate(|s| {
+            s.pending_block = None;
+            if retry {
+                s.relay_retries
+                    .as_mut()
+                    .expect("relay retry state")
+                    .dispatching_block = None;
+            }
+        });
+        return Err(reason);
     }
     let result: Result<Result<Nat, TransferError>, String> = reply
         .map_err(|error| error.to_string())
@@ -456,6 +551,114 @@ pub async fn tick(now: u64) -> Result<(), String> {
     storage::put(&record);
     finish(&record);
     Ok(())
+}
+
+/// Pin a finite journal end for each round. New records cannot perpetually
+/// extend the current pass and starve earlier unresolved opportunities.
+/// At most 32 existing journal records are inspected per invocation.
+pub(super) fn select_relay_retry() -> Result<Option<PatronRecord>, String> {
+    let Some(retries) = storage::read().relay_retries.filter(|r| r.outstanding > 0) else {
+        return Ok(None);
+    };
+    let end = match retries.end_block {
+        Some(end) => end,
+        None => {
+            let end =
+                storage::last_record_block().ok_or("deferred count without journal records")?;
+            storage::mutate(|s| {
+                s.relay_retries
+                    .as_mut()
+                    .expect("relay retry state")
+                    .end_block = Some(end)
+            });
+            end
+        }
+    };
+    let page = storage::retry_page(retries.cursor, end, 32);
+    if page.is_empty() {
+        storage::mutate(|s| {
+            let retry = s.relay_retries.as_mut().expect("relay retry state");
+            retry.cursor = None;
+            retry.end_block = None;
+        });
+        return Ok(None);
+    }
+    for record in page {
+        storage::mutate(|s| {
+            s.relay_retries.as_mut().expect("relay retry state").cursor =
+                Some(record.contribution_block)
+        });
+        if matches!(
+            record.outcome,
+            PatronOutcome::AwaitingRelayMembership { .. }
+        ) {
+            return Ok(Some(record));
+        }
+    }
+    Ok(None)
+}
+
+/// One membership page/financial preparation per tick, independent of primary
+/// history progress. A permanently pending record is revisited without blocking.
+async fn retry_relay(config: &ProgrammeConfig, now: u64) -> Result<(), String> {
+    let Some(mut record) = select_relay_retry()? else {
+        return Ok(());
+    };
+    let state = storage::read();
+    let PatronOutcome::AwaitingRelayMembership { lookup, .. } = &record.outcome else {
+        return Err("retry selected a non-deferred record".into());
+    };
+    let relay = match record.route {
+        PatronRoute::PendingRelay { relay } | PatronRoute::RelayPot { relay, .. } => relay,
+        _ => return Err("deferred opportunity has no Relay source".into()),
+    };
+    let snapshot = state
+        .snapshot
+        .as_ref()
+        .filter(|s| s.valid_for(config, now))
+        .ok_or("Relay retry waits for a complete fresh jUP snapshot")?;
+    if snapshot.sources != record.ownership_snapshot.sources
+        || record.relay_factory != config.relay_factory
+        || record.icp_ledger != config.icp_ledger
+        || record.staking_account != config.staking_account
+    {
+        return Err("deferred Relay financial binding changed".into());
+    }
+    let classification =
+        super::relay::classify(config, record.contribution_block, relay, lookup.clone()).await;
+    if storage::read().config.as_ref() != Some(config) {
+        return Ok(());
+    }
+    match classification {
+        super::relay::Classification::Awaiting { lookup, reason } => {
+            record.outcome = PatronOutcome::AwaitingRelayMembership { lookup, reason };
+            storage::put(&record);
+            return Ok(());
+        }
+        super::relay::Classification::Ready(None) => {
+            record.route = PatronRoute::UnsupportedRelay {
+                claimed_relay: relay,
+            };
+            record.outcome = PatronOutcome::Skipped {
+                reason: "authoritatively unsupported Relay sender".into(),
+            };
+        }
+        super::relay::Classification::Ready(Some(route)) => {
+            record.route = route;
+            if let Err(reason) = prepare_payment(config, &mut record).await {
+                record.outcome = PatronOutcome::AwaitingRelayMembership {
+                    lookup: None,
+                    reason: reason.clone(),
+                };
+                storage::put(&record);
+                return Err(reason);
+            }
+        }
+    }
+    if storage::read().config.as_ref() != Some(config) {
+        return Ok(());
+    }
+    dispatch(record, true).await
 }
 
 #[cfg(test)]

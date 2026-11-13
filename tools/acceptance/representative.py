@@ -42,15 +42,21 @@ def prepare(context, artifacts, output, target=False):
         definitions += [('external', context['rewards'], 3, 1000, [4]),
                         ('io_only', context['io_only'], 4, 1000, all_permissions)]
     else:
-        governance_stake = e['governance_stake_e8s'] // 10**8 if context.get('native_economics') else 1000
-        definitions += [('nnx_fixture', context['nnx_fixture'], 3, governance_stake, [4]),
-                        ('proposer', context['rewards'], 4, context['proposer_stake'], [3]),
+        native = context.get('native_economics')
+        governance_stake = e['governance_stake_e8s'] // 10**8 if native else 1000
+        # Native exclusion tests give protocol neurons real economic authority:
+        # absence of Disburse must not mask a missing exact-ID exclusion. These
+        # are local representative stakes, not a production allocation change.
+        definitions += [('nnx_fixture', context['nnx_fixture'], 1 if native else 3, governance_stake, all_permissions if native else [4]),
+                        ('proposer', context['rewards'], 3 if native else 4, context['proposer_stake'], all_permissions if native else [3]),
                         ('a_second', context['a'], 5, 1, all_permissions)]
+        if native:
+            definitions += [('reserve_transport', context['rewards'], 2, 1, all_permissions)]
     genesis['neurons'] = [{'controller': controller, 'memo': memo, 'stake': stake * 10**8,
-        'dissolve_delay': e['year_seconds'],
+        'dissolve_delay': 0 if name == 'reserve_transport' else e['year_seconds'],
         'permissions': [{'principal': controller, 'permissions': permissions}],
         'voting_power_percentage_multiplier': 100, 'auto_stake_maturity': controller == context['a'],
-        'vesting_period_seconds': 0} for _, controller, memo, stake, permissions in definitions]
+        'vesting_period_seconds': 0} for name, controller, memo, stake, permissions in definitions]
     total = sum(n['stake'] for n in genesis['neurons'])
     # A direct dapp-held reserve is valid operational fixture data. It does not
     # prove the production launcher's reserve-transport disbursement.
