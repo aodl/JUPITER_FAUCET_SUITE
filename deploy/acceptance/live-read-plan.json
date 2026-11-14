@@ -1,0 +1,464 @@
+{
+  "status": "PREPARED ONLY; execution requires separate explicit bounded live-read approval",
+  "provider": "existing operator provider and confirmed public signing principal; normal SDK certificate/query verification",
+  "scope": "only the twelve profile IDs and listed shared system/SNS dependencies; no writes, subscriptions or test transfers",
+  "budget": {
+    "canisters": 12,
+    "certified_canister_paths": 24,
+    "management_status_attempts": 12,
+    "canister_info_attempts": 12,
+    "nns_queries": 3,
+    "ledger_queries": 10,
+    "post_install_queries": 18,
+    "topology_queries": 2,
+    "disburser_metadata_paths": 2,
+    "maximum_read_attempts": 83,
+    "retries": 0,
+    "stop_rule": "one attempt per listed item; one bounded neuron page and one bounded membership/status response; stop that item on denial or unsupported shape; independent items continue",
+    "preinstallation_maximum_read_attempts": 65,
+    "postinstallation_maximum_read_attempts": 18,
+    "per_read_timeout_seconds": 30,
+    "total_deadline_seconds": 1200
+  },
+  "canisters": [
+    {
+      "id": "canister-sns_root",
+      "target": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "role": "sns_root",
+      "initial_budget": {
+        "certified_paths": 2,
+        "status_attempts": 1,
+        "canister_info_attempts": 1
+      },
+      "paths": [
+        "module_hash",
+        "controllers"
+      ],
+      "status_fields": [
+        "cycles",
+        "reserved_cycles",
+        "memory_size",
+        "settings",
+        "status",
+        "module_hash"
+      ],
+      "routes": "existing SDK CanisterStatus certificate checks; management canister_status only through the confirmed already-authorized route; canister_info where supported",
+      "evidence": "certificate verified per path with IC root key/freshness; authorized management status is replicated, not one atomic twelve-canister snapshot",
+      "denial": "record exact denial; do not switch identity, create proxy or change visibility",
+      "canister_info_bound": "num_requested_changes=5 where supported; one call only"
+    },
+    {
+      "id": "canister-sns_governance",
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "role": "sns_governance",
+      "initial_budget": {
+        "certified_paths": 2,
+        "status_attempts": 1,
+        "canister_info_attempts": 1
+      },
+      "paths": [
+        "module_hash",
+        "controllers"
+      ],
+      "status_fields": [
+        "cycles",
+        "reserved_cycles",
+        "memory_size",
+        "settings",
+        "status",
+        "module_hash"
+      ],
+      "routes": "existing SDK CanisterStatus certificate checks; management canister_status only through the confirmed already-authorized route; canister_info where supported",
+      "evidence": "certificate verified per path with IC root key/freshness; authorized management status is replicated, not one atomic twelve-canister snapshot",
+      "denial": "record exact denial; do not switch identity, create proxy or change visibility",
+      "canister_info_bound": "num_requested_changes=5 where supported; one call only"
+    },
+    {
+      "id": "canister-sns_ledger",
+      "target": "sgnny-4iaaa-aaaas-amypq-cai",
+      "role": "sns_ledger",
+      "initial_budget": {
+        "certified_paths": 2,
+        "status_attempts": 1,
+        "canister_info_attempts": 1
+      },
+      "paths": [
+        "module_hash",
+        "controllers"
+      ],
+      "status_fields": [
+        "cycles",
+        "reserved_cycles",
+        "memory_size",
+        "settings",
+        "status",
+        "module_hash"
+      ],
+      "routes": "existing SDK CanisterStatus certificate checks; management canister_status only through the confirmed already-authorized route; canister_info where supported",
+      "evidence": "certificate verified per path with IC root key/freshness; authorized management status is replicated, not one atomic twelve-canister snapshot",
+      "denial": "record exact denial; do not switch identity, create proxy or change visibility",
+      "canister_info_bound": "num_requested_changes=5 where supported; one call only"
+    },
+    {
+      "id": "canister-sns_index",
+      "target": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "role": "sns_index",
+      "initial_budget": {
+        "certified_paths": 2,
+        "status_attempts": 1,
+        "canister_info_attempts": 1
+      },
+      "paths": [
+        "module_hash",
+        "controllers"
+      ],
+      "status_fields": [
+        "cycles",
+        "reserved_cycles",
+        "memory_size",
+        "settings",
+        "status",
+        "module_hash"
+      ],
+      "routes": "existing SDK CanisterStatus certificate checks; management canister_status only through the confirmed already-authorized route; canister_info where supported",
+      "evidence": "certificate verified per path with IC root key/freshness; authorized management status is replicated, not one atomic twelve-canister snapshot",
+      "denial": "record exact denial; do not switch identity, create proxy or change visibility",
+      "canister_info_bound": "num_requested_changes=5 where supported; one call only"
+    },
+    {
+      "id": "canister-sns_swap",
+      "target": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "role": "sns_swap",
+      "initial_budget": {
+        "certified_paths": 2,
+        "status_attempts": 1,
+        "canister_info_attempts": 1
+      },
+      "paths": [
+        "module_hash",
+        "controllers"
+      ],
+      "status_fields": [
+        "cycles",
+        "reserved_cycles",
+        "memory_size",
+        "settings",
+        "status",
+        "module_hash"
+      ],
+      "routes": "existing SDK CanisterStatus certificate checks; management canister_status only through the confirmed already-authorized route; canister_info where supported",
+      "evidence": "certificate verified per path with IC root key/freshness; authorized management status is replicated, not one atomic twelve-canister snapshot",
+      "denial": "record exact denial; do not switch identity, create proxy or change visibility",
+      "canister_info_bound": "num_requested_changes=5 where supported; one call only"
+    },
+    {
+      "id": "canister-jupiter_disburser",
+      "target": "spoge-kaaaa-aaaas-amyoa-cai",
+      "role": "jupiter_disburser",
+      "initial_budget": {
+        "certified_paths": 2,
+        "status_attempts": 1,
+        "canister_info_attempts": 1
+      },
+      "paths": [
+        "module_hash",
+        "controllers"
+      ],
+      "status_fields": [
+        "cycles",
+        "reserved_cycles",
+        "memory_size",
+        "settings",
+        "status",
+        "module_hash"
+      ],
+      "routes": "existing SDK CanisterStatus certificate checks; management canister_status only through the confirmed already-authorized route; canister_info where supported",
+      "evidence": "certificate verified per path with IC root key/freshness; authorized management status is replicated, not one atomic twelve-canister snapshot",
+      "denial": "record exact denial; do not switch identity, create proxy or change visibility",
+      "canister_info_bound": "num_requested_changes=5 where supported; one call only"
+    },
+    {
+      "id": "canister-jupiter_faucet",
+      "target": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "role": "jupiter_faucet",
+      "initial_budget": {
+        "certified_paths": 2,
+        "status_attempts": 1,
+        "canister_info_attempts": 1
+      },
+      "paths": [
+        "module_hash",
+        "controllers"
+      ],
+      "status_fields": [
+        "cycles",
+        "reserved_cycles",
+        "memory_size",
+        "settings",
+        "status",
+        "module_hash"
+      ],
+      "routes": "existing SDK CanisterStatus certificate checks; management canister_status only through the confirmed already-authorized route; canister_info where supported",
+      "evidence": "certificate verified per path with IC root key/freshness; authorized management status is replicated, not one atomic twelve-canister snapshot",
+      "denial": "record exact denial; do not switch identity, create proxy or change visibility",
+      "canister_info_bound": "num_requested_changes=5 where supported; one call only"
+    },
+    {
+      "id": "canister-jupiter_lifeline",
+      "target": "xiqae-3qaaa-aaaas-amyta-cai",
+      "role": "jupiter_lifeline",
+      "initial_budget": {
+        "certified_paths": 2,
+        "status_attempts": 1,
+        "canister_info_attempts": 1
+      },
+      "paths": [
+        "module_hash",
+        "controllers"
+      ],
+      "status_fields": [
+        "cycles",
+        "reserved_cycles",
+        "memory_size",
+        "settings",
+        "status",
+        "module_hash"
+      ],
+      "routes": "existing SDK CanisterStatus certificate checks; management canister_status only through the confirmed already-authorized route; canister_info where supported",
+      "evidence": "certificate verified per path with IC root key/freshness; authorized management status is replicated, not one atomic twelve-canister snapshot",
+      "denial": "record exact denial; do not switch identity, create proxy or change visibility",
+      "canister_info_bound": "num_requested_changes=5 where supported; one call only"
+    },
+    {
+      "id": "canister-jupiter_sns_rewards",
+      "target": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "role": "jupiter_sns_rewards",
+      "initial_budget": {
+        "certified_paths": 2,
+        "status_attempts": 1,
+        "canister_info_attempts": 1
+      },
+      "paths": [
+        "module_hash",
+        "controllers"
+      ],
+      "status_fields": [
+        "cycles",
+        "reserved_cycles",
+        "memory_size",
+        "settings",
+        "status",
+        "module_hash"
+      ],
+      "routes": "existing SDK CanisterStatus certificate checks; management canister_status only through the confirmed already-authorized route; canister_info where supported",
+      "evidence": "certificate verified per path with IC root key/freshness; authorized management status is replicated, not one atomic twelve-canister snapshot",
+      "denial": "record exact denial; do not switch identity, create proxy or change visibility",
+      "canister_info_bound": "num_requested_changes=5 where supported; one call only"
+    },
+    {
+      "id": "canister-jupiter_historian",
+      "target": "xbtly-nyaaa-aaaas-amysq-cai",
+      "role": "jupiter_historian",
+      "initial_budget": {
+        "certified_paths": 2,
+        "status_attempts": 1,
+        "canister_info_attempts": 1
+      },
+      "paths": [
+        "module_hash",
+        "controllers"
+      ],
+      "status_fields": [
+        "cycles",
+        "reserved_cycles",
+        "memory_size",
+        "settings",
+        "status",
+        "module_hash"
+      ],
+      "routes": "existing SDK CanisterStatus certificate checks; management canister_status only through the confirmed already-authorized route; canister_info where supported",
+      "evidence": "certificate verified per path with IC root key/freshness; authorized management status is replicated, not one atomic twelve-canister snapshot",
+      "denial": "record exact denial; do not switch identity, create proxy or change visibility",
+      "canister_info_bound": "num_requested_changes=5 where supported; one call only"
+    },
+    {
+      "id": "canister-jupiter_relay",
+      "target": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "role": "jupiter_relay",
+      "initial_budget": {
+        "certified_paths": 2,
+        "status_attempts": 1,
+        "canister_info_attempts": 1
+      },
+      "paths": [
+        "module_hash",
+        "controllers"
+      ],
+      "status_fields": [
+        "cycles",
+        "reserved_cycles",
+        "memory_size",
+        "settings",
+        "status",
+        "module_hash"
+      ],
+      "routes": "existing SDK CanisterStatus certificate checks; management canister_status only through the confirmed already-authorized route; canister_info where supported",
+      "evidence": "certificate verified per path with IC root key/freshness; authorized management status is replicated, not one atomic twelve-canister snapshot",
+      "denial": "record exact denial; do not switch identity, create proxy or change visibility",
+      "canister_info_bound": "num_requested_changes=5 where supported; one call only"
+    },
+    {
+      "id": "canister-jupiter_faucet_frontend",
+      "target": "xprgq-wiaaa-aaaas-amytq-cai",
+      "role": "jupiter_faucet_frontend",
+      "initial_budget": {
+        "certified_paths": 2,
+        "status_attempts": 1,
+        "canister_info_attempts": 1
+      },
+      "paths": [
+        "module_hash",
+        "controllers"
+      ],
+      "status_fields": [
+        "cycles",
+        "reserved_cycles",
+        "memory_size",
+        "settings",
+        "status",
+        "module_hash"
+      ],
+      "routes": "existing SDK CanisterStatus certificate checks; management canister_status only through the confirmed already-authorized route; canister_info where supported",
+      "evidence": "certificate verified per path with IC root key/freshness; authorized management status is replicated, not one atomic twelve-canister snapshot",
+      "denial": "record exact denial; do not switch identity, create proxy or change visibility",
+      "canister_info_bound": "num_requested_changes=5 where supported; one call only"
+    }
+  ],
+  "additional": [
+    {
+      "id": "NNS-public-info",
+      "target": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+      "method": "get_neuron_info",
+      "neuron_id": "2234355977000034918",
+      "evidence": "replica-signed public query, not full certified neuron"
+    },
+    {
+      "id": "NNS-controller-full",
+      "target": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+      "method": "get_full_neuron",
+      "neuron_id": "2234355977000034918",
+      "authority": "existing supported controller/hot-key route confirmed by operator; do not assume operator is authorized",
+      "fields": [
+        "controller",
+        "account bytes",
+        "cached_neuron_stake_e8s",
+        "dissolve state/delay",
+        "aging timestamp",
+        "auto_stake_maturity",
+        "maturity/staked maturity",
+        "followees",
+        "hot_keys",
+        "visibility",
+        "pending effects"
+      ]
+    },
+    {
+      "id": "NNS-runtime-visibility",
+      "target": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+      "method": "list_neurons",
+      "neuron_id": "2234355977000034918",
+      "caller": "actual allowed public-full-neuron semantics used by treasury and Relay; reproduce exact request shapes; private controller read is insufficient",
+      "mutation": "none; Public visibility change requires separate later approval"
+    },
+    {
+      "id": "ICP-reads",
+      "target": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "methods": [
+        "icrc1_fee",
+        "icrc1_balance_of(expected NNS Account)",
+        "icrc1_balance_of(canonical Relay default Account)",
+        "icrc1_balance_of(SNS Governance treasury Account)",
+        "icrc1_balance_of(Disburser default Account)",
+        "icrc1_balance_of(Faucet default payout Account)",
+        "icrc1_balance_of(SNS Rewards default ICP Account)"
+      ],
+      "evidence": "signed queries except independently verified CMC certified data if supplied; no inferred cached stake from balance",
+      "purpose": "Also preserve the three value-moving application balances before any helper replacement or timer-starting installation; observations do not prove absence of pending effects."
+    },
+    {
+      "id": "topology",
+      "methods": [
+        "existing provider supported subnet evidence for twelve IDs (one bounded batch)",
+        "supported subnet size/create-cost evidence (one bounded batch)"
+      ],
+      "denial": "unsupported topology remains unknown; no custom proof system"
+    },
+    {
+      "id": "helper-preservation",
+      "target": "spoge-kaaaa-aaaas-amyoa-cai",
+      "methods": [
+        "certified candid:service metadata",
+        "certified git_commit_id metadata if present"
+      ],
+      "operator_records": [
+        "source/build hash and purpose",
+        "stable-state obligations",
+        "outstanding neuron/maturity/ledger effects",
+        "supported state-preserving transition or explicit disposable-helper replacement approval",
+        "If no existing supported full-neuron/controller observation route exists, stop that item and report the missing route; do not create a proxy or invoke a helper mutation as a read."
+      ],
+      "limit": "metadata and historical logs alone cannot prove absence of stable state; no unlimited artifact hunt"
+    },
+    {
+      "id": "post-install",
+      "queries": [
+        "jUP metadata, decimals, fee, total_supply, minting_account (5)",
+        "jUP reserve, proposer, governance, test-bucket balance/typed genesis reconciliation (4 bounded requests)",
+        "Root list_sns_canisters and get_sns_canisters_summary (2)",
+        "Governance get_mode, get_nervous_system_parameters, get_running_sns_version, get_upgrade_journal (4)",
+        "SNS Rewards get_programme_status, get_reserve_transport_status, get_relay_reward_context (3)"
+      ],
+      "evidence": "normal signed query unless explicitly routed through an existing authorized replicated call; do not claim certificate coverage of arbitrary query values",
+      "conditions": "only after separately authorized installation; select one representative test Account for bounded bucket check, retain full offline supply reconciliation"
+    },
+    {
+      "id": "participant-balances",
+      "target": "ICP Ledger",
+      "participants": {
+        "A": null,
+        "B": null
+      },
+      "methods": [
+        "icrc1_balance_of(approved Participant A default Account)",
+        "icrc1_balance_of(approved Participant B default Account)"
+      ],
+      "conditions": "Read each Account only after that participant public principal is supplied; an unresolved other participant does not block it. Do not select unrelated local identities. At most one read per Account.",
+      "purpose": "Determine whether operator provisioning is needed, including its additional sender fee, without counting funding and donation principal twice."
+    },
+    {
+      "id": "CMC-rate",
+      "target": "rkp4c-7iaaa-aaaaa-aaaca-cai",
+      "method": "get_icp_xdr_conversion_rate",
+      "arguments": "()",
+      "evidence": "Record the replica-signed query, timestamp and supplied certification bytes; verify certification with existing supported tooling where available and label its actual verification level. No invented fresh rate.",
+      "purpose": "Price only the actual cycles deficits and verify the factory threshold. Included in the ten Ledger/participant/CMC read slots."
+    }
+  ],
+  "outputs": [
+    "timestamp and exact public caller/provider",
+    "raw replies and command/request arguments",
+    "per-read certificate/query/replicated classification",
+    "module/controller comparison to package hashes",
+    "precise missing authority and unresolved fields",
+    "funding deltas without executing them"
+  ],
+  "prohibited": [
+    "new canisters/proxies",
+    "controller/visibility/settings changes",
+    "ICP/cycles transfers",
+    "installs/upgrades",
+    "notification subscriptions",
+    "silent identity fallback"
+  ],
+  "authorization_staging": "Next approval covers at most 65 pre-installation read attempts, including two conditional participant-balance reads once their public principals are supplied. Unknown participants consume no fake calls and do not block the other 63. The 18 post-installation reads require a later installation and separately approved verification stage; no read approval authorizes installation."
+}

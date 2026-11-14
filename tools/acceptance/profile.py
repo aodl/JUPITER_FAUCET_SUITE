@@ -67,14 +67,18 @@ def validate_roles(roles):
     return roles
 
 
-def validate(profile):
+def validate(profile, require_operator=True):
     if set(profile) != {'environment', 'network', 'operator', 'roles', 'nns_neuron',
                         'age_bonus_recipient_2', 'relay_surplus_neuron_recipients',
                         'initial_main_cycles_target', 'genesis'}:
         raise ValueError('unexpected/missing profile fields')
     if profile['environment'] != 'acceptance' or profile['network'] != 'ic':
         raise ValueError('acceptance must explicitly target the real ic network')
-    operator = isolated_principal(profile['operator'])
+    # Application executable bindings contain no operator/genesis authority.
+    # Permit an absent operator only for that build-only path; constructors and
+    # the installation handoff retain the strict default validation.
+    operator = (None if not require_operator and profile['operator'] is None
+                else isolated_principal(profile['operator']))
     roles = validate_roles(profile['roles'])
     if operator in roles.values():
         raise ValueError('application/SNS role cannot be the operator')
@@ -140,7 +144,7 @@ def validate(profile):
 
 
 def bindings(profile):
-    checked = validate(profile)
+    checked = validate(profile, require_operator=False)
     return {
         **{'JUPITER_BOUND_' + role.removeprefix('jupiter_').upper() + '_ID': value
            for role, value in checked['roles'].items()},
@@ -152,7 +156,7 @@ def bindings(profile):
 
 
 def frontend(profile):
-    checked = validate(profile)
+    checked = validate(profile, require_operator=False)
     return {
         'network': 'acceptance',
         'historianCanisterId': checked['roles']['jupiter_historian'],
@@ -167,7 +171,7 @@ def frontend(profile):
 
 
 def render_markup(profile, text):
-    checked = validate(profile)
+    checked = validate(profile, require_operator=False)
     production = json.loads((REPO / '.icp/data/mappings/ic.ids.json').read_text())
     replacements = {}
     old_staking = account(SYSTEM['governance'], PROTECTED_STAKING[0])

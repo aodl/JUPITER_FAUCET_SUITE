@@ -1,0 +1,159 @@
+{
+  "sns_root": {
+    "status": "operator-approved role assignment; not observed mainnet state",
+    "account": {
+      "owner": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "subaccountHex": null,
+      "address": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "explorerAccountHex": "cb692fa69cd5b2bacfd63c4370541ef3e37098bb32def0f4b54cf7140c6a4d5b"
+    }
+  },
+  "sns_governance": {
+    "status": "operator-approved role assignment; not observed mainnet state",
+    "account": {
+      "owner": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "subaccountHex": null,
+      "address": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "explorerAccountHex": "ae61bdb02899de73a2a650399a5d25af0df69942067ed1051525e9d848e6b1d9"
+    }
+  },
+  "sns_ledger": {
+    "status": "operator-approved role assignment; not observed mainnet state",
+    "account": {
+      "owner": "sgnny-4iaaa-aaaas-amypq-cai",
+      "subaccountHex": null,
+      "address": "sgnny-4iaaa-aaaas-amypq-cai",
+      "explorerAccountHex": "c3bba4e488db8128991d577f45d5db589a5f0f0389138881e7ed520788ffb11e"
+    }
+  },
+  "sns_index": {
+    "status": "operator-approved role assignment; not observed mainnet state",
+    "account": {
+      "owner": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "subaccountHex": null,
+      "address": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "explorerAccountHex": "899ad985ebfebd41585977cdb4f868c13cc2c6d6f5dd8499554e1b5a2e1e9e57"
+    }
+  },
+  "sns_swap": {
+    "status": "operator-approved role assignment; not observed mainnet state",
+    "account": {
+      "owner": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "subaccountHex": null,
+      "address": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "explorerAccountHex": "dd51ab67c3db9c9676aec06ba79833d4067386dc53756ae85a700c683b7fa2e7"
+    }
+  },
+  "jupiter_disburser": {
+    "status": "operator-confirmed",
+    "account": {
+      "owner": "spoge-kaaaa-aaaas-amyoa-cai",
+      "subaccountHex": null,
+      "address": "spoge-kaaaa-aaaas-amyoa-cai",
+      "explorerAccountHex": "83769eb0e199179943ac2372a374af3750b546a57c88aa11338d175fbafcf50d"
+    }
+  },
+  "jupiter_faucet": {
+    "status": "operator-approved role assignment; not observed mainnet state",
+    "account": {
+      "owner": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "subaccountHex": null,
+      "address": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "explorerAccountHex": "57a62b3c1118de3ea6c6d797bc1f63e49d8dcd3be7f5fca53c0d34f252c7b907"
+    }
+  },
+  "jupiter_lifeline": {
+    "status": "operator-approved role assignment; not observed mainnet state",
+    "account": {
+      "owner": "xiqae-3qaaa-aaaas-amyta-cai",
+      "subaccountHex": null,
+      "address": "xiqae-3qaaa-aaaas-amyta-cai",
+      "explorerAccountHex": "4cb9cc92a809876ed27ab00b8275f528702ea21d5f68b68b232e4be90216f31a"
+    }
+  },
+  "jupiter_sns_rewards": {
+    "status": "operator-approved role assignment; not observed mainnet state",
+    "account": {
+      "owner": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "subaccountHex": null,
+      "address": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "explorerAccountHex": "9f4871aa3492087db845ca0eb154c3a639464f40f0b882231ede354671c81a06"
+    }
+  },
+  "jupiter_historian": {
+    "status": "operator-approved role assignment; not observed mainnet state",
+    "account": {
+      "owner": "xbtly-nyaaa-aaaas-amysq-cai",
+      "subaccountHex": null,
+      "address": "xbtly-nyaaa-aaaas-amysq-cai",
+      "explorerAccountHex": "8836989dc436bcac9e2e2db1195d8f679c4307a0f3e8aecf606537dccd190637"
+    }
+  },
+  "jupiter_relay": {
+    "status": "operator-approved role assignment; not observed mainnet state",
+    "account": {
+      "owner": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "subaccountHex": null,
+      "address": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "explorerAccountHex": "620e88ec50f6c35b1a58ea9f7fc3f3c7f23355d1582fc9912ecfca405bc8c069"
+    }
+  },
+  "jupiter_faucet_frontend": {
+    "status": "operator-approved role assignment; not observed mainnet state",
+    "account": {
+      "owner": "xprgq-wiaaa-aaaas-amytq-cai",
+      "subaccountHex": null,
+      "address": "xprgq-wiaaa-aaaas-amytq-cai",
+      "explorerAccountHex": "8b7d36835d228bbbc2df9bbada99403e756c4139f26affbc8e2e3b89d99aa6b9"
+    }
+  },
+  "nns_staking_expectation": {
+    "status": "derived expectation; requires authorized full-neuron comparison",
+    "neuron_id": "2234355977000034918",
+    "account": {
+      "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+      "subaccountHex": "52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+      "address": "rrkah-fqaaa-aaaaa-aaaaq-cai-v6gacby.52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+      "explorerAccountHex": "e458b5ed224bd0b9e884599dd0e986e78d02266674b093b617105528311fa602"
+    }
+  },
+  "reserve_transport": {
+    "status": "derived from operator-approved role; not observed",
+    "controller": "xgsnm-aaaaa-aaaas-amysa-cai",
+    "nonce": 2,
+    "neuron_id_hex": "f8fd94bd8a3e171de027ed463f27f52b8f5b843ecc3bcaa8e1a7faa76ee64bf5",
+    "account": {
+      "owner": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "subaccountHex": "f8fd94bd8a3e171de027ed463f27f52b8f5b843ecc3bcaa8e1a7faa76ee64bf5",
+      "address": "sipaq-hyaaa-aaaas-amyoq-cai-kqegs6a.f8fd94bd8a3e171de027ed463f27f52b8f5b843ecc3bcaa8e1a7faa76ee64bf5",
+      "explorerAccountHex": "3d7187d3dca4b1fed0e9b1434520732ce883f40ee3d6dd672d43f5062f27b56a"
+    }
+  },
+  "operational_proposer": {
+    "status": "derived from operator-approved role; not observed",
+    "controller": "xgsnm-aaaaa-aaaas-amysa-cai",
+    "nonce": 3,
+    "neuron_id_hex": "eae5db7cc63c22034920c311770997a58dabdcb01589b2d9cf30d3a7a0276326",
+    "account": {
+      "owner": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "subaccountHex": "eae5db7cc63c22034920c311770997a58dabdcb01589b2d9cf30d3a7a0276326",
+      "address": "sipaq-hyaaa-aaaas-amyoq-cai-fzdqeki.eae5db7cc63c22034920c311770997a58dabdcb01589b2d9cf30d3a7a0276326",
+      "explorerAccountHex": "b088f13b0b1d64e87dedb631e0b75070bd99c38f435ecebd716503d59fd7fb16"
+    }
+  },
+  "dominant_governance": {
+    "status": "temporary operator authority approved; verified signer still unresolved",
+    "nonce": 1,
+    "neuron_id_hex": null,
+    "account": null
+  },
+  "dquorum_age_bonus": {
+    "status": "settled",
+    "account": {
+      "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+      "subaccountHex": "77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f",
+      "address": "rrkah-fqaaa-aaaaa-aaaaq-cai-62gcwni.77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f",
+      "explorerAccountHex": "52991edd749dc095b2f15121289f3697543aad08db6f01a7ff840818a84fda10"
+    }
+  }
+}

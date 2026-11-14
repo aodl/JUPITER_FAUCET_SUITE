@@ -100,7 +100,9 @@ class Isolation(unittest.TestCase):
         self.assertEqual(checked_in['age_bonus_recipient_2'], {
             'owner': acceptance.SYSTEM['governance'],
             'subaccountHex': acceptance.DQUORUM_STAKING_SUBACCOUNT})
-        self.assertIsNone(checked_in['relay_surplus_neuron_recipients'])
+        # Work-package A explicitly approves an empty initial acceptance list.
+        # D-QUORUM's age-bonus Account remains independently fixed above.
+        self.assertEqual(checked_in['relay_surplus_neuron_recipients'], [])
 
     def test_other_governance_accounts_and_wrong_dquorum_owner_remain_rejected(self):
         for sub in (None, '00' * 32, '01' * 32,

@@ -36,7 +36,7 @@ def encode_checked(did, types, value):
     command = ['didc', 'encode', '--defs', str(did), '--types', types]
     encoded = bytes.fromhex(subprocess.check_output(command, input=value, text=True).strip())
     decoded = subprocess.check_output(
-        ['didc', 'decode', '--defs', str(did), '--types', types, encoded.hex()], text=True)
+        ['didc', 'decode', '--defs', str(did), '--types', types], input=encoded.hex(), text=True)
     again = bytes.fromhex(subprocess.check_output(command, input=decoded, text=True).strip())
     if encoded != again:
         raise ValueError('typed constructor did not round trip exactly')

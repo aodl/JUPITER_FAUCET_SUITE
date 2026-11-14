@@ -1,0 +1,44 @@
+{
+  "roles_confirmed": true,
+  "operator": null,
+  "voting_authority": {
+    "principal": null,
+    "kind": "temporary-acceptance",
+    "executable_route": "Existing operator signing provider, pending public principal and callable-route verification; no live operation authorization."
+  },
+  "acceptance_start_timestamp_seconds": null,
+  "genesis_timestamp_seconds": null,
+  "test_allocations": [
+    {
+      "owner": null,
+      "amount_e8s": 500000000000,
+      "kind": "neuron",
+      "memo": 10,
+      "dissolve_delay_seconds": 0
+    },
+    {
+      "owner": null,
+      "amount_e8s": 500000000000,
+      "kind": "neuron",
+      "memo": 11,
+      "dissolve_delay_seconds": 31557600
+    },
+    {
+      "owner": null,
+      "amount_e8s": 500000000000,
+      "kind": "neuron",
+      "memo": 20,
+      "dissolve_delay_seconds": 0
+    },
+    {
+      "owner": null,
+      "amount_e8s": 500000000000,
+      "kind": "neuron",
+      "memo": 21,
+      "dissolve_delay_seconds": 31557600
+    }
+  ],
+  "relay_surplus_neuron_recipients": [],
+  "bootstrap_disburser": null,
+  "approved": true
+}

@@ -1,0 +1,27 @@
+{
+  "source": "Operator work-package A configuration reply, 14 November 2026; no mainnet operation authorization",
+  "role_assignments_approved": true,
+  "operator_expected_principal": "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+  "signing_provider": null,
+  "operator_verified_principal": null,
+  "local_public_identity_checks": {
+    "icp_default": "anonymous",
+    "icp_listed_principals": ["2vxsx-fae", "6ykjr-j55xd-s2kry-ki6wm-x5hka-lba2p-ddm3x-34fdi-zgbl5-rnhho-kae"],
+    "dfx_default": "codex_local",
+    "dfx_default_principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+    "conclusion": "Expected operator not established by these normal public CLI outputs. No identity was switched. These are local observations, not mainnet controller or signing-authority evidence."
+  },
+  "temporary_acceptance_voter_approved": true,
+  "temporary_voter_binding": "the verified operator; unresolved until provider/public principal confirmation",
+  "temporary_voter_native_permissions": [2, 3, 4],
+  "mainnet_permission_revocation_authorized": false,
+  "acceptance_time_policy": "Fix the acceptance-specific reward timestamp at the explicitly approved patron activation checkpoint; confirm with the installation schedule. Production launch time remains separate.",
+  "participant_principals": {"A": null, "B": null},
+  "test_allocation_policy": "Each participant receives 5000 jUP in a zero-delay neuron and 5000 jUP in a one-year neuron, entirely within the existing 20000-jUP bucket. Not sale purchases.",
+  "relay_surplus_neuron_recipients": [],
+  "relay_surplus_policy": "Approved temporary acceptance simplification only; eventual acceptance-only destinations remain separately reviewed.",
+  "helper_operator_understanding": "Temporary helper intended to create the existing NNS neuron; this remains to be confirmed with preservation facts.",
+  "helper_disposable_established": false,
+  "mainnet_reads_authorized": false,
+  "mainnet_mutations_authorized": false
+}

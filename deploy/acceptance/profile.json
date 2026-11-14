@@ -24,7 +24,7 @@
     "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
     "subaccountHex": "77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f"
   },
-  "relay_surplus_neuron_recipients": null,
+  "relay_surplus_neuron_recipients": [],
   "initial_main_cycles_target": 3000000000000,
   "genesis": null
 }

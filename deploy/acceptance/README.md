@@ -1,5 +1,11 @@
 # Jupiter acceptance SNS
 
+The executable preparation follow-up is [work package A](work-package-a.md):
+owner decisions, exact-allocation genesis generation, native governance recipes,
+installation staging, a [funding sheet](funding-sheet.json) and a bounded
+[live-read approval plan](live-read-plan.json). Unanswered owner inputs remain
+unanswered; preparation does not authorize mainnet reads or writes.
+
 This is offline preparation for a separate, directly installed Jupiter SNS on the
 real IC. It authorizes no installation, funding, neuron operation or controller
 change. Production `ic`, its mappings and installation arguments retain their
@@ -16,15 +22,15 @@ contract; no build, test or script needs its checkout.
 `spoge-kaaaa-aaaas-amyoa-cai` and exact NNS neuron `2234355977000034918`.
 The checked-in handoff reports delegated selection of the other eleven roles;
 all twelve assignments are recorded in the profile and the
-[identity handoff](identity-handoff.md). The original authenticated operator
-session is not available as independent evidence in this checkout. Treat the
-eleven mappings as proposed assignments requiring final operator confirmation,
+[identity handoff](identity-handoff.md). The work-package A operator reply
+explicitly approves all eleven assignments. These are approved configuration,
 not observations of installed mainnet roles. No read-only or mutating mainnet
-calls were authorized for this integration task.
+calls are authorized by that approval.
 `provisioning.json` retains the original inventory and delegation provenance.
 No existing mapping was inferred from ID ordering. Role isolation is independently
-validated with `profile.py check-roles`. Operator, production NNX authority, launch
-timestamp and reviewed genesis/Relay surplus inputs remain unresolved, so full
+validated with `profile.py check-roles`. The verified operator/provider, acceptance
+timestamps and participant principals remain unresolved. Temporary operator
+voting authority and empty canonical Relay surplus are approved policies. Full
 constructor preparation still fails closed. The
 `acceptance` CLI environment uses network `ic` and all twelve roles, separately
 from production. A Ledger archive is a later-created component, not an initial
@@ -44,7 +50,7 @@ This is the reviewed production Disburser's 5% age-bonus recipient, not IO's
 protected permanent neuron. No other Governance Account is allowed in that role,
 including protected Jupiter/IO staking Accounts. Protected application principals
 and neuron IDs remain rejected. The exact D-QUORUM recipient is encoded in the checked profile. The canonical
-Relay surplus policy remains unresolved; constructor preparation authorizes no
+Relay surplus policy is an approved temporary empty list; constructor preparation authorizes no
 real ICP donation.
 Any real funding requires separate explicit authorization.
 
@@ -231,8 +237,10 @@ production launch support.
 
 Long-lived acceptance retains the direct-installed Normal SNS and parked Swap.
 Its real Ledger/governance/controller behavior is useful operational evidence,
-but it has no sale history or authentic SNS-token sale valuation. Its small contested ownership
-fixture is not the production participant distribution. Native SNS-token treasury/mint valuation belongs in the sale rehearsal.
+but it has no sale history or authentic SNS-token sale valuation. The separate
+compatibility scenario's small contested ownership fixture is not the
+operational acceptance genesis: `operational.py` renders the exact 100-million
+allocation and approved four-neuron test bucket. Native SNS-token treasury/mint valuation belongs in the sale rehearsal.
 ICP-treasury valuation uses the real ICP Ledger and CMC, independently of Swap,
 as the [pinned valuation source](https://github.com/dfinity/ic/blob/98c898f8de068a1fc0e97ebc805f9fa7f315d862/rs/sns/governance/token_valuation/src/lib.rs)
 shows. The sale test reinvests actual sale proceeds; a funded operational ICP
