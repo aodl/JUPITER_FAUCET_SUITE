@@ -68,6 +68,16 @@ fn set(state: &State) {
             .set(candid::encode_one(state).expect("encode participation state"));
     });
 }
+
+/// A stored aggregate cannot prove which policy excluded its neuron shares.
+/// Rebuild from native events after an upgrade before exposing any quote. This
+/// touches no funded IO entitlement and leaves participation data untouched for
+/// deployed V1 without an explicitly configured programme.
+pub(crate) fn invalidate_after_upgrade() {
+    if storage::read().config.is_some() {
+        set(&State::default());
+    }
+}
 fn weights<R>(slot: u8, f: impl FnOnce(&mut Weights) -> R) -> R {
     let (map, id) = match slot {
         0 => (&A, 10),
@@ -103,7 +113,10 @@ async fn tick_inner() -> Result<(), String> {
         .ok_or("no settled native participation event")?;
     let mut state = read();
     if state.active.as_ref().is_some_and(|e| {
-        e.source == source && e.round == event.round && e.config_version == config.version
+        e.source == source
+            && e.round == event.round
+            && e.end_timestamp_seconds == end
+            && e.config_version == config.version
     }) {
         return Ok(());
     }
@@ -162,7 +175,7 @@ async fn tick_inner() -> Result<(), String> {
             return Err("non-progressing participation page".into());
         }
         scan.cursor = Some(id.clone());
-        if config.excluded_jup_neurons.contains(id) {
+        if config.excludes_neuron(id, ic_cdk::api::canister_self()) {
             continue;
         }
         let Some(participation) = &n.latest_reward_event_participation else {
@@ -190,7 +203,8 @@ async fn tick_inner() -> Result<(), String> {
         let narrow: discovery::Neuron =
             candid::decode_one(&candid::encode_one(n).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
-        if let Some(owner) = discovery::economic_owner(&narrow) {
+        if let Some(owner) = discovery::economic_owner(&narrow).filter(|p| *p != source.governance)
+        {
             entries.push((owner, shares));
         }
     }

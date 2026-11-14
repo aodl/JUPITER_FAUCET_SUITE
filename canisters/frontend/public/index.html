@@ -565,7 +565,7 @@
                 into:
               </p>
               <ul class="nav-panel-content how-it-works-age-bonus-list">
-                <li><strong>95%</strong> distributed to <strong>SNS jUP stakers</strong> in the form of newly issued <strong>IO</strong> (a liquid staking protocol that will be launched alongside Jupiter Faucet)</li>
+                <li><strong>95%</strong> sent as ICP to <strong>SNS Rewards</strong>. Future <strong>IO</strong> distribution to eligible external jUP governance participants requires authenticated settlement and separately reviewed payout rules.</li>
                 <li>
                   <strong>5%</strong> restaked into the
                   <a
@@ -601,11 +601,12 @@
                 to the <a href="https://dashboard.internetcomputer.org/account/22594ba982e201a96a8e3e51105ac412221a30f231ec74bb320322deccb5061d" target="_blank" rel="noopener noreferrer" class="pane-external-link">staking account</a>
                 of Jupiter Faucet's <a href="https://dashboard.internetcomputer.org/neuron/11614578985374291210" target="_blank" rel="noopener noreferrer" class="pane-external-link">neuron</a>
                 (following the <a href="#how-it-works" data-page-target="0" class="pane-external-link">rules described</a>). Contributions must meet the requirements in order to be counted (transactions of at least 1 ICP featuring a memo that declares a canister ID or neuron ID).
-                Use the default ICP Account of the same principal that owns a recognised jUP or IO neuron, and wait for recognition before contributing. Unmatched contributions are final; historical recognition uses the launch processing snapshot. Liquid jUP is normal. Eligible direct rewards to an exact one-year, non-dissolving jUP neuron with auto-stake maturity enabled are doubled; Relay rewards remain base-rate liquid. The reserve pays the delivery fee separately from the quoted amount. Rare uncertain payments are treated as paid automatically and may need DAO review; they are not confirmed Ledger transfers.
+                Use the default ICP Account of the same principal that securely controls a recognised positive-stake jUP neuron, and wait for recognition before contributing. Unmatched contributions are final; historical recognition uses the launch processing snapshot. Liquid jUP is normal. Eligible direct rewards to an exact one-year, non-dissolving jUP neuron with auto-stake maturity enabled are doubled. Authentic Relay endowments fund a base-rate pot in that Relay; its existing distribution, fees and economic thresholds determine individual receipts. Memo-less treasury staking creates no patron jUP or Relay pot. The reserve pays the delivery fee separately from the quoted amount. Rare uncertain payments are treated as paid automatically and may need DAO review; they are not confirmed Ledger transfers.
                 This programme is not active on production. Sale purchases, external Faucet commitments, protocol treasury reinvestment and age-bonus IO rewards are separate flows. While the rewards integration is completed, age-bonus ICP accumulates in the
                 <a href="https://dashboard.internetcomputer.org/account/4d6afc06456fc7d5e5d6c9096a12ca60182a9fdb4ee50c4ff2feb2112c86222f" target="_blank" rel="noopener noreferrer" class="pane-external-link">rewards account</a>
                 (reserved until SNS launch). See <a href="#governance" data-panel="governance" class="pane-external-link">Governance</a> for more info.
               </p>
+              <p class="nav-panel-content" id="jup-native-economic-note">The launch candidate sets a 0.01 jUP transfer fee and zero native jUP inflation. Voting requires six months of remaining dissolve delay. A non-dissolving one-year neuron gains native voting and participation weight as it ages, capped after four years at three times an equal fresh commitment. This is relative weight, not an income rate. Starting dissolution resets age; the zero-delay sale neuron cannot vote without increasing its delay. Externally funded IO still requires authenticated settlement and reviewed distribution.</p>
             </div>
 
             <div class="nav-panel-page" data-page="2">
@@ -716,9 +717,9 @@
                 that raw ICP to keep itself topped up along with configured canisters. Surplus ICP
                 (if any) can then be routed to configured principals' default ICP accounts or public NNS neuron staking accounts. The
                 Jupiter Faucet protocol's own relay canister routes 50% of any surplus ICP back into
-                the Jupiter Faucet neuron itself (forever increasing the rate of future
-                maturity-minted ICP back into the relay). The relay routes remaining surplus ICP
-                into the IO neuron's staking account (forever increasing the base APY for IO holders and therefore jUP stakers).
+                the Jupiter Faucet neuron itself, adding productive principal subject to normal
+                NNS maturity and age rules. The relay routes remaining surplus ICP
+                into the IO neuron's staking account. External reward income remains conditional on actual maturity and authenticated settlement.
               </p>
               <p class="nav-panel-content">
                 Anyone can deploy their own relay canister (specifying their own selection of target

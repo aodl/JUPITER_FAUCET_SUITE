@@ -5064,6 +5064,43 @@ fn age_bonus_routes_incremental_rewards_to_bonus_accounts() -> Result<()> {
         );
     }
 
+    // Additional principal does not consume or divert subsequent native maturity.
+    // The separate native-treasury rehearsal proves the SNS source route; this
+    // cycle retains actual NNS reward generation and real 95/5 Ledger receipts.
+    stop_canister_as(&pic, disburser_canister, disburser_canister)?;
+    // Establish genuine native age without synthesizing its stored age field.
+    // No reward-period accounting is claimed during this idle fixture interval.
+    pic.advance_time(Duration::from_secs(4 * 366 * DAY_SECS));
+    tick_n(&pic, 20);
+    top_up_neuron_stake_and_refresh(&pic, ledger, gov, controller, neuron_id, 25 * 100_000_000)?;
+    let refreshed: ManageNeuronResponse = update_call(
+        &pic,
+        gov,
+        controller,
+        "manage_neuron",
+        ManageNeuronRequest {
+            id: None,
+            neuron_id_or_subaccount: Some(manage_neuron::NeuronIdOrSubaccount::NeuronId(
+                NeuronId { id: neuron_id },
+            )),
+            command: Some(ManageNeuronCommandRequest::RefreshVotingPower(
+                Default::default(),
+            )),
+        },
+    )?;
+    assert!(
+        matches!(
+            refreshed.command,
+            Some(manage_neuron_response::Command::RefreshVotingPower(_))
+        ),
+        "{refreshed:?}"
+    );
+    start_canister_as(&pic, disburser_canister, disburser_canister)?;
+    let c3 = run_cycle(9_003)?;
+    assert!(c3.age_seconds_used >= MAX_AGE_FOR_BONUS_SECS);
+    assert!(c3.total_disbursed_e8s > 0);
+    assert!(c3.bonus1_net_e8s > 0 && c3.bonus2_net_e8s > 0);
+
     Ok(())
 }
 
@@ -5806,6 +5843,11 @@ fn claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
     increase_dissolve_delay(&pic, gov, controller, neuron_id, 31_557_600)?;
     ensure_maturity_ge_1_icp(&pic, ledger, gov, controller, neuron_id)?;
 
+    // Establish actual nonzero NNS age before installing the timer-driven dapp.
+    // The stake increase below must dilute this age under official NNS rules.
+    pic.advance_time(Duration::from_secs(2 * 365 * DAY_SECS));
+    tick_n(&pic, 20);
+
     let wasm = build_disburser_wasm()?;
     let init = InitArg {
         neuron_id,
@@ -5847,6 +5889,7 @@ fn claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
         );
     }
 
+    let refresh_started = (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
     let _: () = update_noargs(
         &pic,
         disburser_canister,
@@ -5863,6 +5906,31 @@ fn claim_or_refresh_top_up_is_driven_by_disburser_tick() -> Result<()> {
             after.cached_neuron_stake_e8s
         );
     }
+
+    let refresh_finished = (pic.get_time().as_nanos_since_unix_epoch() / 1_000_000_000) as u64;
+    assert_eq!(after.cached_neuron_stake_e8s, before_stake + top_up_e8s);
+    let expected_since = |now: u64| {
+        let old_age = now.saturating_sub(before.aging_since_timestamp_seconds);
+        now - u64::try_from(
+            u128::from(old_age) * u128::from(before_stake)
+                / u128::from(after.cached_neuron_stake_e8s),
+        )
+        .unwrap()
+    };
+    assert!(
+        (expected_since(refresh_started)..=expected_since(refresh_finished))
+            .contains(&after.aging_since_timestamp_seconds),
+        "official NNS weighted age: before={before:?}, after={after:?}"
+    );
+    assert!(after.aging_since_timestamp_seconds > before.aging_since_timestamp_seconds);
+    let staking = Account {
+        owner: gov,
+        subaccount: Some(before.account.clone().try_into().unwrap()),
+    };
+    assert_eq!(
+        icrc1_balance(&pic, ledger, &staking)?,
+        after.cached_neuron_stake_e8s
+    );
 
     Ok(())
 }

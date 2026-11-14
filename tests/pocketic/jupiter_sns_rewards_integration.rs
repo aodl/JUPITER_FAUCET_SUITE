@@ -127,12 +127,27 @@ struct TimerScanEnv {
 
 impl TimerScanEnv {
     fn new(valid_initial_resolution: bool) -> Result<Self> {
+        Self::with_openchat_ids(valid_initial_resolution, false)
+    }
+
+    fn with_openchat_ids(valid_initial_resolution: bool, openchat: bool) -> Result<Self> {
         let pic = support::pocketic::builder()
             .with_application_subnet()
             .build();
-        let root = pic.create_canister();
-        let governance = pic.create_canister();
-        let ledger = pic.create_canister();
+        let allocate = |id: &str| -> Result<Principal> {
+            if openchat {
+                let id = Principal::from_text(id)?;
+                pic.create_canister_with_id(None, None, id)
+                    .map_err(anyhow::Error::msg)?;
+                Ok(id)
+            } else {
+                Ok(pic.create_canister())
+            }
+        };
+        // Owned local mocks at the historical public IDs; no live IC calls.
+        let root = allocate("3e3x2-xyaaa-aaaaq-aaalq-cai")?;
+        let governance = allocate("2jvtu-yqaaa-aaaaq-aaama-cai")?;
+        let ledger = allocate("2ouva-viaaa-aaaaq-aaamq-cai")?;
         let rewards = pic.create_canister();
         for canister in [root, governance, ledger, rewards] {
             pic.add_cycles(canister, 5_000_000_000_000);
@@ -181,7 +196,7 @@ impl TimerScanEnv {
                 id: Some(NeuronId { id: neuron_id(1) }),
                 permissions: vec![NeuronPermission {
                     principal: Some(owner),
-                    permission_type: vec![1],
+                    permission_type: vec![5],
                 }],
                 cached_neuron_stake_e8s: 100,
                 neuron_fees_e8s: 0,
@@ -410,7 +425,7 @@ fn owner_scan_is_resumable_atomic_and_invalidated_on_root_change() -> Result<()>
             }),
             permissions: vec![NeuronPermission {
                 principal: Some(owner),
-                permission_type: vec![1, 2],
+                permission_type: vec![1, 2, 5],
             }],
             cached_neuron_stake_e8s: 100,
             neuron_fees_e8s: 0,
@@ -538,7 +553,83 @@ fn previous_production_owner_index_upgrades_without_enabling_new_features() -> R
         hex::encode(Sha256::digest(predecessor)),
         "dc60d0c80214f37f06ad42f6785cb2adc123ce1615669a9bace689538e253079"
     );
-    let env = TimerScanEnv::new(true)?;
+    let env = TimerScanEnv::with_openchat_ids(true, true)?;
+    use jupiter_sns_rewards::generated::NeuronPermissionType as P;
+    let who = |n: u8| Principal::from_slice(&[n]);
+    let entry = |n, permissions: &[P]| NeuronPermission {
+        principal: Some(who(n)),
+        permission_type: permissions.iter().map(|p| *p as i32).collect(),
+    };
+    let make = |id, permissions| Neuron {
+        id: Some(NeuronId { id: neuron_id(id) }),
+        permissions,
+        cached_neuron_stake_e8s: 1000,
+        neuron_fees_e8s: 0,
+    };
+    let _: () = update_one(
+        &env.pic,
+        env.governance,
+        Principal::anonymous(),
+        "debug_set_neurons",
+        vec![
+            make(1, vec![entry(7, &[P::Disburse])]),
+            make(2, vec![entry(8, &[P::ManagePrincipals, P::Vote])]),
+            make(
+                3,
+                vec![
+                    entry(
+                        9,
+                        &[
+                            P::Disburse,
+                            P::ConfigureDissolveState,
+                            P::Vote,
+                            P::Split,
+                            P::ManagePrincipals,
+                        ],
+                    ),
+                    entry(10, &[P::ManagePrincipals]),
+                ],
+            ),
+            make(
+                4,
+                vec![
+                    entry(13, &[P::Disburse]),
+                    entry(11, &[P::Vote, P::SubmitProposal, P::ManageVotingPermission]),
+                ],
+            ),
+            make(
+                5,
+                vec![
+                    entry(14, &[P::Disburse, P::ConfigureDissolveState]),
+                    entry(15, &[P::Vote]),
+                ],
+            ),
+            make(
+                6,
+                vec![
+                    entry(
+                        16,
+                        &[P::Disburse, P::ManagePrincipals, P::ConfigureDissolveState],
+                    ),
+                    entry(17, &[P::Vote]),
+                ],
+            ),
+            make(
+                7,
+                vec![
+                    entry(18, &[P::Disburse, P::Vote]),
+                    entry(19, &[P::StakeMaturity]),
+                ],
+            ),
+            make(
+                8,
+                vec![NeuronPermission {
+                    principal: Some(env.governance),
+                    permission_type: vec![P::Disburse as i32],
+                }],
+            ),
+        ],
+    )?;
     for _ in 0..100 {
         env.pic.tick();
     }
@@ -556,14 +647,39 @@ fn previous_production_owner_index_upgrades_without_enabling_new_features() -> R
         env.pic.tick();
     }
     let before = env.context()?.expect("V1 complete snapshot");
-    let owner = Principal::from_slice(&[7]);
+    let owner = who(7);
+    let principals = [7, 8, 9, 10, 13, 11, 14, 15, 16, 17, 18, 19];
     let args = jupiter_sns_rewards::ResolveDefaultIcpAccountsArgs {
         snapshot_id: before.snapshot_id,
-        account_identifiers: vec![
-            jupiter_ic_clients::account_identifier::account_identifier_bytes(owner, None).to_vec(),
-        ],
+        account_identifiers: principals
+            .into_iter()
+            .map(who)
+            .chain([env.governance])
+            .map(|p| {
+                jupiter_ic_clients::account_identifier::account_identifier_bytes(p, None).to_vec()
+            })
+            .collect(),
     };
-    let expected = jupiter_sns_rewards::ResolveDefaultIcpAccountsResult::Ok(vec![Some(owner)]);
+    let expected = jupiter_sns_rewards::ResolveDefaultIcpAccountsResult::Ok(
+        [
+            Some(7),
+            Some(8),
+            Some(9),
+            None,
+            None,
+            Some(11),
+            Some(14),
+            None,
+            Some(16),
+            None,
+            Some(18),
+            None,
+        ]
+        .into_iter()
+        .map(|n| n.map(who))
+        .chain([Some(env.governance)])
+        .collect(),
+    );
     let old_owners: jupiter_sns_rewards::ResolveDefaultIcpAccountsResult = query_one(
         &env.pic,
         env.rewards,
@@ -582,35 +698,72 @@ fn previous_production_owner_index_upgrades_without_enabling_new_features() -> R
             .module_hash,
         Some(Sha256::digest(&candidate).to_vec())
     );
-    let after = env.context()?.expect("preserved V1 snapshot");
-    assert_eq!(after.snapshot_id, before.snapshot_id);
-    assert_eq!(after.sns_root_canister_id, env.root);
-    assert_eq!(
-        after.sns_governance_canister_id,
-        before.sns_governance_canister_id
-    );
-    assert_eq!(after.sns_ledger_canister_id, before.sns_ledger_canister_id);
-    assert_eq!(
-        after.scan_started_at_timestamp_nanos,
-        before.scan_started_at_timestamp_nanos
-    );
-    assert_eq!(
-        after.scan_completed_at_timestamp_nanos,
-        before.scan_completed_at_timestamp_nanos
-    );
-    let owners: jupiter_sns_rewards::ResolveDefaultIcpAccountsResult = query_one(
+    // The frozen predecessor used a permission-count heuristic. Its published
+    // snapshot is invalidated, while its Root and monotonic namespace survive.
+    assert!(env.context()?.is_none());
+    let stale: jupiter_sns_rewards::ResolveDefaultIcpAccountsResult = query_one(
         &env.pic,
         env.rewards,
         owner,
         "resolve_default_icp_accounts",
-        args,
+        args.clone(),
     )?;
-    assert_eq!(owners, expected);
+    assert_eq!(
+        stale,
+        jupiter_sns_rewards::ResolveDefaultIcpAccountsResult::SnapshotChanged
+    );
     env.pic.advance_time(std::time::Duration::from_secs(86_400));
     for _ in 0..12 {
         env.pic.tick();
     }
-    assert!(env.context()?.unwrap().snapshot_id > before.snapshot_id);
+    let rebuilt = env.context()?.unwrap();
+    assert!(rebuilt.snapshot_id > before.snapshot_id);
+    assert_eq!(rebuilt.sns_root_canister_id, before.sns_root_canister_id);
+    assert_eq!(
+        rebuilt.sns_governance_canister_id,
+        before.sns_governance_canister_id
+    );
+    assert_eq!(
+        rebuilt.sns_ledger_canister_id,
+        before.sns_ledger_canister_id
+    );
+    assert_eq!(
+        rebuilt.sns_root_canister_id.to_text(),
+        "3e3x2-xyaaa-aaaaq-aaalq-cai"
+    );
+    let new_owners: jupiter_sns_rewards::ResolveDefaultIcpAccountsResult = query_one(
+        &env.pic,
+        env.rewards,
+        owner,
+        "resolve_default_icp_accounts",
+        jupiter_sns_rewards::ResolveDefaultIcpAccountsArgs {
+            snapshot_id: rebuilt.snapshot_id,
+            ..args
+        },
+    )?;
+    assert_eq!(
+        new_owners,
+        jupiter_sns_rewards::ResolveDefaultIcpAccountsResult::Ok(
+            [
+                Some(7),
+                None,
+                None,
+                None,
+                Some(13),
+                None,
+                Some(14),
+                None,
+                Some(16),
+                None,
+                None,
+                None
+            ]
+            .into_iter()
+            .map(|n| n.map(who))
+            .chain([None])
+            .collect()
+        )
+    );
     let programme: Runtime = query_one(&env.pic, env.rewards, owner, "get_programme_status", ())?;
     assert_eq!(programme, Runtime::default());
     let automation: AutomationState =
@@ -637,8 +790,8 @@ fn previous_production_owner_index_upgrades_without_enabling_new_features() -> R
 }
 
 #[test]
-#[ignore = "candidate production Wasm rejects unimplemented financial activation at installation"]
-fn production_installation_rejects_general_patron_and_treasury_activation() -> Result<()> {
+#[ignore = "candidate production Wasm accepts reviewed financial configuration"]
+fn production_installation_accepts_explicit_patron_and_treasury_configuration() -> Result<()> {
     use jupiter_sns_rewards::{AutomationConfig, ProgrammeConfig};
     let candidate = wasm(&PRODUCTION_REWARDS_WASM, "jupiter-sns-rewards", None)?;
     let pic = support::pocketic::builder()
@@ -649,21 +802,25 @@ fn production_installation_rejects_general_patron_and_treasury_activation() -> R
         let config = ProgrammeConfig {
             version: 1,
             jup_root: principal(1),
-            io_root: principal(2),
-            icp_ledger: principal(3),
-            icp_index: principal(4),
+            relay_factory: None,
+            icp_ledger: support::principals::icp_ledger(),
+            icp_index: support::principals::icp_index(),
             staking_account: icrc_ledger_types::icrc1::account::Account {
-                owner: principal(5),
+                owner: support::principals::nns_governance(),
                 subaccount: Some([1; 32]),
             },
             canonical_relay: principal(6),
+            treasury_stake: Some(jupiter_sns_rewards::TreasuryStakeBinding {
+                disburser: principal(10),
+                neuron_id: 42,
+            }),
             protocol_governance_neuron: vec![8; 32],
             excluded_icp_accounts: vec![],
             excluded_jup_neurons: vec![vec![8; 32], vec![9; 32]],
             reserve_subaccount: None,
             reserve_transport_neuron: None,
             launch_timestamp_seconds: Some(100),
-            patron_enabled: !treasury,
+            patron_enabled: true,
             snapshot_max_age_seconds: 172800,
             automation: treasury.then(|| AutomationConfig {
                 proposer_neuron: vec![9; 32],
@@ -676,18 +833,51 @@ fn production_installation_rejects_general_patron_and_treasury_activation() -> R
         config.validate().map_err(anyhow::Error::msg)?;
         let id = pic.create_canister();
         pic.add_cycles(id, 5_000_000_000_000);
-        let error = pic
-            .reinstall_canister(
-                id,
-                candidate.clone(),
-                encode_one(jupiter_sns_rewards::InitArgs {
-                    reward_sns_root_canister_id: None,
-                    programme: Some(config),
-                })?,
-                None,
-            )
-            .expect_err("production financial activation must fail closed");
-        assert!(format!("{error:?}").contains("provenance"), "{error:?}");
+        pic.reinstall_canister(
+            id,
+            candidate.clone(),
+            encode_one(jupiter_sns_rewards::InitArgs {
+                reward_sns_root_canister_id: None,
+                programme: Some(config.clone()),
+            })?,
+            None,
+        )
+        .map_err(|e| anyhow::anyhow!("production activation: {e:?}"))?;
+        for wrong_binding in 0..4 {
+            let mut invalid = config.clone();
+            let expected_error = match wrong_binding {
+                0 => {
+                    invalid.icp_ledger = principal(44);
+                    "canonical ICP Ledger and Index"
+                }
+                1 => {
+                    invalid.icp_index = principal(45);
+                    "canonical ICP Ledger and Index"
+                }
+                2 => {
+                    invalid.staking_account.owner = principal(46);
+                    "canonical NNS Governance"
+                }
+                _ => {
+                    invalid.staking_account.subaccount = None;
+                    "staking subaccount"
+                }
+            };
+            let rejected = pic.create_canister();
+            pic.add_cycles(rejected, 5_000_000_000_000);
+            let error = pic
+                .reinstall_canister(
+                    rejected,
+                    candidate.clone(),
+                    encode_one(jupiter_sns_rewards::InitArgs {
+                        reward_sns_root_canister_id: None,
+                        programme: Some(invalid),
+                    })?,
+                    None,
+                )
+                .expect_err("production must reject a noncanonical financial binding");
+            assert!(format!("{error:?}").contains(expected_error), "{error:?}");
+        }
     }
     Ok(())
 }

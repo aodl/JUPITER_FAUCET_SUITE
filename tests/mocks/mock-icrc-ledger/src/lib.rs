@@ -126,6 +126,7 @@ struct LedgerState {
 }
 
 thread_local! {
+    static MINTING_ACCOUNT: RefCell<Option<Account>> = const { RefCell::new(None) };
     static ST: RefCell<LedgerState> = RefCell::new(LedgerState { fee_e8s: 10_000, ..Default::default() });
 }
 
@@ -522,6 +523,7 @@ fn transfer(arg: LegacyTransferArg) -> Result<u64, LegacyTransferError> {
 
 #[ic_cdk::update]
 fn debug_reset() {
+    MINTING_ACCOUNT.with_borrow_mut(|a| *a = None);
     ST.with(|s| {
         *s.borrow_mut() = LedgerState {
             fee_e8s: 10_000,
@@ -806,4 +808,13 @@ mod tests {
         identities.insert(present_empty, 2);
         assert_eq!(identities.len(), 2);
     }
+}
+
+#[ic_cdk::query]
+fn icrc1_minting_account() -> Option<Account> {
+    MINTING_ACCOUNT.with_borrow(|a| *a)
+}
+#[ic_cdk::update]
+fn debug_set_minting_account(account: Account) {
+    MINTING_ACCOUNT.with_borrow_mut(|a| *a = Some(account));
 }

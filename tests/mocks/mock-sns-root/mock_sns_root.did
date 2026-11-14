@@ -14,10 +14,14 @@ type DebugCall = record {
   canister_id : opt principal;
   caller : principal;
 };
+type RelayMembershipArgs = record { relay : principal; ledger : principal; staking_account : record { owner : principal; subaccount : opt blob }; cursor : opt blob; revision : opt nat64 };
+type RelayMembership = variant { Active : record { setup_key : blob }; Pending; Unsupported; Page : record { cursor : blob; revision : nat64 }; RegistryChanged; InvalidBinding };
 service : {
   list_sns_canisters : (record {}) -> (ListSnsCanistersResponse);
   canister_status : (record { canister_id : principal }) -> (record { cycles : nat });
   debug_set_canisters : (ListSnsCanistersResponse) -> ();
   debug_calls : () -> (vec DebugCall) query;
   debug_reset_calls : () -> ();
+  debug_set_relay_membership : (principal, RelayMembership) -> ();
+  get_relay_factory_membership : (RelayMembershipArgs) -> (RelayMembership) query;
 }

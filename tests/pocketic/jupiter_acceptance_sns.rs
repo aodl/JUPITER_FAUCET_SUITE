@@ -217,6 +217,9 @@ struct ProposalReply {
     result: Option<ProposalResult>,
 }
 
+#[path = "acceptance_reward_pots.rs"]
+mod reward_pots;
+
 #[test]
 #[ignore = "owned PocketIC topology and exact official SNS artifacts required"]
 fn real_jup_sns_ownership_rewards_factory_and_governed_upgrade() -> Result<()> {
@@ -672,7 +675,7 @@ prepare.framework(p, sys.argv[3], out/'sns', c['timestamp'], local_fixture=True)
     )?;
     assert_eq!(
         owners,
-        ResolveDefaultIcpAccountsResult::Ok(vec![Some(operator), Some(outsider)])
+        ResolveDefaultIcpAccountsResult::Ok(vec![Some(operator), None])
     );
     let transfer = TransferArg {
         from_subaccount: None,
@@ -859,7 +862,7 @@ prepare.framework(p, sys.argv[3], out/'sns', c['timestamp'], local_fixture=True)
     assert_eq!(supply_after, Nat::from(3_099_998_000u64));
     // The debug build intentionally forces a fresh owner scan after upgrade.
     // Use production scheduling to test preservation of the current snapshot.
-    let mut candidate = rewards_production;
+    let mut candidate = rewards_production.clone();
     let name = b"icp:public acceptance-upgrade";
     let content = b"local SNS-governed upgrade";
     candidate.extend([0, (1 + name.len() + content.len()) as u8, name.len() as u8]);
@@ -1093,12 +1096,27 @@ prepare.framework(p, sys.argv[3], out/'sns', c['timestamp'], local_fixture=True)
             vec![id]
         );
     }
+    let pot_blocks = reward_pots::run(reward_pots::Fixture {
+        pic: &pic,
+        repo: &repo,
+        profile: &profile,
+        evidence: &evidence,
+        rewards,
+        root,
+        relay,
+        child,
+        operator,
+        ledger,
+        index,
+        staking: fc.staking_account,
+        production: rewards_production,
+    })?;
     fs::write(
         evidence.join("outcome.json"),
         serde_json::to_vec_pretty(&json!({
             "framework_root": root.to_text(), "governance": governance.to_text(),
             "ledger": ledger.to_text(), "child": child.to_text(), "snapshot_id": context.snapshot_id,
-            "reward_fee": 1000, "owner_balance": balance, "governed_upgrade_module_hash": after.module_hash.map(hex::encode),
+            "reserve_pot_blocks": pot_blocks, "reward_fee": 1000, "owner_balance": balance, "governed_upgrade_module_hash": after.module_hash.map(hex::encode),
             "local_fixture": true, "mainnet_genesis_approved": false,
             "profile": profile_value,
         }))?,

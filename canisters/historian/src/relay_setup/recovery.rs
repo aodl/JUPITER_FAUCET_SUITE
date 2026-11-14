@@ -221,10 +221,10 @@ pub(super) async fn live_child_status(canister_id: Principal) -> Result<ChildSta
             .map_err(|e| format!("{e:?}"))?
             .candid()
             .map_err(|e| format!("{e:?}"))?;
-    let supported = status.settings.compute_allocation == candid::Nat::from(0u8)
-        && status.settings.memory_allocation == candid::Nat::from(0u8)
-        && status.settings.freezing_threshold <= candid::Nat::from(2_592_000u64)
-        && status.memory_size <= candid::Nat::from(256 * 1024 * 1024u64);
+    let supported = status.settings.compute_allocation == 0u8
+        && status.settings.memory_allocation == 0u8
+        && status.settings.freezing_threshold <= 2_592_000u64
+        && status.memory_size <= 256 * 1024 * 1024u64;
     Ok(ChildStatus {
         budget_settings_supported: supported,
         status: CanisterStatusResult {
@@ -264,7 +264,6 @@ fn pending(message: impl Into<String>) -> CheckError {
 
 async fn inspect(
     key: RelaySetupKey,
-    _setup: &CanonicalRelaySetup,
     config: &Config,
     historian: Principal,
     ledger: &dyn LedgerClient,
@@ -596,7 +595,6 @@ pub(crate) async fn view(args: RelaySetupArgs) -> RelaySetupViewResult {
     view.recovery = Some(
         match inspect(
             key,
-            &setup,
             &config,
             self_canister_id(),
             &ledger,
@@ -637,11 +635,7 @@ pub(super) async fn continue_setup(
     };
     let ticket = guard.ticket();
     for _ in 0..=MAX_CONVERSIONS {
-        let plan = match inspect(
-            key, setup, config, historian, ledger, cmc, management, ticket,
-        )
-        .await
-        {
+        let plan = match inspect(key, config, historian, ledger, cmc, management, ticket).await {
             Ok(plan) => plan,
             Err(CheckError::Pending(_)) => {
                 return notify_for_entry(get_entry(key).expect("existing setup"))
@@ -936,7 +930,7 @@ pub(super) fn creation_credit(progress: &RelayCreationProgress) -> Option<u128> 
 #[cfg(test)]
 pub(super) async fn quote_for_test(
     key: RelaySetupKey,
-    setup: &CanonicalRelaySetup,
+    _setup: &CanonicalRelaySetup,
     config: &Config,
     ledger: &dyn LedgerClient,
     cmc: &dyn CmcClient,
@@ -947,7 +941,6 @@ pub(super) async fn quote_for_test(
     };
     match inspect(
         key,
-        setup,
         config,
         self_canister_id(),
         ledger,

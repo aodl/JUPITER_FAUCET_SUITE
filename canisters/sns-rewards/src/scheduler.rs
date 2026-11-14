@@ -109,6 +109,9 @@ fn schedule_continuation() {
 }
 
 pub(crate) async fn scan_tick(force: bool) {
+    if crate::programme::read().config.is_some() {
+        return;
+    }
     let now_nanos = ic_cdk::api::time();
     let now_secs = now_nanos / 1_000_000_000;
     let Some(guard) = ScanGuard::acquire(now_secs) else {
@@ -305,7 +308,9 @@ fn finish_page(
         }
     };
     for neuron in &response.neurons {
-        if let Some(owner) = owner_for_neuron(neuron) {
+        if let Some(owner) =
+            owner_for_neuron(neuron).filter(|p| *p != scan.sns_governance_canister_id)
+        {
             state::insert_owner(scan.staging_slot, owner);
         }
     }

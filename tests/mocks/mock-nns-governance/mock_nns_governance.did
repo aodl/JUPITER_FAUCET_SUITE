@@ -71,6 +71,7 @@ type Command1 = variant {
 type ManageNeuronResponse = record { command : opt Command1 };
 
 service : {
+  debug_set_neuron_controller : (nat64, principal) -> ();
   // Keep nat64 here to match the mock canister implementation.
   get_full_neuron : (nat64) -> (NeuronResult);
   list_neurons : (ListNeurons) -> (ListNeuronsResponse);

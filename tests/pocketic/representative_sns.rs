@@ -7,9 +7,17 @@ use jupiter_sns_rewards::{generated as sns, *};
 use pocket_ic::PocketIc;
 use std::{collections::BTreeMap, fs, path::PathBuf, process::Command};
 
+static RELAY_DEBUG: OnceLock<Vec<u8>> = OnceLock::new();
+static RELAY_PRODUCTION: OnceLock<Vec<u8>> = OnceLock::new();
+static NNS_BOUNDARY: OnceLock<Vec<u8>> = OnceLock::new();
+
 struct Env {
     pic: PocketIc,
     rewards: Principal,
+    relay: Principal,
+    production: bool,
+    relay_wasm: Vec<u8>,
+    forwarding_governance: Principal,
     jup: BTreeMap<String, Principal>,
     target: BTreeMap<String, Principal>,
     jup_neurons: BTreeMap<String, Vec<u8>>,
@@ -20,8 +28,7 @@ struct Env {
     staking: Account,
     rewards_wasm: Vec<u8>,
     app: Principal,
-    artifacts: PathBuf,
-    constructors: PathBuf,
+    factory: Option<Principal>,
 }
 
 fn command(command: &mut Command) -> Result<String> {
@@ -42,12 +49,66 @@ impl Env {
         Self::setup_sources(automation, fault_ledger, true)
     }
     fn setup_sources(automation: bool, fault_ledger: bool, install_io: bool) -> Result<Self> {
+        Self::setup_programme(automation, fault_ledger, install_io, false)
+    }
+    fn setup_programme(
+        automation: bool,
+        fault_ledger: bool,
+        install_io: bool,
+        production: bool,
+    ) -> Result<Self> {
+        Self::setup_with_economics(automation, fault_ledger, install_io, production, false)
+    }
+    fn setup_with_economics(
+        automation: bool,
+        fault_ledger: bool,
+        install_io: bool,
+        production: bool,
+        native_economics: bool,
+    ) -> Result<Self> {
+        Self::setup_with_factory(
+            automation,
+            fault_ledger,
+            install_io,
+            production,
+            native_economics,
+            false,
+        )
+    }
+    fn setup_with_factory(
+        automation: bool,
+        fault_ledger: bool,
+        install_io: bool,
+        production: bool,
+        native_economics: bool,
+        factory_fixture: bool,
+    ) -> Result<Self> {
         // Compile every application before starting the owned server.
-        let rewards_wasm = wasm(&REWARDS_WASM, "jupiter-sns-rewards", Some("debug_api"))?;
+        let rewards_wasm = if production {
+            wasm(&PRODUCTION_REWARDS_WASM, "jupiter-sns-rewards", None)?
+        } else {
+            wasm(&REWARDS_WASM, "jupiter-sns-rewards", Some("debug_api"))?
+        };
+        let relay_wasm = support::wasm::build_wasm_cached_for_test(
+            if production {
+                &RELAY_PRODUCTION
+            } else {
+                &RELAY_DEBUG
+            },
+            "jupiter-relay",
+            if production { None } else { Some("debug_api") },
+        )?;
+        let nns_wasm =
+            support::wasm::build_wasm_cached_for_test(&NNS_BOUNDARY, "mock-nns-governance", None)?;
         let app_wasm =
             support::wasm::build_wasm_cached_for_test(&OnceLock::new(), "mock-cycle-burner", None)?;
         let fault_wasm = if fault_ledger {
             Some(wasm(&LEDGER_WASM, "mock-icrc-ledger", None)?)
+        } else {
+            None
+        };
+        let factory_wasm = if factory_fixture {
+            Some(wasm(&ROOT_WASM, "mock-sns-root", None)?)
         } else {
             None
         };
@@ -73,6 +134,23 @@ impl Env {
         let rewards = allocate();
         let app = allocate();
         let relay = allocate();
+        let factory = factory_wasm.map(|module| {
+            let id = allocate();
+            pic.install_canister(id, module, encode_args(()).unwrap(), None);
+            id
+        });
+        let forwarding_governance = support::principals::nns_governance();
+        pic.create_canister_with_id(None, None, forwarding_governance)
+            .map_err(anyhow::Error::msg)?;
+        pic.add_cycles(forwarding_governance, 5_000_000_000_000);
+        pic.install_canister(forwarding_governance, nns_wasm, encode_args(())?, None);
+        let _: () = support::calls::update_bytes(
+            &pic,
+            forwarding_governance,
+            Principal::anonymous(),
+            "debug_set_neuron_account",
+            encode_args((11_614_578_985_374_291_210_u64, vec![42_u8; 32]))?,
+        )?;
         let jup: BTreeMap<String, Principal> = ["root", "governance", "ledger", "index", "swap"]
             .into_iter()
             .map(|role| (role.to_string(), allocate()))
@@ -96,6 +174,7 @@ impl Env {
         let context = serde_json::json!({ "jup": jup, "target": target, "rewards": rewards,
             "operator": Principal::self_authenticating(b"local constructor fallback fixture"), "a": a, "b": b, "io_only": io_only,
             "nnx_fixture": fixture, "app": app, "proposer_stake": if automation {10} else {100},
+            "native_economics": native_economics,
             "timestamp": pic.get_time().as_nanos_since_unix_epoch()/1_000_000_000,
             "icp_ledger": support::principals::icp_ledger(), "nns_governance": support::principals::nns_governance() });
         let context_path = directory.join("context.json");
@@ -137,8 +216,18 @@ impl Env {
                         &pic,
                         ids[role],
                         Principal::anonymous(),
+                        "debug_set_minting_account",
+                        Account {
+                            owner: jup["governance"],
+                            subaccount: None,
+                        },
+                    )?;
+                    let _: () = update_one(
+                        &pic,
+                        ids[role],
+                        Principal::anonymous(),
                         "debug_set_fee",
-                        10_000_000_u64,
+                        1_000_000_u64,
                     )?;
                 } else {
                     pic.install_canister(
@@ -174,17 +263,18 @@ impl Env {
         let jup_neurons = neuron_ids("jup")?;
         let target_neurons = neuron_ids("target")?;
         let staking = Account {
-            owner: support::principals::nns_governance(),
+            owner: forwarding_governance,
             subaccount: Some([42; 32]),
         };
         let config = ProgrammeConfig {
             version: 1,
             jup_root: jup["root"],
-            io_root: target["root"],
+            relay_factory: factory,
             icp_ledger: support::principals::icp_ledger(),
             icp_index: support::principals::icp_index(),
             staking_account: staking,
             canonical_relay: relay,
+            treasury_stake: None,
             protocol_governance_neuron: jup_neurons["nnx_fixture"].clone(),
             excluded_icp_accounts: vec![],
             excluded_jup_neurons: vec![
@@ -194,7 +284,7 @@ impl Env {
             reserve_subaccount: None,
             reserve_transport_neuron: None,
             launch_timestamp_seconds: Some(u64::MAX / 1_000_000_000),
-            patron_enabled: !automation,
+            patron_enabled: !automation && !factory_fixture,
             snapshot_max_age_seconds: 172_800,
             automation: automation.then(|| AutomationConfig {
                 proposer_neuron: jup_neurons["proposer"].clone(),
@@ -225,6 +315,10 @@ impl Env {
         Ok(Self {
             pic,
             rewards,
+            relay,
+            production,
+            relay_wasm,
+            forwarding_governance,
             jup,
             target,
             jup_neurons,
@@ -235,31 +329,8 @@ impl Env {
             staking,
             rewards_wasm,
             app,
-            artifacts,
-            constructors: directory,
+            factory,
         })
-    }
-    fn install_io(&self) -> Result<()> {
-        for role in ["governance", "ledger", "index", "swap", "root"] {
-            self.pic.install_canister(
-                self.target[role],
-                fs::read(self.artifacts.join(format!("sns_{role}.wasm")))?,
-                fs::read(self.constructors.join("target").join(format!("{role}.bin")))?,
-                None,
-            );
-        }
-        for (role, controller) in [
-            ("governance", "root"),
-            ("root", "governance"),
-            ("ledger", "root"),
-            ("index", "root"),
-            ("swap", "root"),
-        ] {
-            self.pic
-                .set_controllers(self.target[role], None, vec![self.target[controller]])
-                .map_err(|e| anyhow!("IO controller: {e:?}"))?;
-        }
-        Ok(())
     }
     fn relay_context(&self) -> Result<super::RelayRewardContext> {
         let context: Option<super::RelayRewardContext> = query_one(
@@ -295,6 +366,13 @@ impl Env {
         Ok(())
     }
     fn tick(&self) -> Result<()> {
+        if self.production {
+            self.pic.advance_time(std::time::Duration::from_secs(31));
+            for _ in 0..12 {
+                self.pic.tick();
+            }
+            return Ok(());
+        }
         update_noargs(
             &self.pic,
             self.rewards,
@@ -387,23 +465,16 @@ impl Env {
 
 #[test]
 #[ignore = "two real official SNS instances and owned real ICP topology"]
-fn two_sources_direct_patron_compounding_and_fixed_history() -> Result<()> {
+fn jup_only_direct_patron_compounding_and_fixed_history() -> Result<()> {
     let env = Env::new(false)?;
-    // Hold the required IO Root unavailable before the first complete snapshot.
+    // Hold the unrelated IO mirror Root unavailable before the first complete snapshot.
     env.pic
         .stop_canister(env.target["root"], Some(env.target["governance"]))
-        .map_err(|e| anyhow!("stop required source: {e:?}"))?;
+        .map_err(|e| anyhow!("stop unrelated IO source: {e:?}"))?;
     let direct = env.commit(env.a)?;
     let liquid = env.commit(env.io_only)?;
     let unmatched = Principal::self_authenticating(b"no recognised neuron");
     let unmatched_block = env.commit(unmatched)?;
-    env.drive(6)?;
-    assert!(env.status()?.snapshot.is_none());
-    assert!(env.status()?.batch.is_none());
-    assert!(env.record(direct)?.is_none());
-    env.pic
-        .start_canister(env.target["root"], Some(env.target["governance"]))
-        .map_err(|e| anyhow!("start required source: {e:?}"))?;
     for _ in 0..120 {
         env.pic.advance_time(std::time::Duration::from_secs(2));
         env.pic.tick();
@@ -421,7 +492,7 @@ fn two_sources_direct_patron_compounding_and_fixed_history() -> Result<()> {
         env.status()?
     );
     assert_eq!(record.amount_e8s, 200_000_000);
-    assert_eq!(record.fee_e8s, 10_000_000);
+    assert_eq!(record.fee_e8s, 1_000_000);
     let expected = [&env.jup_neurons["a"], &env.jup_neurons["a_second"]]
         .into_iter()
         .min()
@@ -432,14 +503,18 @@ fn two_sources_direct_patron_compounding_and_fixed_history() -> Result<()> {
         Some("confirmed stake refresh")
     );
     let liquid_record = env.record(liquid)?.context("IO-only owner contribution")?;
-    assert_eq!(liquid_record.amount_e8s, 100_000_000);
+    assert_eq!(liquid_record.amount_e8s, 0);
+    assert!(matches!(
+        liquid_record.outcome,
+        PatronOutcome::Skipped { .. }
+    ));
     assert!(liquid_record.compounded_neuron.is_none());
     assert_eq!(
         env.balance(Account {
             owner: env.io_only,
             subaccount: None
         })?,
-        100_000_000
+        0
     );
     let skipped = env
         .record(unmatched_block)?
@@ -447,12 +522,8 @@ fn two_sources_direct_patron_compounding_and_fixed_history() -> Result<()> {
     assert!(matches!(skipped.outcome, PatronOutcome::Skipped { .. }));
     assert_eq!(record.snapshot_id, liquid_record.snapshot_id);
     assert_eq!(record.ownership_snapshot.sources[0].root, env.jup["root"]);
-    assert_eq!(
-        record.ownership_snapshot.sources[1].root,
-        env.target["root"]
-    );
+    assert_eq!(record.ownership_snapshot.sources.len(), 1);
     assert_eq!(record.recognition.as_ref().unwrap().principal, env.a);
-    assert!(record.recognition.as_ref().unwrap().jup && record.recognition.as_ref().unwrap().io);
     assert!(skipped.recognition.is_none());
     assert_eq!(record.snapshot_id, skipped.snapshot_id);
     let snapshot = env.status()?.snapshot.unwrap();
@@ -480,7 +551,7 @@ fn two_sources_direct_patron_compounding_and_fixed_history() -> Result<()> {
     env.drive(8)?;
     assert_eq!(env.record(direct)?.unwrap(), record);
     assert_eq!(env.status()?.snapshot.unwrap().id, snapshot.id);
-    assert_eq!(env.status()?.verified_e8s, 300_000_000);
+    assert_eq!(env.status()?.verified_e8s, 200_000_000);
     // An authentic ICRC-2 spender does not replace the economic source owner.
     // The Ledger's exact default `from` Account remains the direct contributor.
     let delegate =
@@ -576,6 +647,17 @@ fn two_sources_direct_patron_compounding_and_fixed_history() -> Result<()> {
         )?;
     }
     let later_direct = env.commit(env.a)?;
+    env.pic
+        .stop_canister(env.jup["governance"], Some(env.jup["root"]))
+        .map_err(|e| anyhow!("stop selected-neuron lookup: {e:?}"))?;
+    env.drive(6)?;
+    assert!(
+        env.record(later_direct)?.is_none(),
+        "unavailable lookup cannot consume or classify the contribution"
+    );
+    env.pic
+        .start_canister(env.jup["governance"], Some(env.jup["root"]))
+        .map_err(|e| anyhow!("restore selected-neuron lookup: {e:?}"))?;
     for _ in 0..80 {
         env.pic.advance_time(std::time::Duration::from_secs(2));
         env.tick()?;
@@ -589,6 +671,51 @@ fn two_sources_direct_patron_compounding_and_fixed_history() -> Result<()> {
     assert!(matches!(later.outcome, PatronOutcome::Verified { .. }));
     assert_eq!(later.amount_e8s, 100_000_000);
     assert!(later.compounded_neuron.is_none());
+    // Re-enable both preferences, then share economic control only on the pinned
+    // smallest candidate. Dispatch must fall back to liquid without rescanning
+    // for the other still-secure compounding neuron or replaying an older block.
+    for name in ["a", "a_second"] {
+        env.manage(
+            env.jup["governance"],
+            env.a,
+            &env.jup_neurons[name],
+            sns::Command::Configure(sns::Configure {
+                operation: Some(sns::Operation::ChangeAutoStakeMaturity(
+                    sns::ChangeAutoStakeMaturity {
+                        requested_setting_for_auto_stake_maturity: true,
+                    },
+                )),
+            }),
+        )?;
+    }
+    env.manage(
+        env.jup["governance"],
+        env.a,
+        expected,
+        sns::Command::AddNeuronPermissions(sns::AddNeuronPermissions {
+            principal_id: Some(env.b),
+            permissions_to_add: Some(sns::NeuronPermissionList {
+                permissions: vec![
+                    jupiter_sns_rewards::generated::NeuronPermissionType::ManagePrincipals as i32,
+                ],
+            }),
+        }),
+    )?;
+    let shared_block = env.commit(env.a)?;
+    for _ in 0..80 {
+        env.pic.advance_time(std::time::Duration::from_secs(2));
+        env.tick()?;
+        if env.record(shared_block)?.is_some() && env.status()?.batch.is_none() {
+            break;
+        }
+    }
+    let shared = env
+        .record(shared_block)?
+        .context("permission-revoked bonus")?;
+    assert!(matches!(shared.outcome, PatronOutcome::Verified { .. }));
+    assert!(shared.compounded_neuron.is_none());
+    assert_eq!(shared.amount_e8s, 100_000_000);
+    assert_eq!(env.record(direct)?.unwrap(), record);
     // A real economic ownership change can qualify a later contribution but
     // cannot reopen the contribution finally skipped under the historical cohort.
     env.manage(
@@ -1012,7 +1139,7 @@ fn authentic_mirror_adoption_votes_yes_and_rejection_votes_no() -> Result<()> {
     ))?["initial_supply_e8s"]
         .as_u64()
         .unwrap();
-    assert_eq!(reserve, initial_supply - 3_101 * 100_000_000 - 10_000_000,
+    assert_eq!(reserve, initial_supply - 3_101 * 100_000_000 - 1_000_000,
         "one 90 jUP top-up plus its fee; open, adopted and one rejected charge cannot cause repeated reserve spending");
     // Zero native inflation retains authentic participation-event shares.
     env.pic
@@ -1126,7 +1253,7 @@ fn uncertain_paid_and_unpaid_patron_transfers_are_terminal_and_do_not_block_late
     let env = Env::setup(false, true)?;
     env.drive(6)?;
     let recipient = Account {
-        owner: env.io_only,
+        owner: env.b,
         subaccount: None,
     };
     let mut blocks = Vec::new();
@@ -1144,7 +1271,7 @@ fn uncertain_paid_and_unpaid_patron_transfers_are_terminal_and_do_not_block_late
             "debug_set_next_error",
             Some(fault),
         )?;
-        let block = env.commit(env.io_only)?;
+        let block = env.commit(env.b)?;
         for _ in 0..100 {
             env.pic.advance_time(std::time::Duration::from_secs(2));
             env.pic.tick();
@@ -1177,7 +1304,7 @@ fn uncertain_paid_and_unpaid_patron_transfers_are_terminal_and_do_not_block_late
     assert_eq!(env.balance(recipient)?, 100_000_000); // only the first uncertain call really paid
     assert_eq!(env.status()?.verified_e8s, 0);
     assert_eq!(env.status()?.assumed_e8s, 200_000_000);
-    let good = env.commit(env.io_only)?;
+    let good = env.commit(env.b)?;
     for _ in 0..100 {
         env.pic.advance_time(std::time::Duration::from_secs(2));
         env.pic.tick();
@@ -1209,7 +1336,7 @@ fn uncertain_paid_and_unpaid_patron_transfers_are_terminal_and_do_not_block_late
 fn upgrade_of_unresolved_dispatch_never_repeats_the_patron_transfer() -> Result<()> {
     let env = Env::new(false)?;
     env.drive(6)?;
-    let block = env.commit(env.io_only)?;
+    let block = env.commit(env.b)?;
     let _: () = update_noargs(
         &env.pic,
         env.rewards,
@@ -1239,7 +1366,7 @@ fn upgrade_of_unresolved_dispatch_never_repeats_the_patron_transfer() -> Result<
     );
     assert_eq!(
         env.balance(Account {
-            owner: env.io_only,
+            owner: env.b,
             subaccount: None
         })?,
         100_000_000
@@ -1274,7 +1401,7 @@ fn upgrade_of_unresolved_dispatch_never_repeats_the_patron_transfer() -> Result<
     env.drive(10)?;
     assert_eq!(
         env.balance(Account {
-            owner: env.io_only,
+            owner: env.b,
             subaccount: None
         })?,
         100_000_000
@@ -1285,33 +1412,30 @@ fn upgrade_of_unresolved_dispatch_never_repeats_the_patron_transfer() -> Result<
 }
 
 #[test]
-#[ignore = "official jUP, delayed IO installation and a pinned historical patron batch"]
+#[ignore = "official jUP with IO absent and a pinned historical patron batch"]
 fn relay_jup_index_is_independent_of_io_and_long_patron_history() -> Result<()> {
     let env = Env::setup_sources(false, false, false)?;
     let direct = env.commit(env.a)?;
-    for _ in 0..12 {
+    for _ in 0..120 {
         let _: () = update_noargs(&env.pic, env.rewards, env.a, "debug_scan_tick")?;
+        env.pic.advance_time(std::time::Duration::from_secs(2));
+        env.pic.tick();
         env.tick()?;
+        if env.record(direct)?.is_some() && env.status()?.batch.is_none() {
+            break;
+        }
     }
     let first = env.relay_context()?;
     env.assert_relay_owners(&first)?;
-    assert!(
-        env.status()?.snapshot.is_none(),
-        "uninstalled IO is not an empty source"
-    );
-    assert!(env.record(direct)?.is_none());
-    env.install_io()?;
-    for _ in 0..12 {
-        env.tick()?;
-    }
-    let both = env
-        .status()?
-        .snapshot
-        .context("two-source patron snapshot")?;
-    env.assert_relay_owners(&env.relay_context()?)?;
-    assert_ne!(both.id, env.relay_context()?.snapshot_id);
+    assert!(env.status()?.snapshot.is_some());
+    assert!(matches!(
+        env.record(direct)?.unwrap().outcome,
+        PatronOutcome::Verified { .. }
+    ));
+    assert_eq!(env.status()?.snapshot.unwrap().id, first.snapshot_id);
     // A historical batch with many independently recorded contributions remains
     // pinned across two daily refresh opportunities. No fixture changes its cursor.
+    let pinned_b = env.commit(env.b)?;
     for n in 0..24 {
         let outsider = Principal::self_authenticating(format!("long history {n}"));
         env.commit(outsider)?;
@@ -1328,13 +1452,55 @@ fn relay_jup_index_is_independent_of_io_and_long_patron_history() -> Result<()> 
         .status()?
         .batch
         .context("long patron batch did not start")?;
+    // Transfer B's genuine neuron after the historical generation was pinned.
+    // Relay's live map must update; this batch must retain its original B owner.
+    env.manage(
+        env.jup["governance"],
+        env.b,
+        &env.jup_neurons["b"],
+        sns::Command::AddNeuronPermissions(sns::AddNeuronPermissions {
+            principal_id: Some(env.io_only),
+            permissions_to_add: Some(sns::NeuronPermissionList {
+                permissions: (1..=10).collect(),
+            }),
+        }),
+    )?;
+    env.manage(
+        env.jup["governance"],
+        env.b,
+        &env.jup_neurons["b"],
+        sns::Command::RemoveNeuronPermissions(sns::RemoveNeuronPermissions {
+            principal_id: Some(env.b),
+            permissions_to_remove: Some(sns::NeuronPermissionList {
+                permissions: (1..=10).collect(),
+            }),
+        }),
+    )?;
+    env.pic.advance_time(std::time::Duration::from_secs(3600));
+    for _ in 0..100 {
+        env.pic.tick();
+    }
+    env.pic
+        .upgrade_canister(
+            env.rewards,
+            env.rewards_wasm.clone(),
+            encode_args(())?,
+            Some(env.jup["root"]),
+        )
+        .map_err(|e| anyhow!("pinned historical upgrade: {e:?}"))?;
+    let restored_batch = env
+        .status()?
+        .batch
+        .context("pinned batch survives upgrade")?;
+    assert_eq!(restored_batch.snapshot, pinned.snapshot);
+    assert_eq!(restored_batch.end_block, pinned.end_block);
     let mut prior = env.relay_context()?;
     for _ in 0..2 {
         env.pic.advance_time(std::time::Duration::from_secs(86_400));
         for _ in 0..8 {
             env.pic.tick();
         }
-        env.tick()?;
+        env.drive(3)?;
         assert_eq!(
             env.status()?.batch.as_ref().map(|b| b.snapshot.id),
             Some(pinned.snapshot.id)
@@ -1342,7 +1508,25 @@ fn relay_jup_index_is_independent_of_io_and_long_patron_history() -> Result<()> 
         let refreshed = env.relay_context()?;
         assert!(refreshed.snapshot_id > prior.snapshot_id);
         assert_ne!(refreshed.snapshot_id, pinned.snapshot.id);
-        env.assert_relay_owners(&refreshed)?;
+        let owners: ResolveDefaultIcpAccountsResult = query_one(
+            &env.pic,
+            env.rewards,
+            env.a,
+            "resolve_default_icp_accounts",
+            ResolveDefaultIcpAccountsArgs {
+                snapshot_id: refreshed.snapshot_id,
+                account_identifiers: [env.b, env.io_only]
+                    .map(|p| {
+                        jupiter_ic_clients::account_identifier::account_identifier_bytes(p, None)
+                            .to_vec()
+                    })
+                    .to_vec(),
+            },
+        )?;
+        assert_eq!(
+            owners,
+            ResolveDefaultIcpAccountsResult::Ok(vec![None, Some(env.io_only)])
+        );
         let stale: ResolveDefaultIcpAccountsResult = query_one(
             &env.pic,
             env.rewards,
@@ -1356,6 +1540,20 @@ fn relay_jup_index_is_independent_of_io_and_long_patron_history() -> Result<()> 
         assert_eq!(stale, ResolveDefaultIcpAccountsResult::SnapshotChanged);
         prior = refreshed;
     }
+    env.drive(100)?;
+    let historical = env
+        .record(pinned_b)?
+        .context("old cohort's recognised direct patron")?;
+    assert!(matches!(historical.outcome, PatronOutcome::Verified { .. }));
+    assert_eq!(historical.snapshot_id, pinned.snapshot.id);
+    assert_eq!(historical.recognition.as_ref().unwrap().principal, env.b);
+    assert_eq!(
+        historical.to,
+        Account {
+            owner: env.b,
+            subaccount: None
+        }
+    );
     Ok(())
 }
 
@@ -1510,3 +1708,297 @@ fn paid_compound_refresh_resumes_without_reselection_or_payment_replay() -> Resu
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "official Governance permission attack, voting delegation and production payout"]
+fn economic_permission_attack_cannot_capture_or_poison_real_compounding() -> Result<()> {
+    use jupiter_sns_rewards::generated::NeuronPermissionType as P;
+    use sha2::{Digest, Sha256};
+    let env = Env::setup_programme(false, false, false, true)?;
+    let selected = [&env.jup_neurons["a"], &env.jup_neurons["a_second"]]
+        .into_iter()
+        .min()
+        .unwrap()
+        .clone();
+    let (memo, expected_id) = (20_u64..10_000)
+        .map(|memo| {
+            let id = Sha256::digest(
+                [
+                    b"\x0cneuron-stake".as_slice(),
+                    env.b.as_slice(),
+                    &memo.to_be_bytes(),
+                ]
+                .concat(),
+            )
+            .to_vec();
+            (memo, id)
+        })
+        .find(|(_, id)| id < &selected)
+        .context("low attack nonce")?;
+    // A zero-duration genesis vesting period ends after its creation instant.
+    env.pic.advance_time(std::time::Duration::from_secs(1));
+    env.pic.tick();
+    let split = env.manage(
+        env.jup["governance"],
+        env.b,
+        &env.jup_neurons["b"],
+        sns::Command::Split(sns::Split {
+            memo,
+            amount_e8s: 100 * 100_000_000,
+        }),
+    )?;
+    let sns::Command1::Split(split) = split else {
+        anyhow::bail!("split: {split:?}");
+    };
+    let attacker_id = split.created_neuron_id.context("split ID")?.id;
+    assert_eq!(attacker_id, expected_id);
+    env.manage(
+        env.jup["governance"],
+        env.b,
+        &attacker_id,
+        sns::Command::Configure(sns::Configure {
+            operation: Some(sns::Operation::ChangeAutoStakeMaturity(
+                sns::ChangeAutoStakeMaturity {
+                    requested_setting_for_auto_stake_maturity: true,
+                },
+            )),
+        }),
+    )?;
+    // Victim gets more permission codes than attacker. Attacker retains takeover.
+    env.manage(
+        env.jup["governance"],
+        env.b,
+        &attacker_id,
+        sns::Command::RemoveNeuronPermissions(sns::RemoveNeuronPermissions {
+            principal_id: Some(env.b),
+            permissions_to_remove: Some(sns::NeuronPermissionList {
+                permissions: vec![
+                    P::ConfigureDissolveState,
+                    P::SubmitProposal,
+                    P::Vote,
+                    P::Disburse,
+                    P::Split,
+                    P::MergeMaturity,
+                    P::DisburseMaturity,
+                    P::StakeMaturity,
+                    P::ManageVotingPermission,
+                ]
+                .into_iter()
+                .map(|p| p as i32)
+                .collect(),
+            }),
+        }),
+    )?;
+    env.manage(
+        env.jup["governance"],
+        env.b,
+        &attacker_id,
+        sns::Command::AddNeuronPermissions(sns::AddNeuronPermissions {
+            principal_id: Some(env.a),
+            permissions_to_add: Some(sns::NeuronPermissionList {
+                permissions: vec![
+                    P::ConfigureDissolveState,
+                    P::SubmitProposal,
+                    P::Vote,
+                    P::Disburse,
+                    P::Split,
+                    P::MergeMaturity,
+                    P::DisburseMaturity,
+                    P::StakeMaturity,
+                    P::ManageVotingPermission,
+                ]
+                .into_iter()
+                .map(|p| p as i32)
+                .collect(),
+            }),
+        }),
+    )?;
+    // Run the predecessor's permission-count rule on the actual native record.
+    // It attributes the attacker's low-ID neuron to the unconsenting victim.
+    let response: sns::GetNeuronResponse = query_one(
+        &env.pic,
+        env.jup["governance"],
+        Principal::anonymous(),
+        "get_neuron",
+        sns::GetNeuron {
+            neuron_id: Some(sns::NeuronId {
+                id: attacker_id.clone(),
+            }),
+        },
+    )?;
+    let Some(sns::Result::Neuron(attack)) = response.result else {
+        anyhow::bail!("native attack neuron missing")
+    };
+    let mut previous_permissions = BTreeMap::<_, std::collections::BTreeSet<_>>::new();
+    for permission in &attack.permissions {
+        if let Some(principal) = permission.principal {
+            previous_permissions
+                .entry(principal)
+                .or_default()
+                .extend(permission.permission_type.iter().copied());
+        }
+    }
+    let previous_owner = previous_permissions
+        .into_iter()
+        .max_by(|(left_principal, left), (right_principal, right)| {
+            left.len()
+                .cmp(&right.len())
+                .then_with(|| right_principal.as_slice().cmp(left_principal.as_slice()))
+        })
+        .map(|(principal, _)| principal);
+    assert_eq!(previous_owner, Some(env.a));
+    assert!(attack.auto_stake_maturity.unwrap_or(false));
+    assert!(attacker_id < selected);
+    // Legitimate voting delegation is safe, including its native grant restriction.
+    env.manage(
+        env.jup["governance"],
+        env.a,
+        &selected,
+        sns::Command::AddNeuronPermissions(sns::AddNeuronPermissions {
+            principal_id: Some(env.io_only),
+            permissions_to_add: Some(sns::NeuronPermissionList {
+                permissions: vec![P::Vote as i32, P::ManageVotingPermission as i32],
+            }),
+        }),
+    )?;
+    let denied = env.manage(
+        env.jup["governance"],
+        env.io_only,
+        &selected,
+        sns::Command::AddNeuronPermissions(sns::AddNeuronPermissions {
+            principal_id: Some(env.b),
+            permissions_to_add: Some(sns::NeuronPermissionList {
+                permissions: vec![P::Disburse as i32],
+            }),
+        }),
+    );
+    assert!(
+        denied.is_err(),
+        "voting manager cannot grant economic permissions"
+    );
+    // Nobody needs ManagePrincipals: freeze permission control on the valid neuron.
+    env.manage(
+        env.jup["governance"],
+        env.a,
+        &selected,
+        sns::Command::RemoveNeuronPermissions(sns::RemoveNeuronPermissions {
+            principal_id: Some(env.a),
+            permissions_to_remove: Some(sns::NeuronPermissionList {
+                permissions: vec![P::ManagePrincipals as i32],
+            }),
+        }),
+    )?;
+    env.manage(
+        env.jup["governance"],
+        env.io_only,
+        &selected,
+        sns::Command::AddNeuronPermissions(sns::AddNeuronPermissions {
+            principal_id: Some(env.b),
+            permissions_to_add: Some(sns::NeuronPermissionList {
+                permissions: vec![P::Vote as i32],
+            }),
+        }),
+    )?;
+    let all_rights: Vec<i32> = [
+        P::ConfigureDissolveState,
+        P::ManagePrincipals,
+        P::SubmitProposal,
+        P::Vote,
+        P::Disburse,
+        P::Split,
+        P::MergeMaturity,
+        P::DisburseMaturity,
+        P::StakeMaturity,
+        P::ManageVotingPermission,
+    ]
+    .into_iter()
+    .map(|p| p as i32)
+    .collect();
+    // A fully gifted, sole-Governance neuron would satisfy economic ownership,
+    // but Governance's default token Account is the minter, never a recipient.
+    env.manage(
+        env.jup["governance"],
+        env.b,
+        &env.jup_neurons["b"],
+        sns::Command::AddNeuronPermissions(sns::AddNeuronPermissions {
+            principal_id: Some(env.jup["governance"]),
+            permissions_to_add: Some(sns::NeuronPermissionList {
+                permissions: all_rights.clone(),
+            }),
+        }),
+    )?;
+    env.manage(
+        env.jup["governance"],
+        env.b,
+        &env.jup_neurons["b"],
+        sns::Command::RemoveNeuronPermissions(sns::RemoveNeuronPermissions {
+            principal_id: Some(env.b),
+            permissions_to_remove: Some(sns::NeuronPermissionList {
+                permissions: all_rights.clone(),
+            }),
+        }),
+    )?;
+    let attack_balance = env.balance(Account {
+        owner: env.jup["governance"],
+        subaccount: Some(attacker_id.try_into().unwrap()),
+    })?;
+    env.pic.advance_time(std::time::Duration::from_secs(86_401));
+    env.drive(6)?;
+    let context = env.relay_context()?;
+    let governance_owner: ResolveDefaultIcpAccountsResult = query_one(
+        &env.pic,
+        env.rewards,
+        env.a,
+        "resolve_default_icp_accounts",
+        ResolveDefaultIcpAccountsArgs {
+            snapshot_id: context.snapshot_id,
+            account_identifiers: vec![
+                jupiter_ic_clients::account_identifier::account_identifier_bytes(
+                    env.jup["governance"],
+                    None,
+                )
+                .to_vec(),
+            ],
+        },
+    )?;
+    assert_eq!(
+        governance_owner,
+        ResolveDefaultIcpAccountsResult::Ok(vec![None])
+    );
+    let governance_commit = env.commit(env.jup["governance"])?;
+    let block = env.commit(env.a)?;
+    for _ in 0..60 {
+        env.tick()?;
+        if env.record(block)?.is_some() && env.record(governance_commit)?.is_some() {
+            break;
+        }
+    }
+    assert!(matches!(
+        env.record(governance_commit)?
+            .context("Governance exclusion")?
+            .outcome,
+        PatronOutcome::Skipped { .. }
+    ));
+    let record = env.record(block)?.context("secure production payout")?;
+    assert!(
+        matches!(record.outcome, PatronOutcome::Verified { .. }),
+        "{record:?}; {:?}",
+        env.status()?
+    );
+    assert_eq!(record.compounded_neuron, Some(selected));
+    assert_eq!(record.amount_e8s, 200_000_000);
+    assert_eq!(
+        env.balance(Account {
+            owner: env.jup["governance"],
+            subaccount: Some(expected_id.try_into().unwrap())
+        })?,
+        attack_balance
+    );
+    Ok(())
+}
+
+#[path = "secure_rewards.rs"]
+mod secure_rewards;
+
+#[path = "native_economics.rs"]
+mod native_economics;

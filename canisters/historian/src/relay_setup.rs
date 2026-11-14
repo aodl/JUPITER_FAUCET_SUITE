@@ -315,6 +315,7 @@ fn get_entry(key: RelaySetupKey) -> Option<RelaySetupEntry> {
 thread_local! { static SETUP_ENTRY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
 fn insert_entry(key: RelaySetupKey, entry: RelaySetupEntry) {
+    membership_revision(true);
     let mut creating = state::relay_creating_keys();
     if matches!(&entry, RelaySetupEntry::Creating(_)) {
         if !creating.contains(&key) {
@@ -334,6 +335,7 @@ fn insert_entry(key: RelaySetupKey, entry: RelaySetupEntry) {
 }
 
 fn remove_entry(key: RelaySetupKey) {
+    membership_revision(true);
     let mut creating = state::relay_creating_keys();
     creating.retain(|existing| existing != &key);
     state::with_relay_setup_entries_map(|map| {
@@ -1891,7 +1893,7 @@ async fn fund_installed_relay(
     {
         return result;
     }
-    drive_relay_finalization(key, &setup, historian, management, ticket).await
+    drive_relay_finalization(key, setup, historian, management, ticket).await
 }
 
 pub(crate) async fn notify_relay_configuration(args: RelaySetupArgs) -> RelaySetupNotifyResult {
@@ -1957,6 +1959,7 @@ pub(crate) fn debug_setup_entries() -> Vec<RelaySetupDebugEntry> {
 
 #[cfg(any(test, feature = "debug_api"))]
 pub(crate) fn clear_setup_entries_for_debug() {
+    membership_revision(true);
     state::with_relay_setup_entries_map(|map| map.clear_new());
     state::set_relay_creating_keys(Vec::new());
     admission::reset_for_debug();
@@ -2078,6 +2081,80 @@ mod tests {
         admission::reset_for_test();
         clear_setup_entries_for_debug();
         state::set_state(State::new(config(), 0));
+    }
+
+    #[test]
+    fn membership_requires_active_financial_binding_and_complete_unchanged_pages() {
+        reset();
+        let relay = principal(202);
+        let args = RelayMembershipArgs {
+            relay,
+            ledger: config().ledger_canister_id,
+            staking_account: config().staking_account,
+            cursor: None,
+            revision: None,
+        };
+        assert_eq!(
+            get_relay_factory_membership(args.clone()),
+            RelayMembership::Unsupported
+        );
+        // Memo registration and the RelayTarget tag are deliberately irrelevant.
+        let key = key_for_targets(&[principal(7)]);
+        let mut progress = RelayCreationProgress::reserved();
+        progress.relay_canister_id = Some(relay);
+        insert_entry(key, RelaySetupEntry::Creating(progress));
+        assert_eq!(
+            get_relay_factory_membership(args.clone()),
+            RelayMembership::Pending
+        );
+        insert_entry(
+            key,
+            RelaySetupEntry::Active {
+                relay_canister_id: relay,
+                completed: None,
+            },
+        );
+        assert_eq!(
+            get_relay_factory_membership(args.clone()),
+            RelayMembership::Active {
+                setup_key: key.bytes().to_vec()
+            }
+        );
+        let mut wrong = args.clone();
+        wrong.ledger = principal(203);
+        assert_eq!(
+            get_relay_factory_membership(wrong),
+            RelayMembership::InvalidBinding
+        );
+        for i in 0..130_u16 {
+            let key = key_for_targets(&[Principal::from_slice(&i.to_be_bytes())]);
+            insert_entry(
+                key,
+                RelaySetupEntry::Active {
+                    relay_canister_id: principal(200),
+                    completed: None,
+                },
+            );
+        }
+        let mut missing = args;
+        missing.relay = principal(204);
+        let first = get_relay_factory_membership(missing.clone());
+        let RelayMembership::Page { cursor, revision } = first else {
+            panic!("bounded first page: {first:?}")
+        };
+        missing.cursor = Some(cursor);
+        missing.revision = Some(revision);
+        insert_entry(
+            key,
+            RelaySetupEntry::Active {
+                relay_canister_id: relay,
+                completed: None,
+            },
+        );
+        assert_eq!(
+            get_relay_factory_membership(missing),
+            RelayMembership::RegistryChanged
+        );
     }
 
     #[test]
@@ -3536,7 +3613,7 @@ mod tests {
                 assert_eq!(transfers[0].amount, Nat::from(55_000_000_u64));
                 if active {
                     assert_eq!(transfers.len(), 2);
-                    assert!(transfers[1].amount >= Nat::from(105_020_000_u64));
+                    assert!(transfers[1].amount >= 105_020_000_u64);
                     assert_eq!(*ledger.balance.lock().unwrap(), 0);
                     assert_eq!(management.create_calls.load(Ordering::SeqCst), 1);
                 } else {
@@ -7507,5 +7584,150 @@ mod tests {
         );
         assert_eq!(management.inner.status_calls.load(Ordering::SeqCst), 2);
         assert_eq!(management.inner.update_calls.load(Ordering::SeqCst), 1);
+    }
+}
+
+// A revision fences negative membership across bounded registry pages. It is a
+// separate stable cell, so the deployed root and setup records stay unchanged.
+thread_local! {
+    static MEMBERSHIP_REVISION: std::cell::RefCell<Option<ic_stable_structures::StableCell<u64,
+        ic_stable_structures::memory_manager::VirtualMemory<ic_stable_structures::DefaultMemoryImpl>>>> = const { std::cell::RefCell::new(None) };
+}
+fn membership_revision(increment: bool) -> u64 {
+    MEMBERSHIP_REVISION.with_borrow_mut(|cell| {
+        let cell = cell.get_or_insert_with(|| {
+            ic_stable_structures::StableCell::init(state::relay_membership_memory(), 0)
+        });
+        if increment {
+            cell.set(
+                cell.get()
+                    .checked_add(1)
+                    .expect("factory revision exhausted"),
+            );
+        }
+        *cell.get()
+    })
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RelayMembershipArgs {
+    pub relay: Principal,
+    pub ledger: Principal,
+    pub staking_account: Account,
+    pub cursor: Option<Vec<u8>>,
+    pub revision: Option<u64>,
+}
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum RelayMembership {
+    Active { setup_key: Vec<u8> },
+    Pending,
+    Unsupported,
+    Page { cursor: Vec<u8>, revision: u64 },
+    RegistryChanged,
+    InvalidBinding,
+}
+
+/// Read only: only finalised authoritative Active records establish membership.
+/// Neither memo registration, a target tag, nor a child status claim suffices.
+#[ic_cdk::query]
+fn get_relay_factory_membership(args: RelayMembershipArgs) -> RelayMembership {
+    if !state::with_state(|s| {
+        s.config.ledger_canister_id == args.ledger
+            && s.config.staking_account == args.staking_account
+    }) {
+        return RelayMembership::InvalidBinding;
+    }
+    let revision = membership_revision(false);
+    if args.revision.is_some_and(|old| old != revision) {
+        return RelayMembership::RegistryChanged;
+    }
+    let cursor = match args.cursor {
+        Some(bytes) if bytes.len() == 32 => Some(RelaySetupKey::from_bytes(Cow::Owned(bytes))),
+        Some(_) => return RelayMembership::InvalidBinding,
+        None => None,
+    };
+    use std::ops::Bound::{Excluded, Unbounded};
+    state::with_relay_setup_entries_map(|map| {
+        let mut page = map.range((cursor.map_or(Unbounded, Excluded), Unbounded));
+        let mut last = None;
+        for entry in page.by_ref().take(64) {
+            last = Some(*entry.key());
+            match entry.value() {
+                RelaySetupEntry::Active {
+                    relay_canister_id, ..
+                } if relay_canister_id == args.relay => {
+                    return RelayMembership::Active {
+                        setup_key: entry.key().bytes().to_vec(),
+                    }
+                }
+                RelaySetupEntry::Creating(p)
+                | RelaySetupEntry::Paused(p)
+                | RelaySetupEntry::ManualRecoveryRequired(p)
+                    if p.relay_canister_id == Some(args.relay) =>
+                {
+                    return RelayMembership::Pending
+                }
+                _ => {}
+            }
+        }
+        if page.next().is_some() {
+            RelayMembership::Page {
+                cursor: last.expect("nonempty page").bytes().to_vec(),
+                revision,
+            }
+        } else {
+            RelayMembership::Unsupported
+        }
+    })
+}
+
+#[cfg(test)]
+mod membership_review_tests {
+    use super::*;
+
+    #[test]
+    fn paused_and_manual_recovery_children_remain_pending_until_authoritative_active() {
+        clear_setup_entries_for_debug();
+        state::set_state(State::new(super::tests::config(), 0));
+        let relay = Principal::from_slice(&[202]);
+        let key = RelaySetupKey::from_bytes(Cow::Owned(vec![7; 32]));
+        let args = RelayMembershipArgs {
+            relay,
+            ledger: super::tests::config().ledger_canister_id,
+            staking_account: super::tests::config().staking_account,
+            cursor: None,
+            revision: None,
+        };
+        let mut progress = RelayCreationProgress::reserved();
+        progress.relay_canister_id = Some(relay);
+        progress.phase = RelayCreationPhase::FinalizationAttempted;
+        for entry in [
+            RelaySetupEntry::Creating(progress.clone()),
+            RelaySetupEntry::Paused(progress.clone()),
+            RelaySetupEntry::ManualRecoveryRequired(progress),
+        ] {
+            insert_entry(key, entry);
+            assert_eq!(
+                get_relay_factory_membership(args.clone()),
+                RelayMembership::Pending
+            );
+            assert_eq!(
+                get_relay_factory_membership(args.clone()),
+                RelayMembership::Pending
+            );
+        }
+        insert_entry(
+            key,
+            RelaySetupEntry::Active {
+                relay_canister_id: relay,
+                completed: None,
+            },
+        );
+        assert_eq!(
+            get_relay_factory_membership(args),
+            RelayMembership::Active {
+                setup_key: vec![7; 32]
+            }
+        );
     }
 }

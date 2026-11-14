@@ -91,3 +91,51 @@ fn debug_calls() -> Vec<DebugCall> {
 fn debug_reset_calls() {
     CALLS.with(|calls| calls.borrow_mut().clear());
 }
+
+// Scripted read-only factory boundary for reward-isolation tests. Official SNS
+// Governance/Ledger/Index remain real; Historian's phase semantics have separate
+// native tests. This does not establish production factory provenance.
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct FactoryAccount {
+    owner: Principal,
+    subaccount: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct RelayMembershipArgs {
+    relay: Principal,
+    ledger: Principal,
+    staking_account: FactoryAccount,
+    cursor: Option<Vec<u8>>,
+    revision: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum RelayMembership {
+    Active { setup_key: Vec<u8> },
+    Pending,
+    Unsupported,
+    Page { cursor: Vec<u8>, revision: u64 },
+    RegistryChanged,
+    InvalidBinding,
+}
+
+thread_local! {
+    static MEMBERSHIP: RefCell<std::collections::BTreeMap<Principal, RelayMembership>> = const {RefCell::new(std::collections::BTreeMap::new())};
+}
+
+#[ic_cdk::update]
+fn debug_set_relay_membership(relay: Principal, result: RelayMembership) {
+    MEMBERSHIP.with_borrow_mut(|m| m.insert(relay, result));
+}
+
+#[ic_cdk::query]
+fn get_relay_factory_membership(args: RelayMembershipArgs) -> RelayMembership {
+    MEMBERSHIP.with_borrow(|m| {
+        m.get(&args.relay)
+            .cloned()
+            .unwrap_or(RelayMembership::Unsupported)
+    })
+}
+
+ic_cdk::export_candid!();

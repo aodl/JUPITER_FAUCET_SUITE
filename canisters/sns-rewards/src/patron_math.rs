@@ -114,14 +114,14 @@ with localcontext() as c:
 
     #[test]
     fn fees_are_sponsored_and_tiny_payment_amplification_is_explicit() {
-        let fee = 10_000_000;
+        let fee = 1_000_000;
         assert_eq!(
             reserve_cost(reward_e8s(1_000_000_000, 0, 0, false), fee),
-            Some(110_000_000)
+            Some(101_000_000)
         );
         assert_eq!(
             reserve_cost(reward_e8s(1_000_000_000, 0, 0, true), fee),
-            Some(210_000_000)
+            Some(201_000_000)
         );
         // Each commitment still satisfies Faucet's actual one-ICP minimum.
         // Far into the programme, each nonzero reward can be a single base unit.
@@ -129,8 +129,8 @@ with localcontext() as c:
         let one = reserve_cost(reward_e8s(10_000_000_000_000_000, late, 0, false), fee).unwrap();
         let split = reserve_cost(reward_e8s(100_000_000, late, 0, false), fee).unwrap() as u128
             * 100_000_000;
-        assert_eq!(split, 1_000_000_100_000_000);
-        assert!(split > u128::from(one) * 7_000_000);
+        assert_eq!(split, 100_000_100_000_000);
+        assert!(split > u128::from(one) * 700_000);
         assert_eq!(reserve_cost(u64::MAX, fee), None);
     }
 }

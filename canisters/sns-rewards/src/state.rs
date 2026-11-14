@@ -342,3 +342,19 @@ mod tests {
         assert!(matches!(decoded, VersionedStableState::Uninitialized));
     }
 }
+
+// Separate policy marker preserves the frozen deployed V1 root representation.
+thread_local! {
+    static OWNER_POLICY: std::cell::RefCell<Option<StableCell<u8, Memory>>> = const { std::cell::RefCell::new(None) };
+}
+pub(crate) fn adopt_secure_owner_policy() {
+    OWNER_POLICY.with_borrow_mut(|cell| {
+        let cell =
+            cell.get_or_insert_with(|| StableCell::init(programme_memory(MemoryId::new(22)), 0));
+        if *cell.get() == 0 {
+            let root = with_state(|s| s.config.reward_sns_root_canister_id);
+            invalidate_for_root(root);
+            cell.set(1);
+        }
+    });
+}

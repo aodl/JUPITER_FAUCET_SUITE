@@ -10,7 +10,65 @@ import profile as acceptance
 import sns
 
 
-def application_arguments(profile):
+def programme_arguments(checked, policy):
+    """Explicit local/offline launch policy; financial identities come from profile.
+
+    Never selects a launch timestamp or confirms unresolved administrative roles.
+    Typed Candid round trips and canister validation remain mandatory.
+    """
+    required = {'version', 'launch_timestamp_seconds', 'patron_enabled',
+                'protocol_governance_neuron', 'excluded_jup_neurons', 'excluded_icp_accounts',
+                'reserve_subaccount', 'reserve_transport_neuron', 'snapshot_max_age_seconds', 'automation'}
+    if set(policy) != required:
+        raise ValueError('programme policy requires explicit fields; profile financial bindings cannot be overridden')
+    def number(value):
+        if type(value) is not int or not 0 <= value < 2**64:
+            raise ValueError('programme natural must fit nat64')
+        return str(value)
+    def flag(value):
+        if type(value) is not bool:
+            raise ValueError('programme flag must be boolean')
+        return str(value).lower()
+    def blob32(value):
+        if not isinstance(value, str) or len(value) != 64:
+            raise ValueError('programme Account/neuron bytes require 32-byte hex')
+        return cd.blob(bytes.fromhex(value))
+    optional = lambda value, convert: 'null' if value is None else 'opt ' + convert(value)
+    roles = checked['roles']
+    system = acceptance.SYSTEM
+    auto = policy['automation']
+    if auto is not None:
+        if set(auto) != {'proposer_neuron', 'targets', 'treasury_enabled',
+                         'treasury_retain_icp_e8s', 'treasury_max_proposal_icp_e8s'}:
+            raise ValueError('invalid automation policy fields')
+        targets = []
+        for target in auto['targets']:
+            if set(target) != {'root', 'governance', 'neuron', 'first_proposal', 'delivery_margin_seconds'}:
+                raise ValueError('invalid mirror policy fields')
+            targets.append(cd.record(root=cd.principal(target['root']), governance=cd.principal(target['governance']),
+                neuron=blob32(target['neuron']), first_proposal=number(target['first_proposal']),
+                delivery_margin_seconds=number(target['delivery_margin_seconds'])))
+        auto = 'opt ' + cd.record(proposer_neuron=blob32(auto['proposer_neuron']), targets=cd.vector(targets),
+            treasury_enabled=flag(auto['treasury_enabled']), treasury_retain_icp_e8s=number(auto['treasury_retain_icp_e8s']),
+            treasury_max_proposal_icp_e8s=number(auto['treasury_max_proposal_icp_e8s']))
+    else:
+        auto = 'null'
+    return cd.record(version=number(policy['version']), jup_root=cd.principal(roles['sns_root']),
+        relay_factory='opt ' + cd.principal(roles['jupiter_historian']),
+        icp_ledger=cd.principal(system['ledger']), icp_index=cd.principal(system['index']),
+        staking_account=cd.account(checked['stakingAccount']), canonical_relay=cd.principal(roles['jupiter_relay']),
+        treasury_stake='opt ' + cd.record(disburser=cd.principal(roles['jupiter_disburser']), neuron_id=checked['neuronId']),
+        protocol_governance_neuron=blob32(policy['protocol_governance_neuron']),
+        excluded_jup_neurons=cd.vector(blob32(v) for v in policy['excluded_jup_neurons']),
+        excluded_icp_accounts=cd.vector(blob32(v) for v in policy['excluded_icp_accounts']),
+        reserve_subaccount=optional(policy['reserve_subaccount'], blob32),
+        reserve_transport_neuron=optional(policy['reserve_transport_neuron'], blob32),
+        launch_timestamp_seconds=optional(policy['launch_timestamp_seconds'], number),
+        patron_enabled=flag(policy['patron_enabled']), snapshot_max_age_seconds=number(policy['snapshot_max_age_seconds']),
+        automation=auto)
+
+
+def application_arguments(profile, programme=None):
     checked = acceptance.validate(profile)
     roles = checked['roles']
     if checked['ageBonusRecipient2'] is None or profile['relay_surplus_neuron_recipients'] is None:
@@ -42,7 +100,8 @@ def application_arguments(profile):
             sns_wasm_canister_id=opt(system['sns_wasm']), xrc_canister_id=opt(system['xrc']),
             enable_sns_tracking='opt true', canonical_relay_canister_id=opt(roles['jupiter_relay']),
             canonical_relay_targets='opt ' + targets, relay_factory_enabled='opt true'),
-        'jupiter_sns_rewards': cd.record(reward_sns_root_canister_id=opt(roles['sns_root'])),
+        'jupiter_sns_rewards': cd.record(reward_sns_root_canister_id=opt(roles['sns_root']),
+            programme='null' if programme is None else 'opt ' + programme_arguments(checked, programme)),
         'jupiter_relay': cd.record(managed_canisters=targets,
             ledger_canister_id=opt(system['ledger']), cmc_canister_id=opt(system['cmc']),
             governance_canister_id=opt(system['governance']), blackhole_canister_id='null',
@@ -55,8 +114,8 @@ def application_arguments(profile):
     return checked, args
 
 
-def applications(profile, out):
-    checked, args = application_arguments(profile)
+def applications(profile, out, programme=None):
+    checked, args = application_arguments(profile, programme)
     out = Path(out)
     out.mkdir()
     for role, value in args.items():
@@ -111,13 +170,14 @@ if __name__ == '__main__':
     try:
         command, source, *arguments = sys.argv[1:]
         profile = json.loads(Path(source).read_text())
-        if command == 'applications' and len(arguments) == 1:
-            applications(profile, arguments[0])
+        if command == 'applications' and (len(arguments) == 1 or len(arguments) == 3 and arguments[1] == '--programme'):
+            policy = None if len(arguments) == 1 else json.loads(Path(arguments[2]).read_text())
+            applications(profile, arguments[0], policy)
         elif command == 'sns' and len(arguments) in (3, 4):
             framework(profile, arguments[0], arguments[1], int(arguments[2]),
                       arguments[3:] == ['--local-fixture'])
         else:
-            raise ValueError('usage: prepare.py applications PROFILE OUT | sns PROFILE ARTIFACTS OUT TIMESTAMP [--local-fixture]')
+            raise ValueError('usage: prepare.py applications PROFILE OUT [--programme REVIEWED_POLICY.json] | sns PROFILE ARTIFACTS OUT TIMESTAMP [--local-fixture]')
         directory = Path(arguments[0] if command == 'applications' else arguments[1])
         hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                   for p in directory.iterdir() if p.is_file()}

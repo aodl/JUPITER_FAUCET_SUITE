@@ -196,6 +196,30 @@ class Isolation(unittest.TestCase):
             self.assertIn(profile['roles']['sns_root'], (out / 'jupiter_sns_rewards.did').read_text())
             self.assertIn(profile['roles']['jupiter_relay'], (out / 'jupiter_historian.did').read_text())
 
+    def test_explicit_programme_binds_treasury_and_factory_to_profile_without_io(self):
+        import prepare
+        import candid as cd
+        profile = fixture()
+        checked = acceptance.validate(profile)
+        policy = dict(version=1, launch_timestamp_seconds=123, patron_enabled=True,
+            protocol_governance_neuron='08' * 32, excluded_jup_neurons=['08' * 32, '09' * 32],
+            excluded_icp_accounts=[], reserve_subaccount=None, reserve_transport_neuron=None,
+            snapshot_max_age_seconds=172800, automation=dict(proposer_neuron='09' * 32,
+                targets=[], treasury_enabled=True, treasury_retain_icp_e8s=0,
+                treasury_max_proposal_icp_e8s=1000000000))
+        _, constructors = prepare.application_arguments(profile, policy)
+        value = constructors['jupiter_sns_rewards']
+        did = acceptance.REPO / 'canisters/sns-rewards/jupiter_sns_rewards.did'
+        cd.encode_checked(did, '(InitArgs)', '(' + value + ')')
+        self.assertIn('"patron_enabled" = true', value)
+        self.assertIn('"treasury_enabled" = true', value)
+        self.assertIn(cd.account(checked['stakingAccount']), value)
+        self.assertIn(profile['roles']['jupiter_disburser'], value)
+        self.assertIn(profile['roles']['jupiter_historian'], value)
+        self.assertNotIn('io_root', value)
+        with self.assertRaisesRegex(ValueError, 'cannot be overridden'):
+            prepare.application_arguments(profile, dict(policy, icp_ledger=profile['operator']))
+
     def test_missing_application_recipient_policy_cannot_generate_payloads(self):
         import prepare
         import tempfile

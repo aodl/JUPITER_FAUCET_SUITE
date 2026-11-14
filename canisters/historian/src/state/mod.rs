@@ -31,3 +31,5 @@ pub(crate) fn commitment_index_is_complete(st: &State) -> bool {
         && st.active_staking_catch_up.is_none()
         && st.commitment_index_fault.is_none()
 }
+
+pub(crate) use stable::relay_membership_memory;

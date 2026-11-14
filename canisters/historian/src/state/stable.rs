@@ -25,6 +25,7 @@ const RELAY_CREATING_KEYS_MEMORY_ID: u8 = 30;
 // 28: retired Relay payment-claims experiment from repository history -- DO NOT REUSE
 // 29: exact commitment-route cumulative roll-ups
 // 30: bounded authoritative Creating-key index (at most four keys)
+// 32: read-only factory membership pagination revision
 // 31: retired predecessor Relay installation identity -- permanently reserved; DO NOT REUSE
 thread_local! {
     pub(super) static MEMORY_MANAGER: std::cell::RefCell<MemoryManager<DefaultMemoryImpl>> =
@@ -387,6 +388,10 @@ pub(crate) fn with_relay_setup_entries_map<R>(
             .as_mut()
             .expect("historian relay setup entries stable map not initialized"))
     })
+}
+
+pub(crate) fn relay_membership_memory() -> Memory {
+    MEMORY_MANAGER.with(|manager| manager.borrow().get(MemoryId::new(32)))
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@ mod state;
 pub(crate) use state::*;
 mod relay_setup;
 use jupiter_ic_clients::event_horizon::EventHorizonPokeNotification;
+pub use relay_setup::{RelayMembership, RelayMembershipArgs};
 
 mod normalization;
 pub(crate) use normalization::*;

@@ -29,14 +29,42 @@ pub(crate) fn select_owner(permissions: &[NeuronPermission]) -> Option<Principal
             .1
             .extend(permission.permission_type.iter().copied());
     }
-    by_principal
-        .into_values()
-        .max_by(|(left_principal, left), (right_principal, right)| {
-            left.len()
-                .cmp(&right.len())
-                .then_with(|| right_principal.as_slice().cmp(left_principal.as_slice()))
+    use crate::generated::NeuronPermissionType as P;
+    // A named beneficiary cannot consent on-chain to being assigned permissions.
+    // Require recoverable stake and reject every competing economic authority.
+    // SubmitProposal can incur rejection fees, but is voting-related under the
+    // pinned framework (including grants made by ManageVotingPermission).
+    let candidates: Vec<_> = by_principal
+        .values()
+        .filter(|(p, codes)| {
+            *p != Principal::anonymous()
+                && *p != Principal::management_canister()
+                && codes.contains(&(P::Disburse as i32))
         })
-        .map(|(principal, _)| principal)
+        .map(|(p, _)| *p)
+        .collect();
+    let [beneficiary] = candidates.as_slice() else {
+        return None;
+    };
+    for (principal, codes) in by_principal.values() {
+        for code in codes {
+            let permission = P::try_from(*code).ok()?;
+            // The pinned protobuf explicitly defines Unspecified as unused.
+            // It grants no authority, including when present in a native list.
+            if permission == P::Unspecified {
+                continue;
+            }
+            if principal != beneficiary
+                && !matches!(
+                    permission,
+                    P::Vote | P::SubmitProposal | P::ManageVotingPermission
+                )
+            {
+                return None;
+            }
+        }
+    }
+    Some(*beneficiary)
 }
 
 pub(crate) fn owner_for_neuron(neuron: &Neuron) -> Option<Principal> {
@@ -46,69 +74,80 @@ pub(crate) fn owner_for_neuron(neuron: &Neuron) -> Option<Principal> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn principal(byte: u8) -> Principal {
-        Principal::from_slice(&[byte])
+    use crate::generated::NeuronPermissionType as P;
+    fn p(b: u8) -> Principal {
+        Principal::from_slice(&[b])
     }
-
-    fn permission(principal: Option<Principal>, types: &[i32]) -> NeuronPermission {
+    fn entry(who: Principal, codes: &[P]) -> NeuronPermission {
         NeuronPermission {
-            principal,
-            permission_type: types.to_vec(),
+            principal: Some(who),
+            permission_type: codes.iter().map(|c| *c as i32).collect(),
         }
     }
-
-    fn neuron(stake: u64, fees: u64, permissions: Vec<NeuronPermission>) -> Neuron {
-        Neuron {
-            id: None,
-            permissions,
-            cached_neuron_stake_e8s: stake,
-            neuron_fees_e8s: fees,
-        }
-    }
-
     #[test]
-    fn owner_selection_counts_distinct_permissions_across_entries() {
-        let a = principal(2);
-        let b = principal(3);
-        let permissions = vec![
-            permission(Some(a), &[1, 1, 2]),
-            permission(Some(a), &[2, 3]),
-            permission(Some(b), &[1, 2]),
+    fn disburse_without_permission_manager_and_voting_delegation_are_safe() {
+        let mut entries = vec![entry(p(1), &[P::Disburse])];
+        assert_eq!(select_owner(&entries), Some(p(1)));
+        entries.push(entry(
+            p(2),
+            &[P::Vote, P::SubmitProposal, P::ManageVotingPermission],
+        ));
+        entries.push(entry(p(1), &[P::ConfigureDissolveState, P::Disburse]));
+        assert_eq!(select_owner(&entries), Some(p(1)));
+    }
+    #[test]
+    fn every_competing_economic_authority_and_unknown_code_fails_closed() {
+        for competing in [
+            P::ConfigureDissolveState,
+            P::ManagePrincipals,
+            P::Disburse,
+            P::Split,
+            P::MergeMaturity,
+            P::DisburseMaturity,
+            P::StakeMaturity,
+        ] {
+            let entries = vec![entry(p(1), &[P::Disburse]), entry(p(2), &[competing])];
+            assert_eq!(select_owner(&entries), None, "{competing:?}");
+        }
+        let mut entries = vec![entry(p(1), &[P::Disburse])];
+        entries[0].permission_type.push(999);
+        assert_eq!(select_owner(&entries), None);
+    }
+    #[test]
+    fn fragmented_permissions_are_unioned_and_empty_entries_invent_nothing() {
+        let entries = vec![
+            entry(p(1), &[P::Disburse]),
+            entry(p(1), &[P::ManagePrincipals]),
+            entry(p(1), &[P::Disburse]),
+            entry(p(2), &[]),
+            entry(p(1), &[P::Unspecified]),
+            entry(p(2), &[P::Unspecified]),
+            NeuronPermission {
+                principal: None,
+                permission_type: vec![P::Disburse as i32],
+            },
         ];
-        assert_eq!(select_owner(&permissions), Some(a));
-    }
-
-    #[test]
-    fn owner_selection_uses_lexicographically_smallest_principal_on_tie() {
-        let small = principal(1);
-        let large = principal(2);
-        let forward = vec![permission(Some(large), &[1]), permission(Some(small), &[7])];
-        let reverse = forward.iter().cloned().rev().collect::<Vec<_>>();
-        assert_eq!(select_owner(&forward), Some(small));
-        assert_eq!(select_owner(&reverse), Some(small));
-    }
-
-    #[test]
-    fn missing_principals_and_empty_permissions_produce_no_owner() {
-        assert_eq!(select_owner(&[permission(None, &[1, 2])]), None);
+        assert_eq!(select_owner(&entries), Some(p(1)));
         assert_eq!(select_owner(&[]), None);
+        assert_eq!(
+            select_owner(&[entry(Principal::anonymous(), &[P::Disburse])]),
+            None
+        );
+        assert_eq!(
+            select_owner(&[entry(Principal::management_canister(), &[P::Disburse])]),
+            None
+        );
     }
-
     #[test]
-    fn effective_stake_rule_is_saturating_and_strictly_positive() {
-        let owner = principal(1);
-        assert_eq!(
-            owner_for_neuron(&neuron(10, 10, vec![permission(Some(owner), &[1])])),
-            None
-        );
-        assert_eq!(
-            owner_for_neuron(&neuron(9, 10, vec![permission(Some(owner), &[1])])),
-            None
-        );
-        assert_eq!(
-            owner_for_neuron(&neuron(11, 10, vec![permission(Some(owner), &[1])])),
-            Some(owner)
-        );
+    fn exhausted_stake_does_not_establish_identity() {
+        let mut neuron = Neuron {
+            id: None,
+            cached_neuron_stake_e8s: 10,
+            neuron_fees_e8s: 10,
+            permissions: vec![entry(p(1), &[P::Disburse])],
+        };
+        assert_eq!(owner_for_neuron(&neuron), None);
+        neuron.cached_neuron_stake_e8s += 1;
+        assert_eq!(owner_for_neuron(&neuron), Some(p(1)));
     }
 }

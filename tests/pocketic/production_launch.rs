@@ -72,23 +72,33 @@ fn production_allocation_passes_official_launch_validator() -> Result<()> {
         "official launch validation: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    // Do not invent a minimum/maximum incompatibility: the exact one-year
-    // settings pass the pinned validator. Retain a genuinely invalid basket
-    // control, proving this executes economic validation rather than just YAML.
-    let mut equal: serde_json::Value = serde_json::from_slice(&fs::read(&candidate)?)?;
-    equal["Swap"]["minimum_participant_icp"] = serde_json::json!("10 tokens");
-    let equal_path = directory.join("insufficient-basket.yaml");
-    fs::write(&equal_path, serde_json::to_vec_pretty(&equal)?)?;
-    let output = run(&equal_path)?;
-    fs::write(directory.join("insufficient-basket.stderr"), &output.stderr)?;
-    anyhow::ensure!(
-        !output.status.success(),
-        "expected authentic basket constraint rejection"
-    );
-    let error = String::from_utf8(output.stderr)?;
-    anyhow::ensure!(
-        error.contains("min_participant_icp_e8s"),
-        "unexpected rejection: {error}"
-    );
+    // The exact basket lower bound is 10.1 ICP at the maximum raise. Prove
+    // both adjacent e8s values with the actual converter, not just our formula.
+    for (amount, valid) in [
+        (1_009_999_999_u64, false),
+        (1_010_000_000, true),
+        (1_100_000_000, true),
+    ] {
+        let mut boundary: serde_json::Value = serde_json::from_slice(&fs::read(&candidate)?)?;
+        boundary["Swap"]["minimum_participant_icp"] = serde_json::json!(format!("{amount} e8s"));
+        let path = directory.join(format!("basket-{amount}.yaml"));
+        fs::write(&path, serde_json::to_vec_pretty(&boundary)?)?;
+        let output = run(&path)?;
+        fs::write(
+            directory.join(format!("basket-{amount}.stderr")),
+            &output.stderr,
+        )?;
+        anyhow::ensure!(
+            output.status.success() == valid,
+            "basket {amount}: {:?}",
+            output
+        );
+        if !valid {
+            anyhow::ensure!(
+                String::from_utf8(output.stderr)?.contains("min_participant_icp_e8s"),
+                "unexpected basket rejection"
+            );
+        }
+    }
     Ok(())
 }

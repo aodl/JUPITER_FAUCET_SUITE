@@ -1257,7 +1257,8 @@ mod tests {
 
     #[test]
     fn missing_current_root_fields_reject_before_upgrade_persistence() {
-        let removals: &[(&str, fn(&mut StableRootState))] = &[
+        type RootFieldRemoval = (&'static str, fn(&mut StableRootState));
+        let removals: &[RootFieldRemoval] = &[
             ("qualifying_commitment_count", |root| {
                 root.qualifying_commitment_count = None
             }),
@@ -1301,7 +1302,8 @@ mod tests {
 
     #[test]
     fn stable_config_requires_presence_without_treating_zero_or_empty_as_missing() {
-        let removals: &[(&str, fn(&mut StableConfig))] = &[
+        type ConfigFieldRemoval = (&'static str, fn(&mut StableConfig));
+        let removals: &[ConfigFieldRemoval] = &[
             ("output_source_account", |cfg| {
                 cfg.output_source_account = None
             }),
