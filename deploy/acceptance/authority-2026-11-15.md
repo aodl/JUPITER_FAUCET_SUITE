@@ -199,10 +199,13 @@ to unchanged reviewed acceptance Wasm hashes, the observed controller/module
 preconditions, explicit install/reinstall modes and DFX execution route. Seven
 application argument vectors are review data only; no install was run. Framework
 vectors/hashes remain null until the schedule is supplied. The proposed-operation
-record SHA-256 is `7add42cc99e6a366bf6b0c3859418293d68e367a82d490d07d886b547f1a6bad`. Retained Wasms have
+record SHA-256 is `742a595e782ec1bea6f64284f6eebe2cf5654b64773ac537c1bd93f3f1cfdbb7`. Retained Wasms have
 unchanged executable bindings; their original sidecars/source identity are not
 relabelled as a fresh build. Both bootstrap controllers remain through install
-and rehearsal. Later Root/Governance and self/Lifeline transitions, including
+and rehearsal. Explicit intermediate additions grant Root/Governance (or self
+for Faucet/Disburser) actual execution authority alongside both bootstrap
+controllers before rehearsal; final removals happen only after execution is
+proved. Later Root/Governance and self/Lifeline transitions, including
 removal of bootstrap/personal control, require separate approval. Immutable
 children remain controllerless if later creation is authorized.
 
@@ -228,10 +231,14 @@ independent offline actor signatures, exact supply/derived Accounts/native
 permission checks, install/reinstall selection, funding arithmetic, partial
 constructor round trips and the full-candidate negative gate.
 The affected official-SNS operational case passed with the selected identities
-(1 passed, 61 filtered, 104.78 seconds), including native handover, governed
+(1 passed, 61 filtered; final controller-staging run 133.20 seconds), including native handover, governed
 production Rewards upgrades, reserve transport and preserved journal/no replay.
-The later Python-only exact-memo admission check does not alter that fixture's
-inputs. No monetary algorithm, canister API, stable schema or dependency changed.
+The final run retained both bootstrap controllers during actual governed
+upgrades, then narrowed physical controller sets and required typed
+CanisterInvalidController rejection of the removed bootstrap. An earlier test
+compile error from an unimported Encode macro was fixed with the existing
+candid::encode_args API; both failed and passing logs are retained. The Python-
+only exact-memo admission check does not alter that fixture's inputs. No monetary algorithm, canister API, stable schema or dependency changed.
 No repeated full suite, canonical build or unrelated production Wasm build was
 run. The read-budget audit records the scope deviation rather than passing it.
 

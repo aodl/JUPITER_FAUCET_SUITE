@@ -788,5 +788,12 @@
     "separate genesis installation and patron activation timestamps",
     "funding source and exact spend approvals, including fresh rate/fee/preconditions when separately authorized",
     "explicit final installation and staged irreversible controller/activation approvals"
-  ]
+  ],
+  "controller_staging_rehearsal": {
+    "scope": "Owned local framework/Rewards canisters, no live mutation",
+    "intermediate_additions": "Add Root/Governance alongside both bootstrap controllers before actual governed app upgrade",
+    "removals": "Only after native handover, governed upgrades and durable receipt checks",
+    "removed_bootstrap_upgrade_result": "CanisterInvalidController",
+    "result": "1 passed, 61 filtered, 133.20s"
+  }
 }

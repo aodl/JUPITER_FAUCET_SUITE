@@ -698,6 +698,21 @@
       ],
       "proposed_stages": [
         {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sipaq-hyaaa-aaaas-amyoq-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
             "sipaq-hyaaa-aaaas-amyoq-cai"
@@ -716,6 +731,21 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
         {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
@@ -736,6 +766,21 @@
       ],
       "proposed_stages": [
         {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
             "sbmlm-rqaaa-aaaas-amypa-cai"
@@ -754,6 +799,21 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
         {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
@@ -774,6 +834,21 @@
       ],
       "proposed_stages": [
         {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
             "sbmlm-rqaaa-aaaas-amypa-cai"
@@ -792,6 +867,21 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "spoge-kaaaa-aaaas-amyoa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
         {
           "stage": "after runtime/rescue rehearsal, before arming",
           "controllers": [
@@ -833,6 +923,21 @@
       ],
       "proposed_stages": [
         {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "xuu2v-mqaaa-aaaas-amyra-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
           "stage": "after runtime/rescue rehearsal, before arming",
           "controllers": [
             "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
@@ -873,6 +978,21 @@
       ],
       "proposed_stages": [
         {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
             "sbmlm-rqaaa-aaaas-amypa-cai"
@@ -891,6 +1011,21 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
         {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
@@ -911,6 +1046,21 @@
       ],
       "proposed_stages": [
         {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
             "sbmlm-rqaaa-aaaas-amypa-cai"
@@ -929,6 +1079,21 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
         {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
@@ -949,6 +1114,21 @@
       ],
       "proposed_stages": [
         {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
             "sbmlm-rqaaa-aaaas-amypa-cai"
@@ -960,7 +1140,7 @@
       ]
     }
   ],
-  "bootstrap_policy": "Retain both observed controllers through installation and initial runtime/recovery rehearsals. Codex executor is amzih; personal zkkkd is historical/bootstrap only and is never a Codex signer. Any later full controller-set replacement explicitly removes personal/bootstrap rights under separate approval.",
+  "bootstrap_policy": "Retain both observed controllers through installation and initial runtime/recovery rehearsals. Codex executor is amzih; personal zkkkd is historical/bootstrap only and is never a Codex signer. Any later full controller-set replacement explicitly removes personal/bootstrap rights under separate approval. Explicit intermediate additions retain both bootstrap controllers while granting Root/Governance (or Faucet/Disburser self) the authority needed for rehearsal. Only later full-set removals narrow control after real execution/recovery checks.",
   "genesis_policy": "Exact verified executor and participant identities now recorded; four approved memos 10/11/20/21 and unchanged 100M supply. Only genesis and patron activation timestamps remain null. operational.py candidate fails closed; five framework constructors unavailable until schedule approved.",
   "activation": "Native Governance upgrades in recognition, patron, treasury, bounded continuation order from work-package-a.md; IO settlement disabled; initial Relay surplus empty; no direct operator configuration call.",
   "neuron_mutation": "No live mutation authorized now. Later A/B SNS auto-stake operations use their own DFX aliases and exact derived IDs; B enabling must be verified before 2x test. This is not the Disburser-controlled NNS neuron. No NNS visibility/follow/dissolve/auto-stake setting change proposed.",

@@ -158,6 +158,15 @@ fn exact_genesis_governance_handover_and_production_reserve() -> Result<()> {
     )?)?;
     let operator = Principal::from_text(bindings["operator"].as_str().unwrap())?;
     let bootstrap = operator;
+    let owner_decisions: serde_json::Value = serde_json::from_slice(&fs::read(
+        repo.join("deploy/acceptance/owner-decisions.json"),
+    )?)?;
+    // Retained only in controller sets. No call is sent as the personal user.
+    let personal = Principal::from_text(
+        owner_decisions["protected_personal_principal"]
+            .as_str()
+            .unwrap(),
+    )?;
     // The final executor remains an explicitly owned local fixture, not the
     // unavailable real NNX authority. No mainnet keys enter PocketIC.
     let executor = Principal::self_authenticating([85; 32]);
@@ -194,6 +203,8 @@ fn exact_genesis_governance_handover_and_production_reserve() -> Result<()> {
             .map_err(|error| anyhow::anyhow!("local approved identity {name}: {error}"))?;
         assert_eq!(id, expected);
         assert_eq!(pic.cycle_balance(id), 3_000_000_000_000);
+        pic.set_controllers(id, Some(operator), vec![operator, personal])
+            .map_err(|e| anyhow::anyhow!("local bootstrap controllers: {e:?}"))?;
         roles.insert(name.into(), json!(id.to_text()));
     }
     let role = |name: &str| Principal::from_text(roles[name].as_str().unwrap()).unwrap();
@@ -268,7 +279,7 @@ op.recipes(p,ids,policy,out/'sns/governance.interface.did',out/'governance')
         (role("sns_swap"), root),
         (rewards, root),
     ] {
-        pic.set_controllers(id, Some(operator), vec![controller])
+        pic.set_controllers(id, Some(operator), vec![operator, personal, controller])
             .map_err(|e| anyhow::anyhow!("controllers: {e:?}"))?;
     }
     let mode: GovernanceMode = query_one(&pic, governance, operator, "get_mode", Empty {})?;
@@ -500,10 +511,49 @@ op.recipes(p,ids,policy,out/'sns/governance.interface.did',out/'governance')
     let status = pic
         .canister_status(rewards, Some(root))
         .expect("Root controls application");
-    assert_eq!(status.settings.controllers, vec![root]);
+    let mut expected = vec![operator, personal, root];
+    expected.sort();
+    let mut actual = status.settings.controllers;
+    actual.sort();
+    assert_eq!(
+        actual, expected,
+        "retain both bootstrap controllers through rehearsals"
+    );
     assert_eq!(
         status.module_hash,
         Some(sha2::Sha256::digest(&second.stdout).to_vec())
+    );
+    // Remove bootstrap authority only after actual governed upgrades and durable
+    // receipt preservation succeeded. These are owned local canisters only.
+    for (id, controller) in [
+        (governance, root),
+        (root, governance),
+        (ledger, root),
+        (role("sns_index"), root),
+        (role("sns_swap"), root),
+        (rewards, root),
+    ] {
+        pic.set_controllers(id, Some(operator), vec![controller])
+            .map_err(|e| anyhow::anyhow!("post-rehearsal handoff: {e:?}"))?;
+        assert_eq!(
+            pic.canister_status(id, Some(controller))
+                .expect("final controller checkpoint")
+                .settings
+                .controllers,
+            vec![controller]
+        );
+    }
+    let denied = pic
+        .upgrade_canister(
+            rewards,
+            second.stdout.clone(),
+            candid::encode_args(())?,
+            Some(operator),
+        )
+        .expect_err("removed bootstrap must not retain app-upgrade authority");
+    assert_eq!(
+        denied.error_code,
+        pocket_ic::ErrorCode::CanisterInvalidController
     );
     println!(
         "exact allocation / local voter handover / governed production reserve passed: {}",

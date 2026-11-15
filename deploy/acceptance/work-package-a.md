@@ -234,7 +234,12 @@ the status stage. Any later freshness reads need separate authorization. The tre
 own neuron lookup must succeed under its actual caller and API shape as well.
 No new broad management proxy is proposed.
 
-Rehearse ordinary upgrades and normal runtime while bootstrap control remains.
+Before rehearsal, explicitly add Root as a controller alongside both bootstrap
+controllers for SNS-managed roles, Governance alongside both for Root, and self
+alongside both for Faucet/Disburser. This gives the real governed/runtime path
+its required authority without premature removals. These additions need separate
+controller-change approval. Rehearse ordinary upgrades and normal runtime while
+both bootstrap controllers remain; only then approve the narrowing steps.
 Faucet/Disburser then use the existing operator+self staging, explicitly arm
 only after normal-runtime/rescue evidence, and reach self-only healthy control.
 Broken flow permits self+Lifeline and healthy flow narrows it. Lifeline has no
