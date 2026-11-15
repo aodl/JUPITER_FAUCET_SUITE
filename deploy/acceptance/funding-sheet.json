@@ -1,6 +1,6 @@
 {
-  "status": "PROPOSED; no spend authorized and no fresh mainnet observations",
-  "fee_status": "10,000 ICP e8s assumed for planning only; read current fee before approval; changed fee invalidates exact caps",
+  "status": "PROPOSED; 15 November 2026 signed-query ICP observations recorded; cycles and participants unresolved; no spend authorized",
+  "fee_status": "Observed ICP Ledger icrc1_fee = 10,000 e8s at 2026-11-15T00:39Z; revalidate under separate approval before spending if stale; fee changes invalidate caps",
   "rows": [
     {
       "purpose": "main cycles sns_root",
@@ -181,9 +181,9 @@
         "explorerAccountHex": "e458b5ed224bd0b9e884599dd0e986e78d02266674b093b617105528311fa602"
       },
       "asset": "ICP e8s",
-      "current_observed": null,
+      "current_observed": 100000000,
       "desired": 100000000,
-      "delta": null,
+      "delta": 100000000,
       "proposed_incremental_deposit": 100000000,
       "assumed_sender_fee": 10000,
       "proposed_gross_cap": 100010000,
@@ -204,7 +204,8 @@
         "maximum_operator_gross_e8s": 100020000,
         "maximum_authorized_spend": 0,
         "accounting": "Donation principal/fee is already in the primary test allocation; only this extra sender fee increases consolidated maximum spend. Do not double-count both funding and donation principal."
-      }
+      },
+      "delta_rule": "Additional test deposit, not desired total stake minus existing 1 ICP; existing stake is not a test payment"
     },
     {
       "purpose": "direct 2x",
@@ -215,9 +216,9 @@
         "explorerAccountHex": "e458b5ed224bd0b9e884599dd0e986e78d02266674b093b617105528311fa602"
       },
       "asset": "ICP e8s",
-      "current_observed": null,
+      "current_observed": 100000000,
       "desired": 100000000,
-      "delta": null,
+      "delta": 100000000,
       "proposed_incremental_deposit": 100000000,
       "assumed_sender_fee": 10000,
       "proposed_gross_cap": 100010000,
@@ -238,7 +239,8 @@
         "maximum_operator_gross_e8s": 100020000,
         "maximum_authorized_spend": 0,
         "accounting": "Donation principal/fee is already in the primary test allocation; only this extra sender fee increases consolidated maximum spend. Do not double-count both funding and donation principal."
-      }
+      },
+      "delta_rule": "Additional test deposit, not desired total stake minus existing 1 ICP; existing stake is not a test payment"
     },
     {
       "purpose": "canonical Relay operational funding",
@@ -249,9 +251,9 @@
         "explorerAccountHex": "620e88ec50f6c35b1a58ea9f7fc3f3c7f23355d1582fc9912ecfca405bc8c069"
       },
       "asset": "ICP e8s",
-      "current_observed": null,
+      "current_observed": 0,
       "desired": 200000000,
-      "delta": null,
+      "delta": 200000000,
       "proposed_incremental_deposit": 200000000,
       "assumed_sender_fee": 10000,
       "proposed_gross_cap": 200010000,
@@ -269,9 +271,9 @@
         "explorerAccountHex": "ae61bdb02899de73a2a650399a5d25af0df69942067ed1051525e9d848e6b1d9"
       },
       "asset": "ICP e8s",
-      "current_observed": null,
+      "current_observed": 0,
       "desired": 200010000,
-      "delta": null,
+      "delta": 200010000,
       "proposed_incremental_deposit": 200010000,
       "assumed_sender_fee": 10000,
       "proposed_gross_cap": 200020000,
@@ -309,5 +311,13 @@
   "no_sale_funding": "mainnet direct acceptance has no production-sized sale; use existing local real SNS-W sale rehearsal",
   "primary_wallet_spend_cap_without_provisioning_e8s": 600050000,
   "maximum_additional_participant_provisioning_fees_e8s": 20000,
-  "consolidated_budget_rule": "6.0005 ICP from already funded participant wallets, Relay funding and treasury inventory; add at most 0.0002 ICP if the operator must provision both participants. Primary cap 6.0007; optional child adds 3.0001 for maximum 9.0008 ICP. Principal is counted once across wallet-funding and donation legs; all actual deltas/fees await observations and approval."
+  "consolidated_budget_rule": "6.0005 ICP from already funded participant wallets, Relay funding and treasury inventory; add at most 0.0002 ICP if the operator must provision both participants. Primary cap 6.0007; optional child adds 3.0001 for maximum 9.0008 ICP. Principal is counted once across wallet-funding and donation legs; Known ICP balances/fee are dated in the observation report; cycles and participant deltas, final fee validity and every spending approval remain unresolved.",
+  "observation_report": "inventory-2026-11-15.json",
+  "cycles_quote_observation": {
+    "xdr_permyriad_per_icp": 15943,
+    "timestamp_seconds": 1794702840,
+    "cycles_per_icp_13_node_basis": 1594300000000,
+    "verification": "CMC certificate/hash-tree/leaf and initial SDK query signature verified; no cycle deficit observed",
+    "quote_for_unknown_deficit": false
+  }
 }

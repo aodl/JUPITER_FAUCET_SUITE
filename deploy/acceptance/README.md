@@ -346,3 +346,10 @@ sponsored jUP fee does not authorize unlimited IO fee subsidies.
 There is no mainnet installation, transfer, controller change or neuron action
 in these tests. Hosted CI provisions the pinned official artifacts for the SNS
 Rewards PocketIC lane; ignored real-SNS tests are explicitly discovered by xtask.
+
+## Approved read inventory
+
+The [15 November actual-state report](inventory-2026-11-15.md) records the bounded
+public inventory and [proposed operations](proposed-operations-2026-11-15.json).
+No mutation or post-installation read was authorized or executed. The original
+preparation artifacts and validation evidence remain distinct from these observations.

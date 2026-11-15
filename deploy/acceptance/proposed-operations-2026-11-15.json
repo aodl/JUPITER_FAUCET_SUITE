@@ -1,0 +1,796 @@
+{
+  "status": "PROPOSED ONLY \u2014 NO MUTATION AUTHORIZED; unresolved sender/constructors forbid execution",
+  "source_commit": "a7c6cabdb58c3f2b1f26b3654905df24bb131826",
+  "observation_report": "inventory-2026-11-15.json",
+  "candidate_archive_sha256": "c18f86b639c10bf6c3fbc56df4b09e5fdf9f3653575373e358ae0758f2abacba",
+  "unresolved": [
+    "existing signing provider and actual public principal/authority",
+    "Participant A/B public principals",
+    "genesis and exact approved patron checkpoint timestamps",
+    "helper source/state/funds/pending-effect preservation and explicit upgrade-versus-replacement decision",
+    "cycles/headroom observations, transfer source and final budget approval"
+  ],
+  "installation": [
+    {
+      "order": 1,
+      "target": "xiqae-3qaaa-aaaas-amyta-cai",
+      "role": "jupiter_lifeline",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "applications/jupiter_lifeline.wasm.gz",
+        "sha256": "0688ab5567bd9cdd4c11447380f2e63c7f91629e598086183047fc06dd5f6d70",
+        "raw_sha256": "74e71dff02f1721b00d1c33db6cb14b76bd6e58748618b1b3c1fadb4f9783f3c"
+      },
+      "constructor_path_after_guarded_generation": "applications/jupiter_lifeline.bin",
+      "constructor_sha256": null,
+      "sender": null,
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "order": 2,
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "role": "sns_governance",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "framework-templates/governance.wasm.gz",
+        "sha256": "24ef2004240d2a34bcdaa616134d27bc18d11c1e96b378a46d564feedcc1a8c3",
+        "raw_sha256": "e2fd07bffa7d71241c3b47e2c8398ef78bfc26b95427a3711a9e579ad5f9f190"
+      },
+      "constructor_path_after_guarded_generation": "sns/governance.bin",
+      "constructor_sha256": null,
+      "sender": null,
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "order": 3,
+      "target": "sgnny-4iaaa-aaaas-amypq-cai",
+      "role": "sns_ledger",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "framework-templates/ledger.wasm.gz",
+        "sha256": "354dd6ecfdc72b5409805b31dea22c9db11df6e14095a5a68924eb63535e6d8a",
+        "raw_sha256": "a273d741019b4324b22e2e64cfb0239de148ae9693e8801102a04118dfd383c0"
+      },
+      "constructor_path_after_guarded_generation": "sns/ledger.bin",
+      "constructor_sha256": null,
+      "sender": null,
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "order": 4,
+      "target": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "role": "sns_index",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "framework-templates/index.wasm.gz",
+        "sha256": "dab6808d0dfc06e5e88336d0c3d3e45e5448c6e36c2a781f3e9e09bd450f528c",
+        "raw_sha256": "0768d43e0ca776c80515eb917839cbee0adca38ef69fb28280407c28fe4ea979"
+      },
+      "constructor_path_after_guarded_generation": "sns/index.bin",
+      "constructor_sha256": null,
+      "sender": null,
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "order": 5,
+      "target": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "role": "sns_swap",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "framework-templates/swap.wasm.gz",
+        "sha256": "f3c9cd2a503f3136c91f1d44c5b4bac2d5f15a7d347731aaff03e5fa80df8c48",
+        "raw_sha256": "3d17f42df29a764fa3d813923646f85aac9f61320d97b2b07c1045ffb342d638"
+      },
+      "constructor_path_after_guarded_generation": "sns/swap.bin",
+      "constructor_sha256": null,
+      "sender": null,
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "order": 6,
+      "target": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "role": "sns_root",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "framework-templates/root.wasm.gz",
+        "sha256": "3762dd6f1348830a1d6b19252ca21f518c9f9d3a2b79b1dd99d75c0de6d46ef4",
+        "raw_sha256": "356960e58691a7438cb07c73806cf8d0948247508f0efc281cb2ccb7a382f836"
+      },
+      "constructor_path_after_guarded_generation": "sns/root.bin",
+      "constructor_sha256": null,
+      "sender": null,
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "order": 7,
+      "target": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "role": "jupiter_sns_rewards",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "applications/jupiter_sns_rewards.wasm.gz",
+        "sha256": "56babefd47b5c2a95fd5e1b926e77c447a71b571167e4d0b6c537f3d765264a1",
+        "raw_sha256": "8819a0cc51aead3fb307f691eefb8075e446413960e7000d332ef70767966c4b"
+      },
+      "constructor_path_after_guarded_generation": "applications/jupiter_sns_rewards.bin",
+      "constructor_sha256": null,
+      "sender": null,
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Owner scans; new programme absent initially",
+      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "order": 8,
+      "target": "xbtly-nyaaa-aaaas-amysq-cai",
+      "role": "jupiter_historian",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "applications/jupiter_historian.wasm.gz",
+        "sha256": "2bc0797000c52c289dca92252369cc3129f3746bc8c81ccf4acf890ffb7faf9b",
+        "raw_sha256": "8e5108e400d11d8d6745d4696b1a0e67ed6a137c65791d84712ceb38a776f20f"
+      },
+      "constructor_path_after_guarded_generation": "applications/jupiter_historian.bin",
+      "constructor_sha256": null,
+      "sender": null,
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Indexing, owner-facing read model and permissionless paid factory entrypoints",
+      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "order": 9,
+      "target": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "role": "jupiter_relay",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "applications/jupiter_relay.wasm.gz",
+        "sha256": "d6fc978715d55fea3c417e6b247524808a8ad283354fb6a28c606c416972a9e7",
+        "raw_sha256": "b1e79e4dabf7919eb764217c299ff110168cdfff0c97156e9581520b8fa39e80"
+      },
+      "constructor_path_after_guarded_generation": "applications/jupiter_relay.bin",
+      "constructor_sha256": null,
+      "sender": null,
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Managed-canister top-ups and aggregate forwarding; initially empty surplus recipients",
+      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "order": 10,
+      "target": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "role": "jupiter_faucet",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "applications/jupiter_faucet.wasm.gz",
+        "sha256": "ed661e744e616306dbe00a580e9fe5eb72fb34b19bfa0566f91ed76f1b8449e2",
+        "raw_sha256": "ad77738d9ceb98ca7969b6cd6275fcfb0e73e07ef1d735b0e88b64479d3bdd4b"
+      },
+      "constructor_path_after_guarded_generation": "applications/jupiter_faucet.bin",
+      "constructor_sha256": null,
+      "sender": null,
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Ledger/Index scans, settlement transfers and CMC notifications",
+      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "order": 11,
+      "target": "spoge-kaaaa-aaaas-amyoa-cai",
+      "role": "jupiter_disburser",
+      "operation": "install_code",
+      "mode": null,
+      "wasm": {
+        "path": "applications/jupiter_disburser.wasm.gz",
+        "sha256": "473a1bed784cf4734b2173c8d724d1c093ccbd85f427a391b7914284c16cd070",
+        "raw_sha256": "2c2efab9c45d79193c9ada8a0079f54e4aca162884682ea22d5f5169fbb0a8b4"
+      },
+      "constructor_path_after_guarded_generation": "applications/jupiter_disburser.bin",
+      "constructor_sha256": null,
+      "sender": null,
+      "expected_pre_module_hash": "03e8ba94621d28bf166595a9a9dd0d9943c60caad48c7a2740285a7fee283bbe",
+      "expected_pre_module_path_evidence": "Found",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "NNS reads/maturity disbursement and payout scheduling; unarmed rescue is not financial inactivity",
+      "gate": "helper source/state/pending-effect preservation and approved transition; signer and cycles unresolved"
+    },
+    {
+      "order": 12,
+      "target": "xprgq-wiaaa-aaaas-amytq-cai",
+      "role": "jupiter_faucet_frontend",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "applications/jupiter_faucet_frontend.wasm.gz",
+        "sha256": "6df4b325c73792ca8ee71ae8ce9e3f8b6fe2c354c8b5885347936064ef83bfbc",
+        "raw_sha256": "4f9d31a2bca0d6da8ecd04c8480084e77b7dac2a6ce6198f55521edc8077d4f8"
+      },
+      "constructor_path_after_guarded_generation": "applications/jupiter_faucet_frontend.bin",
+      "constructor_sha256": null,
+      "sender": null,
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+    }
+  ],
+  "funding": [
+    {
+      "operation": "top_up_canister",
+      "target": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "cycles": null,
+      "target_balance": 3000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "cycles": null,
+      "target_balance": 3000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "sgnny-4iaaa-aaaas-amypq-cai",
+      "cycles": null,
+      "target_balance": 3000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "cycles": null,
+      "target_balance": 3000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "cycles": null,
+      "target_balance": 3000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "spoge-kaaaa-aaaas-amyoa-cai",
+      "cycles": null,
+      "target_balance": 3000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "cycles": null,
+      "target_balance": 3000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "xiqae-3qaaa-aaaas-amyta-cai",
+      "cycles": null,
+      "target_balance": 3000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "cycles": null,
+      "target_balance": 3000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "xbtly-nyaaa-aaaas-amysq-cai",
+      "cycles": null,
+      "target_balance": 3000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "cycles": null,
+      "target_balance": 3000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "xprgq-wiaaa-aaaas-amytq-cai",
+      "cycles": null,
+      "target_balance": 3000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "sgnny-4iaaa-aaaas-amypq-cai",
+      "cycles": null,
+      "target_balance": 4000000000000,
+      "actual_balance": null,
+      "maximum_authorized_spend": 0,
+      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase",
+      "purpose": "incremental archive headroom before actual trigger",
+      "incremental_cap_cycles": 1000000000000,
+      "incremental_rule": "max(0, 4T - observed Ledger main balance) - max(0, 3T - observed Ledger main balance); do not double-count main-target top-up"
+    },
+    {
+      "purpose": "direct liquid",
+      "operation": "ICP Ledger icrc1_transfer",
+      "ledger": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "sender": null,
+      "to": {
+        "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+        "subaccountHex": "52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+        "address": "rrkah-fqaaa-aaaaa-aaaaq-cai-v6gacby.52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+        "explorerAccountHex": "e458b5ed224bd0b9e884599dd0e986e78d02266674b093b617105528311fa602"
+      },
+      "amount_e8s": 100000000,
+      "fee_e8s": 10000,
+      "memo_hex": "78707267712d77696161612d61616161732d616d7974712d636169",
+      "created_at_time": null,
+      "maximum_authorized_spend": 0,
+      "gate": "complete secure owner snapshot; A auto-stake disabled / B exact-year neuron auto-stake enabled; original NNS staking Account independently verified"
+    },
+    {
+      "purpose": "direct 2x",
+      "operation": "ICP Ledger icrc1_transfer",
+      "ledger": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "sender": null,
+      "to": {
+        "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+        "subaccountHex": "52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+        "address": "rrkah-fqaaa-aaaaa-aaaaq-cai-v6gacby.52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+        "explorerAccountHex": "e458b5ed224bd0b9e884599dd0e986e78d02266674b093b617105528311fa602"
+      },
+      "amount_e8s": 100000000,
+      "fee_e8s": 10000,
+      "memo_hex": "78707267712d77696161612d61616161732d616d7974712d636169",
+      "created_at_time": null,
+      "maximum_authorized_spend": 0,
+      "gate": "complete secure owner snapshot; A auto-stake disabled / B exact-year neuron auto-stake enabled; original NNS staking Account independently verified"
+    },
+    {
+      "purpose": "canonical Relay operational funding",
+      "operation": "ICP Ledger icrc1_transfer",
+      "ledger": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "sender": null,
+      "to": {
+        "owner": "xtv4b-biaaa-aaaas-amyrq-cai",
+        "subaccountHex": null,
+        "address": "xtv4b-biaaa-aaaas-amyrq-cai",
+        "explorerAccountHex": "620e88ec50f6c35b1a58ea9f7fc3f3c7f23355d1582fc9912ecfca405bc8c069"
+      },
+      "amount_e8s": 200000000,
+      "fee_e8s": 10000,
+      "memo_hex": null,
+      "created_at_time": null,
+      "maximum_authorized_spend": 0,
+      "gate": "approved funding budget and exact source signer; wait for installed runtime/configuration readiness"
+    },
+    {
+      "purpose": "treasury test inventory",
+      "operation": "ICP Ledger icrc1_transfer",
+      "ledger": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "sender": null,
+      "to": {
+        "owner": "sipaq-hyaaa-aaaas-amyoq-cai",
+        "subaccountHex": null,
+        "address": "sipaq-hyaaa-aaaas-amyoq-cai",
+        "explorerAccountHex": "ae61bdb02899de73a2a650399a5d25af0df69942067ed1051525e9d848e6b1d9"
+      },
+      "amount_e8s": 200010000,
+      "fee_e8s": 10000,
+      "memo_hex": null,
+      "created_at_time": null,
+      "maximum_authorized_spend": 0,
+      "gate": "approved funding budget and exact source signer; wait for installed runtime/configuration readiness"
+    },
+    {
+      "operation": "optional paid factory setup and funding",
+      "target": null,
+      "amount_e8s": 300000000,
+      "fee_e8s": 10000,
+      "maximum_authorized_spend": 0,
+      "gate": "separate paid creation approval, exact immutable setup Account and returned requirement <=3 ICP; not approved by inventory"
+    }
+  ],
+  "controller_transitions": [
+    {
+      "role": "sns_root",
+      "target": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sipaq-hyaaa-aaaas-amyoq-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": null,
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "sns_governance",
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": null,
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "sns_ledger",
+      "target": "sgnny-4iaaa-aaaas-amypq-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": null,
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "sns_index",
+      "target": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": null,
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "sns_swap",
+      "target": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": null,
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_disburser",
+      "target": "spoge-kaaaa-aaaas-amyoa-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after runtime/rescue rehearsal, before arming",
+          "controllers": null,
+          "required_members": [
+            "spoge-kaaaa-aaaas-amyoa-cai"
+          ],
+          "additional_member": "verified operator principal unresolved",
+          "permission": "separate explicit transition approval"
+        },
+        {
+          "stage": "separately approved same-code upgrade",
+          "upgrade_arguments_candid": "(opt record { autonomous_rescue_armed = opt true })",
+          "controllers_unchanged_by_this_request": true,
+          "gate": "Typed UpgradeArgs round trip, exact candidate hash, direct controller execution and ordinary runtime evidence"
+        },
+        {
+          "stage": "healthy autonomous reconciliation",
+          "controllers": [
+            "spoge-kaaaa-aaaas-amyoa-cai"
+          ],
+          "actor": "spoge-kaaaa-aaaas-amyoa-cai"
+        },
+        {
+          "stage": "fault recovery only",
+          "controllers": [
+            "spoge-kaaaa-aaaas-amyoa-cai",
+            "xiqae-3qaaa-aaaas-amyta-cai"
+          ],
+          "actor": "spoge-kaaaa-aaaas-amyoa-cai",
+          "gate": "existing conservative rescue policy; no generic Lifeline repair API"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_faucet",
+      "target": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after runtime/rescue rehearsal, before arming",
+          "controllers": null,
+          "required_members": [
+            "xuu2v-mqaaa-aaaas-amyra-cai"
+          ],
+          "additional_member": "verified operator principal unresolved",
+          "permission": "separate explicit transition approval"
+        },
+        {
+          "stage": "separately approved same-code upgrade",
+          "upgrade_arguments_candid": "(opt record { autonomous_rescue_armed = opt true })",
+          "controllers_unchanged_by_this_request": true,
+          "gate": "Typed UpgradeArgs round trip, exact candidate hash, direct controller execution and ordinary runtime evidence"
+        },
+        {
+          "stage": "healthy autonomous reconciliation",
+          "controllers": [
+            "xuu2v-mqaaa-aaaas-amyra-cai"
+          ],
+          "actor": "xuu2v-mqaaa-aaaas-amyra-cai"
+        },
+        {
+          "stage": "fault recovery only",
+          "controllers": [
+            "xuu2v-mqaaa-aaaas-amyra-cai",
+            "xiqae-3qaaa-aaaas-amyta-cai"
+          ],
+          "actor": "xuu2v-mqaaa-aaaas-amyra-cai",
+          "gate": "existing conservative rescue policy; no generic Lifeline repair API"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_lifeline",
+      "target": "xiqae-3qaaa-aaaas-amyta-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": null,
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_sns_rewards",
+      "target": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": null,
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_historian",
+      "target": "xbtly-nyaaa-aaaas-amysq-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": null,
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_relay",
+      "target": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": null,
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_faucet_frontend",
+      "target": "xprgq-wiaaa-aaaas-amytq-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": null,
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    }
+  ],
+  "bootstrap_policy": "Retain both observed controllers through initial installation/rehearsal unless a separate explicit change is approved. Controller membership alone does not select the signing provider. Removing the additional bootstrap principal is an explicit reviewed removal, never an assumed authorization.",
+  "genesis_policy": "Use guarded operational.py candidate; four approved 5000-jUP neurons, no invented owners/timestamps, unchanged temporary permission-management voter and original stake IDs. No deployment constructors currently emitted.",
+  "activation": "Native Governance upgrades in recognition, patron, treasury, bounded continuation order from work-package-a.md; IO settlement disabled; initial Relay surplus empty; no direct operator configuration call.",
+  "neuron_mutation": "None proposed to set Public visibility because current enum 2 and public full-neuron response already satisfy the observed prerequisite. Do not change followees/delay/maturity policy or recreate the neuron. Real canister caller behavior remains an installation smoke gate.",
+  "post_install_reads": "18 separate read checks remain unexecuted and need explicit later approval; future precondition refreshes also need separate authorization; no permission to reuse the completed inventory approval.",
+  "immutable_children": "No initial creation; any later paid factory child ends controllerless. No thirteenth initial archive.",
+  "native_treasury_transfer": {
+    "operation": "native SNS TransferSnsTreasuryFunds proposal via reviewed treasury worker",
+    "source": "SNS Governance ICP treasury",
+    "source_account": {
+      "owner": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "subaccount": null
+    },
+    "destination": {
+      "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+      "subaccountHex": "52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+      "address": "rrkah-fqaaa-aaaaa-aaaaq-cai-v6gacby.52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+      "explorerAccountHex": "e458b5ed224bd0b9e884599dd0e986e78d02266674b093b617105528311fa602"
+    },
+    "amount_e8s": 100000000,
+    "ledger_fee_e8s": 10000,
+    "routing_memo": null,
+    "treasury_retain_e8s": 100000000,
+    "permanently_staked_e8s": 100000000,
+    "patron_jup_generated": false,
+    "relay_pot_generated": false,
+    "maximum_authorized_spend": 0,
+    "gate": "separate treasury activation and decisive native Governance vote; confirmed funded treasury, fresh conversion/native seven-day limit and exact proposal reply; no direct operator transfer or replay"
+  }
+}
