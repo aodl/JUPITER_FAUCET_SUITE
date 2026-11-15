@@ -45,8 +45,10 @@ class Isolation(unittest.TestCase):
                          cd.encode_checked(did, shape, '(record { neuron_id = 2234355977000034918 : nat64 })'))
 
     def test_unresolved_mainnet_profile_fails_closed(self):
+        profile = json.loads(acceptance.PROFILE.read_text())
+        profile['operator'] = None
         with self.assertRaisesRegex(ValueError, 'unresolved'):
-            acceptance.validate(json.loads(acceptance.PROFILE.read_text()))
+            acceptance.validate(profile)
 
     def test_every_protected_application_is_rejected_in_every_role(self):
         for role in acceptance.APPLICATIONS + acceptance.SNS:

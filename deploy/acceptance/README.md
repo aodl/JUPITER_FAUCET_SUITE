@@ -24,12 +24,14 @@ The checked-in handoff reports delegated selection of the other eleven roles;
 all twelve assignments are recorded in the profile and the
 [identity handoff](identity-handoff.md). The work-package A operator reply
 explicitly approves all eleven assignments. These are approved configuration,
-not observations of installed mainnet roles. No read-only or mutating mainnet
-calls are authorized by that approval.
+not observations of installed mainnet roles. That role approval itself authorizes no mainnet calls; completed separately
+authorized read stages are linked below. No mutating mainnet call is authorized.
 `provisioning.json` retains the original inventory and delegation provenance.
 No existing mapping was inferred from ID ordering. Role isolation is independently
-validated with `profile.py check-roles`. The verified operator/provider, acceptance
-timestamps and participant principals remain unresolved. Temporary operator
+validated with `profile.py check-roles`. The verified Codex deployment executor is DFX `codex_local`
+(`amzih-…-3ae`); A/B participant identities are created and recorded. The
+personal `zkkkd-…-wqe` principal is protected from Codex signing. The distinct
+genesis and patron activation timestamps remain schedule inputs. Temporary operator
 voting authority and empty canonical Relay surplus are approved policies. Full
 constructor preparation still fails closed. The
 `acceptance` CLI environment uses network `ic` and all twelve roles, separately
@@ -168,7 +170,9 @@ ordered chunk hashes must match the reviewed artifact. See the [management
 contract](https://docs.internetcomputer.org/references/management-canister/).
 No install/chunk upload has been performed by this preparation task.
 
-The generated controller plan is an expectation, not evidence of deployment:
+The generated controller plan is a role expectation, not an instruction to
+remove either observed bootstrap controller during installation. Both remain
+until an explicitly reviewed handoff. It is not evidence of deployment:
 
 - Bootstrap under the verified operator; do not arm autonomous rescue yet.
 - Governance is controlled by Root; Root by Governance; Ledger/Index/Swap by Root.
@@ -353,3 +357,8 @@ The [15 November actual-state report](inventory-2026-11-15.md) records the bound
 public inventory and [proposed operations](proposed-operations-2026-11-15.json).
 No mutation or post-installation read was authorized or executed. The original
 preparation artifacts and validation evidence remain distinct from these observations.
+
+The [authority and status supplement](authority-2026-11-15.md) records the verified
+Codex executor, created participants, completed helper-local preservation waiver,
+actual cycle deficits, partial constructors and the information-query discovery
+deviation. Historical inventory records are retained without rewriting them.

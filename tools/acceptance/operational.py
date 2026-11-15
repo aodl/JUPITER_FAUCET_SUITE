@@ -106,7 +106,7 @@ def render(profile, decisions, local=False):
             or allocations[0].get('owner') != allocations[1].get('owner')
             or allocations[2].get('owner') != allocations[3].get('owner')
             or allocations[0].get('owner') == allocations[2].get('owner')
-            or len({entry.get('memo') for entry in allocations}) != 4):
+            or [entry.get('memo') for entry in allocations] != [10, 11, 20, 21]):
         raise ValueError('approved A/B allocation requires four distinct-memo 5000-jUP zero/year neurons')
     rewards = p['roles']['jupiter_sns_rewards']
     neurons = [neuron(authority['principal'], 1, e['governance_stake_e8s'], e['year_seconds'], [2, 3, 4]),
@@ -118,8 +118,8 @@ def render(profile, decisions, local=False):
         if set(entry) != {'owner', 'amount_e8s', 'kind', 'memo', 'dissolve_delay_seconds'}:
             raise ValueError('test allocation requires explicit owner, amount, kind, memo and delay')
         owner = acceptance.isolated_principal(entry['owner'])
-        if owner in p['roles'].values():
-            raise ValueError('test bucket must be separate from protocol canister roles')
+        if owner in p['roles'].values() or owner == p['operator']:
+            raise ValueError('test bucket must be separate from protocol canister roles and executor')
         amount = natural(entry['amount_e8s'], 'test allocation', positive=True)
         total += amount
         if entry['kind'] == 'liquid' and entry['memo'] is None and entry['dissolve_delay_seconds'] is None:

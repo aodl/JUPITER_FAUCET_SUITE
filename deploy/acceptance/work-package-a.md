@@ -1,15 +1,20 @@
 # Acceptance installation and operation package A
 
-Status: offline preparation, **not deployed and not authority-representative**.
+Status: acceptance preparation, **not deployed and not final-NNX-authority-representative**.
+The 15 November authority/identity/helper decisions and signed status supplement
+are in [authority-2026-11-15.md](authority-2026-11-15.md). The Codex executor is
+DFX `codex_local` (`amzih-…-3ae`), verified by authenticated status. The personal
+`zkkkd-…-wqe` principal is protected and must never be a Codex signer.
 PR #17 is closed. Source at task start is `40e81937350fcb33ce70d8d15131ebbd91f1d92b`,
 tree `d19a64ae264b2e3912add64f15d82559d1c711e9`, identical to the supplied merged
 tree. The local commit differs from the supplied master commit; unchanged
 PR17 mechanics do not require revalidation merely for that difference.
 `../IO` is read-only and is not required by these commands.
 
-No mainnet reads, installs, funding, controller changes or neuron operations
-are authorized by this package. Commands below are an approval plan. Do not run
-the mainnet commands until their separate bounded authorization arrives.
+The separately approved read stages are complete; their observations and the
+DFX automatic-discovery scope deviation are recorded in the dated supplements.
+No standing read authorization remains. No installs, funding, controller changes
+or neuron operations are authorized. Commands below remain a review plan.
 
 ## Operator decisions
 
@@ -20,15 +25,16 @@ No signing key, identity export or credential file is needed.
 | Value | Status/value | Exact consumer | Blocks |
 |---|---|---|---|
 | Twelve roles | All assignments approved in operator reply | `roles_confirmed`, existing profile role map; build bindings and all constructors | No further role decision |
-| Existing signer | Expected `zkkkd-…-wqe`; provider/public principal and authority not established | `operator`; bootstrap controller plan and parked Swap fallback | Constructors and signer verification |
-| 10m neuron executor | Temporary **verified operator** approved; actual callable provider remains unresolved | `voting_authority = {principal, kind, executable_route}`; nonce-1 Governance neuron | Executable ordinary governance |
+| Deployment executor | Verified `amzih-…-3ae`, existing DFX `codex_local`; not an ICP CLI alias | `operator`; constructor/controller role and parked Swap fallback | Resolved; only exact later operations may be signed |
+| Protected personal principal | `zkkkd-…-wqe`; historical/bootstrap controller only, no signing access | Explicit protected-identity rejection in preparation tools | Never a required Codex signer |
+| 10m neuron executor | Same verified `amzih-…-3ae`; temporary acceptance-only 2/3/4 | `voting_authority = {principal, kind, executable_route}`; nonce-1 Governance neuron | Executable ordinary governance |
 | Temporary exception | Approved for acceptance only | `kind = temporary-acceptance`; native permissions 2/3/4 | Real NNX is a later handover, not an installation prerequisite |
 | Acceptance clock | Activation-checkpoint policy approved; final genesis/start seconds await schedule | `genesis_timestamp_seconds`, `acceptance_start_timestamp_seconds`; neuron age and programme reward clock separately | Framework constructors and patron activation |
-| 20,000 jUP test bucket | A and B each get 5,000 zero-delay + 5,000 one-year; two principals unresolved | `test_allocations`; nonces 10/11 for A and 20/21 for B | Framework constructors |
+| 20,000 jUP test bucket | A/B created, isolated and signing-tested; exact public principals in owner decisions | `test_allocations`; nonces 10/11 for A and 20/21 for B | Framework constructors |
 | Relay surplus | Temporary `[]` approved and recorded in profile | `relay_surplus_neuron_recipients`; canonical Relay constructor | No initial surplus decision; eventual policy remains separate |
-| Existing helper | Purpose/state/pending effects unresolved | `bootstrap_disburser` operator record; transition selection below | Disburser replacement only; other offline work continues |
+| Existing helper | Completed neuron-creation helper; operator waives all helper-local state preservation | `bootstrap_disburser = disposable-helper-replacement` | Exact reinstall payload/startup/timing approval; no source hunt or migration |
 | D-QUORUM / economics | Settled, preserve profile and economics | Disburser second age recipient; `economics.json` | No new decision |
-| Cycles | 3T target each; all current balances unknown | Funding delta sheet | Actual top-up budget |
+| Cycles | Main balances observed; total minimum top-up 18,088,365,604,174 cycles; all reserved zero | Funding delta sheet and signed status supplement | Fresh pricing/funding source and spend approval |
 | Spend approval | None | Funding-sheet row caps and a separate signed-off operation list | Every mainnet spend |
 
 For the authority object use `kind = real-nnx` only when its actual executor can
@@ -40,11 +46,12 @@ prove denial. Retain the original neuron ID/Account and exact exclusions.
 The local rehearsal demonstrates this mechanism with owned fixture callers;
 it supplies no approval or evidence about a real NNX implementation.
 
-`bootstrap_disburser` requires `{transition, state_and_pending_effects,
-source_record}`. The transition is `preserving-upgrade` or
-`disposable-helper-replacement`, supported by the supplied records. Unknown
-obligations block a complete installation bundle; they do not block the
-independent artifact build or local rehearsal.
+`bootstrap_disburser` records the operator's completed-helper decision and
+explicit waiver, not a claim of empty state or absent historical effects. The
+chosen transition is direct same-principal `reinstall`, without preliminary
+uninstall. Preserve the external NNS neuron and settings; no helper-local state
+migration or original-source investigation is required. Installation starts the
+reviewed timer behavior and requires explicit startup/timing approval.
 
 ## Exact genesis and programme policy
 
@@ -56,7 +63,7 @@ it does not relabel the small contested fixture. Supply reconciliation is:
 | Governance authority | 10,000,000 | Approved executor, nonce 1; 2/3/4; exact one-year delay |
 | Reserve transport | 89,979,900 | Acceptance SNS Rewards, nonce 2; Disburse only; zero delay/vesting |
 | Operational proposer | 100 | Acceptance SNS Rewards, nonce 3; SubmitProposal only; one-year delay |
-| Test bucket | 20,000 | Approved test users' liquid balances and/or zero/year-delay neurons |
+| Test bucket | 20,000 | Four approved 5,000-jUP neurons: A memos 10/11, B memos 20/21 |
 | Built-in treasury / parked Swap | 0 / 0 | No fabricated sale proceeds |
 | **Total** | **100,000,000** | Eight decimals, no extra test minting |
 
@@ -79,7 +86,8 @@ the existing frontend token-logo SVG with external requests blocked. It labels
 the SNS as acceptance. No historical fixture genesis/metadata is relabelled.
 
 Reserve and proposer IDs and staking Accounts are derived offline in
-`derived-accounts.json`; the governance ID awaits its real executor. All three
+`derived-accounts.json`, including the verified temporary executor and all four
+participant neuron IDs/Accounts. All three
 protocol neuron IDs are excluded. The reserve disburses natively to SNS Rewards
 default Account, net of 0.01 jUP at the initial fee. It is inventory, not an ICP
 redemption liability. No parallel minting or sale pot is introduced.
@@ -146,13 +154,18 @@ come from real Governance replies, never guessed values. Modules over the
 bounded inline proposal size require a separately reviewed native chunked
 upgrade recipe, not a raised ingress limit.
 
-The signing invocation, **after approval**, is `icp canister call
-sipaq-hyaaa-aaaas-amyoq-cai manage_neuron --args-file PATH_TO_GENERATED_BIN
---args-format bin --candid PATH_TO_VERIFIED_GOVERNANCE_DID -n ic --identity
-CONFIRMED_EXISTING_IDENTITY`. The uppercase arguments are explanatory unresolved
-values; no executable script containing these placeholders is emitted. Identity
-names do not establish principals. Use the existing provider and public identity
-CLI information only; no credentials need to be inspected.
+The verified signing provider is DFX 0.27.0 `codex_local`, not a matching ICP
+CLI alias. After a separate exact-operation approval, use `dfx --identity
+codex_local canister call sipaq-hyaaa-aaaas-amyoq-cai manage_neuron` with
+`--network ic --update --candid` pointing to the verified official Governance
+DID and `--argument-file` pointing to the reviewed generated Candid text.
+DFX uses `--argument-file` / `--argument-type idl`, whereas ICP CLI uses
+`--args-file` / `--args-format bin`; do not pass binary files as DFX Candid text.
+Participant operations use their own aliases. Always supply a local Candid file
+for bounded DFX calls: automatic interface discovery exceeded the read allowlist
+in the information-query stage. No private-key export or identity-store bridge
+is needed. Plaintext file custody and the command-scoped DFX warning
+acknowledgement are explicit conditions of any later signing approval.
 
 There is no public programme configuration update API. Use the tested native
 `UpgradeSnsControlledCanister` action with generated upgrade arguments through
@@ -171,9 +184,12 @@ transfer proposal still needs the decisive vote.
 First execute only the separately approved inventory below. Bind its results to
 the final package hashes and signer. A role with an existing module/state needs
 an explicit preservation decision; never default `auto` into replacement.
-For each approved fresh role the command shape is `icp canister install
-EXACT_ROLE_PRINCIPAL -n ic --mode install --wasm EXACT_PACKAGE.wasm.gz
---args-file EXACT_ROLE.bin --args-format bin --identity CONFIRMED_IDENTITY`.
+For each approved empty-code role, use DFX `codex_local` with an explicit
+principal, `--network ic --mode install --wasm` exact package, and
+`--argument-file` exact constructor Candid text / `--argument-type idl`. The
+proposed-operations JSON records the actual per-role argument vectors and hashes.
+Seven application constructors are available; five framework constructors remain
+blocked on the schedule. Never treat partial preparation as a complete bundle.
 There is no bulk `icp deploy` or canister creation in this plan.
 
 | Order | Canister(s), explicit IDs in profile | Package / constructor | Controller checkpoint |
@@ -188,7 +204,7 @@ There is no bulk `icp deploy` or canister creation in this plan.
 | 8 | Historian | Acceptance with embedded acceptance Relay / application.bin | Root after upgrade/factory-binding checks |
 | 9 | Canonical Relay | Acceptance / application.bin, approved surplus policy | Root; replacement semantics, reconcile/quiesce before replacement |
 | 10 | Faucet | Acceptance / application.bin, rescue unarmed | Bootstrap pending lifecycle rehearsal |
-| 11 | Existing Disburser | Conditional preserved upgrade OR explicitly approved disposable-helper replacement | Same `spoge-…` principal; unarmed |
+| 11 | Existing Disburser | Approved disposable-helper transition: guarded `reinstall`, fresh typed args; execution still unapproved | Same `spoge-…` principal; unarmed |
 | 12 | Frontend | Acceptance assets / empty constructor | Root after destination and certified-asset smoke checks |
 
 At every checkpoint compare installed compressed package module hash, controllers,
@@ -198,21 +214,23 @@ CMC, Relay can fund managed canisters, Historian indexes and factory is enabled,
 SNS Rewards starts owner scans. No programme is **not** financial inertness.
 Review existing ICP/maturity and pending work before installing any application.
 
-The Disburser helper decision needs its purpose/source or creation record,
-stable-state obligations and outstanding asynchronous effects, supplied by the
-operator. `identity-handoff.md` is historical: module present, empty service
-metadata, private full-neuron denial. Empty service metadata proves no absence
-of state. A real stateful Disburser requires its supported preserving upgrade.
-Only a demonstrably disposable helper permits an approved reinstall at the same
-principal with fresh reviewed arguments; no preliminary uninstall. Unknown
-obligations block that replacement, not independent preparation.
+The operator confirms the helper's neuron-creation lifecycle is complete and
+accepts discarding its heap/stable state. Record that decision without claiming
+the state was empty or that no past pending effects existed. Direct reinstall
+at `spoge-kaaaa-aaaas-amyoa-cai` needs no preliminary uninstall. It preserves
+the external neuron principal relationship and Account; no neuron recreation or
+settings change is proposed. The initial production code installs daily main
+and rescue timers. A main tick can initiate 100% native maturity disbursement
+to Disburser's default staging Account and later execute its payout plan. The
+00:39 NNS observation contained nonzero maturity; it was not repeated. Review
+that financial startup with the exact initialization and installation schedule;
+rescue-unarmed and absent Rewards programme do not make it inert.
 
-Before treasury or Relay activation, verify the existing neuron controller,
-staking bytes, cached stake versus Ledger balance, dissolve/age/maturity/follow
-settings and pending effects through an authorized supported route. Nonce zero
-is only an expectation. The treasury worker uses public-full-neuron
-`list_neurons`; private operator visibility does not satisfy it. A Public neuron
-visibility mutation through its real controller needs separate approval. Relay's
+The 00:39 public full-neuron observation matched the existing controller,
+staking bytes, cached stake and Ledger balance and exposed dissolve/follow/
+maturity fields. It is dated replica-signed evidence, not a new observation in
+the status stage. Any later freshness reads need separate authorization. The treasury worker uses public-full-neuron
+`list_neurons`; private operator visibility does not satisfy it. Public visibility was observed and no visibility mutation is proposed. Relay's
 own neuron lookup must succeed under its actual caller and API shape as well.
 No new broad management proxy is proposed.
 
@@ -252,11 +270,13 @@ IO settlement remains disabled throughout. Local real-sale evidence is the
 existing SNS-W sale rehearsal; direct acceptance cannot prove sale valuation.
 
 See [`funding-sheet.json`](funding-sheet.json) for proposed small-test caps and
-[`live-read-plan.json`](live-read-plan.json) for the finite next authorization.
-The next inventory is capped at 65 pre-installation read attempts with no retry
-(63 fixed reads plus two participant-balance reads once their principals are supplied);
-18 post-installation checks are a later, separately authorized stage. No read
-approval includes installation or a financial operation.
+[`live-read-plan.json`](live-read-plan.json) for the historical finite inventory
+definition. That public stage and the later 15-item authority stage are complete;
+no unused slots grant continuing access. The latter completed the listed reads
+but DFX information-call interface discovery added two out-of-scope attempts;
+see the authority supplement for the exact evidence limitation. Eighteen
+post-installation checks remain separately unauthorized. No read approval
+includes installation or a financial operation.
 Primary small-test provisioning is capped in the draft at 6.0007 ICP, including
 up to 0.0002 ICP for funding the two donor wallets if needed. The optional child
 adds a separate 3.0001 ICP, for 9.0008 ICP maximum. These are proposed caps, not
@@ -265,6 +285,7 @@ observed deltas or spending authorization; cycles purchases remain unpriced.
 eventual acceptance IO/Jupiter recipients and exact memo bytes. IO's checked-in
 draft lacks its permanent neuron's actual staking bytes; that Account is
 explicitly unresolved, not derived from the neuron ID. No IO files were changed.
-Actual observations and owner decisions must replace unknowns before any live
-operation package is approved. Build and test evidence is recorded separately
+The remaining owner inputs are the two schedule timestamps, funding-source/
+spend approval and exact installation/activation/controller-transition approvals.
+No helper-source, participant-selection or personal-signing request remains. Build and test evidence is recorded separately
 in `validation-a.md`; no local result is a mainnet observation.

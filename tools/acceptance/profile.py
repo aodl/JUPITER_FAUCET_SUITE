@@ -46,11 +46,13 @@ SYSTEM = {
     'sns_wasm': 'qaa6y-5yaaa-aaaaa-aaafa-cai',
     'xrc': 'uf6dk-hyaaa-aaaaq-qaaaq-cai',
 }
+PROTECTED_PERSONAL_PRINCIPAL = 'zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe'
 
 
 def isolated_principal(text):
     raw = principal_bytes(text)
-    if not raw or raw == b'\x04' or text in PROTECTED or text in SYSTEM.values():
+    if (not raw or raw == b'\x04' or text in PROTECTED or text in SYSTEM.values()
+            or text == PROTECTED_PERSONAL_PRINCIPAL):
         raise ValueError(f'protected/system/anonymous application principal: {text}')
     return text
 

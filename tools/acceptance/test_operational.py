@@ -37,6 +37,7 @@ class Operational(unittest.TestCase):
 
     def test_unresolved_operator_allows_only_fixed_executable_bindings(self):
         p = json.loads(acceptance.PROFILE.read_text())
+        p['operator'] = None
         checked = acceptance.validate(p, require_operator=False)
         self.assertIsNone(checked['operator'])
         self.assertEqual(acceptance.bindings(p)['JUPITER_BOUND_RELAY_ID'], p['roles']['jupiter_relay'])
@@ -51,7 +52,7 @@ class Operational(unittest.TestCase):
         decisions = json.loads((acceptance.PROFILE.parent / 'operator-inputs.json').read_text())
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory) / 'candidate'
-            with self.assertRaisesRegex(ValueError, 'unresolved'):
+            with self.assertRaisesRegex(ValueError, 'genesis_timestamp_seconds'):
                 op.candidate(json.loads(acceptance.PROFILE.read_text()), decisions, '/unused', out)
             self.assertFalse(out.exists())
 
@@ -87,7 +88,10 @@ class Operational(unittest.TestCase):
 
     def test_test_bucket_cannot_mint_extra_or_overlap_protocol_roles(self):
         for mutate in (lambda d: d['test_allocations'][0].update(amount_e8s=10**16),
+                       lambda d: d['test_allocations'][0].update(memo=999),
                        lambda d: d['test_allocations'][0].update(owner=fixture()['roles']['jupiter_sns_rewards']),
+                       lambda d: [entry.update(owner=d['operator']) for entry in d['test_allocations'][:2]],
+                       lambda d: [entry.update(owner=acceptance.PROTECTED_PERSONAL_PRINCIPAL) for entry in d['test_allocations'][:2]],
                        lambda d: d.update(acceptance_start_timestamp_seconds=None),
                        lambda d: d.update(relay_surplus_neuron_recipients=None),
                        lambda d: d['voting_authority'].update(principal=principal_text(bytes([81]) * 28 + b'\x02')),
@@ -96,6 +100,33 @@ class Operational(unittest.TestCase):
             mutate(d)
             with self.assertRaises(ValueError):
                 op.render(fixture(), d, local=True)
+
+    def test_personal_principal_cannot_be_the_executor_or_temporary_voter(self):
+        d = local_decisions()
+        d['operator'] = acceptance.PROTECTED_PERSONAL_PRINCIPAL
+        d['voting_authority']['principal'] = d['operator']
+        with self.assertRaisesRegex(ValueError, 'protected'):
+            op.render(fixture(), d, local=True)
+
+    def test_current_authorities_have_exact_supply_and_only_schedule_is_unresolved(self):
+        d = json.loads((acceptance.PROFILE.parent / 'operator-inputs.json').read_text())
+        self.assertIsNone(d['genesis_timestamp_seconds'])
+        self.assertIsNone(d['acceptance_start_timestamp_seconds'])
+        # An in-memory local clock validates the actual public identities without
+        # approving a mainnet date or writing deployable framework constructors.
+        d['genesis_timestamp_seconds'] = 1_792_000_000
+        d['acceptance_start_timestamp_seconds'] = 1_792_000_001
+        p, ids, policy = op.render(json.loads(acceptance.PROFILE.read_text()), d, local=True)
+        self.assertEqual(p['genesis']['purpose'], 'local-fixture-not-for-deployment')
+        self.assertEqual(d['bootstrap_disburser']['transition'], 'disposable-helper-replacement')
+        actors = [p['operator'], d['test_allocations'][0]['owner'], d['test_allocations'][2]['owner']]
+        self.assertEqual(len(set(actors)), 3)
+        self.assertNotIn(acceptance.PROTECTED_PERSONAL_PRINCIPAL, actors)
+        self.assertEqual(d['voting_authority']['principal'], p['operator'])
+        self.assertEqual(sum(n['stake'] for n in p['genesis']['neurons']), 100_000_000 * 10**8)
+        self.assertEqual([n['memo'] for n in p['genesis']['neurons'][3:]], [10, 11, 20, 21])
+        self.assertEqual(p['genesis']['neurons'][0]['permissions'][0]['permissions'], [2, 3, 4])
+        self.assertEqual(set(ids.values()), set(policy['excluded_jup_neurons']))
 
     @unittest.skipUnless(os.environ.get('JUPITER_SNS_ARTIFACT_DIR'), 'exact official tuple required')
     def test_complete_candidate_packages_all_typed_inputs_and_verified_framework(self):

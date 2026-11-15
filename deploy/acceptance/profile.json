@@ -1,7 +1,7 @@
 {
   "environment": "acceptance",
   "network": "ic",
-  "operator": null,
+  "operator": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
   "roles": {
     "sns_root": "sbmlm-rqaaa-aaaas-amypa-cai",
     "sns_governance": "sipaq-hyaaa-aaaas-amyoq-cai",

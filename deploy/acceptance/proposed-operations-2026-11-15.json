@@ -1,14 +1,12 @@
 {
-  "status": "PROPOSED ONLY \u2014 NO MUTATION AUTHORIZED; unresolved sender/constructors forbid execution",
+  "status": "PROPOSED ONLY \u2014 executor, participants and disposable-helper choice resolved; two schedule inputs and all mutation/spend approvals remain gated",
   "source_commit": "a7c6cabdb58c3f2b1f26b3654905df24bb131826",
   "observation_report": "inventory-2026-11-15.json",
   "candidate_archive_sha256": "c18f86b639c10bf6c3fbc56df4b09e5fdf9f3653575373e358ae0758f2abacba",
   "unresolved": [
-    "existing signing provider and actual public principal/authority",
-    "Participant A/B public principals",
-    "genesis and exact approved patron checkpoint timestamps",
-    "helper source/state/funds/pending-effect preservation and explicit upgrade-versus-replacement decision",
-    "cycles/headroom observations, transfer source and final budget approval"
+    "separate genesis installation and patron activation timestamps",
+    "funding source and exact spend approvals, including fresh rate/fee/preconditions when separately authorized",
+    "explicit final installation and staged irreversible controller/activation approvals"
   ],
   "installation": [
     {
@@ -23,8 +21,8 @@
         "raw_sha256": "74e71dff02f1721b00d1c33db6cb14b76bd6e58748618b1b3c1fadb4f9783f3c"
       },
       "constructor_path_after_guarded_generation": "applications/jupiter_lifeline.bin",
-      "constructor_sha256": null,
-      "sender": null,
+      "constructor_sha256": "0fee102bd16b053022b69f2c65fd5e2f41d150ce9c214ac8731cfaf496ebda4e",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
       "expected_pre_controllers": [
@@ -32,7 +30,32 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+      "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_lifeline.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "xiqae-3qaaa-aaaas-amyta-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "applications/jupiter_lifeline.wasm.gz",
+        "--argument-type",
+        "idl",
+        "--argument-file",
+        "target/acceptance-authority-20261115/application-constructors/jupiter_lifeline.did"
+      ],
+      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "proposed_cli_environment": {
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      }
     },
     {
       "order": 2,
@@ -47,7 +70,7 @@
       },
       "constructor_path_after_guarded_generation": "sns/governance.bin",
       "constructor_sha256": null,
-      "sender": null,
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
       "expected_pre_controllers": [
@@ -55,7 +78,10 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+      "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "proposed_cli_argv": null
     },
     {
       "order": 3,
@@ -70,7 +96,7 @@
       },
       "constructor_path_after_guarded_generation": "sns/ledger.bin",
       "constructor_sha256": null,
-      "sender": null,
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
       "expected_pre_controllers": [
@@ -78,7 +104,10 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+      "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "proposed_cli_argv": null
     },
     {
       "order": 4,
@@ -93,7 +122,7 @@
       },
       "constructor_path_after_guarded_generation": "sns/index.bin",
       "constructor_sha256": null,
-      "sender": null,
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
       "expected_pre_controllers": [
@@ -101,7 +130,10 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+      "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "proposed_cli_argv": null
     },
     {
       "order": 5,
@@ -116,7 +148,7 @@
       },
       "constructor_path_after_guarded_generation": "sns/swap.bin",
       "constructor_sha256": null,
-      "sender": null,
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
       "expected_pre_controllers": [
@@ -124,7 +156,10 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+      "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "proposed_cli_argv": null
     },
     {
       "order": 6,
@@ -139,7 +174,7 @@
       },
       "constructor_path_after_guarded_generation": "sns/root.bin",
       "constructor_sha256": null,
-      "sender": null,
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
       "expected_pre_controllers": [
@@ -147,7 +182,10 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+      "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "proposed_cli_argv": null
     },
     {
       "order": 7,
@@ -161,8 +199,8 @@
         "raw_sha256": "8819a0cc51aead3fb307f691eefb8075e446413960e7000d332ef70767966c4b"
       },
       "constructor_path_after_guarded_generation": "applications/jupiter_sns_rewards.bin",
-      "constructor_sha256": null,
-      "sender": null,
+      "constructor_sha256": "136ddb75378b67ca6c34cc41efd7e41899a07a970b2618b4520b5ff866f5d3fe",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
       "expected_pre_controllers": [
@@ -170,7 +208,32 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Owner scans; new programme absent initially",
-      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+      "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_sns_rewards.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "xgsnm-aaaaa-aaaas-amysa-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "applications/jupiter_sns_rewards.wasm.gz",
+        "--argument-type",
+        "idl",
+        "--argument-file",
+        "target/acceptance-authority-20261115/application-constructors/jupiter_sns_rewards.did"
+      ],
+      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "proposed_cli_environment": {
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      }
     },
     {
       "order": 8,
@@ -184,8 +247,8 @@
         "raw_sha256": "8e5108e400d11d8d6745d4696b1a0e67ed6a137c65791d84712ceb38a776f20f"
       },
       "constructor_path_after_guarded_generation": "applications/jupiter_historian.bin",
-      "constructor_sha256": null,
-      "sender": null,
+      "constructor_sha256": "a6d8ccb6b103e8c8820e4b65f4e45d0e4749c8e138596286955cbe5b503056f0",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
       "expected_pre_controllers": [
@@ -193,7 +256,32 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Indexing, owner-facing read model and permissionless paid factory entrypoints",
-      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+      "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_historian.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "xbtly-nyaaa-aaaas-amysq-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "applications/jupiter_historian.wasm.gz",
+        "--argument-type",
+        "idl",
+        "--argument-file",
+        "target/acceptance-authority-20261115/application-constructors/jupiter_historian.did"
+      ],
+      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "proposed_cli_environment": {
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      }
     },
     {
       "order": 9,
@@ -207,8 +295,8 @@
         "raw_sha256": "b1e79e4dabf7919eb764217c299ff110168cdfff0c97156e9581520b8fa39e80"
       },
       "constructor_path_after_guarded_generation": "applications/jupiter_relay.bin",
-      "constructor_sha256": null,
-      "sender": null,
+      "constructor_sha256": "fd43a5dd713a863de08d8f95c1425fd964736d52617e07981c8ebd7138ff2d97",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
       "expected_pre_controllers": [
@@ -216,7 +304,32 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Managed-canister top-ups and aggregate forwarding; initially empty surplus recipients",
-      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+      "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_relay.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "xtv4b-biaaa-aaaas-amyrq-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "applications/jupiter_relay.wasm.gz",
+        "--argument-type",
+        "idl",
+        "--argument-file",
+        "target/acceptance-authority-20261115/application-constructors/jupiter_relay.did"
+      ],
+      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "proposed_cli_environment": {
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      }
     },
     {
       "order": 10,
@@ -230,8 +343,8 @@
         "raw_sha256": "ad77738d9ceb98ca7969b6cd6275fcfb0e73e07ef1d735b0e88b64479d3bdd4b"
       },
       "constructor_path_after_guarded_generation": "applications/jupiter_faucet.bin",
-      "constructor_sha256": null,
-      "sender": null,
+      "constructor_sha256": "bb22dd75d82391bb0a611c3174dddaee27846510da441ab6dc01b17df9257db0",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
       "expected_pre_controllers": [
@@ -239,22 +352,47 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Ledger/Index scans, settlement transfers and CMC notifications",
-      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+      "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_faucet.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "xuu2v-mqaaa-aaaas-amyra-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "applications/jupiter_faucet.wasm.gz",
+        "--argument-type",
+        "idl",
+        "--argument-file",
+        "target/acceptance-authority-20261115/application-constructors/jupiter_faucet.did"
+      ],
+      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "proposed_cli_environment": {
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      }
     },
     {
       "order": 11,
       "target": "spoge-kaaaa-aaaas-amyoa-cai",
       "role": "jupiter_disburser",
       "operation": "install_code",
-      "mode": null,
+      "mode": "reinstall",
       "wasm": {
         "path": "applications/jupiter_disburser.wasm.gz",
         "sha256": "473a1bed784cf4734b2173c8d724d1c093ccbd85f427a391b7914284c16cd070",
         "raw_sha256": "2c2efab9c45d79193c9ada8a0079f54e4aca162884682ea22d5f5169fbb0a8b4"
       },
       "constructor_path_after_guarded_generation": "applications/jupiter_disburser.bin",
-      "constructor_sha256": null,
-      "sender": null,
+      "constructor_sha256": "519a1877c82858bc45aa8c1a5caeb58ad6f35d0dfad613c5ceea21d3363abb4a",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": "03e8ba94621d28bf166595a9a9dd0d9943c60caad48c7a2740285a7fee283bbe",
       "expected_pre_module_path_evidence": "Found",
       "expected_pre_controllers": [
@@ -262,7 +400,37 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "NNS reads/maturity disbursement and payout scheduling; unarmed rescue is not financial inactivity",
-      "gate": "helper source/state/pending-effect preservation and approved transition; signer and cycles unresolved"
+      "gate": "Approve exact fresh initialization, financial timer/maturity startup and installation time; helper-local migration explicitly not required; preserve external NNS neuron/Account.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "preservation_decision": {
+        "transition": "disposable-helper-replacement",
+        "state_and_pending_effects": "Operator explicitly accepts discarding all helper-local heap/stable state: neuron-creation lifecycle complete, no migration required. This is a preservation waiver, not proof of empty state or absence of prior pending effects. Preserve external NNS neuron settings, stake, maturity and staking Account; review financial timer startup before approved reinstall.",
+        "source_record": "Operator final November 2026 confirmation in Jupiter Acceptance \u2014 Complete Operator Authority, Test Identity, Disburser Transition and Deployment Preparation Instructions, section 5."
+      },
+      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_disburser.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "spoge-kaaaa-aaaas-amyoa-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "reinstall",
+        "--wasm",
+        "applications/jupiter_disburser.wasm.gz",
+        "--argument-type",
+        "idl",
+        "--argument-file",
+        "target/acceptance-authority-20261115/application-constructors/jupiter_disburser.did"
+      ],
+      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "proposed_cli_environment": {
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      }
     },
     {
       "order": 12,
@@ -276,8 +444,8 @@
         "raw_sha256": "4f9d31a2bca0d6da8ecd04c8480084e77b7dac2a6ce6198f55521edc8077d4f8"
       },
       "constructor_path_after_guarded_generation": "applications/jupiter_faucet_frontend.bin",
-      "constructor_sha256": null,
-      "sender": null,
+      "constructor_sha256": "0fee102bd16b053022b69f2c65fd5e2f41d150ce9c214ac8731cfaf496ebda4e",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
       "expected_pre_controllers": [
@@ -285,126 +453,151 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "verified signing provider, complete constructor inputs and cycles/headroom"
+      "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_faucet_frontend.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "xprgq-wiaaa-aaaas-amytq-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "applications/jupiter_faucet_frontend.wasm.gz",
+        "--argument-type",
+        "idl",
+        "--argument-file",
+        "target/acceptance-authority-20261115/application-constructors/jupiter_faucet_frontend.did"
+      ],
+      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "proposed_cli_environment": {
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      }
     }
   ],
   "funding": [
     {
       "operation": "top_up_canister",
       "target": "sbmlm-rqaaa-aaaas-amypa-cai",
-      "cycles": null,
+      "cycles": 1506579800049,
       "target_balance": 3000000000000,
-      "actual_balance": null,
+      "actual_balance": 1493420199951,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
     },
     {
       "operation": "top_up_canister",
       "target": "sipaq-hyaaa-aaaas-amyoq-cai",
-      "cycles": null,
+      "cycles": 1506580040139,
       "target_balance": 3000000000000,
-      "actual_balance": null,
+      "actual_balance": 1493419959861,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
     },
     {
       "operation": "top_up_canister",
       "target": "sgnny-4iaaa-aaaas-amypq-cai",
-      "cycles": null,
+      "cycles": 1506579419909,
       "target_balance": 3000000000000,
-      "actual_balance": null,
+      "actual_balance": 1493420580091,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
     },
     {
       "operation": "top_up_canister",
       "target": "x2wx5-xaaaa-aaaas-amyqa-cai",
-      "cycles": null,
+      "cycles": 1506579199828,
       "target_balance": 3000000000000,
-      "actual_balance": null,
+      "actual_balance": 1493420800172,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
     },
     {
       "operation": "top_up_canister",
       "target": "x5xrj-2yaaa-aaaas-amyqq-cai",
-      "cycles": null,
+      "cycles": 1506578979746,
       "target_balance": 3000000000000,
-      "actual_balance": null,
+      "actual_balance": 1493421020254,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
     },
     {
       "operation": "top_up_canister",
       "target": "spoge-kaaaa-aaaas-amyoa-cai",
-      "cycles": null,
+      "cycles": 1516005520157,
       "target_balance": 3000000000000,
-      "actual_balance": null,
+      "actual_balance": 1483994479843,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
     },
     {
       "operation": "top_up_canister",
       "target": "xuu2v-mqaaa-aaaas-amyra-cai",
-      "cycles": null,
+      "cycles": 1506578939733,
       "target_balance": 3000000000000,
-      "actual_balance": null,
+      "actual_balance": 1493421060267,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
     },
     {
       "operation": "top_up_canister",
       "target": "xiqae-3qaaa-aaaas-amyta-cai",
-      "cycles": null,
+      "cycles": 1506575538480,
       "target_balance": 3000000000000,
-      "actual_balance": null,
+      "actual_balance": 1493424461520,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
     },
     {
       "operation": "top_up_canister",
       "target": "xgsnm-aaaaa-aaaas-amysa-cai",
-      "cycles": null,
+      "cycles": 1506578149441,
       "target_balance": 3000000000000,
-      "actual_balance": null,
+      "actual_balance": 1493421850559,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
     },
     {
       "operation": "top_up_canister",
       "target": "xbtly-nyaaa-aaaas-amysq-cai",
-      "cycles": null,
+      "cycles": 1506576628881,
       "target_balance": 3000000000000,
-      "actual_balance": null,
+      "actual_balance": 1493423371119,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
     },
     {
       "operation": "top_up_canister",
       "target": "xtv4b-biaaa-aaaas-amyrq-cai",
-      "cycles": null,
+      "cycles": 1506578399534,
       "target_balance": 3000000000000,
-      "actual_balance": null,
+      "actual_balance": 1493421600466,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
     },
     {
       "operation": "top_up_canister",
       "target": "xprgq-wiaaa-aaaas-amytq-cai",
-      "cycles": null,
+      "cycles": 1506574988277,
       "target_balance": 3000000000000,
-      "actual_balance": null,
+      "actual_balance": 1493425011723,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase"
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
     },
     {
       "operation": "top_up_canister",
       "target": "sgnny-4iaaa-aaaas-amypq-cai",
-      "cycles": null,
+      "cycles": 1000000000000,
       "target_balance": 4000000000000,
-      "actual_balance": null,
+      "actual_balance": 1493420580091,
       "maximum_authorized_spend": 0,
-      "gate": "authorized status read and delta, existing cycles provider/source balance, exact fee/ICP conversion budget; no assumed 36T purchase",
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance.",
       "purpose": "incremental archive headroom before actual trigger",
       "incremental_cap_cycles": 1000000000000,
       "incremental_rule": "max(0, 4T - observed Ledger main balance) - max(0, 3T - observed Ledger main balance); do not double-count main-target top-up"
@@ -413,7 +606,7 @@
       "purpose": "direct liquid",
       "operation": "ICP Ledger icrc1_transfer",
       "ledger": "ryjl3-tyaaa-aaaaa-aaaba-cai",
-      "sender": null,
+      "sender": "dpb4d-s3blg-twxrv-w4ucr-2w76w-rctgx-zycty-at3p4-5paoc-x4764-eae",
       "to": {
         "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
         "subaccountHex": "52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
@@ -425,13 +618,14 @@
       "memo_hex": "78707267712d77696161612d61616161732d616d7974712d636169",
       "created_at_time": null,
       "maximum_authorized_spend": 0,
-      "gate": "complete secure owner snapshot; A auto-stake disabled / B exact-year neuron auto-stake enabled; original NNS staking Account independently verified"
+      "gate": "Participant wallet provisioning separately approved; secure owner snapshot, A disabled/B exact-year auto-stake true, approved patron checkpoint and real test transfer approval.",
+      "source_identity_alias": "jupiter_acceptance_participant_a"
     },
     {
       "purpose": "direct 2x",
       "operation": "ICP Ledger icrc1_transfer",
       "ledger": "ryjl3-tyaaa-aaaaa-aaaba-cai",
-      "sender": null,
+      "sender": "lsgoi-jv53o-vvez4-teecu-5t66a-7bnlq-mjvi3-iails-23k3p-qykdc-lae",
       "to": {
         "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
         "subaccountHex": "52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
@@ -443,7 +637,8 @@
       "memo_hex": "78707267712d77696161612d61616161732d616d7974712d636169",
       "created_at_time": null,
       "maximum_authorized_spend": 0,
-      "gate": "complete secure owner snapshot; A auto-stake disabled / B exact-year neuron auto-stake enabled; original NNS staking Account independently verified"
+      "gate": "Participant wallet provisioning separately approved; secure owner snapshot, A disabled/B exact-year auto-stake true, approved patron checkpoint and real test transfer approval.",
+      "source_identity_alias": "jupiter_acceptance_participant_b"
     },
     {
       "purpose": "canonical Relay operational funding",
@@ -461,7 +656,8 @@
       "memo_hex": null,
       "created_at_time": null,
       "maximum_authorized_spend": 0,
-      "gate": "approved funding budget and exact source signer; wait for installed runtime/configuration readiness"
+      "gate": "approved funding budget and exact source signer; wait for installed runtime/configuration readiness",
+      "funding_source_identity": null
     },
     {
       "purpose": "treasury test inventory",
@@ -479,7 +675,8 @@
       "memo_hex": null,
       "created_at_time": null,
       "maximum_authorized_spend": 0,
-      "gate": "approved funding budget and exact source signer; wait for installed runtime/configuration readiness"
+      "gate": "approved funding budget and exact source signer; wait for installed runtime/configuration readiness",
+      "funding_source_identity": null
     },
     {
       "operation": "optional paid factory setup and funding",
@@ -487,7 +684,8 @@
       "amount_e8s": 300000000,
       "fee_e8s": 10000,
       "maximum_authorized_spend": 0,
-      "gate": "separate paid creation approval, exact immutable setup Account and returned requirement <=3 ICP; not approved by inventory"
+      "gate": "separate paid creation approval, exact immutable setup Account and returned requirement <=3 ICP; not approved by inventory",
+      "funding_source_identity": null
     }
   ],
   "controller_transitions": [
@@ -505,7 +703,7 @@
             "sipaq-hyaaa-aaaas-amyoq-cai"
           ],
           "operation": "update_settings, controllers field only",
-          "sender": null,
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
           "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
         }
       ]
@@ -524,7 +722,7 @@
             "sbmlm-rqaaa-aaaas-amypa-cai"
           ],
           "operation": "update_settings, controllers field only",
-          "sender": null,
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
           "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
         }
       ]
@@ -543,7 +741,7 @@
             "sbmlm-rqaaa-aaaas-amypa-cai"
           ],
           "operation": "update_settings, controllers field only",
-          "sender": null,
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
           "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
         }
       ]
@@ -562,7 +760,7 @@
             "sbmlm-rqaaa-aaaas-amypa-cai"
           ],
           "operation": "update_settings, controllers field only",
-          "sender": null,
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
           "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
         }
       ]
@@ -581,7 +779,7 @@
             "sbmlm-rqaaa-aaaas-amypa-cai"
           ],
           "operation": "update_settings, controllers field only",
-          "sender": null,
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
           "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
         }
       ]
@@ -596,11 +794,10 @@
       "proposed_stages": [
         {
           "stage": "after runtime/rescue rehearsal, before arming",
-          "controllers": null,
-          "required_members": [
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
             "spoge-kaaaa-aaaas-amyoa-cai"
           ],
-          "additional_member": "verified operator principal unresolved",
           "permission": "separate explicit transition approval"
         },
         {
@@ -637,11 +834,10 @@
       "proposed_stages": [
         {
           "stage": "after runtime/rescue rehearsal, before arming",
-          "controllers": null,
-          "required_members": [
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
             "xuu2v-mqaaa-aaaas-amyra-cai"
           ],
-          "additional_member": "verified operator principal unresolved",
           "permission": "separate explicit transition approval"
         },
         {
@@ -682,7 +878,7 @@
             "sbmlm-rqaaa-aaaas-amypa-cai"
           ],
           "operation": "update_settings, controllers field only",
-          "sender": null,
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
           "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
         }
       ]
@@ -701,7 +897,7 @@
             "sbmlm-rqaaa-aaaas-amypa-cai"
           ],
           "operation": "update_settings, controllers field only",
-          "sender": null,
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
           "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
         }
       ]
@@ -720,7 +916,7 @@
             "sbmlm-rqaaa-aaaas-amypa-cai"
           ],
           "operation": "update_settings, controllers field only",
-          "sender": null,
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
           "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
         }
       ]
@@ -739,7 +935,7 @@
             "sbmlm-rqaaa-aaaas-amypa-cai"
           ],
           "operation": "update_settings, controllers field only",
-          "sender": null,
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
           "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
         }
       ]
@@ -758,16 +954,16 @@
             "sbmlm-rqaaa-aaaas-amypa-cai"
           ],
           "operation": "update_settings, controllers field only",
-          "sender": null,
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
           "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
         }
       ]
     }
   ],
-  "bootstrap_policy": "Retain both observed controllers through initial installation/rehearsal unless a separate explicit change is approved. Controller membership alone does not select the signing provider. Removing the additional bootstrap principal is an explicit reviewed removal, never an assumed authorization.",
-  "genesis_policy": "Use guarded operational.py candidate; four approved 5000-jUP neurons, no invented owners/timestamps, unchanged temporary permission-management voter and original stake IDs. No deployment constructors currently emitted.",
+  "bootstrap_policy": "Retain both observed controllers through installation and initial runtime/recovery rehearsals. Codex executor is amzih; personal zkkkd is historical/bootstrap only and is never a Codex signer. Any later full controller-set replacement explicitly removes personal/bootstrap rights under separate approval.",
+  "genesis_policy": "Exact verified executor and participant identities now recorded; four approved memos 10/11/20/21 and unchanged 100M supply. Only genesis and patron activation timestamps remain null. operational.py candidate fails closed; five framework constructors unavailable until schedule approved.",
   "activation": "Native Governance upgrades in recognition, patron, treasury, bounded continuation order from work-package-a.md; IO settlement disabled; initial Relay surplus empty; no direct operator configuration call.",
-  "neuron_mutation": "None proposed to set Public visibility because current enum 2 and public full-neuron response already satisfy the observed prerequisite. Do not change followees/delay/maturity policy or recreate the neuron. Real canister caller behavior remains an installation smoke gate.",
+  "neuron_mutation": "No live mutation authorized now. Later A/B SNS auto-stake operations use their own DFX aliases and exact derived IDs; B enabling must be verified before 2x test. This is not the Disburser-controlled NNS neuron. No NNS visibility/follow/dissolve/auto-stake setting change proposed.",
   "post_install_reads": "18 separate read checks remain unexecuted and need explicit later approval; future precondition refreshes also need separate authorization; no permission to reuse the completed inventory approval.",
   "immutable_children": "No initial creation; any later paid factory child ends controllerless. No thirteenth initial archive.",
   "native_treasury_transfer": {
@@ -791,6 +987,47 @@
     "patron_jup_generated": false,
     "relay_pot_generated": false,
     "maximum_authorized_spend": 0,
-    "gate": "separate treasury activation and decisive native Governance vote; confirmed funded treasury, fresh conversion/native seven-day limit and exact proposal reply; no direct operator transfer or replay"
-  }
+    "gate": "separate treasury activation and decisive native Governance vote; confirmed funded treasury, fresh conversion/native seven-day limit and exact proposal reply; no direct operator transfer or replay",
+    "initial_inventory_funding_source_identity": null
+  },
+  "authority_report": "authority-2026-11-15.json",
+  "execution_provider": {
+    "tool": "dfx",
+    "version": "0.27.0",
+    "alias": "codex_local",
+    "principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+    "icp_cli_alias": null
+  },
+  "helper_policy": "Direct same-principal reinstall with validated fresh arguments; no preliminary uninstall, no helper-local migration, no canister/neuron recreation. External NNS settings untouched by preparation; later worker maturity effects require startup approval.",
+  "participant_neuron_operations": [
+    {
+      "participant": "A",
+      "principal": "dpb4d-s3blg-twxrv-w4ucr-2w76w-rctgx-zycty-at3p4-5paoc-x4764-eae",
+      "identity_alias": "jupiter_acceptance_participant_a",
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "method": "manage_neuron",
+      "neuron_id_hex": "35af483157352ecead781b2d7262280ac5c512e3198ad31f67818e5a22dd234f",
+      "requested_auto_stake_maturity": false,
+      "payload_sha256": "5cdc37aef604cbb4cecace3418ede52a43787f17c9878d15d6e66f2b04fd8618",
+      "payload_file": "target/acceptance-authority-20261115/participant-recipes/participant-a-auto-stake.bin",
+      "candid_file": "target/acceptance-authority-20261115/participant-recipes/participant-a-auto-stake.did",
+      "signed_or_submitted": false,
+      "gate": "Later explicit SNS-neuron operation and setting/ownership read approval after actual SNS installation; this is not the permanent NNS neuron."
+    },
+    {
+      "participant": "B",
+      "principal": "lsgoi-jv53o-vvez4-teecu-5t66a-7bnlq-mjvi3-iails-23k3p-qykdc-lae",
+      "identity_alias": "jupiter_acceptance_participant_b",
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "method": "manage_neuron",
+      "neuron_id_hex": "760876f353abdd6324ecf727532f98f7f17bd154b90e847c0e81b7c946825008",
+      "requested_auto_stake_maturity": true,
+      "payload_sha256": "38d1b025fceeb52a5871889ff0689de5b6b172345bdb728f294e411ba533173d",
+      "payload_file": "target/acceptance-authority-20261115/participant-recipes/participant-b-auto-stake.bin",
+      "candid_file": "target/acceptance-authority-20261115/participant-recipes/participant-b-auto-stake.did",
+      "signed_or_submitted": false,
+      "gate": "Later explicit SNS-neuron operation and setting/ownership read approval after actual SNS installation; this is not the permanent NNS neuron."
+    }
+  ],
+  "execution_warning_scope": "DFX reports plaintext local custody. The warning acknowledgement is command-scoped and only for an exact separately approved acceptance operation; never global, never personal/production signing. No install command was run."
 }

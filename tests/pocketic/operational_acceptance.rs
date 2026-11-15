@@ -151,12 +151,19 @@ fn exact_genesis_governance_handover_and_production_reserve() -> Result<()> {
         .with_sns_subnet()
         .with_application_subnet()
         .build();
-    let bootstrap = Principal::self_authenticating([80; 32]);
-    let executor = Principal::self_authenticating([85; 32]);
-    let user = Principal::self_authenticating([84; 32]);
-    let operator = Principal::self_authenticating([80; 32]);
     let bindings: serde_json::Value =
         serde_json::from_slice(&fs::read(repo.join("deploy/acceptance/profile.json"))?)?;
+    let inputs: serde_json::Value = serde_json::from_slice(&fs::read(
+        repo.join("deploy/acceptance/operator-inputs.json"),
+    )?)?;
+    let operator = Principal::from_text(bindings["operator"].as_str().unwrap())?;
+    let bootstrap = operator;
+    // The final executor remains an explicitly owned local fixture, not the
+    // unavailable real NNX authority. No mainnet keys enter PocketIC.
+    let executor = Principal::self_authenticating([85; 32]);
+    let participant_a =
+        Principal::from_text(inputs["test_allocations"][0]["owner"].as_str().unwrap())?;
+    let user = Principal::from_text(inputs["test_allocations"][2]["owner"].as_str().unwrap())?;
     let mut roles = serde_json::Map::new();
     for name in [
         "sns_root",
@@ -194,6 +201,7 @@ fn exact_genesis_governance_handover_and_production_reserve() -> Result<()> {
         evidence.join("context.json"),
         serde_json::to_vec(&json!({"roles":roles,
         "operator":operator.to_text(), "bootstrap":bootstrap.to_text(), "user":user.to_text(),
+        "participant_a":participant_a.to_text(),
         "timestamp":pic.get_time().as_nanos_since_unix_epoch()/1_000_000_000}))?,
     )?;
     checked_command(
@@ -209,6 +217,7 @@ from test_operational import local_decisions
 c=json.loads(Path(sys.argv[1]).read_text()); out=Path(sys.argv[2])
 p=json.loads(profile.PROFILE.read_text()); p['roles']=c['roles']
 d=local_decisions(); d['operator']=c['operator']; d['voting_authority']['principal']=c['bootstrap']
+d['test_allocations'][0]['owner']=d['test_allocations'][1]['owner']=c['participant_a']
 d['test_allocations'][2]['owner']=d['test_allocations'][3]['owner']=c['user']
 d['genesis_timestamp_seconds']=d['acceptance_start_timestamp_seconds']=c['timestamp']
 p, ids, policy=op.render(p,d,local=True)

@@ -108,7 +108,7 @@
     }
   },
   "nns_staking_expectation": {
-    "status": "derived expectation; requires authorized full-neuron comparison",
+    "status": "Derived nonce-zero Account matched the 15 November 00:39 public full-neuron observation and Ledger stake; NNS was not re-read during the later status stage.",
     "neuron_id": "2234355977000034918",
     "account": {
       "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
@@ -142,10 +142,16 @@
     }
   },
   "dominant_governance": {
-    "status": "temporary operator authority approved; verified signer still unresolved",
+    "status": "Derived from verified acceptance-only public identity; not an installed SNS neuron",
+    "controller": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
     "nonce": 1,
-    "neuron_id_hex": null,
-    "account": null
+    "neuron_id_hex": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+    "account": {
+      "owner": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "subaccountHex": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+      "address": "sipaq-hyaaa-aaaas-amyoq-cai-xrmoehi.ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+      "explorerAccountHex": "48974d6fe8d64a13adbf314870a66a9618aa61cef02da6207ea7d8baadd4e5df"
+    }
   },
   "dquorum_age_bonus": {
     "status": "settled",
@@ -154,6 +160,54 @@
       "subaccountHex": "77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f",
       "address": "rrkah-fqaaa-aaaaa-aaaaq-cai-62gcwni.77e63de72b5e3339ea20f4baf3ec2bd92138ddde0daeb69db50acceb384bdf0f",
       "explorerAccountHex": "52991edd749dc095b2f15121289f3697543aad08db6f01a7ff840818a84fda10"
+    }
+  },
+  "participant_a_zero": {
+    "status": "Derived from verified acceptance-only public identity; not an installed SNS neuron",
+    "controller": "dpb4d-s3blg-twxrv-w4ucr-2w76w-rctgx-zycty-at3p4-5paoc-x4764-eae",
+    "nonce": 10,
+    "neuron_id_hex": "6051913a7c3fddbf5883a1cf5c073d5c1898e18dfd06d725ab49590de1994609",
+    "account": {
+      "owner": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "subaccountHex": "6051913a7c3fddbf5883a1cf5c073d5c1898e18dfd06d725ab49590de1994609",
+      "address": "sipaq-hyaaa-aaaas-amyoq-cai-odbu5ry.6051913a7c3fddbf5883a1cf5c073d5c1898e18dfd06d725ab49590de1994609",
+      "explorerAccountHex": "606af4beec0df326777834512bb78a930b9b1f2e84d28f3e707e5eb2262df6d5"
+    }
+  },
+  "participant_a_year": {
+    "status": "Derived from verified acceptance-only public identity; not an installed SNS neuron",
+    "controller": "dpb4d-s3blg-twxrv-w4ucr-2w76w-rctgx-zycty-at3p4-5paoc-x4764-eae",
+    "nonce": 11,
+    "neuron_id_hex": "35af483157352ecead781b2d7262280ac5c512e3198ad31f67818e5a22dd234f",
+    "account": {
+      "owner": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "subaccountHex": "35af483157352ecead781b2d7262280ac5c512e3198ad31f67818e5a22dd234f",
+      "address": "sipaq-hyaaa-aaaas-amyoq-cai-7ogkixa.35af483157352ecead781b2d7262280ac5c512e3198ad31f67818e5a22dd234f",
+      "explorerAccountHex": "4b3bbe116b78985d589047a41a260e0b2854bc56178e48b6a0cea1b3e467143b"
+    }
+  },
+  "participant_b_zero": {
+    "status": "Derived from verified acceptance-only public identity; not an installed SNS neuron",
+    "controller": "lsgoi-jv53o-vvez4-teecu-5t66a-7bnlq-mjvi3-iails-23k3p-qykdc-lae",
+    "nonce": 20,
+    "neuron_id_hex": "b000174db039991a1d76b27e8c10117262c4cee11afec73c9d78db09940ac5f8",
+    "account": {
+      "owner": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "subaccountHex": "b000174db039991a1d76b27e8c10117262c4cee11afec73c9d78db09940ac5f8",
+      "address": "sipaq-hyaaa-aaaas-amyoq-cai-7eq7ewy.b000174db039991a1d76b27e8c10117262c4cee11afec73c9d78db09940ac5f8",
+      "explorerAccountHex": "ac78453a7ac64aa1474078556cea90e383c84a02d0eb79987ef8b06c1846bbda"
+    }
+  },
+  "participant_b_year": {
+    "status": "Derived from verified acceptance-only public identity; not an installed SNS neuron",
+    "controller": "lsgoi-jv53o-vvez4-teecu-5t66a-7bnlq-mjvi3-iails-23k3p-qykdc-lae",
+    "nonce": 21,
+    "neuron_id_hex": "760876f353abdd6324ecf727532f98f7f17bd154b90e847c0e81b7c946825008",
+    "account": {
+      "owner": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "subaccountHex": "760876f353abdd6324ecf727532f98f7f17bd154b90e847c0e81b7c946825008",
+      "address": "sipaq-hyaaa-aaaas-amyoq-cai-l3fhwnq.760876f353abdd6324ecf727532f98f7f17bd154b90e847c0e81b7c946825008",
+      "explorerAccountHex": "bc6ccdf3b9e37d51e01edd35658338762c060911cce9aa2e3092ad8d3bfb157e"
     }
   }
 }
