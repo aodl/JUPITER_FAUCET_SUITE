@@ -2,14 +2,16 @@
   "source": "Operator final 15 November 2026 identity/participant/helper decisions plus narrowly authorized read stage; no mainnet mutation authorization",
   "role_assignments_approved": true,
   "signing_provider": {
-    "tool": "dfx 0.27.0",
+    "tool": "dfx 0.31.0",
     "identity_alias": "codex_local",
     "principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
     "route": "DFX existing provider -> offline signed request -> standard IC management ingress and SDK certificate validation; future actual operations use explicit DFX alias",
     "evidence": "authority-2026-11-15.json",
     "custody": "Existing plaintext DFX local file provider; no private material read/exported/copied. Independent offline ECDSA verification and all twelve authenticated status reads passed. Plaintext storage is disclosed; this is acceptance-only authority, not a production custody recommendation.",
     "icp_cli_alias_verified": false,
-    "depends_on_personal_identity": false
+    "depends_on_personal_identity": false,
+    "version_evidence": "Repository context said 0.27.0; final supported tool check reports 0.31.0, and all three providers signed verified offline read envelopes with DFX_VERSION=0.31.0. Read-time executable version was not captured separately; no toolchain upgrade or live repeat was performed. Original read metadata labels were assumptions, not observed versions.",
+    "future_command_scoped_version": "0.31.0"
   },
   "operator_verified_principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
   "local_public_identity_checks": {

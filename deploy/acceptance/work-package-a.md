@@ -154,7 +154,10 @@ come from real Governance replies, never guessed values. Modules over the
 bounded inline proposal size require a separately reviewed native chunked
 upgrade recipe, not a raised ingress limit.
 
-The verified signing provider is DFX 0.27.0 `codex_local`, not a matching ICP
+The final tool check and pinned offline signing verification use DFX 0.31.0
+`codex_local`; the repository's 0.27.0 context was an unverified read-time label.
+Read-time version was not captured; no live read or toolchain upgrade was repeated.
+This is not a matching ICP
 CLI alias. After a separate exact-operation approval, use `dfx --identity
 codex_local canister call sipaq-hyaaa-aaaas-amyoq-cai manage_neuron` with
 `--network ic --update --candid` pointing to the verified official Governance

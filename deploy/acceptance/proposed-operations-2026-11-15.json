@@ -32,7 +32,7 @@
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
       "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
       "identity_alias": "codex_local",
-      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_lifeline.bin",
       "proposed_cli_argv": [
         "dfx",
@@ -54,7 +54,8 @@
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity"
+        "DFX_WARNING": "-mainnet_plaintext_identity",
+        "DFX_VERSION": "0.31.0"
       }
     },
     {
@@ -80,7 +81,7 @@
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
       "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
       "identity_alias": "codex_local",
-      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "proposed_cli_argv": null
     },
     {
@@ -106,7 +107,7 @@
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
       "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
       "identity_alias": "codex_local",
-      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "proposed_cli_argv": null
     },
     {
@@ -132,7 +133,7 @@
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
       "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
       "identity_alias": "codex_local",
-      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "proposed_cli_argv": null
     },
     {
@@ -158,7 +159,7 @@
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
       "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
       "identity_alias": "codex_local",
-      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "proposed_cli_argv": null
     },
     {
@@ -184,7 +185,7 @@
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
       "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
       "identity_alias": "codex_local",
-      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "proposed_cli_argv": null
     },
     {
@@ -210,7 +211,7 @@
       "timers_and_effects": "Owner scans; new programme absent initially",
       "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
       "identity_alias": "codex_local",
-      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_sns_rewards.bin",
       "proposed_cli_argv": [
         "dfx",
@@ -232,7 +233,8 @@
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity"
+        "DFX_WARNING": "-mainnet_plaintext_identity",
+        "DFX_VERSION": "0.31.0"
       }
     },
     {
@@ -258,7 +260,7 @@
       "timers_and_effects": "Indexing, owner-facing read model and permissionless paid factory entrypoints",
       "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
       "identity_alias": "codex_local",
-      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_historian.bin",
       "proposed_cli_argv": [
         "dfx",
@@ -280,7 +282,8 @@
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity"
+        "DFX_WARNING": "-mainnet_plaintext_identity",
+        "DFX_VERSION": "0.31.0"
       }
     },
     {
@@ -306,7 +309,7 @@
       "timers_and_effects": "Managed-canister top-ups and aggregate forwarding; initially empty surplus recipients",
       "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
       "identity_alias": "codex_local",
-      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_relay.bin",
       "proposed_cli_argv": [
         "dfx",
@@ -328,7 +331,8 @@
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity"
+        "DFX_WARNING": "-mainnet_plaintext_identity",
+        "DFX_VERSION": "0.31.0"
       }
     },
     {
@@ -354,7 +358,7 @@
       "timers_and_effects": "Ledger/Index scans, settlement transfers and CMC notifications",
       "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
       "identity_alias": "codex_local",
-      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_faucet.bin",
       "proposed_cli_argv": [
         "dfx",
@@ -376,7 +380,8 @@
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity"
+        "DFX_WARNING": "-mainnet_plaintext_identity",
+        "DFX_VERSION": "0.31.0"
       }
     },
     {
@@ -402,7 +407,7 @@
       "timers_and_effects": "NNS reads/maturity disbursement and payout scheduling; unarmed rescue is not financial inactivity",
       "gate": "Approve exact fresh initialization, financial timer/maturity startup and installation time; helper-local migration explicitly not required; preserve external NNS neuron/Account.",
       "identity_alias": "codex_local",
-      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "preservation_decision": {
         "transition": "disposable-helper-replacement",
         "state_and_pending_effects": "Operator explicitly accepts discarding all helper-local heap/stable state: neuron-creation lifecycle complete, no migration required. This is a preservation waiver, not proof of empty state or absence of prior pending effects. Preserve external NNS neuron settings, stake, maturity and staking Account; review financial timer startup before approved reinstall.",
@@ -429,7 +434,8 @@
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity"
+        "DFX_WARNING": "-mainnet_plaintext_identity",
+        "DFX_VERSION": "0.31.0"
       }
     },
     {
@@ -455,7 +461,7 @@
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
       "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
       "identity_alias": "codex_local",
-      "execution_tool": "dfx 0.27.0; not ICP CLI identity-store substitution",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_faucet_frontend.bin",
       "proposed_cli_argv": [
         "dfx",
@@ -477,7 +483,8 @@
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity"
+        "DFX_WARNING": "-mainnet_plaintext_identity",
+        "DFX_VERSION": "0.31.0"
       }
     }
   ],
@@ -1173,10 +1180,11 @@
   "authority_report": "authority-2026-11-15.json",
   "execution_provider": {
     "tool": "dfx",
-    "version": "0.27.0",
+    "version": "0.31.0",
     "alias": "codex_local",
     "principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
-    "icp_cli_alias": null
+    "icp_cli_alias": null,
+    "read_time_version_recorded": false
   },
   "helper_policy": "Direct same-principal reinstall with validated fresh arguments; no preliminary uninstall, no helper-local migration, no canister/neuron recreation. External NNS settings untouched by preparation; later worker maturity effects require startup approval.",
   "participant_neuron_operations": [
@@ -1209,5 +1217,6 @@
       "gate": "Later explicit SNS-neuron operation and setting/ownership read approval after actual SNS installation; this is not the permanent NNS neuron."
     }
   ],
-  "execution_warning_scope": "DFX reports plaintext local custody. The warning acknowledgement is command-scoped and only for an exact separately approved acceptance operation; never global, never personal/production signing. No install command was run."
+  "execution_warning_scope": "DFX reports plaintext local custody. The warning acknowledgement is command-scoped and only for an exact separately approved acceptance operation; never global, never personal/production signing. No install command was run.",
+  "tool_version_correction": "Repository context said 0.27.0; final supported tool check reports 0.31.0, and all three providers signed verified offline read envelopes with DFX_VERSION=0.31.0. Read-time executable version was not captured separately; no toolchain upgrade or live repeat was performed. Original read metadata labels were assumptions, not observed versions."
 }

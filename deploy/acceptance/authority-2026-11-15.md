@@ -12,13 +12,22 @@ questions, not its observations.
 
 The deployment executor and temporary acceptance governance voter intentionally
 share **`amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae`**.
-Its provider is existing **DFX 0.27.0 `codex_local`**. Ordinary public derivation
+Its provider is existing **DFX 0.31.0 `codex_local`**. Ordinary public derivation
 matched; DFX signed native status envelopes with network access disabled;
 independent standard IC-domain ECDSA verification matched the public principal;
 all twelve actual controller-authorized status responses succeeded and passed
 normal SDK mainnet BLS certificate/range/freshness checks. The execution route
 uses DFX's provider, not an assumed ICP CLI alias or copied key. No new executor
 or controller delegation is needed.
+
+Tool-version correction: the repository context said 0.27.0, which I initially
+used as an unverified label. The final ordinary tool check reports 0.31.0. The
+read-time executable version was not captured separately, so original labels
+are not version observations. The current 0.31 provider was command-scoped and
+re-tested offline for all three identities, with independent signature checks;
+no live read was repeated and no toolchain was upgraded. The same automatic
+Candid-discovery path exists in both inspected releases. Proposed commands pin
+`DFX_VERSION=0.31.0`; this is not a global version change.
 
 The personal principal
 `zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe`
@@ -81,7 +90,7 @@ at its own time, not an atomic snapshot. Participant default ICP balances were
 normal signature/freshness validation; no fallback identity was tried.
 
 **The information call exceeded the method allowlist through DFX automatic
-interface discovery.** I omitted its local `--candid` option. The pinned CLI's
+interface discovery.** I omitted its local `--candid` option. The inspected CLI's
 `fetch_remote_did_file` path attempts management-facade `candid:service` metadata
 and `__get_candid_interface_tmp_hack` before the requested `canister_info` query.
 The missing-interface warning and exact pinned source are retained. These two
@@ -199,7 +208,7 @@ to unchanged reviewed acceptance Wasm hashes, the observed controller/module
 preconditions, explicit install/reinstall modes and DFX execution route. Seven
 application argument vectors are review data only; no install was run. Framework
 vectors/hashes remain null until the schedule is supplied. The proposed-operation
-record SHA-256 is `742a595e782ec1bea6f64284f6eebe2cf5654b64773ac537c1bd93f3f1cfdbb7`. Retained Wasms have
+record SHA-256 is `2234368d865cd61f29afe121d06aa92ca558bc8c1c6eabaecab5077d7103d444`. Retained Wasms have
 unchanged executable bindings; their original sidecars/source identity are not
 relabelled as a fresh build. Both bootstrap controllers remain through install
 and rehearsal. Explicit intermediate additions grant Root/Governance (or self

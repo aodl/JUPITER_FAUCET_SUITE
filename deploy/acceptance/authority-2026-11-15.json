@@ -4,12 +4,14 @@
   "executor": {
     "principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
     "alias": "codex_local",
-    "provider": "Existing DFX 0.27.0 secp256k1 provider",
+    "provider": "Existing DFX 0.31.0 secp256k1 provider",
     "public_principal_verified": true,
     "independent_offline_signature_verification": "Node crypto verifies DFX IC-domain ECDSA signatures and self-authenticating sender against exact principal",
     "authenticated_route_verified": "All twelve replicated canister_status responses verified with standard SDK BLS certificates/ranges/freshness after DFX offline signing",
     "icp_cli_identity_alias_equivalence_claimed": false,
-    "custody": "DFX reports plaintext local storage; private key was not inspected/exported/copied. Use is confined to explicit acceptance authorization; no production or personal identity dependency was introduced."
+    "custody": "DFX reports plaintext local storage; private key was not inspected/exported/copied. Use is confined to explicit acceptance authorization; no production or personal identity dependency was introduced.",
+    "tool_version_correction": "Repository context said 0.27.0; final supported tool check reports 0.31.0, and all three providers signed verified offline read envelopes with DFX_VERSION=0.31.0. Read-time executable version was not captured separately; no toolchain upgrade or live repeat was performed. Original read metadata labels were assumptions, not observed versions.",
+    "future_command_scoped_version": "0.31.0"
   },
   "protected_personal_identity": {
     "principal": "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
@@ -104,7 +106,7 @@
       "management facade candid:service read_state metadata",
       "management facade __get_candid_interface_tmp_hack query"
     ],
-    "evidence_basis": "Source-inferred from pinned DFX 0.27.0 fetch_remote_did_file path and observed missing-interface warning; raw CLI transport was not captured. Do not describe as a clean 15-only run.",
+    "evidence_basis": "Source-inferred from inspected DFX 0.27 and 0.31 fetch_remote_did_file paths plus the actual missing-interface warning; raw CLI traffic/read-time executable version were not captured. Final tool check observed 0.31.0. Do not describe as a clean 15-only run.",
     "root_cause": "canister_info DFX call omitted a local --candid file; normal CLI discovery precedes the requested method.",
     "retries": "Guarded status and participant transports recorded none. Pinned DFX ic-agent defaults to zero TCP retries, but CLI transport-level count is not independently captured.",
     "physical_http_directly_logged": 15,

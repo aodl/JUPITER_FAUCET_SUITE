@@ -4,7 +4,7 @@
   "voting_authority": {
     "principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
     "kind": "temporary-acceptance",
-    "executable_route": "Existing DFX 0.27.0 identity codex_local; public derivation, independently verified offline signatures and twelve authenticated replicated canister_status replies on 15 November 2026. DFX identity is not an ICP CLI alias. No personal signer access."
+    "executable_route": "Existing DFX identity codex_local. Final command-scoped 0.31.0 provider verified by independent offline signatures; read-time executable version was not separately captured. Twelve authenticated replicated canister_status replies establish the same amzih public principal/controller route. DFX is not an ICP CLI alias; no personal signer access."
   },
   "acceptance_start_timestamp_seconds": null,
   "genesis_timestamp_seconds": null,
