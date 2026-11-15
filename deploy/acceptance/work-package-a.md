@@ -27,8 +27,8 @@ No signing key, identity export or credential file is needed.
 | Twelve roles | All assignments approved in operator reply | `roles_confirmed`, existing profile role map; build bindings and all constructors | No further role decision |
 | Deployment executor | Verified `amzih-…-3ae`, existing DFX `codex_local`; not an ICP CLI alias | `operator`; constructor/controller role and parked Swap fallback | Resolved; only exact later operations may be signed |
 | Protected personal principal | `zkkkd-…-wqe`; historical/bootstrap controller only, no signing access | Explicit protected-identity rejection in preparation tools | Never a required Codex signer |
-| 10m neuron executor | Same verified `amzih-…-3ae`; temporary acceptance-only 2/3/4 | `voting_authority = {principal, kind, executable_route}`; nonce-1 Governance neuron | Executable ordinary governance |
-| Temporary exception | Approved for acceptance only | `kind = temporary-acceptance`; native permissions 2/3/4 | Real NNX is a later handover, not an installation prerequisite |
+| 10m neuron executor | Same verified `amzih-…-3ae`; temporary acceptance-only 3/4/10 | `voting_authority = {principal, kind, executable_route}`; nonce-1 Governance neuron | Executable ordinary governance |
+| Temporary exception | Approved for acceptance only | `kind = temporary-acceptance`; native permissions 3/4/10 | Real NNX is a later handover, not an installation prerequisite |
 | Acceptance clock | Activation-checkpoint policy approved; final genesis/start seconds await schedule | `genesis_timestamp_seconds`, `acceptance_start_timestamp_seconds`; neuron age and programme reward clock separately | Framework constructors and patron activation |
 | 20,000 jUP test bucket | A/B created, isolated and signing-tested; exact public principals in owner decisions | `test_allocations`; nonces 10/11 for A and 20/21 for B | Framework constructors |
 | Relay surplus | Temporary `[]` approved and recorded in profile | `relay_surplus_neuron_recipients`; canonical Relay constructor | No initial surplus decision; eventual policy remains separate |
@@ -40,8 +40,8 @@ No signing key, identity export or credential file is needed.
 For the authority object use `kind = real-nnx` only when its actual executor can
 make `manage_neuron` calls as that principal. An address, inaccessible canister,
 or principal copied from production is insufficient. A temporary executor gets
-ManagePrincipals, SubmitProposal and Vote (2/3/4), without Disburse/Split.
-Grant final 2/3/4, prove a final-executor vote, then revoke temporary 2/3/4 and
+SubmitProposal, Vote and ManageVotingPermission (3/4/10), without Disburse/Split.
+Grant final 3/4/10, prove a final-executor vote, then revoke temporary 3/4/10 and
 prove denial. Retain the original neuron ID/Account and exact exclusions.
 The local rehearsal demonstrates this mechanism with owned fixture callers;
 it supplies no approval or evidence about a real NNX implementation.
@@ -60,7 +60,7 @@ it does not relabel the small contested fixture. Supply reconciliation is:
 
 | Role | jUP | Identity / permissions |
 |---|---:|---|
-| Governance authority | 10,000,000 | Approved executor, nonce 1; 2/3/4; exact one-year delay |
+| Governance authority | 10,000,000 | Approved executor, nonce 1; 3/4/10; exact one-year delay |
 | Reserve transport | 89,979,900 | Acceptance SNS Rewards, nonce 2; Disburse only; zero delay/vesting |
 | Operational proposer | 100 | Acceptance SNS Rewards, nonce 3; SubmitProposal only; one-year delay |
 | Test bucket | 20,000 | Four approved 5,000-jUP neurons: A memos 10/11, B memos 20/21 |
@@ -297,3 +297,9 @@ The remaining owner inputs are the two schedule timestamps, funding-source/
 spend approval and exact installation/activation/controller-transition approvals.
 No helper-source, participant-selection or personal-signing request remains. Build and test evidence is recorded separately
 in `validation-a.md`; no local result is a mainnet observation.
+
+The final governance correction uses native `[3,4,10]` and enforces
+`genesis_timestamp_seconds <= acceptance_start_timestamp_seconds`.
+See [governance-correction.md](governance-correction.md) for authentic escalation
+denials, the proposed two-day schedule and the remaining approval sheet. Neither
+clock is approved or populated; voting still influences financial proposals.

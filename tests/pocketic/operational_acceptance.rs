@@ -12,19 +12,29 @@ struct Parameters {
 struct RewardParameters {
     initial_reward_rate_basis_points: Option<u64>,
 }
-#[derive(CandidType, Deserialize)]
+#[derive(CandidType, Deserialize, Debug)]
 struct NeuronId {
     id: Vec<u8>,
 }
-#[derive(CandidType, Deserialize)]
+#[derive(CandidType, Deserialize, Debug)]
 struct Neuron {
     id: Option<NeuronId>,
     cached_neuron_stake_e8s: u64,
+    dissolve_state: Option<DissolveState>,
+    aging_since_timestamp_seconds: u64,
+    voting_power_percentage_multiplier: u64,
+    neuron_fees_e8s: u64,
     permissions: Vec<Permission>,
 }
-#[derive(CandidType, Deserialize)]
+#[derive(CandidType, Deserialize, Debug)]
 struct Permission {
     principal: Option<Principal>,
+    permission_type: Vec<i32>,
+}
+#[derive(CandidType, Deserialize, Debug, PartialEq)]
+enum DissolveState {
+    DissolveDelaySeconds(u64),
+    WhenDissolvedTimestampSeconds(u64),
 }
 #[derive(CandidType)]
 struct GetNeuron {
@@ -47,6 +57,81 @@ fn succeeded(reply: &IDLValue, name: &str) -> Result<()> {
         "{reply}"
     );
     Ok(())
+}
+
+fn not_authorized(reply: &IDLValue) -> Result<()> {
+    succeeded(reply, "Error")?;
+    let IDLValue::Variant(error) = opted(field(reply, "command")?)? else {
+        unreachable!()
+    };
+    // Exact official ErrorType::NotAuthorized, not any generic failure.
+    assert_eq!(field(&error.0.val, "error_type")?, &IDLValue::Int32(2));
+    Ok(())
+}
+
+fn neuron_state(
+    pic: &PocketIc,
+    governance: Principal,
+    caller: Principal,
+    id: &[u8],
+) -> Result<Neuron> {
+    let reply: NeuronReply = query_one(
+        pic,
+        governance,
+        caller,
+        "get_neuron",
+        GetNeuron {
+            neuron_id: Some(NeuronId { id: id.to_vec() }),
+        },
+    )?;
+    match reply.result {
+        Some(NeuronResult::Neuron(n)) => Ok(n),
+        _ => bail!("governance neuron missing"),
+    }
+}
+
+fn ballot_power(
+    pic: &PocketIc,
+    governance: Principal,
+    caller: Principal,
+    proposal: u64,
+    neuron: &[u8],
+) -> Result<u64> {
+    #[derive(CandidType, Deserialize)]
+    struct Ballot {
+        voting_power: u64,
+    }
+    #[derive(CandidType, Deserialize)]
+    struct Data {
+        ballots: Vec<(String, Ballot)>,
+    }
+    #[derive(CandidType, Deserialize)]
+    enum ResultValue {
+        Proposal(Data),
+        Error(candid::Reserved),
+    }
+    #[derive(CandidType, Deserialize)]
+    struct Reply {
+        result: Option<ResultValue>,
+    }
+    let reply: Reply = query_one(
+        pic,
+        governance,
+        caller,
+        "get_proposal",
+        GetProposal {
+            proposal_id: Some(ProposalId { id: proposal }),
+        },
+    )?;
+    let Some(ResultValue::Proposal(p)) = reply.result else {
+        bail!("proposal ballot missing")
+    };
+    Ok(p.ballots
+        .into_iter()
+        .find(|(id, _)| *id == hex::encode(neuron))
+        .context("dominant ballot missing")?
+        .1
+        .voting_power)
 }
 
 fn proposal_id(reply: &IDLValue) -> Result<u64> {
@@ -320,14 +405,56 @@ op.recipes(p,ids,policy,out/'sns/governance.interface.did',out/'governance')
     let total: Nat = query_one(&pic, ledger, operator, "icrc1_total_supply", ())?;
     assert_eq!(total, Nat::from(100_000_000_u64 * 100_000_000));
     let did = evidence.join("sns/governance.interface.did");
-    // Grant an owned final executor; the original staking identity stays fixed.
-    let grant=format!("variant {{ AddNeuronPermissions = record {{ principal_id = opt principal \"{executor}\"; permissions_to_add = opt record {{ permissions = vec {{ 2 : int32; 3; 4 }} }} }} }}");
+    let initial = neuron_state(&pic, governance, bootstrap, &dominant)?;
+    assert_eq!(initial.permissions.len(), 1);
+    assert_eq!(initial.permissions[0].permission_type, vec![3, 4, 10]);
+    let action="variant { ManageNervousSystemParameters = record { automatically_advance_target_version = opt false } }";
+    // Authentic native submission by the temporary voter (automatic Yes).
+    let submitted = proposal_id(&manage(
+        &pic, governance, bootstrap, &dominant, action, &did,
+    )?)?;
+    let submitter_power = ballot_power(&pic, governance, bootstrap, submitted, &dominant)?;
+    assert!(submitter_power > 10_000_000_u64 * 100_000_000);
+    // Every non-voting permission, including mixed requests, must fail for both
+    // self and another principal while global grantability remains unchanged.
+    for recipient in [bootstrap, executor] {
+        for code in [1, 2, 5, 6, 7, 8, 9] {
+            for permissions in [format!("{code} : int32"), format!("3 : int32; {code}")] {
+                let escalation = format!("variant {{ AddNeuronPermissions = record {{ principal_id = opt principal \"{recipient}\"; permissions_to_add = opt record {{ permissions = vec {{ {permissions} }} }} }} }}");
+                not_authorized(&manage_command(
+                    &pic,
+                    governance,
+                    bootstrap,
+                    &dominant,
+                    &escalation,
+                    &did,
+                )?)?;
+            }
+        }
+    }
+    // Explicit native Vote by the temporary voter on a small participant's proposal.
+    let id = proposal_id(&manage(&pic, governance, user, &user_sub, action, &did)?)?;
+    let initial_power = ballot_power(&pic, governance, bootstrap, id, &dominant)?;
+    let vote = format!("variant {{ RegisterVote = record {{ proposal = opt record {{ id = {id} }}; vote = 1 : int32 }} }}");
+    succeeded(
+        &manage_command(&pic, governance, bootstrap, &dominant, &vote, &did)?,
+        "RegisterVote",
+    )?;
+    // Grant voting-only rights. The original staking identity stays fixed.
+    let grant = format!("variant {{ AddNeuronPermissions = record {{ principal_id = opt principal \"{executor}\"; permissions_to_add = opt record {{ permissions = vec {{ 3 : int32; 4; 10 }} }} }} }}");
     succeeded(
         &manage_command(&pic, governance, bootstrap, &dominant, &grant, &did)?,
         "AddNeuronPermission",
     )?;
-    let action="variant { ManageNervousSystemParameters = record { automatically_advance_target_version = opt false } }";
-    // The small user proposes. Only the final executor's real vote decides.
+    let submitted = proposal_id(&manage(
+        &pic, governance, executor, &dominant, action, &did,
+    )?)?;
+    assert_eq!(
+        ballot_power(&pic, governance, executor, submitted, &dominant)?,
+        submitter_power,
+        "permission changes preserve actual native ballot weight at the fixed local clock"
+    );
+    // The final executor's explicit Vote decides a distinct pending proposal.
     let id = proposal_id(&manage(&pic, governance, user, &user_sub, action, &did)?)?;
     let before: ProposalReply = query_one(
         &pic,
@@ -342,7 +469,7 @@ op.recipes(p,ids,policy,out/'sns/governance.interface.did',out/'governance')
         bail!("proposal missing")
     };
     assert_eq!(before.executed_timestamp_seconds, 0);
-    let vote=format!("variant {{ RegisterVote = record {{ proposal = opt record {{ id = {id} }}; vote = 1 : int32 }} }}");
+    let vote = format!("variant {{ RegisterVote = record {{ proposal = opt record {{ id = {id} }}; vote = 1 : int32 }} }}");
     succeeded(
         &manage_command(&pic, governance, executor, &dominant, &vote, &did)?,
         "RegisterVote",
@@ -363,14 +490,62 @@ op.recipes(p,ids,policy,out/'sns/governance.interface.did',out/'governance')
         bail!("proposal missing")
     };
     assert!(after.executed_timestamp_seconds > 0);
-    // Revoke only after the final executor has proved its voting route.
-    let remove=format!("variant {{ RemoveNeuronPermissions = record {{ principal_id = opt principal \"{bootstrap}\"; permissions_to_remove = opt record {{ permissions = vec {{ 2 : int32; 3; 4 }} }} }} }}");
+    // Temporary voter removes its OWN rights only after the successor proved
+    // both SubmitProposal and Vote, retaining the successor's permission manager.
+    let remove = format!("variant {{ RemoveNeuronPermissions = record {{ principal_id = opt principal \"{bootstrap}\"; permissions_to_remove = opt record {{ permissions = vec {{ 3 : int32; 4; 10 }} }} }} }}");
     succeeded(
-        &manage_command(&pic, governance, executor, &dominant, &remove, &did)?,
+        &manage_command(&pic, governance, bootstrap, &dominant, &remove, &did)?,
         "RemoveNeuronPermission",
     )?;
-    let denied = manage(&pic, governance, bootstrap, &dominant, action, &did)?;
-    succeeded(&denied, "Error")?;
+    let handed = neuron_state(&pic, governance, executor, &dominant)?;
+    assert_eq!(
+        handed.id.as_ref().unwrap().id,
+        initial.id.as_ref().unwrap().id
+    );
+    assert_eq!(
+        handed.cached_neuron_stake_e8s,
+        initial.cached_neuron_stake_e8s
+    );
+    assert_eq!(handed.dissolve_state, initial.dissolve_state);
+    assert_eq!(
+        handed.dissolve_state,
+        Some(DissolveState::DissolveDelaySeconds(31_557_600))
+    );
+    assert_eq!(
+        handed.aging_since_timestamp_seconds,
+        initial.aging_since_timestamp_seconds
+    );
+    assert_eq!(
+        handed.voting_power_percentage_multiplier,
+        initial.voting_power_percentage_multiplier
+    );
+    assert_eq!(handed.neuron_fees_e8s, initial.neuron_fees_e8s);
+    assert_eq!(handed.permissions.len(), 1);
+    assert_eq!(handed.permissions[0].principal, Some(executor));
+    assert_eq!(handed.permissions[0].permission_type, vec![3, 4, 10]);
+    not_authorized(&manage(
+        &pic, governance, bootstrap, &dominant, action, &did,
+    )?)?;
+    not_authorized(&manage_command(
+        &pic, governance, bootstrap, &dominant, &grant, &did,
+    )?)?;
+    not_authorized(&manage_command(
+        &pic, governance, bootstrap, &dominant, &remove, &did,
+    )?)?;
+    let id = proposal_id(&manage(&pic, governance, user, &user_sub, action, &did)?)?;
+    let vote = format!("variant {{ RegisterVote = record {{ proposal = opt record {{ id = {id} }}; vote = 1 : int32 }} }}");
+    not_authorized(&manage_command(
+        &pic, governance, bootstrap, &dominant, &vote, &did,
+    )?)?;
+    succeeded(
+        &manage_command(&pic, governance, executor, &dominant, &vote, &did)?,
+        "RegisterVote",
+    )?;
+    assert_eq!(
+        ballot_power(&pic, governance, executor, id, &dominant)?,
+        initial_power
+    );
+    println!("native [3,4,10] handover: proposal/vote; 28 escalation denials; self-revoke; four NotAuthorized denials; unchanged neuron/stake/delay/age/ballot weight");
     // Use the generated typed recognition args through Governance's native
     // upgrade action, with production application code and real disbursement.
     let path = evidence.join("production.wasm");
@@ -413,6 +588,22 @@ op.recipes(p,ids,policy,out/'sns/governance.interface.did',out/'governance')
         }
     }
     assert!(verified, "native reserve transport must complete");
+    #[derive(CandidType, Deserialize)]
+    struct Exclusions {
+        protocol_governance_neuron: Vec<u8>,
+        excluded_jup_neurons: Vec<Vec<u8>>,
+    }
+    #[derive(CandidType, Deserialize)]
+    struct Configured {
+        config: Option<Exclusions>,
+    }
+    let configured: Configured = query_one(&pic, rewards, executor, "get_programme_status", ())?;
+    let configured = configured.config.context("installed programme config")?;
+    assert_eq!(configured.protocol_governance_neuron, dominant);
+    assert!(
+        configured.excluded_jup_neurons.contains(&dominant),
+        "external IO exclusion keeps the original neuron ID across permission handover"
+    );
     let paid = support::ledger::icrc1_balance(&pic, ledger, &reserve)?;
     assert_eq!(paid, 89_979_900_u64 * 100_000_000 - 1_000_000);
     let source = Account {
@@ -438,6 +629,7 @@ op.recipes(p,ids,policy,out/'sns/governance.interface.did',out/'governance')
     assert_eq!(n.cached_neuron_stake_e8s, 10_000_000_u64 * 100_000_000);
     assert_eq!(n.permissions.len(), 1);
     assert_eq!(n.permissions[0].principal, Some(executor));
+    assert_eq!(n.permissions[0].permission_type, vec![3, 4, 10]);
     assert_eq!(
         support::ledger::icrc1_balance(
             &pic,

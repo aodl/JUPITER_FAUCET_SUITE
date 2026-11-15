@@ -68,8 +68,8 @@ def neuron(controller, memo, stake, delay, permissions):
 def render(profile, decisions, local=False):
     """Build exact economics with an explicit executable voting route.
 
-    Vote, SubmitProposal and ManagePrincipals suffice for ordinary operation and
-    later handover. Neither economic control nor a human is silently selected.
+    SubmitProposal, Vote and ManageVotingPermission allow voting handover
+    without granting direct economic permissions or ManagePrincipals.
     """
     required = {'roles_confirmed', 'operator', 'voting_authority',
         'acceptance_start_timestamp_seconds', 'genesis_timestamp_seconds',
@@ -94,6 +94,8 @@ def render(profile, decisions, local=False):
         raise ValueError('voting executor must have its own executable route, outside the twelve roles')
     for name in ('genesis_timestamp_seconds', 'acceptance_start_timestamp_seconds'):
         natural(decisions[name], name, positive=True)
+    if decisions['genesis_timestamp_seconds'] > decisions['acceptance_start_timestamp_seconds']:
+        raise ValueError('genesis_timestamp_seconds must be <= acceptance_start_timestamp_seconds')
     if p['relay_surplus_neuron_recipients'] is None:
         raise ValueError('Relay surplus decision is unresolved')
     allocations = decisions['test_allocations']
@@ -109,7 +111,7 @@ def render(profile, decisions, local=False):
             or [entry.get('memo') for entry in allocations] != [10, 11, 20, 21]):
         raise ValueError('approved A/B allocation requires four distinct-memo 5000-jUP zero/year neurons')
     rewards = p['roles']['jupiter_sns_rewards']
-    neurons = [neuron(authority['principal'], 1, e['governance_stake_e8s'], e['year_seconds'], [2, 3, 4]),
+    neurons = [neuron(authority['principal'], 1, e['governance_stake_e8s'], e['year_seconds'], [3, 4, 10]),
         neuron(rewards, 2, e['reserve_transport_e8s'], 0, [5]),
         neuron(rewards, 3, e['proposer_stake_e8s'], e['year_seconds'], [3])]
     balances = []
@@ -313,7 +315,7 @@ if __name__ == '__main__':
                     raise ValueError('permissions operation must be grant or revoke')
                 name, field = ('AddNeuronPermissions', 'permissions_to_add') if args.operation == 'grant' else ('RemoveNeuronPermissions', 'permissions_to_remove')
                 command = 'variant { ' + name + ' = ' + cd.record(principal_id='opt ' + cd.principal(args.principal),
-                    **{field: 'opt record { permissions = vec { 2 : int32; 3; 4 } }'}) + ' }'
+                    **{field: 'opt record { permissions = vec { 3 : int32; 4; 10 } }'}) + ' }'
             cd.write_constructor(out, 'proposal', args.governance_did, '(ManageNeuron)', manage_value(args.neuron_id_hex, command))
             manifest(out)
     except (ValueError, KeyError, OSError) as error:

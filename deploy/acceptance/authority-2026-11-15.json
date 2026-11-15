@@ -22,17 +22,23 @@
   "temporary_governance_voter": {
     "principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
     "native_permissions": [
+      3,
+      4,
+      10
+    ],
+    "permissions_names": [
+      "SubmitProposal",
+      "Vote",
+      "ManageVotingPermission"
+    ],
+    "disburse_or_split": false,
+    "handover": "Grant final executor [3,4,10], prove its genuine vote, revoke temporary rights, prove denial; preserve original neuron ID/Account; no live permission operation authorized.",
+    "superseded_proposed_permissions": [
       2,
       3,
       4
     ],
-    "permissions_names": [
-      "ManagePrincipals",
-      "SubmitProposal",
-      "Vote"
-    ],
-    "disburse_or_split": false,
-    "handover": "Grant final executor [2,3,4], prove its genuine vote, revoke temporary rights, prove denial; preserve original neuron ID/Account; no live permission operation authorized."
+    "correction": "governance-correction.md; original read observations unchanged; no live governance mutation"
   },
   "future_nnx_executor": {
     "principal": null,

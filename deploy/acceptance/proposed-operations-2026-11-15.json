@@ -1155,7 +1155,7 @@
     }
   ],
   "bootstrap_policy": "Retain both observed controllers through installation and initial runtime/recovery rehearsals. Codex executor is amzih; personal zkkkd is historical/bootstrap only and is never a Codex signer. Any later full controller-set replacement explicitly removes personal/bootstrap rights under separate approval. Explicit intermediate additions retain both bootstrap controllers while granting Root/Governance (or Faucet/Disburser self) the authority needed for rehearsal. Only later full-set removals narrow control after real execution/recovery checks.",
-  "genesis_policy": "Exact verified executor and participant identities now recorded; four approved memos 10/11/20/21 and unchanged 100M supply. Only genesis and patron activation timestamps remain null. operational.py candidate fails closed; five framework constructors unavailable until schedule approved.",
+  "genesis_policy": "Exact verified executor and participant identities now recorded; four approved memos 10/11/20/21 and unchanged 100M supply. Only genesis and patron activation timestamps remain null. operational.py candidate fails closed; five framework constructors unavailable until schedule approved. Correction: dominant voting-only permissions [3,4,10]; no ManagePrincipals; global user rights unchanged; enforce genesis <= patron clock. Proposed schedule is review-only, both input clocks remain null.",
   "activation": "Native Governance upgrades in recognition, patron, treasury, bounded continuation order from work-package-a.md; IO settlement disabled; initial Relay surplus empty; no direct operator configuration call.",
   "neuron_mutation": "No live mutation authorized now. Later A/B SNS auto-stake operations use their own DFX aliases and exact derived IDs; B enabling must be verified before 2x test. This is not the Disburser-controlled NNS neuron. No NNS visibility/follow/dissolve/auto-stake setting change proposed.",
   "post_install_reads": "18 separate read checks remain unexecuted and need explicit later approval; future precondition refreshes also need separate authorization; no permission to reuse the completed inventory approval.",
@@ -1228,5 +1228,81 @@
   ],
   "execution_warning_scope": "DFX reports plaintext local custody. The warning acknowledgement is command-scoped and only for an exact separately approved acceptance operation; never global, never personal/production signing. No install command was run.",
   "tool_version_correction": "Repository context said 0.27.0; final supported tool check reports 0.31.0, and all three providers signed verified offline read envelopes with DFX_VERSION=0.31.0. Read-time executable version was not captured separately; no toolchain upgrade or live repeat was performed. Original read metadata labels were assumptions, not observed versions.",
-  "constructor_handoff": "Use .hex sidecars with DFX --argument-type raw --argument-file; .hex decodes exactly to the typed .bin. Do not pass binary files as DFX text or infer Candid numeric types from readable .did."
+  "constructor_handoff": "Use .hex sidecars with DFX --argument-type raw --argument-file; .hex decodes exactly to the typed .bin. Do not pass binary files as DFX text or infer Candid numeric types from readable .did.",
+  "governance_voting_permissions": {
+    "codes": [
+      3,
+      4,
+      10
+    ],
+    "names": [
+      "SubmitProposal",
+      "Vote",
+      "ManageVotingPermission"
+    ],
+    "excluded_codes": [
+      1,
+      2,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "global_claimant_and_grantable_permissions": "unchanged 1 through 10",
+    "warning": "Voting can decide financial Governance proposals; this removes direct neuron-permission escalation only.",
+    "neuron_id_hex": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+    "future_executor": null,
+    "handover_order": [
+      "grant final executor [3,4,10]",
+      "prove final executor native proposal and explicit vote",
+      "temporary voter removes its own [3,4,10]",
+      "prove former submit/vote/add/remove rejected and successor remains authorized"
+    ],
+    "native_recipe": "tools/acceptance/operational.py permissions; final grant remains blocked until real NNX principal and signing route are approved; no fake authority payload",
+    "live_operations_authorized": false,
+    "unsigned_future_self_revocation": {
+      "payload_sha256": "4e687e9779057f66ee1168a2ca0aefbd1f54ba7697b53943a57686b7ee68f686",
+      "payload_file": "target/acceptance-governance-correction/future-temp-revoke/proposal.bin",
+      "raw_hex_file": "target/acceptance-governance-correction/future-temp-revoke/proposal.hex",
+      "signed_or_submitted": false,
+      "gate": "Later separate authorization only after real final NNX route proves native submission/vote and retains 3/4/10. No live operation authorized."
+    }
+  },
+  "proposed_schedule": {
+    "approved": false,
+    "genesis_checkpoint_utc": "2026-11-17T14:00:00Z",
+    "installation_window_utc": [
+      "2026-11-17T14:00:00Z",
+      "2026-11-17T16:00:00Z"
+    ],
+    "patron_activation_checkpoint_utc": "2026-11-18T14:00:00Z",
+    "order_constraint": "genesis_timestamp_seconds <= acceptance_start_timestamp_seconds",
+    "genesis_timestamp_seconds": null,
+    "acceptance_start_timestamp_seconds": null,
+    "missed_checkpoint": "Pause and obtain revised owner-approved timestamps before constructor/proposal regeneration. Do not backdate or use preparation/fixture time.",
+    "smoke_window": "After final installation and before the next-day patron checkpoint, independently verify Normal mode, tuple/target/pending upgrades, controllers, balance, secure owner snapshot and recognition/reserve/proposer readiness; new read authorization required."
+  },
+  "funding_methods_without_personal_provider": [
+    {
+      "method": "External funding wallet",
+      "procedure": "Operator or nominated independent funder sends exact approved ICP to the listed participant/Relay/Governance Accounts through their own wallet/provider; Codex never accesses that provider. Source selection and transaction approval still required."
+    },
+    {
+      "method": "Fund acceptance executor default Account",
+      "destination": {
+        "owner": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "subaccountHex": null,
+        "address": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "explorerAccountHex": "bab708d3f58aad4861d1ece056efbe900721dd02c7037af5cab4488e288f2236"
+      },
+      "procedure": "Nominated external funder provisions only an approved capped amount to codex_local default Account; later Codex transfers require separate exact approval. Existing plaintext-at-rest custody limitation applies; no personal credentials are bridged."
+    },
+    {
+      "method": "External cycles provider",
+      "procedure": "Nominated funded cycles wallet/provider sends separately approved deposit_cycles to the twelve explicit canister principals; do not send ICP to a canister principal expecting its main cycles to increase. Exact dated deficits are in funding-sheet.json; source, conversion quote/fees and spend cap remain unresolved."
+    }
+  ],
+  "current_preparation_base_commit": "0981156dcc30735600d712eed38b74440c43d8cf",
+  "correction_report": "governance-correction.md"
 }

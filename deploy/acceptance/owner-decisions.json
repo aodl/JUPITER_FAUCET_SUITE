@@ -28,9 +28,9 @@
   "temporary_acceptance_voter_approved": true,
   "temporary_voter_binding": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
   "temporary_voter_native_permissions": [
-    2,
     3,
-    4
+    4,
+    10
   ],
   "mainnet_permission_revocation_authorized": false,
   "acceptance_time_policy": "Fix the acceptance-specific reward timestamp at the explicitly approved patron activation checkpoint; confirm with the installation schedule. Production launch time remains separate.",
@@ -56,7 +56,7 @@
   "future_nnx_executor": {
     "principal": null,
     "route": null,
-    "policy": "Grant [2,3,4], prove real vote, then revoke temporary rights and verify denial; preserve original neuron ID/Account. Future approval required."
+    "policy": "Grant [3,4,10], prove real vote, then revoke temporary rights and verify denial; preserve original neuron ID/Account. Future approval required."
   },
   "helper_transition": "disposable-helper-replacement",
   "bootstrap_controller_history": [
@@ -64,5 +64,6 @@
     "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
   ],
   "retain_both_bootstrap_controllers_until_separate_approval": true,
-  "completed_read_authorization": "One bounded 12-status + 1-info + 2-participant stage only; completed, not standing authority; documented CLI discovery deviation"
+  "completed_read_authorization": "One bounded 12-status + 1-info + 2-participant stage only; completed, not standing authority; documented CLI discovery deviation",
+  "permission_correction": "Owner final governance correction: ManageVotingPermission replaces ManagePrincipals for this neuron only; global claimant/grantable permissions unchanged. Voting can influence financial proposals."
 }

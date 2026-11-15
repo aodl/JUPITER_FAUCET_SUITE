@@ -1,6 +1,8 @@
 import copy
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -76,7 +78,10 @@ class Operational(unittest.TestCase):
         self.assertEqual(g['total_supply'], 100_000_000 * 10**8)
         self.assertEqual(sum(n['stake'] for n in g['neurons']) + sum(b['amount'] for b in g['balances']), g['total_supply'])
         self.assertEqual([n['stake'] for n in g['neurons'][:3]], [10_000_000 * 10**8, 89_979_900 * 10**8, 100 * 10**8])
-        self.assertEqual([n['permissions'][0]['permissions'] for n in g['neurons'][:3]], [[2, 3, 4], [5], [3]])
+        self.assertEqual([n['permissions'][0]['permissions'] for n in g['neurons'][:3]], [[3, 4, 10], [5], [3]])
+        self.assertTrue(all(n['permissions'][0]['permissions'] == list(range(1, 11)) for n in g['neurons'][3:]))
+        self.assertIn('neuron_grantable_permissions', g['parameters'])
+        self.assertEqual(g['parameters'].count('permissions = vec { 1;2;3;4;5;6;7;8;9;10 }'), 2)
         self.assertEqual(g['neurons'][1]['vesting_period_seconds'], 0)
         self.assertEqual(g['neurons'][1]['dissolve_delay'], 0)
         self.assertEqual(set(policy['excluded_jup_neurons']), set(ids.values()))
@@ -85,6 +90,19 @@ class Operational(unittest.TestCase):
         self.assertEqual(policy['automation']['targets'], [])
         for name, n in zip(('governance', 'reserve_transport', 'proposer'), g['neurons']):
             self.assertEqual(ids[name], staking_subaccount(n['controller'], n['memo']))
+
+    def test_clock_order_accepts_equal_and_later_activation_rejects_reversal(self):
+        d = local_decisions()
+        for delta in (0, 3600):
+            d['acceptance_start_timestamp_seconds'] = d['genesis_timestamp_seconds'] + delta
+            op.render(fixture(), d, local=True)
+        d['acceptance_start_timestamp_seconds'] = d['genesis_timestamp_seconds'] - 1
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / 'candidate'
+            d['approved'] = True
+            with self.assertRaisesRegex(ValueError, 'must be <='):
+                op.candidate(fixture(), d, '/unused', out)
+            self.assertFalse(out.exists())
 
     def test_test_bucket_cannot_mint_extra_or_overlap_protocol_roles(self):
         for mutate in (lambda d: d['test_allocations'][0].update(amount_e8s=10**16),
@@ -125,7 +143,7 @@ class Operational(unittest.TestCase):
         self.assertEqual(d['voting_authority']['principal'], p['operator'])
         self.assertEqual(sum(n['stake'] for n in p['genesis']['neurons']), 100_000_000 * 10**8)
         self.assertEqual([n['memo'] for n in p['genesis']['neurons'][3:]], [10, 11, 20, 21])
-        self.assertEqual(p['genesis']['neurons'][0]['permissions'][0]['permissions'], [2, 3, 4])
+        self.assertEqual(p['genesis']['neurons'][0]['permissions'][0]['permissions'], [3, 4, 10])
         self.assertEqual(set(ids.values()), set(policy['excluded_jup_neurons']))
 
     @unittest.skipUnless(os.environ.get('JUPITER_SNS_ARTIFACT_DIR'), 'exact official tuple required')
@@ -176,6 +194,12 @@ class Operational(unittest.TestCase):
             action = op.upgrade_action(p['roles']['jupiter_sns_rewards'], b'\0asm\x01\0\0\0',
                 (out / 'governance/recognition-upgrade-args.bin').read_bytes())
             cd.encode_checked(did, '(ManageNeuron)', '(' + op.manage_value(ids['governance'], op.proposal(action, 'Local wire check')) + ')')
+            for operation in ('grant', 'revoke'):
+                destination = out / operation
+                subprocess.run([sys.executable, str(acceptance.REPO / 'tools/acceptance/operational.py'),
+                    'permissions', str(did), ids['governance'], p['operator'], operation,
+                    str(destination)], check=True, capture_output=True)
+                self.assertIn('vec { 3 : int32; 4; 10 }', (destination / 'proposal.did').read_text())
             with self.assertRaisesRegex(ValueError, 'chunked'):
                 op.upgrade_action(p['roles']['jupiter_sns_rewards'], bytes(1_800_001), b'')
 

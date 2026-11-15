@@ -66,8 +66,10 @@ independently enable its own exact-year **SNS** neuron and verify control/settin
 before a separately approved 2x contribution. Zero-delay positions do not become
 qualifying voters or compounded-reward positions merely by existing.
 
-The 10-million neuron grants only ManagePrincipals, SubmitProposal and Vote
-(native 2/3/4), not Disburse/Split. The final NNX principal/route remain future
+The corrected 10-million neuron grants only SubmitProposal, Vote and ManageVotingPermission
+(native 3/4/10), not Disburse/Split. This supersedes the prior ManagePrincipals proposal; see
+[governance correction](governance-correction.md). Voting still influences
+financial Governance proposals. The final NNX principal/route remain future
 handover inputs, not initial acceptance blockers. Grant the real executor,
 prove its genuine vote, then revoke temporary rights and prove denial while
 preserving the original neuron ID, staking Account and exclusions. The local
@@ -211,7 +213,7 @@ not readable-text numeric inference. An offline, network-blocked DFX 0.31.0
 read-signing check preserved the exact typed bytes and verified the executor
 signature. No install was run. Framework
 vectors/hashes remain null until the schedule is supplied. The proposed-operation
-record SHA-256 is `acaa798efa2dd7544168bb1d0d50a215b1b3d42f67d12532b99befe42a3befd3`. Retained Wasms have
+record SHA-256 is `151eb1a4aa723979318310b0b87cb2b337c430bd5512d7ab8cb7ff202db34dc6`. Retained Wasms have
 unchanged executable bindings; their original sidecars/source identity are not
 relabelled as a fresh build. Both bootstrap controllers remain through install
 and rehearsal. Explicit intermediate additions grant Root/Governance (or self
