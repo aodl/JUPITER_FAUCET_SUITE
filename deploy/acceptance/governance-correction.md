@@ -1,5 +1,11 @@
 # Final governance permission correction and approval sheet
 
+The permission correction below is retained. Its earlier schedule/partial-bundle
+proposal is superseded by the complete configuration-only candidate in
+[installation-approval.md](installation-approval.md): genesis 17 November 2026
+14:00 UTC, patron candidate 19 November 16:00 UTC; final installation-window
+confirmation and every live-operation approval remain separate.
+
 Preparation base: `0981156dcc30735600d712eed38b74440c43d8cf`, draft PR #18.
 This correction authorizes no mainnet call or mutation. Prior status and funding
 observations remain dated evidence, not standing read authority.

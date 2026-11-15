@@ -147,6 +147,29 @@ class Operational(unittest.TestCase):
         self.assertEqual(set(ids.values()), set(policy['excluded_jup_neurons']))
 
     @unittest.skipUnless(os.environ.get('JUPITER_SNS_ARTIFACT_DIR'), 'exact official tuple required')
+    def test_reviewed_candidate_copy_has_exact_clocks_and_native_genesis(self):
+        import datetime
+        d = json.loads((acceptance.PROFILE.parent / 'candidate-inputs.json').read_text())
+        as_seconds = lambda text: int(datetime.datetime.fromisoformat(text).timestamp())
+        self.assertEqual(d['genesis_timestamp_seconds'], as_seconds('2026-11-17T14:00:00+00:00'))
+        self.assertEqual(d['acceptance_start_timestamp_seconds'], as_seconds('2026-11-19T16:00:00+00:00'))
+        self.assertEqual(d['acceptance_start_timestamp_seconds'] - d['genesis_timestamp_seconds'], 50 * 3600)
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / 'candidate'
+            op.candidate(json.loads(acceptance.PROFILE.read_text()), d, os.environ['JUPITER_SNS_ARTIFACT_DIR'], out)
+            self.assertEqual(len(list((out / 'sns').glob('*.bin'))), 5)
+            self.assertEqual(len(list((out / 'applications').glob('*.bin'))), 7)
+            p = json.loads((out / 'profile.json').read_text())
+            self.assertEqual(p['genesis']['purpose'], 'reviewed-acceptance')
+            self.assertEqual(p['genesis']['neurons'][0]['permissions'][0]['permissions'], [3, 4, 10])
+            self.assertEqual(sum(n['stake'] for n in p['genesis']['neurons']), 100_000_000 * 10**8)
+            policy = json.loads((out / 'governance/patron-policy.json').read_text())
+            self.assertEqual(policy['launch_timestamp_seconds'], d['acceptance_start_timestamp_seconds'])
+        baseline = json.loads((acceptance.PROFILE.parent / 'operator-inputs.json').read_text())
+        self.assertIsNone(baseline['genesis_timestamp_seconds'])
+        self.assertIsNone(baseline['acceptance_start_timestamp_seconds'])
+
+    @unittest.skipUnless(os.environ.get('JUPITER_SNS_ARTIFACT_DIR'), 'exact official tuple required')
     def test_complete_candidate_packages_all_typed_inputs_and_verified_framework(self):
         # Synthetic owned identities stay inside a disposable unit-test directory;
         # this exercises the approved-input path, not a live acceptance package.

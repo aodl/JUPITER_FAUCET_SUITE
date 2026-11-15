@@ -1,5 +1,5 @@
 {
-  "status": "PROPOSED; 15 November signed status and participant balance supplement applied; zero authorized spend",
+  "status": "EXTERNAL-WALLET FUNDING PROPOSAL ONLY; dated observations; no transfer/top-up authorized",
   "fee_status": "Observed ICP Ledger icrc1_fee = 10,000 e8s at 2026-11-15T00:39Z; revalidate under separate approval before spending if stale; fee changes invalidate caps",
   "rows": [
     {
@@ -11,12 +11,13 @@
       "delta": 1506579800049,
       "delta_rule": "max(0, desired - freshly_observed_main_balance)",
       "fee": null,
-      "proposed_cap": 3000000000000,
+      "proposed_cap": 1506579800049,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
       "reserved_cycles_observed": 0,
       "freezing_threshold_seconds": 2592000,
-      "current_idle_freezing_reserve_estimate_cycles": 25929781320
+      "current_idle_freezing_reserve_estimate_cycles": 25929781320,
+      "proposed_cap_basis": "Dated delivery delta, not 3T purchase; fresh exact per-destination amount must be approved before spending. Desired post-top-up main balance remains 3T."
     },
     {
       "purpose": "main cycles sns_governance",
@@ -27,12 +28,13 @@
       "delta": 1506580040139,
       "delta_rule": "max(0, desired - freshly_observed_main_balance)",
       "fee": null,
-      "proposed_cap": 3000000000000,
+      "proposed_cap": 1506580040139,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
       "reserved_cycles_observed": 0,
       "freezing_threshold_seconds": 2592000,
-      "current_idle_freezing_reserve_estimate_cycles": 25929781320
+      "current_idle_freezing_reserve_estimate_cycles": 25929781320,
+      "proposed_cap_basis": "Dated delivery delta, not 3T purchase; fresh exact per-destination amount must be approved before spending. Desired post-top-up main balance remains 3T."
     },
     {
       "purpose": "main cycles sns_ledger",
@@ -43,12 +45,13 @@
       "delta": 1506579419909,
       "delta_rule": "max(0, desired - freshly_observed_main_balance)",
       "fee": null,
-      "proposed_cap": 3000000000000,
+      "proposed_cap": 1506579419909,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
       "reserved_cycles_observed": 0,
       "freezing_threshold_seconds": 2592000,
-      "current_idle_freezing_reserve_estimate_cycles": 25929781320
+      "current_idle_freezing_reserve_estimate_cycles": 25929781320,
+      "proposed_cap_basis": "Dated delivery delta, not 3T purchase; fresh exact per-destination amount must be approved before spending. Desired post-top-up main balance remains 3T."
     },
     {
       "purpose": "main cycles sns_index",
@@ -59,12 +62,13 @@
       "delta": 1506579199828,
       "delta_rule": "max(0, desired - freshly_observed_main_balance)",
       "fee": null,
-      "proposed_cap": 3000000000000,
+      "proposed_cap": 1506579199828,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
       "reserved_cycles_observed": 0,
       "freezing_threshold_seconds": 2592000,
-      "current_idle_freezing_reserve_estimate_cycles": 25929781320
+      "current_idle_freezing_reserve_estimate_cycles": 25929781320,
+      "proposed_cap_basis": "Dated delivery delta, not 3T purchase; fresh exact per-destination amount must be approved before spending. Desired post-top-up main balance remains 3T."
     },
     {
       "purpose": "main cycles sns_swap",
@@ -75,12 +79,13 @@
       "delta": 1506578979746,
       "delta_rule": "max(0, desired - freshly_observed_main_balance)",
       "fee": null,
-      "proposed_cap": 3000000000000,
+      "proposed_cap": 1506578979746,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
       "reserved_cycles_observed": 0,
       "freezing_threshold_seconds": 2592000,
-      "current_idle_freezing_reserve_estimate_cycles": 25929781320
+      "current_idle_freezing_reserve_estimate_cycles": 25929781320,
+      "proposed_cap_basis": "Dated delivery delta, not 3T purchase; fresh exact per-destination amount must be approved before spending. Desired post-top-up main balance remains 3T."
     },
     {
       "purpose": "main cycles jupiter_disburser",
@@ -91,12 +96,13 @@
       "delta": 1516005520157,
       "delta_rule": "max(0, desired - freshly_observed_main_balance)",
       "fee": null,
-      "proposed_cap": 3000000000000,
+      "proposed_cap": 1516005520157,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
       "reserved_cycles_observed": 0,
       "freezing_threshold_seconds": 2592000,
-      "current_idle_freezing_reserve_estimate_cycles": 34553594790
+      "current_idle_freezing_reserve_estimate_cycles": 34553594790,
+      "proposed_cap_basis": "Dated delivery delta, not 3T purchase; fresh exact per-destination amount must be approved before spending. Desired post-top-up main balance remains 3T."
     },
     {
       "purpose": "main cycles jupiter_faucet",
@@ -107,12 +113,13 @@
       "delta": 1506578939733,
       "delta_rule": "max(0, desired - freshly_observed_main_balance)",
       "fee": null,
-      "proposed_cap": 3000000000000,
+      "proposed_cap": 1506578939733,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
       "reserved_cycles_observed": 0,
       "freezing_threshold_seconds": 2592000,
-      "current_idle_freezing_reserve_estimate_cycles": 25929781320
+      "current_idle_freezing_reserve_estimate_cycles": 25929781320,
+      "proposed_cap_basis": "Dated delivery delta, not 3T purchase; fresh exact per-destination amount must be approved before spending. Desired post-top-up main balance remains 3T."
     },
     {
       "purpose": "main cycles jupiter_lifeline",
@@ -123,12 +130,13 @@
       "delta": 1506575538480,
       "delta_rule": "max(0, desired - freshly_observed_main_balance)",
       "fee": null,
-      "proposed_cap": 3000000000000,
+      "proposed_cap": 1506575538480,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
       "reserved_cycles_observed": 0,
       "freezing_threshold_seconds": 2592000,
-      "current_idle_freezing_reserve_estimate_cycles": 25929781320
+      "current_idle_freezing_reserve_estimate_cycles": 25929781320,
+      "proposed_cap_basis": "Dated delivery delta, not 3T purchase; fresh exact per-destination amount must be approved before spending. Desired post-top-up main balance remains 3T."
     },
     {
       "purpose": "main cycles jupiter_sns_rewards",
@@ -139,12 +147,13 @@
       "delta": 1506578149441,
       "delta_rule": "max(0, desired - freshly_observed_main_balance)",
       "fee": null,
-      "proposed_cap": 3000000000000,
+      "proposed_cap": 1506578149441,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
       "reserved_cycles_observed": 0,
       "freezing_threshold_seconds": 2592000,
-      "current_idle_freezing_reserve_estimate_cycles": 25929781320
+      "current_idle_freezing_reserve_estimate_cycles": 25929781320,
+      "proposed_cap_basis": "Dated delivery delta, not 3T purchase; fresh exact per-destination amount must be approved before spending. Desired post-top-up main balance remains 3T."
     },
     {
       "purpose": "main cycles jupiter_historian",
@@ -155,12 +164,13 @@
       "delta": 1506576628881,
       "delta_rule": "max(0, desired - freshly_observed_main_balance)",
       "fee": null,
-      "proposed_cap": 3000000000000,
+      "proposed_cap": 1506576628881,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
       "reserved_cycles_observed": 0,
       "freezing_threshold_seconds": 2592000,
-      "current_idle_freezing_reserve_estimate_cycles": 25929781320
+      "current_idle_freezing_reserve_estimate_cycles": 25929781320,
+      "proposed_cap_basis": "Dated delivery delta, not 3T purchase; fresh exact per-destination amount must be approved before spending. Desired post-top-up main balance remains 3T."
     },
     {
       "purpose": "main cycles jupiter_relay",
@@ -171,12 +181,13 @@
       "delta": 1506578399534,
       "delta_rule": "max(0, desired - freshly_observed_main_balance)",
       "fee": null,
-      "proposed_cap": 3000000000000,
+      "proposed_cap": 1506578399534,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
       "reserved_cycles_observed": 0,
       "freezing_threshold_seconds": 2592000,
-      "current_idle_freezing_reserve_estimate_cycles": 25929781320
+      "current_idle_freezing_reserve_estimate_cycles": 25929781320,
+      "proposed_cap_basis": "Dated delivery delta, not 3T purchase; fresh exact per-destination amount must be approved before spending. Desired post-top-up main balance remains 3T."
     },
     {
       "purpose": "main cycles jupiter_faucet_frontend",
@@ -187,12 +198,13 @@
       "delta": 1506574988277,
       "delta_rule": "max(0, desired - freshly_observed_main_balance)",
       "fee": null,
-      "proposed_cap": 3000000000000,
+      "proposed_cap": 1506574988277,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
       "reserved_cycles_observed": 0,
       "freezing_threshold_seconds": 2592000,
-      "current_idle_freezing_reserve_estimate_cycles": 25929781320
+      "current_idle_freezing_reserve_estimate_cycles": 25929781320,
+      "proposed_cap_basis": "Dated delivery delta, not 3T purchase; fresh exact per-destination amount must be approved before spending. Desired post-top-up main balance remains 3T."
     },
     {
       "purpose": "Ledger archive allocation before trigger",
@@ -363,5 +375,12 @@
   "funding_source_identity": null,
   "protected_personal_funding_source_for_codex": false,
   "total_observed_minimum_main_cycles_top_up": 18088365604174,
-  "conditional_archive_incremental_cycles": 1000000000000
+  "conditional_archive_incremental_cycles": 1000000000000,
+  "selected_funding_method": "Independent external wallet/provider; no Codex access to personal funding credentials",
+  "source_wallet": null,
+  "cycles_provider": null,
+  "cycles_requested_delivery_cap": null,
+  "cycles_requested_delivery_cap_rule": "UNAPPROVED ceiling 18.2T cycles; deliver only sum of fresh max(0,3T-main) deficits, never the unused margin. Stop/reapprove if fresh total or provider fees require more. Separate archive/child funding not included.",
+  "fresh_execution_preconditions_authorized": false,
+  "proposed_cycles_delivery_ceiling": 18200000000000
 }

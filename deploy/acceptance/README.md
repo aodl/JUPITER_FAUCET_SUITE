@@ -362,3 +362,8 @@ The [authority and status supplement](authority-2026-11-15.md) records the verif
 Codex executor, created participants, completed helper-local preservation waiver,
 actual cycle deficits, partial constructors and the information-query discovery
 deviation. Historical inventory records are retained without rewriting them.
+
+The complete selected-clock configuration-only installation candidate is in
+[installation-approval.md](installation-approval.md), with [candidate-inputs.json](candidate-inputs.json)
+and the unexecuted [fresh preflight proposal](execution-preconditions.json).
+No timestamp, artifact or constructor preparation authorizes a mainnet operation.

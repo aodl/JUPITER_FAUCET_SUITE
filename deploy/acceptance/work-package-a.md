@@ -303,3 +303,9 @@ The final governance correction uses native `[3,4,10]` and enforces
 See [governance-correction.md](governance-correction.md) for authentic escalation
 denials, the proposed two-day schedule and the remaining approval sheet. Neither
 clock is approved or populated; voting still influences financial proposals.
+
+Complete selected-clock candidate: [installation-approval.md](installation-approval.md)
+and [candidate-inputs.json](candidate-inputs.json). Patron candidate is 19 November
+2026 16:00 UTC, 48 hours after the installation window ends. This supersedes the
+earlier proposed 18 November checkpoint and schedule-blocked preparation status;
+final window confirmation and all live-operation approvals remain unresolved.

@@ -1,8 +1,7 @@
 {
-  "status": "PROPOSED ONLY \u2014 executor, participants and disposable-helper choice resolved; two schedule inputs and all mutation/spend approvals remain gated",
+  "status": "COMPLETE CONFIGURATION-ONLY CANDIDATE; installation window confirmation, fresh execution preconditions and every spend/mutation approval remain required",
   "source_commit": "a7c6cabdb58c3f2b1f26b3654905df24bb131826",
   "observation_report": "inventory-2026-11-15.json",
-  "candidate_archive_sha256": "c18f86b639c10bf6c3fbc56df4b09e5fdf9f3653575373e358ae0758f2abacba",
   "unresolved": [
     "separate genesis installation and patron activation timestamps",
     "funding source and exact spend approvals, including fresh rate/fee/preconditions when separately authorized",
@@ -20,7 +19,7 @@
         "sha256": "0688ab5567bd9cdd4c11447380f2e63c7f91629e598086183047fc06dd5f6d70",
         "raw_sha256": "74e71dff02f1721b00d1c33db6cb14b76bd6e58748618b1b3c1fadb4f9783f3c"
       },
-      "constructor_path_after_guarded_generation": "applications/jupiter_lifeline.bin",
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_lifeline.bin",
       "constructor_sha256": "0fee102bd16b053022b69f2c65fd5e2f41d150ce9c214ac8731cfaf496ebda4e",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
@@ -30,10 +29,10 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_lifeline.bin",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_lifeline.bin",
       "proposed_cli_argv": [
         "dfx",
         "--identity",
@@ -50,14 +49,28 @@
         "--argument-type",
         "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_lifeline.hex"
+        "constructors/applications/jupiter_lifeline.hex"
       ],
-      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity",
-        "DFX_VERSION": "0.31.0"
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
       },
-      "constructor_hex_sha256": "fe7582321d95af083628016a682d14fc487485bc0f6731b1708a61e39e041188"
+      "constructor_hex_sha256": "fe7582321d95af083628016a682d14fc487485bc0f6731b1708a61e39e041188",
+      "constructor_hex_file": "constructors/applications/jupiter_lifeline.hex",
+      "constructor_candid_definition": "interfaces/jupiter_lifeline.did",
+      "constructor_candid_sha256": "ef8337e9bfa311dd11cd811d5490a5c27716fd7c8a91cc553a69080cb847bae7",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 62691,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
     },
     {
       "order": 2,
@@ -70,8 +83,8 @@
         "sha256": "24ef2004240d2a34bcdaa616134d27bc18d11c1e96b378a46d564feedcc1a8c3",
         "raw_sha256": "e2fd07bffa7d71241c3b47e2c8398ef78bfc26b95427a3711a9e579ad5f9f190"
       },
-      "constructor_path_after_guarded_generation": "sns/governance.bin",
-      "constructor_sha256": null,
+      "constructor_path_after_guarded_generation": "constructors/sns/governance.bin",
+      "constructor_sha256": "123f9348365ece40b9c1d212055c68914ce9cd825366eef9d0c5f07870d89e35",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
@@ -80,10 +93,64 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "proposed_cli_argv": null
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "sipaq-hyaaa-aaaas-amyoq-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "framework-templates/governance.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/sns/governance.hex"
+      ],
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/governance.bin",
+      "constructor_hex_sha256": "dba6c3aee4b8cad7836cc606b4b056b5ccd649799935a7d976c8f589b9a13f82",
+      "constructor_hex_file": "constructors/sns/governance.hex",
+      "constructor_candid_definition": "constructors/sns/governance.interface.did",
+      "constructor_candid_sha256": "0d3a00e821c8959991cfb90f4366d101fce340e78f3fb76b0de4ed28c1c08c38",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 2044269,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "chunked",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "stored_chunks",
+          "upload_chunk",
+          "install_chunked_code",
+          "clear_chunk_store"
+        ],
+        "fresh_chunk_count": 2,
+        "chunks": [
+          {
+            "bytes": 1048576,
+            "sha256": "b6415b30baf22d2dac55bb545a16b38e2b259dc238a5fab11ffa7a37042436ae"
+          },
+          {
+            "bytes": 889661,
+            "sha256": "98eeab14e98697c9e23be42721ff94a75ca51ec14e9a4d638209a3e5fbb37cd4"
+          }
+        ],
+        "native_calls_with_empty_store": 5,
+        "precondition": "Separately authorized pre-check confirms empty chunk store before command; stop for owner review if unrelated staged chunks exist. Native SDK reads stored_chunks, uploads missing package chunks and clears its store after installation; all these methods require explicit installation approval."
+      }
     },
     {
       "order": 3,
@@ -96,8 +163,8 @@
         "sha256": "354dd6ecfdc72b5409805b31dea22c9db11df6e14095a5a68924eb63535e6d8a",
         "raw_sha256": "a273d741019b4324b22e2e64cfb0239de148ae9693e8801102a04118dfd383c0"
       },
-      "constructor_path_after_guarded_generation": "sns/ledger.bin",
-      "constructor_sha256": null,
+      "constructor_path_after_guarded_generation": "constructors/sns/ledger.bin",
+      "constructor_sha256": "cb32950dd69d09206735847fb7d5a4e623ca27a0ceef2718fbe7d02563e3edfe",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
@@ -106,10 +173,48 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "proposed_cli_argv": null
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "sgnny-4iaaa-aaaas-amypq-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "framework-templates/ledger.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/sns/ledger.hex"
+      ],
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/ledger.bin",
+      "constructor_hex_sha256": "f814df0ca2e90ca07fbd9f6d8ab562756becd2d59ac9cb58eae3d7745c03458b",
+      "constructor_hex_file": "constructors/sns/ledger.hex",
+      "constructor_candid_definition": "constructors/sns/ledger.interface.did",
+      "constructor_candid_sha256": "02a42599e3d2036a19dcfa53db04ad5a5271b0bd78ac1a5986b3dd361f33a99c",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 683804,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
     },
     {
       "order": 4,
@@ -122,8 +227,8 @@
         "sha256": "dab6808d0dfc06e5e88336d0c3d3e45e5448c6e36c2a781f3e9e09bd450f528c",
         "raw_sha256": "0768d43e0ca776c80515eb917839cbee0adca38ef69fb28280407c28fe4ea979"
       },
-      "constructor_path_after_guarded_generation": "sns/index.bin",
-      "constructor_sha256": null,
+      "constructor_path_after_guarded_generation": "constructors/sns/index.bin",
+      "constructor_sha256": "c8ad314678a03900d37042030cdbddc57c5b78fe1264d9e90e65e678b63d5b85",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
@@ -132,10 +237,48 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "proposed_cli_argv": null
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "x2wx5-xaaaa-aaaas-amyqa-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "framework-templates/index.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/sns/index.hex"
+      ],
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/index.bin",
+      "constructor_hex_sha256": "5de0a888311fa79cae51dbdf4b9f05bc7a3158de6d14c2f1eac75dae75b0ccb3",
+      "constructor_hex_file": "constructors/sns/index.hex",
+      "constructor_candid_definition": "constructors/sns/index.interface.did",
+      "constructor_candid_sha256": "701a43426ae7ba89cb3f348b9925f946e710fb4b2d3c338a2413c18d7112d95d",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 350164,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
     },
     {
       "order": 5,
@@ -148,8 +291,8 @@
         "sha256": "f3c9cd2a503f3136c91f1d44c5b4bac2d5f15a7d347731aaff03e5fa80df8c48",
         "raw_sha256": "3d17f42df29a764fa3d813923646f85aac9f61320d97b2b07c1045ffb342d638"
       },
-      "constructor_path_after_guarded_generation": "sns/swap.bin",
-      "constructor_sha256": null,
+      "constructor_path_after_guarded_generation": "constructors/sns/swap.bin",
+      "constructor_sha256": "ac3e3001699440f1207b0b83dda9c2ff6a8dbc32249fe8c8b73b7211facba528",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
@@ -158,10 +301,48 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "proposed_cli_argv": null
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "x5xrj-2yaaa-aaaas-amyqq-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "framework-templates/swap.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/sns/swap.hex"
+      ],
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/swap.bin",
+      "constructor_hex_sha256": "65932714452c5bc8881d0ca4fe9616d11958570ca0601a37a6d86e9ab681d569",
+      "constructor_hex_file": "constructors/sns/swap.hex",
+      "constructor_candid_definition": "constructors/sns/swap.interface.did",
+      "constructor_candid_sha256": "2f0c524b3f4dd84a63ef0cbe8df37042ad662f7befc9612afe9b9e15ce900f56",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 803543,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
     },
     {
       "order": 6,
@@ -174,8 +355,8 @@
         "sha256": "3762dd6f1348830a1d6b19252ca21f518c9f9d3a2b79b1dd99d75c0de6d46ef4",
         "raw_sha256": "356960e58691a7438cb07c73806cf8d0948247508f0efc281cb2ccb7a382f836"
       },
-      "constructor_path_after_guarded_generation": "sns/root.bin",
-      "constructor_sha256": null,
+      "constructor_path_after_guarded_generation": "constructors/sns/root.bin",
+      "constructor_sha256": "44e81e88d9e312e20df0401167e86fce2e8996e67a4771660f6dbf5a0cb8c65e",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
@@ -184,10 +365,48 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Exact genesis timestamp and typed framework constructor/hash; separate installation approval and fresh preconditions",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "proposed_cli_argv": null
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "sbmlm-rqaaa-aaaas-amypa-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "framework-templates/root.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/sns/root.hex"
+      ],
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/root.bin",
+      "constructor_hex_sha256": "e2027c5eaf94631dd5aaea226769b3fbc7692819e381a50a21fe080078aabbc2",
+      "constructor_hex_file": "constructors/sns/root.hex",
+      "constructor_candid_definition": "constructors/sns/root.interface.did",
+      "constructor_candid_sha256": "9867bfe913aa17d42d891c22187273e643eedb3ec8e4b3af4b894e74945d5806",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 474971,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
     },
     {
       "order": 7,
@@ -200,7 +419,7 @@
         "sha256": "56babefd47b5c2a95fd5e1b926e77c447a71b571167e4d0b6c537f3d765264a1",
         "raw_sha256": "8819a0cc51aead3fb307f691eefb8075e446413960e7000d332ef70767966c4b"
       },
-      "constructor_path_after_guarded_generation": "applications/jupiter_sns_rewards.bin",
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_sns_rewards.bin",
       "constructor_sha256": "136ddb75378b67ca6c34cc41efd7e41899a07a970b2618b4520b5ff866f5d3fe",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
@@ -210,10 +429,10 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Owner scans; new programme absent initially",
-      "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_sns_rewards.bin",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_sns_rewards.bin",
       "proposed_cli_argv": [
         "dfx",
         "--identity",
@@ -230,14 +449,28 @@
         "--argument-type",
         "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_sns_rewards.hex"
+        "constructors/applications/jupiter_sns_rewards.hex"
       ],
-      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity",
-        "DFX_VERSION": "0.31.0"
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
       },
-      "constructor_hex_sha256": "8709d5ff68307c010e5f4f6d5ed3e51a2353a19f220c6fe884770de44345f625"
+      "constructor_hex_sha256": "8709d5ff68307c010e5f4f6d5ed3e51a2353a19f220c6fe884770de44345f625",
+      "constructor_hex_file": "constructors/applications/jupiter_sns_rewards.hex",
+      "constructor_candid_definition": "interfaces/jupiter_sns_rewards.did",
+      "constructor_candid_sha256": "9fd3878c56bab8a1403e662b71e25b3a0ad1946dd4641c308af256fe3ade7985",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 809346,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
     },
     {
       "order": 8,
@@ -250,7 +483,7 @@
         "sha256": "2bc0797000c52c289dca92252369cc3129f3746bc8c81ccf4acf890ffb7faf9b",
         "raw_sha256": "8e5108e400d11d8d6745d4696b1a0e67ed6a137c65791d84712ceb38a776f20f"
       },
-      "constructor_path_after_guarded_generation": "applications/jupiter_historian.bin",
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_historian.bin",
       "constructor_sha256": "a6d8ccb6b103e8c8820e4b65f4e45d0e4749c8e138596286955cbe5b503056f0",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
@@ -260,10 +493,10 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Indexing, owner-facing read model and permissionless paid factory entrypoints",
-      "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_historian.bin",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_historian.bin",
       "proposed_cli_argv": [
         "dfx",
         "--identity",
@@ -280,14 +513,28 @@
         "--argument-type",
         "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_historian.hex"
+        "constructors/applications/jupiter_historian.hex"
       ],
-      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity",
-        "DFX_VERSION": "0.31.0"
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
       },
-      "constructor_hex_sha256": "11a3797d56bd58b0e98a7ba7c0b5948c547ee08f7cb761692423cdd8e5bb1858"
+      "constructor_hex_sha256": "11a3797d56bd58b0e98a7ba7c0b5948c547ee08f7cb761692423cdd8e5bb1858",
+      "constructor_hex_file": "constructors/applications/jupiter_historian.hex",
+      "constructor_candid_definition": "interfaces/jupiter_historian.did",
+      "constructor_candid_sha256": "cec362c1210805d73c2acfeca60ef095b51f8d50808206e7b6036633bed33516",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 1623645,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
     },
     {
       "order": 9,
@@ -300,7 +547,7 @@
         "sha256": "d6fc978715d55fea3c417e6b247524808a8ad283354fb6a28c606c416972a9e7",
         "raw_sha256": "b1e79e4dabf7919eb764217c299ff110168cdfff0c97156e9581520b8fa39e80"
       },
-      "constructor_path_after_guarded_generation": "applications/jupiter_relay.bin",
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_relay.bin",
       "constructor_sha256": "fd43a5dd713a863de08d8f95c1425fd964736d52617e07981c8ebd7138ff2d97",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
@@ -310,10 +557,10 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Managed-canister top-ups and aggregate forwarding; initially empty surplus recipients",
-      "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_relay.bin",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_relay.bin",
       "proposed_cli_argv": [
         "dfx",
         "--identity",
@@ -330,14 +577,28 @@
         "--argument-type",
         "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_relay.hex"
+        "constructors/applications/jupiter_relay.hex"
       ],
-      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity",
-        "DFX_VERSION": "0.31.0"
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
       },
-      "constructor_hex_sha256": "207807179bebd6fc9ca9c19f0c303742e62971c7973b15443e527c1a79bdef5c"
+      "constructor_hex_sha256": "207807179bebd6fc9ca9c19f0c303742e62971c7973b15443e527c1a79bdef5c",
+      "constructor_hex_file": "constructors/applications/jupiter_relay.hex",
+      "constructor_candid_definition": "interfaces/jupiter_relay.did",
+      "constructor_candid_sha256": "e3202ebe14c158858d39d0da43467284b90391e843c44e61a3d2fc81e6a5ee46",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 670210,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
     },
     {
       "order": 10,
@@ -350,7 +611,7 @@
         "sha256": "ed661e744e616306dbe00a580e9fe5eb72fb34b19bfa0566f91ed76f1b8449e2",
         "raw_sha256": "ad77738d9ceb98ca7969b6cd6275fcfb0e73e07ef1d735b0e88b64479d3bdd4b"
       },
-      "constructor_path_after_guarded_generation": "applications/jupiter_faucet.bin",
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_faucet.bin",
       "constructor_sha256": "bb22dd75d82391bb0a611c3174dddaee27846510da441ab6dc01b17df9257db0",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
@@ -360,10 +621,10 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Ledger/Index scans, settlement transfers and CMC notifications",
-      "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_faucet.bin",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_faucet.bin",
       "proposed_cli_argv": [
         "dfx",
         "--identity",
@@ -380,14 +641,28 @@
         "--argument-type",
         "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_faucet.hex"
+        "constructors/applications/jupiter_faucet.hex"
       ],
-      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity",
-        "DFX_VERSION": "0.31.0"
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
       },
-      "constructor_hex_sha256": "c57daa548b5a38346bff98ebb155d1545db495fc32623acb8bc97de1c2136757"
+      "constructor_hex_sha256": "c57daa548b5a38346bff98ebb155d1545db495fc32623acb8bc97de1c2136757",
+      "constructor_hex_file": "constructors/applications/jupiter_faucet.hex",
+      "constructor_candid_definition": "interfaces/jupiter_faucet.did",
+      "constructor_candid_sha256": "2ef40cbd47c1d2a55df8ad06643cc64b226494cc531634480d8293ef49b07271",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 491526,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
     },
     {
       "order": 11,
@@ -400,7 +675,7 @@
         "sha256": "473a1bed784cf4734b2173c8d724d1c093ccbd85f427a391b7914284c16cd070",
         "raw_sha256": "2c2efab9c45d79193c9ada8a0079f54e4aca162884682ea22d5f5169fbb0a8b4"
       },
-      "constructor_path_after_guarded_generation": "applications/jupiter_disburser.bin",
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_disburser.bin",
       "constructor_sha256": "519a1877c82858bc45aa8c1a5caeb58ad6f35d0dfad613c5ceea21d3363abb4a",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": "03e8ba94621d28bf166595a9a9dd0d9943c60caad48c7a2740285a7fee283bbe",
@@ -410,7 +685,7 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "NNS reads/maturity disbursement and payout scheduling; unarmed rescue is not financial inactivity",
-      "gate": "Approve exact fresh initialization, financial timer/maturity startup and installation time; helper-local migration explicitly not required; preserve external NNS neuron/Account.",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "preservation_decision": {
@@ -418,7 +693,7 @@
         "state_and_pending_effects": "Operator explicitly accepts discarding all helper-local heap/stable state: neuron-creation lifecycle complete, no migration required. This is a preservation waiver, not proof of empty state or absence of prior pending effects. Preserve external NNS neuron settings, stake, maturity and staking Account; review financial timer startup before approved reinstall.",
         "source_record": "Operator final November 2026 confirmation in Jupiter Acceptance \u2014 Complete Operator Authority, Test Identity, Disburser Transition and Deployment Preparation Instructions, section 5."
       },
-      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_disburser.bin",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_disburser.bin",
       "proposed_cli_argv": [
         "dfx",
         "--identity",
@@ -435,14 +710,28 @@
         "--argument-type",
         "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_disburser.hex"
+        "constructors/applications/jupiter_disburser.hex"
       ],
-      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity",
-        "DFX_VERSION": "0.31.0"
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
       },
-      "constructor_hex_sha256": "5378c0ab9b6f4f72a9c99d9e200a56dd3777e92be89f7868f6435c0fe698e998"
+      "constructor_hex_sha256": "5378c0ab9b6f4f72a9c99d9e200a56dd3777e92be89f7868f6435c0fe698e998",
+      "constructor_hex_file": "constructors/applications/jupiter_disburser.hex",
+      "constructor_candid_definition": "interfaces/jupiter_disburser.did",
+      "constructor_candid_sha256": "e63be4544d03cceeb2c7b7250641c779164d7a719091b8fe65ff9c767b850f00",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 392997,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "reinstall",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
     },
     {
       "order": 12,
@@ -455,7 +744,7 @@
         "sha256": "6df4b325c73792ca8ee71ae8ce9e3f8b6fe2c354c8b5885347936064ef83bfbc",
         "raw_sha256": "4f9d31a2bca0d6da8ecd04c8480084e77b7dac2a6ce6198f55521edc8077d4f8"
       },
-      "constructor_path_after_guarded_generation": "applications/jupiter_faucet_frontend.bin",
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_faucet_frontend.bin",
       "constructor_sha256": "0fee102bd16b053022b69f2c65fd5e2f41d150ce9c214ac8731cfaf496ebda4e",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
@@ -465,10 +754,10 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Seven typed application constructors available; full SNS framework remains schedule-blocked. Separate installation/startup approval and fresh preconditions required.",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "constructor_evidence_path": "target/acceptance-authority-20261115/application-constructors/jupiter_faucet_frontend.bin",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_faucet_frontend.bin",
       "proposed_cli_argv": [
         "dfx",
         "--identity",
@@ -485,14 +774,48 @@
         "--argument-type",
         "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_faucet_frontend.hex"
+        "constructors/applications/jupiter_faucet_frontend.hex"
       ],
-      "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
       "proposed_cli_environment": {
-        "DFX_WARNING": "-mainnet_plaintext_identity",
-        "DFX_VERSION": "0.31.0"
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
       },
-      "constructor_hex_sha256": "fe7582321d95af083628016a682d14fc487485bc0f6731b1708a61e39e041188"
+      "constructor_hex_sha256": "fe7582321d95af083628016a682d14fc487485bc0f6731b1708a61e39e041188",
+      "constructor_hex_file": "constructors/applications/jupiter_faucet_frontend.hex",
+      "constructor_candid_definition": "interfaces/jupiter_faucet_frontend.did",
+      "constructor_candid_sha256": "ce3422eb4d658d1f58b7716bfcfc286629e411c493a29badd1a63d98c0d995cb",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 2455032,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "chunked",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "stored_chunks",
+          "upload_chunk",
+          "install_chunked_code",
+          "clear_chunk_store"
+        ],
+        "fresh_chunk_count": 3,
+        "chunks": [
+          {
+            "bytes": 1048576,
+            "sha256": "8efc46b9ad4ea12e956a4d05e58cfb40b1b41326c852812d6bd26d55a87866a7"
+          },
+          {
+            "bytes": 1048576,
+            "sha256": "ee532c3be3ab55ccb74675372fab576d4365fc34d94a52825e2b17900664bf4c"
+          },
+          {
+            "bytes": 357874,
+            "sha256": "c94437d727b0824718bf34e6c28f05b3d2d214719a1d1ab97172e7694f2907ee"
+          }
+        ],
+        "native_calls_with_empty_store": 6,
+        "precondition": "Separately authorized pre-check confirms empty chunk store before command; stop for owner review if unrelated staged chunks exist. Native SDK reads stored_chunks, uploads missing package chunks and clears its store after installation; all these methods require explicit installation approval."
+      }
     }
   ],
   "funding": [
@@ -1155,7 +1478,7 @@
     }
   ],
   "bootstrap_policy": "Retain both observed controllers through installation and initial runtime/recovery rehearsals. Codex executor is amzih; personal zkkkd is historical/bootstrap only and is never a Codex signer. Any later full controller-set replacement explicitly removes personal/bootstrap rights under separate approval. Explicit intermediate additions retain both bootstrap controllers while granting Root/Governance (or Faucet/Disburser self) the authority needed for rehearsal. Only later full-set removals narrow control after real execution/recovery checks.",
-  "genesis_policy": "Exact verified executor and participant identities now recorded; four approved memos 10/11/20/21 and unchanged 100M supply. Only genesis and patron activation timestamps remain null. operational.py candidate fails closed; five framework constructors unavailable until schedule approved. Correction: dominant voting-only permissions [3,4,10]; no ManagePrincipals; global user rights unchanged; enforce genesis <= patron clock. Proposed schedule is review-only, both input clocks remain null.",
+  "genesis_policy": "Reviewed candidate copy contains exact candidate clocks 1794924000 / 1795104000; 100M jUP, four approved 5000-jUP allocations, governance-only [3,4,10], reserve/proposer Accounts unchanged. Complete five-framework/seven-application constructors exist; candidate time selection is not installation/activation approval. Base operator-inputs.json remains unresolved historical input; never silently substitute it for candidate-inputs.json.",
   "activation": "Native Governance upgrades in recognition, patron, treasury, bounded continuation order from work-package-a.md; IO settlement disabled; initial Relay surplus empty; no direct operator configuration call.",
   "neuron_mutation": "No live mutation authorized now. Later A/B SNS auto-stake operations use their own DFX aliases and exact derived IDs; B enabling must be verified before 2x test. This is not the Disburser-controlled NNS neuron. No NNS visibility/follow/dissolve/auto-stake setting change proposed.",
   "post_install_reads": "18 separate read checks remain unexecuted and need explicit later approval; future precondition refreshes also need separate authorization; no permission to reuse the completed inventory approval.",
@@ -1228,7 +1551,7 @@
   ],
   "execution_warning_scope": "DFX reports plaintext local custody. The warning acknowledgement is command-scoped and only for an exact separately approved acceptance operation; never global, never personal/production signing. No install command was run.",
   "tool_version_correction": "Repository context said 0.27.0; final supported tool check reports 0.31.0, and all three providers signed verified offline read envelopes with DFX_VERSION=0.31.0. Read-time executable version was not captured separately; no toolchain upgrade or live repeat was performed. Original read metadata labels were assumptions, not observed versions.",
-  "constructor_handoff": "Use .hex sidecars with DFX --argument-type raw --argument-file; .hex decodes exactly to the typed .bin. Do not pass binary files as DFX text or infer Candid numeric types from readable .did.",
+  "constructor_handoff": "Twelve .bin constructors and matching .hex sidecars typed/round-trip checked against exact local Candid. DFX install consumes --argument-type raw --argument-file .hex and has no --candid option. Every future dfx canister call must use --candid with the pinned local service DID; never permit automatic metadata/interface discovery.",
   "governance_voting_permissions": {
     "codes": [
       3,
@@ -1276,12 +1599,14 @@
       "2026-11-17T14:00:00Z",
       "2026-11-17T16:00:00Z"
     ],
-    "patron_activation_checkpoint_utc": "2026-11-18T14:00:00Z",
+    "patron_activation_checkpoint_utc": "2026-11-19T16:00:00Z",
     "order_constraint": "genesis_timestamp_seconds <= acceptance_start_timestamp_seconds",
-    "genesis_timestamp_seconds": null,
-    "acceptance_start_timestamp_seconds": null,
+    "genesis_timestamp_seconds": 1794924000,
+    "acceptance_start_timestamp_seconds": 1795104000,
     "missed_checkpoint": "Pause and obtain revised owner-approved timestamps before constructor/proposal regeneration. Do not backdate or use preparation/fixture time.",
-    "smoke_window": "After final installation and before the next-day patron checkpoint, independently verify Normal mode, tuple/target/pending upgrades, controllers, balance, secure owner snapshot and recognition/reserve/proposer readiness; new read authorization required."
+    "smoke_window": "48 hours after installation window ends, before the separate 19 November 16:00 UTC patron checkpoint; new bounded read authorization required. Stop if a checkpoint is missed; owner must approve revised clocks and regenerated hashes.",
+    "configuration_candidate_selected": true,
+    "installation_window_finally_confirmed": false
   },
   "funding_methods_without_personal_provider": [
     {
@@ -1289,20 +1614,89 @@
       "procedure": "Operator or nominated independent funder sends exact approved ICP to the listed participant/Relay/Governance Accounts through their own wallet/provider; Codex never accesses that provider. Source selection and transaction approval still required."
     },
     {
-      "method": "Fund acceptance executor default Account",
-      "destination": {
-        "owner": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
-        "subaccountHex": null,
-        "address": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
-        "explorerAccountHex": "bab708d3f58aad4861d1ece056efbe900721dd02c7037af5cab4488e288f2236"
-      },
-      "procedure": "Nominated external funder provisions only an approved capped amount to codex_local default Account; later Codex transfers require separate exact approval. Existing plaintext-at-rest custody limitation applies; no personal credentials are bridged."
-    },
-    {
       "method": "External cycles provider",
       "procedure": "Nominated funded cycles wallet/provider sends separately approved deposit_cycles to the twelve explicit canister principals; do not send ICP to a canister principal expecting its main cycles to increase. Exact dated deficits are in funding-sheet.json; source, conversion quote/fees and spend cap remain unresolved."
     }
   ],
-  "current_preparation_base_commit": "0981156dcc30735600d712eed38b74440c43d8cf",
-  "correction_report": "governance-correction.md"
+  "current_preparation_base_commit": "1e67fd37e1218cf24a78514bbed4cc7292dfab77",
+  "correction_report": "governance-correction.md",
+  "candidate_inputs": {
+    "path": "configuration/candidate-inputs.json",
+    "sha256": "e80844ac087156647185a0864dd583c9ba2b575163c5e2e06dd836eac83e0121",
+    "configuration_only": true,
+    "installation_window_finally_confirmed": false,
+    "installation_authorized": false
+  },
+  "selected_funding_method": {
+    "kind": "independent-external-wallet",
+    "personal_provider_access_required": false,
+    "source_wallet": null,
+    "transfers_authorized": false,
+    "cycles_provider": null,
+    "freshness": "New separately approved balances, ICP fee and CMC quote (if conversion is used), NNS public full-neuron/staking reconciliation and installation preconditions; no standing inventory authorization."
+  },
+  "unsigned_governance_stages": [
+    {
+      "stage": "recognition",
+      "payload": "governance-proposals/recognition/proposal.bin",
+      "payload_sha256": "48c4bae9bbb434ea5200c58980de213d4cc4bc18b901dc1a14388c9f994a54d2",
+      "raw_hex_sha256": "693ebc70d47eb6059a426c0ebed2e6bdb59803805eb72a65a657f24020ade137",
+      "policy_sha256": "50c328730d5fdd5de4399af792d40cc6844a1d328185d41746028cad08a858f1",
+      "wasm_sha256": "56babefd47b5c2a95fd5e1b926e77c447a71b571167e4d0b6c537f3d765264a1",
+      "upgrade_args_sha256": "b79e473189a3ef6d864267e37b2b053f0e5c74b7295a02ce5ff60a94816a13ac",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "native_neuron": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+      "signed_or_submitted": false,
+      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation."
+    },
+    {
+      "stage": "patron",
+      "payload": "governance-proposals/patron/proposal.bin",
+      "payload_sha256": "4e38a7dc4b24960d1fac07b4e2bf72a833b0181292a0ad5b5e390712392e4f30",
+      "raw_hex_sha256": "3dcdaff80e1b114c412c5b4d196edc1cd88f673b1ec041da49922931ed7221f4",
+      "policy_sha256": "ddba17089a06f0f99e0e33829fc74729d5286c62a8d8a7f94832bb6734f73e6f",
+      "wasm_sha256": "56babefd47b5c2a95fd5e1b926e77c447a71b571167e4d0b6c537f3d765264a1",
+      "upgrade_args_sha256": "39686a7db080e8b49ff079d06f7369ac89c63bf768eba60e69dc257be6152bd5",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "native_neuron": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+      "signed_or_submitted": false,
+      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation."
+    },
+    {
+      "stage": "treasury",
+      "payload": "governance-proposals/treasury/proposal.bin",
+      "payload_sha256": "9d73bfed1426d7dba877ecfceadd78644051ff831e2f2146e91acab522779410",
+      "raw_hex_sha256": "f8405a93f494dafa3e5cc8f3cdd4e9bc934cc9eb73376122611a8a649a1b4509",
+      "policy_sha256": "f9f3a21790da33dae255aefa5856ed5dcfc41b34270ce08bb61268ac967c2a95",
+      "wasm_sha256": "56babefd47b5c2a95fd5e1b926e77c447a71b571167e4d0b6c537f3d765264a1",
+      "upgrade_args_sha256": "d389810f89a05f73f6c974495f4354d0a900d249bca0c14153e24f585c9e3a7b",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "native_neuron": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+      "signed_or_submitted": false,
+      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation."
+    },
+    {
+      "stage": "treasury-continuation",
+      "payload": "governance-proposals/treasury-continuation/proposal.bin",
+      "payload_sha256": "a5d6ffed0eee62b8a74ee82b3455fb7b14c8ea976b97cf09dda0db311d11e85d",
+      "raw_hex_sha256": "2570e7e2168fab3cf0a63f8e76f516034082bc1b07e2a202d0298fa4e049351b",
+      "policy_sha256": "764361f4ae43514dcd40e309e182522b65292cc88fba744a55c424d3594c2410",
+      "wasm_sha256": "56babefd47b5c2a95fd5e1b926e77c447a71b571167e4d0b6c537f3d765264a1",
+      "upgrade_args_sha256": "427fcf6f9d6320178d3166947f5f1ff509dead1ab0dabd715fab6210e6eeeb0d",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "native_neuron": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+      "signed_or_submitted": false,
+      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation."
+    }
+  ],
+  "source_binding": "Final package STATUS.json and manifest.json bind final Git commit/tree, all source/configuration/input/interface/constructor/Wasm hashes. This tracked record cannot contain its own final Git commit.",
+  "native_install_transport_source": {
+    "sdk_source_sha256": "59a1edef5d57b25a766ba33b046f6b152dfb778a1cbcebed87496e2e05437909",
+    "locked_ic_utils_crate_sha256": "30c22aaa2924df0321705dc01d408c8b75d1e1deb40b65defd2ff04008a720be",
+    "discovery": "Pinned public CLI source only, no mainnet observation",
+    "initial_code_install_calls_with_empty_stores": 21
+  },
+  "retained_preparation_archive_sha256": "c18f86b639c10bf6c3fbc56df4b09e5fdf9f3653575373e358ae0758f2abacba",
+  "completed_candidate_archive_hash": "Final review-package.tar.gz.sha256 beside the archive; full commit/tree and hashes are in package STATUS.json / manifest.json, not the retained earlier archive.",
+  "fresh_preconditions_proposal": "execution-preconditions.json: 25 logical requests, zero executed/authorized; eighteen post-install checks remain separate."
 }

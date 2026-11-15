@@ -24,6 +24,7 @@ struct Neuron {
     aging_since_timestamp_seconds: u64,
     voting_power_percentage_multiplier: u64,
     neuron_fees_e8s: u64,
+    auto_stake_maturity: Option<bool>,
     permissions: Vec<Permission>,
 }
 #[derive(CandidType, Deserialize, Debug)]
@@ -57,6 +58,14 @@ fn succeeded(reply: &IDLValue, name: &str) -> Result<()> {
         "{reply}"
     );
     Ok(())
+}
+
+fn permission_codes(permission: &Permission) -> Vec<i32> {
+    // Native permission mutation uses an unordered set. Sorting preserves the
+    // exact-code/length assertion, including rejection of extras or duplicates.
+    let mut codes = permission.permission_type.clone();
+    codes.sort_unstable();
+    codes
 }
 
 fn not_authorized(reply: &IDLValue) -> Result<()> {
@@ -232,9 +241,22 @@ fn exact_genesis_governance_handover_and_production_reserve() -> Result<()> {
         .join("target")
         .join(format!("operational-acceptance-{}", std::process::id()));
     fs::create_dir(&evidence)?;
+    let candidate_inputs: serde_json::Value = serde_json::from_slice(&fs::read(
+        repo.join("deploy/acceptance/candidate-inputs.json"),
+    )?)?;
+    let genesis = candidate_inputs["genesis_timestamp_seconds"]
+        .as_u64()
+        .unwrap();
+    let activation = candidate_inputs["acceptance_start_timestamp_seconds"]
+        .as_u64()
+        .unwrap();
+    assert!(genesis < activation);
     let pic = support::pocketic::builder()
         .with_sns_subnet()
         .with_application_subnet()
+        .with_initial_time(pocket_ic::Time::from_nanos_since_unix_epoch(
+            genesis * 1_000_000_000,
+        ))
         .build();
     let bindings: serde_json::Value =
         serde_json::from_slice(&fs::read(repo.join("deploy/acceptance/profile.json"))?)?;
@@ -293,6 +315,7 @@ fn exact_genesis_governance_handover_and_production_reserve() -> Result<()> {
         roles.insert(name.into(), json!(id.to_text()));
     }
     let role = |name: &str| Principal::from_text(roles[name].as_str().unwrap()).unwrap();
+
     fs::write(
         evidence.join("context.json"),
         serde_json::to_vec(&json!({"roles":roles,
@@ -308,21 +331,15 @@ fn exact_genesis_governance_handover_and_production_reserve() -> Result<()> {
 import json, sys
 from pathlib import Path
 sys.path.insert(0, 'tools/acceptance')
-import profile, operational as op, prepare
-from test_operational import local_decisions
+import profile, operational as op
 c=json.loads(Path(sys.argv[1]).read_text()); out=Path(sys.argv[2])
-p=json.loads(profile.PROFILE.read_text()); p['roles']=c['roles']
-d=local_decisions(); d['operator']=c['operator']; d['voting_authority']['principal']=c['bootstrap']
-d['test_allocations'][0]['owner']=d['test_allocations'][1]['owner']=c['participant_a']
-d['test_allocations'][2]['owner']=d['test_allocations'][3]['owner']=c['user']
-d['genesis_timestamp_seconds']=d['acceptance_start_timestamp_seconds']=c['timestamp']
-p, ids, policy=op.render(p,d,local=True)
-(out/'profile.json').write_text(json.dumps(p,indent=2)+'\n')
-(out/'neuron-ids.json').write_text(json.dumps(ids,indent=2)+'\n')
-prepare.framework(p,sys.argv[3],out/'sns',c['timestamp'],local_fixture=True)
-prepare.applications(p,out/'applications')
-p['_acceptance_start_timestamp_seconds']=c['timestamp']
-op.recipes(p,ids,policy,out/'sns/governance.interface.did',out/'governance')
+p=json.loads(profile.PROFILE.read_text())
+d=json.loads((profile.PROFILE.parent/'candidate-inputs.json').read_text())
+assert p['roles']==c['roles'] and d['operator']==c['operator']
+assert d['genesis_timestamp_seconds']==c['timestamp']
+assert d['test_allocations'][0]['owner']==c['participant_a']
+assert d['test_allocations'][2]['owner']==c['user']
+op.candidate(p,d,sys.argv[3],out/'candidate')
 "#,
             )
             .arg(evidence.join("context.json"))
@@ -330,6 +347,7 @@ op.recipes(p,ids,policy,out/'sns/governance.interface.did',out/'governance')
             .arg(&artifacts)
             .current_dir(&repo),
     )?;
+    let evidence = evidence.join("candidate");
     for name in ["governance", "ledger", "index", "swap", "root"] {
         let package = fs::read(artifacts.join(format!("{name}.wasm.gz")))?;
         let expected_hash = sha2::Sha256::digest(&package).to_vec();
@@ -404,10 +422,41 @@ op.recipes(p,ids,policy,out/'sns/governance.interface.did',out/'governance')
     assert_eq!(support::ledger::icrc1_balance(&pic, ledger, &reserve)?, 0);
     let total: Nat = query_one(&pic, ledger, operator, "icrc1_total_supply", ())?;
     assert_eq!(total, Nat::from(100_000_000_u64 * 100_000_000));
+    for allocation in candidate_inputs["test_allocations"].as_array().unwrap() {
+        let owner = Principal::from_text(allocation["owner"].as_str().unwrap())?;
+        let sub = account_neuron_subaccount(owner, allocation["memo"].as_u64().unwrap());
+        let n = neuron_state(&pic, governance, operator, &sub)?;
+        assert_eq!(n.id.unwrap().id, sub);
+        assert_eq!(n.cached_neuron_stake_e8s, 5_000 * 100_000_000);
+        assert_eq!(
+            n.dissolve_state,
+            Some(DissolveState::DissolveDelaySeconds(
+                allocation["dissolve_delay_seconds"].as_u64().unwrap()
+            ))
+        );
+        assert_eq!(n.permissions.len(), 1);
+        assert_eq!(n.permissions[0].principal, Some(owner));
+        assert_eq!(
+            permission_codes(&n.permissions[0]),
+            (1..=10).collect::<Vec<_>>()
+        );
+        assert!(!n.auto_stake_maturity.unwrap_or(false));
+        assert_eq!(
+            support::ledger::icrc1_balance(
+                &pic,
+                ledger,
+                &Account {
+                    owner: governance,
+                    subaccount: Some(sub.try_into().unwrap())
+                }
+            )?,
+            5_000 * 100_000_000
+        );
+    }
     let did = evidence.join("sns/governance.interface.did");
     let initial = neuron_state(&pic, governance, bootstrap, &dominant)?;
     assert_eq!(initial.permissions.len(), 1);
-    assert_eq!(initial.permissions[0].permission_type, vec![3, 4, 10]);
+    assert_eq!(permission_codes(&initial.permissions[0]), vec![3, 4, 10]);
     let action="variant { ManageNervousSystemParameters = record { automatically_advance_target_version = opt false } }";
     // Authentic native submission by the temporary voter (automatic Yes).
     let submitted = proposal_id(&manage(
@@ -522,7 +571,7 @@ op.recipes(p,ids,policy,out/'sns/governance.interface.did',out/'governance')
     assert_eq!(handed.neuron_fees_e8s, initial.neuron_fees_e8s);
     assert_eq!(handed.permissions.len(), 1);
     assert_eq!(handed.permissions[0].principal, Some(executor));
-    assert_eq!(handed.permissions[0].permission_type, vec![3, 4, 10]);
+    assert_eq!(permission_codes(&handed.permissions[0]), vec![3, 4, 10]);
     not_authorized(&manage(
         &pic, governance, bootstrap, &dominant, action, &did,
     )?)?;
@@ -629,7 +678,7 @@ op.recipes(p,ids,policy,out/'sns/governance.interface.did',out/'governance')
     assert_eq!(n.cached_neuron_stake_e8s, 10_000_000_u64 * 100_000_000);
     assert_eq!(n.permissions.len(), 1);
     assert_eq!(n.permissions[0].principal, Some(executor));
-    assert_eq!(n.permissions[0].permission_type, vec![3, 4, 10]);
+    assert_eq!(permission_codes(&n.permissions[0]), vec![3, 4, 10]);
     assert_eq!(
         support::ledger::icrc1_balance(
             &pic,
