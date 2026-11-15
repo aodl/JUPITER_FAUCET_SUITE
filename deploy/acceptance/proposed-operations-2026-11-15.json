@@ -48,15 +48,16 @@
         "--wasm",
         "applications/jupiter_lifeline.wasm.gz",
         "--argument-type",
-        "idl",
+        "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_lifeline.did"
+        "target/acceptance-authority-20261115/application-constructors/jupiter_lifeline.hex"
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
         "DFX_WARNING": "-mainnet_plaintext_identity",
         "DFX_VERSION": "0.31.0"
-      }
+      },
+      "constructor_hex_sha256": "fe7582321d95af083628016a682d14fc487485bc0f6731b1708a61e39e041188"
     },
     {
       "order": 2,
@@ -227,15 +228,16 @@
         "--wasm",
         "applications/jupiter_sns_rewards.wasm.gz",
         "--argument-type",
-        "idl",
+        "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_sns_rewards.did"
+        "target/acceptance-authority-20261115/application-constructors/jupiter_sns_rewards.hex"
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
         "DFX_WARNING": "-mainnet_plaintext_identity",
         "DFX_VERSION": "0.31.0"
-      }
+      },
+      "constructor_hex_sha256": "8709d5ff68307c010e5f4f6d5ed3e51a2353a19f220c6fe884770de44345f625"
     },
     {
       "order": 8,
@@ -276,15 +278,16 @@
         "--wasm",
         "applications/jupiter_historian.wasm.gz",
         "--argument-type",
-        "idl",
+        "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_historian.did"
+        "target/acceptance-authority-20261115/application-constructors/jupiter_historian.hex"
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
         "DFX_WARNING": "-mainnet_plaintext_identity",
         "DFX_VERSION": "0.31.0"
-      }
+      },
+      "constructor_hex_sha256": "11a3797d56bd58b0e98a7ba7c0b5948c547ee08f7cb761692423cdd8e5bb1858"
     },
     {
       "order": 9,
@@ -325,15 +328,16 @@
         "--wasm",
         "applications/jupiter_relay.wasm.gz",
         "--argument-type",
-        "idl",
+        "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_relay.did"
+        "target/acceptance-authority-20261115/application-constructors/jupiter_relay.hex"
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
         "DFX_WARNING": "-mainnet_plaintext_identity",
         "DFX_VERSION": "0.31.0"
-      }
+      },
+      "constructor_hex_sha256": "207807179bebd6fc9ca9c19f0c303742e62971c7973b15443e527c1a79bdef5c"
     },
     {
       "order": 10,
@@ -374,15 +378,16 @@
         "--wasm",
         "applications/jupiter_faucet.wasm.gz",
         "--argument-type",
-        "idl",
+        "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_faucet.did"
+        "target/acceptance-authority-20261115/application-constructors/jupiter_faucet.hex"
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
         "DFX_WARNING": "-mainnet_plaintext_identity",
         "DFX_VERSION": "0.31.0"
-      }
+      },
+      "constructor_hex_sha256": "c57daa548b5a38346bff98ebb155d1545db495fc32623acb8bc97de1c2136757"
     },
     {
       "order": 11,
@@ -428,15 +433,16 @@
         "--wasm",
         "applications/jupiter_disburser.wasm.gz",
         "--argument-type",
-        "idl",
+        "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_disburser.did"
+        "target/acceptance-authority-20261115/application-constructors/jupiter_disburser.hex"
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
         "DFX_WARNING": "-mainnet_plaintext_identity",
         "DFX_VERSION": "0.31.0"
-      }
+      },
+      "constructor_hex_sha256": "5378c0ab9b6f4f72a9c99d9e200a56dd3777e92be89f7868f6435c0fe698e998"
     },
     {
       "order": 12,
@@ -477,15 +483,16 @@
         "--wasm",
         "applications/jupiter_faucet_frontend.wasm.gz",
         "--argument-type",
-        "idl",
+        "raw",
         "--argument-file",
-        "target/acceptance-authority-20261115/application-constructors/jupiter_faucet_frontend.did"
+        "target/acceptance-authority-20261115/application-constructors/jupiter_faucet_frontend.hex"
       ],
       "argv_status": "Review-only argument vector; never executed. Resolve package-relative Wasm path, approve payload/startup and preconditions. DFX plaintext warning is disclosed, not a general mutation authorization.",
       "proposed_cli_environment": {
         "DFX_WARNING": "-mainnet_plaintext_identity",
         "DFX_VERSION": "0.31.0"
-      }
+      },
+      "constructor_hex_sha256": "fe7582321d95af083628016a682d14fc487485bc0f6731b1708a61e39e041188"
     }
   ],
   "funding": [
@@ -1200,7 +1207,8 @@
       "payload_file": "target/acceptance-authority-20261115/participant-recipes/participant-a-auto-stake.bin",
       "candid_file": "target/acceptance-authority-20261115/participant-recipes/participant-a-auto-stake.did",
       "signed_or_submitted": false,
-      "gate": "Later explicit SNS-neuron operation and setting/ownership read approval after actual SNS installation; this is not the permanent NNS neuron."
+      "gate": "Later explicit SNS-neuron operation and setting/ownership read approval after actual SNS installation; this is not the permanent NNS neuron.",
+      "hex_file": "target/acceptance-authority-20261115/participant-recipes/participant-a-auto-stake.hex"
     },
     {
       "participant": "B",
@@ -1214,9 +1222,11 @@
       "payload_file": "target/acceptance-authority-20261115/participant-recipes/participant-b-auto-stake.bin",
       "candid_file": "target/acceptance-authority-20261115/participant-recipes/participant-b-auto-stake.did",
       "signed_or_submitted": false,
-      "gate": "Later explicit SNS-neuron operation and setting/ownership read approval after actual SNS installation; this is not the permanent NNS neuron."
+      "gate": "Later explicit SNS-neuron operation and setting/ownership read approval after actual SNS installation; this is not the permanent NNS neuron.",
+      "hex_file": "target/acceptance-authority-20261115/participant-recipes/participant-b-auto-stake.hex"
     }
   ],
   "execution_warning_scope": "DFX reports plaintext local custody. The warning acknowledgement is command-scoped and only for an exact separately approved acceptance operation; never global, never personal/production signing. No install command was run.",
-  "tool_version_correction": "Repository context said 0.27.0; final supported tool check reports 0.31.0, and all three providers signed verified offline read envelopes with DFX_VERSION=0.31.0. Read-time executable version was not captured separately; no toolchain upgrade or live repeat was performed. Original read metadata labels were assumptions, not observed versions."
+  "tool_version_correction": "Repository context said 0.27.0; final supported tool check reports 0.31.0, and all three providers signed verified offline read envelopes with DFX_VERSION=0.31.0. Read-time executable version was not captured separately; no toolchain upgrade or live repeat was performed. Original read metadata labels were assumptions, not observed versions.",
+  "constructor_handoff": "Use .hex sidecars with DFX --argument-type raw --argument-file; .hex decodes exactly to the typed .bin. Do not pass binary files as DFX text or infer Candid numeric types from readable .did."
 }

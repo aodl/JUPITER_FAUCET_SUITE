@@ -148,6 +148,8 @@ class Operational(unittest.TestCase):
             self.assertFalse(manifest['live_observations_included'])
             for group in ('applications', 'sns'):
                 self.assertIn('profile.json', json.loads((out / group / 'sha256.json').read_text()))
+                for binary in (out / group).glob('*.bin'):
+                    self.assertEqual(bytes.fromhex(binary.with_suffix('.hex').read_text()), binary.read_bytes())
             policies = [json.loads((out / 'governance' / (stage + '-policy.json')).read_text())
                 for stage in ('recognition', 'patron', 'treasury', 'treasury-continuation')]
             self.assertEqual([p['version'] for p in policies], [1, 2, 3, 4])

@@ -124,6 +124,7 @@ def applications(profile, out, programme=None):
         cd.write_constructor(out, role, did, '(InitArgs)', value)
     for role in ('jupiter_lifeline', 'jupiter_faucet_frontend'):
         (out / (role + '.bin')).write_bytes(bytes.fromhex('4449444c0000'))
+        (out / (role + '.hex')).write_text('4449444c0000')
         (out / (role + '.did')).write_text('()\n')
     (out / 'frontend.json').write_text(json.dumps(acceptance.frontend(profile), sort_keys=True, indent=2) + '\n')
     (out / 'accounts.json').write_text(json.dumps(checked, sort_keys=True, indent=2) + '\n')

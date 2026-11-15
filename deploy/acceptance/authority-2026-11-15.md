@@ -206,9 +206,12 @@ state at a clearly local clock, without their mainnet credentials.
 [Proposed operations](proposed-operations-2026-11-15.json) bind all twelve targets
 to unchanged reviewed acceptance Wasm hashes, the observed controller/module
 preconditions, explicit install/reinstall modes and DFX execution route. Seven
-application argument vectors are review data only; no install was run. Framework
+application argument vectors use typed-byte .hex sidecars with DFX raw mode,
+not readable-text numeric inference. An offline, network-blocked DFX 0.31.0
+read-signing check preserved the exact typed bytes and verified the executor
+signature. No install was run. Framework
 vectors/hashes remain null until the schedule is supplied. The proposed-operation
-record SHA-256 is `2234368d865cd61f29afe121d06aa92ca558bc8c1c6eabaecab5077d7103d444`. Retained Wasms have
+record SHA-256 is `acaa798efa2dd7544168bb1d0d50a215b1b3d42f67d12532b99befe42a3befd3`. Retained Wasms have
 unchanged executable bindings; their original sidecars/source identity are not
 relabelled as a fresh build. Both bootstrap controllers remain through install
 and rehearsal. Explicit intermediate additions grant Root/Governance (or self

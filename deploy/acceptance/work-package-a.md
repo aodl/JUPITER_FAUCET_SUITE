@@ -161,8 +161,8 @@ This is not a matching ICP
 CLI alias. After a separate exact-operation approval, use `dfx --identity
 codex_local canister call sipaq-hyaaa-aaaas-amyoq-cai manage_neuron` with
 `--network ic --update --candid` pointing to the verified official Governance
-DID and `--argument-file` pointing to the reviewed generated Candid text.
-DFX uses `--argument-file` / `--argument-type idl`, whereas ICP CLI uses
+DID and `--argument-type raw --argument-file` pointing to the generated hex sidecar.
+DFX uses `--argument-file` / `--argument-type raw` for validated hex text, whereas ICP CLI uses
 `--args-file` / `--args-format bin`; do not pass binary files as DFX Candid text.
 Participant operations use their own aliases. Always supply a local Candid file
 for bounded DFX calls: automatic interface discovery exceeded the read allowlist
@@ -189,7 +189,7 @@ the final package hashes and signer. A role with an existing module/state needs
 an explicit preservation decision; never default `auto` into replacement.
 For each approved empty-code role, use DFX `codex_local` with an explicit
 principal, `--network ic --mode install --wasm` exact package, and
-`--argument-file` exact constructor Candid text / `--argument-type idl`. The
+`--argument-file` exact validated constructor hex sidecar / `--argument-type raw`. The
 proposed-operations JSON records the actual per-role argument vectors and hashes.
 Seven application constructors are available; five framework constructors remain
 blocked on the schedule. Never treat partial preparation as a complete bundle.

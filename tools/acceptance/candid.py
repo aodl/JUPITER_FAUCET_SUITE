@@ -47,4 +47,7 @@ def write_constructor(directory, role, did, types, value):
     encoded = encode_checked(did, types, '(' + value + ')')
     Path(directory, role + '.did').write_text('(' + value + ')\n')
     Path(directory, role + '.bin').write_bytes(encoded)
+    # DFX --argument-type raw consumes hex text, not the binary file. Preserve
+    # the already typed bytes rather than relying on CLI value inference.
+    Path(directory, role + '.hex').write_text(encoded.hex())
     return encoded
