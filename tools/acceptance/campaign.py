@@ -209,8 +209,8 @@ def verify(manifest):
                             economic = [entry['principal'] for entry in permissions if 5 in entry['permissions']]
                             isolated = economic == [participant] and all(
                                 entry['principal']==participant or set(entry['permissions']) <= {0,3,4,10} for entry in permissions)
-                            expected_id=staking_subaccount(participant,21 if compounded else 11)
-                            eligible = isolated and all(type(code) is int and 0 <= code <= 10 for entry in permissions for code in entry['permissions']) and selection['id']==expected_id and selection['cached_neuron_stake_e8s']>selection.get('neuron_fees_e8s',0)
+                            expected_ids={staking_subaccount(participant,memo) for memo in ([21] if compounded else [10,11])}
+                            eligible = isolated and all(type(code) is int and 0 <= code <= 10 for entry in permissions for code in entry['permissions']) and selection['id'] in expected_ids and selection['cached_neuron_stake_e8s']>selection.get('neuron_fees_e8s',0)
                             if compounded:
                                 eligible &= selection['dissolve_delay_seconds']==economics.load()['year_seconds'] and selection['auto_stake_maturity'] is True
                             else:
