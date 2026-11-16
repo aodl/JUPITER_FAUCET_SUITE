@@ -176,7 +176,7 @@ programme/patron queries. Sources are normalized exports of retained original qu
 responses; the importer must separately verify transport signatures/certificates,
 raw-response hashes and normalization fidelity. The verifier hashes normalized
 imports; it does **not** verify raw signatures, decode arbitrary Candid, or certify
-the exporter. `replica-signed-query`, `certified`, `local-PocketIC` are distinct labels;
+the exporter. `replica-signed-query`, `certified`, `local-PocketIC` and synthetic `local-fixture` are distinct labels;
 a source cannot gain certification merely by being signed. No standalone authenticity
 claim is made from a manifest label. The fixture builder in `test_campaign.py` is an
 executable schema example, explicitly local evidence.

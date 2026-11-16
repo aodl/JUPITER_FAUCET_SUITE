@@ -38,7 +38,7 @@ def fixture(name='direct liquid'):
                 cached_neuron_stake_e8s=5000*10**8,neuron_fees_e8s=0,permissions=[dict(principal=participant,permissions=list(range(1,11)))],
                 dissolve_delay_seconds=31557600,auto_stake_maturity=name=='direct 2x')
     def src(label,target,method,value,**kw):
-        return dict(id=label,target=target,method=method,verification='local-PocketIC',value=value,**kw)
+        return dict(id=label,target=target,method=method,verification='local-fixture',value=value,**kw)
     sources=[src('icp',acceptance.SYSTEM['ledger'],'query_blocks',dict(log_length=41,transactions=[deposit])),
              src('jup',p['roles']['sns_ledger'],'get_transactions',dict(log_length=61,transactions=[receipt])),
              src('patron',p['roles']['jupiter_sns_rewards'],'get_patron_record',record),
@@ -88,7 +88,7 @@ class Campaign(unittest.TestCase):
         f=fixture();page=f['sources'][1]['value'];row=page['transactions'].pop()
         archive=principal_text(b'\x11\x01')
         page['archived_ranges']=[dict(target=archive,start=60,end_exclusive=61)]
-        f['sources'].append(dict(id='archive',target=archive,method='get_transactions',verification='local-PocketIC',value=dict(transactions=[row])))
+        f['sources'].append(dict(id='archive',target=archive,method='get_transactions',verification='local-fixture',value=dict(transactions=[row])))
         self.assertEqual(campaign.verify(f)['status'],'INCOMPLETE')
         f['windows'][1]['sources'].append('archive')
         self.assertEqual(campaign.verify(f)['status'],'PASS')

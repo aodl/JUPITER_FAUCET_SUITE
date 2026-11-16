@@ -64,7 +64,7 @@ def verify(manifest):
     for src in sources:
         if src['id'] in source_map or src['target'] not in allowed_targets | archive_ranges.keys() or src['method'] not in allowed_methods:
             raise ValueError('duplicate/unapproved canonical evidence source')
-        if src['verification'] not in ('replica-signed-query', 'certified', 'local-PocketIC'):
+        if src['verification'] not in ('replica-signed-query', 'certified', 'local-PocketIC', 'local-fixture'):
             raise ValueError('explicit evidence verification classification required')
         # Archive targets require a canonical callback in a ledger response, not
         # a name supplied in an arbitrary manifest. No network discovery occurs.
@@ -244,7 +244,7 @@ def verify(manifest):
         status = ('FAIL' if 'INVARIANT_FAILURE' in checks.values() else
                   'INCOMPLETE' if any(v in ('UNAVAILABLE_EVIDENCE','DELAYED') for v in checks.values()) else 'PASS')
         output.append(dict(name=name,status=status,checks=checks,details=details))
-    return dict(schema=1,campaign_id=manifest['campaign_id'],input_sha256=digest(manifest),
+    return dict(schema=1,fixture=any(s['verification'].startswith('local-') for s in sources),campaign_id=manifest['campaign_id'],input_sha256=digest(manifest),
                 source_hashes={key:digest(row) for key,row in source_map.items()},
                 status='FAIL' if any(r['status']=='FAIL' for r in output) else
                        'INCOMPLETE' if any(r['status']=='INCOMPLETE' for r in output) else 'PASS',
