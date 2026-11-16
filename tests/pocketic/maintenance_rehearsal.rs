@@ -322,7 +322,7 @@ pub(super) fn rehearse(
         operator,
         fs::read(artifacts.join("ledger.wasm.gz"))?,
         &candidate_did,
-        false,
+        true,
         true,
     )?;
     transfers(pic, ledger, rewards, outsider, 1)?;
@@ -334,7 +334,8 @@ pub(super) fn rehearse(
             .unwrap()
             .settings
             .controllers,
-        vec![root]
+        vec![root, operator],
+        "the official Ledger grants maintenance at creation, not through a simulated Root delegation"
     );
     let archived_before = pic
         .query_call(
@@ -365,10 +366,8 @@ pub(super) fn rehearse(
         }
     );
     assert!(pic
-        .set_controllers(first, Some(operator), vec![root, operator])
+        .set_controllers(first, Some(viewer), vec![viewer])
         .is_err());
-    pic.set_controllers(first, Some(root), vec![root, operator])
-        .unwrap();
     for _ in 0..20 {
         pic.tick();
     }

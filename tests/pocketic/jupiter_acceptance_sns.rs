@@ -329,6 +329,7 @@ import profile, prepare
 from test_sns import local_genesis
 c=json.loads(Path(sys.argv[1]).read_text()); out=Path(sys.argv[2])
 p=json.loads(profile.PROFILE.read_text()); p['roles']=c['roles']; p['operator']=c['operator']
+p.pop('maintenance', None)  # Owned local fixture, not the acceptance maintenance authority.
 p['nns_neuron']['id']=c['acceptance_neuron_id']
 p['age_bonus_recipient_2']={'owner':c['operator'],'subaccountHex':None}
 p['relay_surplus_neuron_recipients']=[]

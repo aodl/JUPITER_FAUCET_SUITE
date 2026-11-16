@@ -59,14 +59,19 @@ before submission. These files are not a second deployment executor.
 
 Discover existing archives through the authentic Ledger `archives()` reply; then
 check physical controllers/ranges/hashes. Root discovery does not grant control.
-Existing archives require an actual controller to add the maintainer. Future
+An existing archive is maintainable only when its actual controller set already
+contains the executor or a supported executable delegation route is proved. A
+**Root-only archive is blocked**: this package establishes no Root API that can
+grant the executor, and controlling Root is not the ability to sign as Root. No
+framework fork/proxy is introduced to bypass that gap. Future
 archives require a reviewed native Ledger upgrade argument containing
 `change_archive_options.more_controller_ids=[executor]`, retaining `controller_id=Root`
 and every other existing option. This changes **future** archive creation, not old
 archives. Do not assume an archive is maintainable from its name or membership.
 
-The official-SNS mechanism fixture creates a real archive before Ledger upgrade,
-adds the maintainer through Root, upgrades that archive, checks its first retained
+The official-SNS mechanism fixture sets the official Ledger archive option before
+first creation, creates a real archive with Root+maintainer before the candidate
+Ledger upgrade, upgrades that already-authorised archive and checks its first retained
 transaction, upgrades Ledger, creates further real archives, checks contiguous
 ranges and Root+maintainer sets, and independently checks account effects/fee burns.
 Small archive thresholds/memory and extra archive cycles are local acceleration,
@@ -150,6 +155,13 @@ PATH, disk/backups and notification delivery before enabling it. No credentials 
 the job. The internal nonblocking lock prevents overlap; failure exits 2, complete
 public collection exits 0 while coverage gaps remain explicit (0 is not a payout
 health assertion).
+
+Anonymous SDK configuration is not OS key isolation. A job running as the same
+Unix user could still access that user's plaintext DFX store if compromised.
+Before unattended activation, the owner must supply an existing restricted host
+execution context with no maintenance/participant/personal key directories exposed.
+The cron line below is an invocation example, not a claim that this isolation is
+configured. No new host user, container service or custody system is created here.
 
 ```cron
 # PROPOSAL ONLY — install only after standing read approval and alert hookup.
@@ -280,6 +292,7 @@ SDK 5.0.0 and the workspace-pinned PocketIC 15.0.0:
 - `PYTHONDONTWRITEBYTECODE=1 JUPITER_SNS_ARTIFACT_DIR=/home/codexdev/.cache/verified-sns/4d5e00cd65581c64 python3 -m unittest discover -s tools/acceptance -p 'test_*.py'`: 51 tests, including exact official/app Candid → SDK projections and fail-closed active null clocks.
 - `node --test tools/acceptance/observe.test.mjs`: two transport-isolation tests; no HTTP request is dispatched.
 - `POCKET_IC_MUTE_SERVER=1 RUST_TEST_THREADS=1 JUPITER_POCKETIC_IDLE_TTL_SECS=3600 cargo test --locked -p jupiter-relay --test jupiter_relay_integration acceptance_sns::operational::exact_genesis_governance_handover_and_production_reserve -- --exact --ignored --nocapture`: one complete populated official-SNS scenario passed. Controller/viewer/snapshot boundaries, the 1T rejection, old/new real archives, full decoded transaction preservation, 191 real transfers/191,000,000 e8s of fee burn, candidate Root/Ledger upgrades, native governed app upgrade, stored-version drift and official SNS-W absence/next-version rejection were exercised.
+- The existing `acceptance_sns::real_jup_sns_ownership_rewards_factory_and_governed_upgrade` case also passed after explicitly dropping acceptance maintenance metadata from its synthetic local-operator profile. This fixture remains independent of the acceptance exception; strict validation is retained.
 - `python3 tools/scripts/validate-mainnet-install-args`: passed; production/debug DID and artifact bindings retained.
 - `cargo fmt --all -- --check` and `git diff --check`: passed.
 

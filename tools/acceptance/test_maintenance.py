@@ -153,6 +153,11 @@ console.log(JSON.stringify(decoded,(_,v)=>typeof v==='bigint'?v.toString():v));"
         changed=observe.report(p,e,good,12000,900)
         self.assertFalse(changed['checkpoint_eligible'])
         self.assertEqual({a['category'] for a in changed['alerts']},{'DELAYED','BLOCKED'})
+        fee_change=evidence()
+        next(r for r in fee_change['observations'] if r['method']=='icrc1_fee')['value']='10001'
+        changed=observe.report(p,fee_change,good,11000,900)
+        self.assertFalse(changed['checkpoint_eligible'])
+        self.assertIn('BLOCKED',[a['category'] for a in changed['alerts']])
         with self.assertRaises(ValueError):observe.report(p,e,good,9999,900)
         e['observations'][0]['target']=acceptance.PROTECTED[0]
         with self.assertRaises(ValueError):observe.report(p,e,None,10000,900)

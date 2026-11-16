@@ -82,15 +82,15 @@ def report(profile, evidence, previous, now, interval):
     complete = evidence.get('complete') is True and len(rows) == len(allowed) and all(r.get('ok') for r in rows)
     # Do not include client timestamps in module/config epoch comparison.
     physical = sha([(r['target'], r['args'], r.get('value')) for r in rows if r['method'] == 'read_state'])
-    configuration = sha([(r['method'], r.get('value', {}).get('config') if r['method'] == 'get_programme_status' else r.get('value'))
+    configuration = sha([(r['target'], r['method'], r.get('value', {}).get('config') if r['method'] == 'get_programme_status' else r.get('value'))
                          for r in rows if r.get('ok') and r['method'] in {
-                             'get_programme_status', 'get_running_sns_version', 'get_nervous_system_parameters'}])
+                             'get_programme_status', 'get_running_sns_version', 'get_nervous_system_parameters', 'icrc1_fee'}])
     if complete and previous and previous['physical'] != physical:
         alerts.append(dict(category='BLOCKED', reason='module/controller epoch changed; review before continuing financial cohorts'))
     if previous and previous['profile_sha256'] != sha(profile):
         alerts.append(dict(category='BLOCKED', reason='profile/configuration epoch changed; explicit review required'))
     if complete and previous and previous['configuration'] != configuration:
-        alerts.append(dict(category='BLOCKED', reason='programme/framework version epoch changed; explicit review required'))
+        alerts.append(dict(category='BLOCKED', reason='programme/framework/fee epoch changed; explicit review required'))
     if not complete:
         alerts.append(dict(category='UNAVAILABLE_EVIDENCE', reason='partial/failed read set; checkpoint not advanced'))
     for row in rows:

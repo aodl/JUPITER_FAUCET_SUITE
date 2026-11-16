@@ -37,7 +37,7 @@ def plan(profile):
         executor=executor, controller_risk='Full arbitrary-code/state/asset authority; plaintext-at-rest key. Not upgrade-only or production custody.',
         framework=transitions,
         archive=dict(discovery='Ledger archives(), then physical controller/status verification; no arbitrary IDs',
-            existing='Add executor only through an actual current controller, before removing any bootstrap principal.',
+            existing='Inspect physical controllers. Upgrade only if the executor is already authorised. A Root-only archive is BLOCKED: no supported live delegation route is established here; never impersonate Root or assume its controller can sign as it.',
             creation_blocker='Pinned Ledger rejects the retained 1T archive setting on application subnets: at least max(4.5T, 3 * native creation cost) per archive and 10T Ledger liquid cycles remaining afterward. Separate constructor/settings and funding revision approval required; existing funding sheet unchanged.',
             future_upgrade_argument='(variant { Upgrade = opt record { change_archive_options = opt record { more_controller_ids = opt vec { principal "' + executor + '" } } } })',
             preserve='Keep controller_id=Root and all source-defined archive options; verify each created archive. Root discovery does not confer control.'),
