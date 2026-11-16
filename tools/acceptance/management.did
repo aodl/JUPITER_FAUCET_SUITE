@@ -7,4 +7,16 @@ type Settings = record {
   snapshot_visibility : opt Visibility;
 };
 type UpdateSettings = record { canister_id : principal; settings : Settings };
-service : { update_settings : (UpdateSettings) -> () };
+type Target = record { canister_id : principal };
+type Status = record {
+  cycles : nat; reserved_cycles : nat; memory_size : nat;
+  status : variant { running; stopping; stopped };
+  module_hash : opt blob;
+  settings : record { controllers : vec principal; freezing_threshold : nat };
+};
+type Logs = record { canister_log_records : vec record { idx : nat64; timestamp_nanos : nat64; content : blob } };
+service : {
+  update_settings : (UpdateSettings) -> ();
+  canister_status : (Target) -> (Status);
+  fetch_canister_logs : (Target) -> (Logs) query;
+};

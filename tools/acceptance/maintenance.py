@@ -38,8 +38,8 @@ def plan(profile):
         framework=transitions,
         archive=dict(discovery='Ledger archives(), then physical controller/status verification; no arbitrary IDs',
             existing='Inspect physical controllers. Upgrade only if the executor is already authorised. A Root-only archive is BLOCKED: no supported live delegation route is established here; never impersonate Root or assume its controller can sign as it.',
-            creation_blocker='Pinned Ledger rejects the retained 1T archive setting on application subnets: at least max(4.5T, 3 * native creation cost) per archive and 10T Ledger liquid cycles remaining afterward. Separate constructor/settings and funding revision approval required; existing funding sheet unchanged.',
-            future_upgrade_argument='(variant { Upgrade = opt record { change_archive_options = opt record { more_controller_ids = opt vec { principal "' + executor + '" } } } })',
+            creation_policy='Genesis InitArgs: 4.5T per archive; controller_id=Root; more_controller_ids=[executor]. Before trigger require actual native creation cost <=1.5T and at least17.5T Ledger liquid cycles (4.5T allocation +10T native retained floor +existing3T operating margin). Unexpected archives at installation preflight STOP for actual-controller review.',
+            initial_more_controller_ids=[executor],
             preserve='Keep controller_id=Root and all source-defined archive options; verify each created archive. Root discovery does not confer control.'),
         viewer=dict(principal=None, route='Anonymous public queries initially; private settings blocked until one separate low-privilege provider is approved.',
             proposed_settings='status_visibility=allowed_viewers [viewer]; log_visibility=allowed_viewers [viewer]; snapshot_visibility=controllers; no controller grant',
@@ -169,6 +169,11 @@ if __name__ == '__main__':
     p.add_argument('--lock', required=True)
     p.add_argument('--artifacts', required=True)
     p.add_argument('--output', required=True)
+    p = sub.add_parser('viewer-settings')
+    p.add_argument('--principal', required=True)
+    p.add_argument('--output', required=True)
+    p = sub.add_parser('verify-campaign')
+    p.add_argument('--evidence', required=True, help='Saved finite canonical export; no network')
     p = sub.add_parser('exercises')
     p.add_argument('--campaign-id', required=True)
     args = parser.parse_args()
@@ -177,6 +182,17 @@ if __name__ == '__main__':
         print(json.dumps(write_plan(profile, args.output) if args.output else plan(profile), indent=2))
     elif args.command == 'select':
         print(json.dumps(select(json.loads(Path(args.saved_proposals).read_text())), indent=2))
+    elif args.command == 'viewer-settings':
+        import viewer
+        viewer.settings(args.principal, args.output)
+    elif args.command == 'verify-campaign':
+        import campaign
+        raw = Path(args.evidence).read_bytes()
+        if len(raw) > 4 * 1024 * 1024:
+            raise ValueError('campaign evidence exceeds 4MiB')
+        report = campaign.verify(json.loads(raw))
+        print(json.dumps(report, indent=2))
+        raise SystemExit({'PASS': 0, 'INCOMPLETE': 2, 'FAIL': 3}[report['status']])
     elif args.command == 'exercises':
         print(json.dumps(exercises(args.campaign_id), indent=2))
     else:

@@ -345,6 +345,15 @@ assert d['genesis_timestamp_seconds']==c['timestamp']
 assert d['test_allocations'][0]['owner']==c['participant_a']
 assert d['test_allocations'][2]['owner']==c['user']
 op.candidate(p,d,sys.argv[3],out/'candidate')
+# Local archive capacity acceleration only. Keep the exact live 2000/1000
+# threshold, 4.5T funding and initial controllers. Retain canonical arguments.
+import candid as cd
+ledger=out/'candidate/sns/ledger.did'
+text=ledger.read_text()
+assert 'opt 1073741824' in text
+(out/'candidate/local-small-archive-ledger.bin').write_bytes(cd.encode_checked(
+    out/'candidate/sns/ledger.interface.did','(LedgerArg)',text.replace('opt 1073741824','opt 65536')))
+
 "#,
             )
             .arg(evidence.join("context.json"))
@@ -359,7 +368,11 @@ op.candidate(p,d,sys.argv[3],out/'candidate')
         pic.install_canister(
             role(&format!("sns_{name}")),
             package,
-            fs::read(evidence.join(format!("sns/{name}.bin")))?,
+            fs::read(if name == "ledger" {
+                evidence.join("local-small-archive-ledger.bin")
+            } else {
+                evidence.join(format!("sns/{name}.bin"))
+            })?,
             Some(operator),
         );
         assert_eq!(

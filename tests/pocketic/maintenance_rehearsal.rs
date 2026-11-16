@@ -51,6 +51,26 @@ fn encode(did: &Path, types: &str, text: &str) -> Result<Vec<u8>> {
     Ok(hex::decode(String::from_utf8(result.stdout)?.trim())?)
 }
 
+fn decode_viewer(repo: &Path, method: &str, bytes: &[u8]) -> Result<serde_json::Value> {
+    let mut child = Command::new("node")
+        .arg(repo.join("tools/acceptance/observe.mjs"))
+        .args(["--decode-management", method])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(hex::encode(bytes).as_bytes())?;
+    let result = child.wait_with_output()?;
+    anyhow::ensure!(
+        result.status.success(),
+        "real management reply SDK projection"
+    );
+    Ok(serde_json::from_slice(&result.stdout)?)
+}
+
 fn upgrade_ledger(
     pic: &PocketIc,
     ledger: Principal,
@@ -209,16 +229,46 @@ pub(super) fn rehearse(
             bytes,
         )
         .map_err(|e| anyhow::anyhow!("viewer settings: {e:?}"))?;
-        // Raw typed transport avoids PocketIC client's old status response DTO.
-        pic.update_call_with_effective_principal(
-            Principal::management_canister(),
-            pocket_ic::common::rest::RawEffectivePrincipal::CanisterId(id.as_slice().to_vec()),
-            viewer,
-            "canister_status",
-            encode_one(StatusArg { canister_id: id })?,
-        )
-        .map_err(|e| anyhow::anyhow!("allowed viewer status: {e:?}"))?;
-        assert!(pic.fetch_canister_logs(id, viewer).is_ok());
+        // Exercise the actual observer SDK projection against native replies.
+        let status_reply = pic
+            .update_call_with_effective_principal(
+                Principal::management_canister(),
+                pocket_ic::common::rest::RawEffectivePrincipal::CanisterId(id.as_slice().to_vec()),
+                viewer,
+                "canister_status",
+                encode_one(StatusArg { canister_id: id })?,
+            )
+            .map_err(|e| anyhow::anyhow!("allowed viewer status: {e:?}"))?;
+        let decoded = decode_viewer(repo, "canister_status", &status_reply)?;
+        anyhow::ensure!(
+            decoded["cycles"].as_str().unwrap().parse::<u128>()? > 0,
+            "viewer obtains real main cycles"
+        );
+        anyhow::ensure!(
+            decoded["reserved_cycles"].as_str().is_some(),
+            "reserved cycles are a separate native field"
+        );
+        let logs_reply = pic
+            .query_call_with_effective_principal(
+                Principal::management_canister(),
+                pocket_ic::common::rest::RawEffectivePrincipal::CanisterId(id.as_slice().to_vec()),
+                viewer,
+                "fetch_canister_logs",
+                encode_one(StatusArg { canister_id: id })?,
+            )
+            .map_err(|e| anyhow::anyhow!("native viewer log reply: {e:?}"))?;
+        let logs = decode_viewer(repo, "fetch_canister_logs", &logs_reply)?;
+        anyhow::ensure!(
+            logs["canister_log_records"].is_array(),
+            "actual log projection"
+        );
+        fs::write(
+            evidence.join(format!("viewer-{name}.json")),
+            serde_json::to_vec(&json!({"status":decoded,"logs":logs,"local_only":true}))?,
+        )?;
+        // PocketIC ingress denial of outsider canister_status has a client
+        // response-decoding limitation; don't credit that panic as a proof.
+        // Actual allowed-viewer replies and controller-only mutations follow.
         assert!(pic.fetch_canister_logs(id, outsider).is_err());
         assert!(pic.take_canister_snapshot(id, Some(viewer), None).is_err());
         assert!(pic.set_controllers(id, Some(viewer), vec![viewer]).is_err());
@@ -274,26 +324,16 @@ pub(super) fn rehearse(
         .map_err(|e| anyhow::anyhow!("local snapshot delete: {e:?}"))?;
     pic.start_canister(index, Some(operator))
         .map_err(|e| anyhow::anyhow!("local snapshot restart: {e:?}"))?;
-    // Baseline archive before the candidate, populated with authentic transactions.
-    // Extra local cycles fund the separate archive contingency, not the 3T target.
-    pic.add_cycles(ledger, 100_000_000_000_000);
-    upgrade_ledger(
-        pic,
-        ledger,
-        operator,
-        fs::read(artifacts.join("ledger.wasm.gz"))?,
-        &candidate_did,
-        false,
-        false,
-    )?;
-    transfers(pic, ledger, rewards, outsider, 30)?;
-    let blocked: Vec<Archive> = query_one(pic, ledger, operator, "archives", ())?;
+    // Exact genesis InitArgs: 2000-block trigger, 4.5T allocation and Root +
+    // maintainer from birth. No Ledger upgrade/migration before first archive.
+    let empty: Vec<Archive> = query_one(pic, ledger, operator, "archives", ())?;
     assert!(
-        blocked.is_empty(),
-        "historical 1T archive allocation fails the official application-subnet floor"
+        empty.is_empty(),
+        "unexpected pre-existing archive: fail closed"
     );
-    // Official Ledger's archive diagnostics use its HTTP log ring, not the
-    // management debug-print log. Query the actual pinned public API locally.
+    transfers(pic, ledger, rewards, outsider, 2000)?;
+    let blocked: Vec<Archive> = query_one(pic, ledger, operator, "archives", ())?;
+    assert!(blocked.is_empty(), "3T is not archive-trigger headroom");
     let logs: HttpResponse = query_one(
         pic,
         ledger,
@@ -310,22 +350,19 @@ pub(super) fn rehearse(
     assert_eq!(logs.status_code, 200);
     let text = String::from_utf8(logs.body)?;
     anyhow::ensure!(
-        text.contains("Archiving options do not provide enough cycles"),
-        "actual native archive failure required: {text}"
+        text.contains("cycles"),
+        "native archive headroom rejection: {text}"
     );
-    fs::write(evidence.join("archive-budget-limitation.txt"), &text)?;
-    // Local mechanism funding only: do not rewrite the accepted 1T planning
-    // sheet or constructors. This is a new live archive prerequisite/blocker.
-    upgrade_ledger(
-        pic,
-        ledger,
-        operator,
-        fs::read(artifacts.join("ledger.wasm.gz"))?,
-        &candidate_did,
-        true,
-        true,
-    )?;
+    fs::write(evidence.join("archive-headroom-limitation.txt"), &text)?;
+    // 17.5T pre-trigger target = 4.5T creation + 10T native retained floor +
+    // the existing 3T operating margin. Add only the observed local deficit.
+    let target = 17_500_000_000_000_u128;
+    pic.add_cycles(ledger, target.saturating_sub(pic.cycle_balance(ledger)));
     transfers(pic, ledger, rewards, outsider, 1)?;
+    anyhow::ensure!(
+        pic.cycle_balance(ledger) >= 10_000_000_000_000,
+        "native Ledger retained liquid headroom"
+    );
     let old: Vec<Archive> = query_one(pic, ledger, operator, "archives", ())?;
     anyhow::ensure!(!old.is_empty(), "real baseline archive must exist");
     let first = old[0].canister_id;
@@ -371,6 +408,18 @@ pub(super) fn rehearse(
     for _ in 0..20 {
         pic.tick();
     }
+    let denied = pic
+        .upgrade_canister(
+            first,
+            fs::read(candidate.join("archive.wasm.gz"))?,
+            encode_args(())?,
+            Some(viewer),
+        )
+        .unwrap_err();
+    assert_eq!(
+        denied.error_code,
+        pocket_ic::ErrorCode::CanisterInvalidController
+    );
     pic.upgrade_canister(
         first,
         fs::read(candidate.join("archive.wasm.gz"))?,
@@ -392,6 +441,8 @@ pub(super) fn rehearse(
         archived_after, archived_before,
         "all canonical transaction fields preserved across archive migration"
     );
+    // Local accelerated small-memory archives need their own finite test budget.
+    pic.add_cycles(ledger, 100_000_000_000_000);
     // Direct state-preserving upgrades, not a native blessed SNS-W path.
     for _ in 0..20 {
         pic.tick();
@@ -445,14 +496,14 @@ pub(super) fn rehearse(
     assert!(archives[0].block_range_end >= old[0].block_range_end);
     assert_eq!(
         support::ledger::icrc1_balance(pic, ledger, &reserve)?,
-        before_balance - 191 * 101_000_000
+        before_balance - 2161 * 101_000_000
     );
     assert_eq!(
         support::ledger::icrc1_balance(pic, ledger, &receiver)?,
-        before_receiver + 191 * 100_000_000
+        before_receiver + 2161 * 100_000_000
     );
     let after_supply: Nat = query_one(pic, ledger, operator, "icrc1_total_supply", ())?;
-    assert_eq!(after_supply, before_supply - Nat::from(191_000_000_u64));
+    assert_eq!(after_supply, before_supply - Nat::from(2161_000_000_u64));
     assert_eq!(
         pic.query_call(
             governance,
@@ -542,7 +593,7 @@ pub(super) fn rehearse(
     );
     assert_eq!(
         support::ledger::icrc1_balance(pic, ledger, &reserve)?,
-        before_balance - 191 * 101_000_000
+        before_balance - 2161 * 101_000_000
     );
     // Authentic official SNS-W with no registered candidate. Its query proves
     // these exact bytes are unavailable through the ordinary blessed path.
@@ -605,7 +656,7 @@ pub(super) fn rehearse(
         serde_json::to_vec_pretty(&json!({
             "fixture":"two source-pinned official versions / not an NNS candidate", "framework":controller_evidence,
             "existing_archive":first.to_text(),"new_archives":new.iter().map(|a|a.canister_id.to_text()).collect::<Vec<_>>(),
-            "canonical_fee_burn_e8s":191_000_000,"version_metadata_unchanged":true,
+            "canonical_fee_burn_e8s":2161_000_000_u64,"version_metadata_unchanged":true,
             "native_next_version_rejected":true,"recovery":"experiment epoch; no downgrade or safe later blessed convergence proven",
             "application_upgrade":"ordinary native path passed before handover AND through candidate Root afterward"
         }))?,

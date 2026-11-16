@@ -2,7 +2,7 @@
 
 This is an acceptance-only trust exception and a limited observer, not deployment
 approval or a complete financial monitoring service. Both active clocks remain
-null. PR #19's dated constructor archive stays historical and unchanged. No
+null. PR #18's dated constructor archive stays historical and unchanged. No
 monitor, timer, mainnet query, proposal, transfer or upgrade is activated here.
 
 ## Authority and staging
@@ -17,16 +17,27 @@ bootstrap principals; rehearse; separately approve removing the personal bootstr
 principal. Never sign as the personal principal. Existing dated controller
 observations remain authentic. No transition is executed by these tools.
 
-**New archive blocker:** the pinned Ledger's
+**Corrected archive policy:** the pinned Ledger's
 `rs/ledger_suite/common/ledger_canister_core/src/archive.rs` at
-`cf41372e3d4dc1accfe2c09a7969f8bddc729dc1` requires at least
+`cf41372e3d4dc1accfe2c09a7969f8bddc729dc1` requires
 `max(4.5T, 3 × native canister-creation cost)` per archive on application subnets,
-and **10T liquid cycles remaining in Ledger after creation**. The retained 1T
-archive constructor/planning contingency fails this check. No amount or constructor
-is silently revised here. Before an actual archive trigger, owner approval must
-cover the corrected setting and Ledger-only headroom; this is not a blanket 10T
-requirement on the other eleven canisters. The local test retains the real rejection
-before using explicitly local 4.5T-per-archive funding to prove the mechanism.
+and **10T liquid cycles remaining in Ledger after creation**. Future acceptance
+constructors use **4.5T**, gated on fresh native creation cost **<= 1.5T**. Unknown
+or higher cost fails readiness; review the allocation and regenerate rather than
+installing insufficient arguments. This is a configuration correction, not spend approval.
+
+[funding-sheet.json](funding-sheet.json) separately proposes **17.5T Ledger liquid
+cycles before the archive trigger**: 4.5T creation +10T native retained floor +the
+existing 3T operating buffer. The native minimum is 14.5T; 3T is the explicitly retained
+operating margin above that floor, not a claim about uptime. Reserved/freezing
+cycles do not count as liquid. All twelve initial main targets remain 3T.
+Incremental conditional delivery beyond Ledger's 3T row is **14.5T**; using only the
+dated balances, total main top-up plus archive readiness is **32,588,365,604,174 cycles**.
+This is not an ICP quote, spend approval or fresh observation. Before another archive,
+replenish the 4.5T allocation plus measured burn to restore 17.5T liquid and recheck costs.
+The 2000-block trigger/1000-block batch and live 1GiB archive size remain unchanged.
+Historical dated constructors retain their original bytes/hashes and invalid 1T option;
+they are historical evidence, never a future executable package.
 
 The executor can install arbitrary code, destroy state and take control of assets
 and Governance. It is **not upgrade-only**. Its existing plaintext-at-rest DFX
@@ -57,47 +68,61 @@ interface discovery or identity access. Every stage records its expected set;
 fresh exact physical controllers/modules/settings and separate approval are required
 before submission. These files are not a second deployment executor.
 
-Discover existing archives through the authentic Ledger `archives()` reply; then
-check physical controllers/ranges/hashes. Root discovery does not grant control.
-An existing archive is maintainable only when its actual controller set already
-contains the executor or a supported executable delegation route is proved. A
-**Root-only archive is blocked**: this package establishes no Root API that can
-grant the executor, and controlling Root is not the ability to sign as Root. No
-framework fork/proxy is introduced to bypass that gap. Future
-archives require a reviewed native Ledger upgrade argument containing
-`change_archive_options.more_controller_ids=[executor]`, retaining `controller_id=Root`
-and every other existing option. This changes **future** archive creation, not old
-archives. Do not assume an archive is maintainable from its name or membership.
+Installation preflight must fail closed if **any unexpected archive already exists**;
+retain its canonical discovery response and inspect actual controllers/ranges/hashes.
+No Root-only migration is implemented. Root discovery/control never lets an external
+operator sign as Root. Future genesis Ledger **InitArgs** already set
+`controller_id=Root` and `more_controller_ids=[existing acceptance executor]` through
+the pinned official interface. No post-install Ledger upgrade is required for this.
 
-The official-SNS mechanism fixture sets the official Ledger archive option before
-first creation, creates a real archive with Root+maintainer before the candidate
-Ledger upgrade, upgrades that already-authorised archive and checks its first retained
-transaction, upgrades Ledger, creates further real archives, checks contiguous
-ranges and Root+maintainer sets, and independently checks account effects/fee burns.
-Small archive thresholds/memory and extra archive cycles are local acceleration,
-not changes to acceptance constructor defaults, budgets or the 3T starting target.
+The official-SNS fixture creates its first archive directly from those InitArgs,
+with no prior Ledger upgrade. At3T it observes the native headroom rejection; at
+17.5T it creates an archive with both controllers and retains at least 10T. It tests
+an unauthorised archive upgrade rejection, authorised state-preserving upgrade,
+full decoded canonical transaction preservation and balances/fee burns. After a
+candidate Ledger upgrade it creates further archives and checks contiguous ranges.
+The **local-only** first-archive memory limit is 64KiB to force capacity turnover;
+the exact live trigger and batch remain 2000/1000. Later small-memory archiving and
+extra cycles are finite test acceleration, not live constructor defaults or approved budgets.
 
 ## Viewer boundary
 
-No observation identity is created or borrowed in this change. The collector uses
-anonymous public queries and certificates only. A separate low-privilege viewer is
-needed for private status/logs; its provider and live management route are a later
-approval gate. The local fixture uses a distinct synthetic viewer and proves
-`status_visibility.allowed_viewers`, `log_visibility.allowed_viewers`, controller-only
-snapshots, log denial to outsiders and denial of writes/snapshots to the viewer.
-This is PocketIC capability evidence, not a claim about settings on the acceptance
-subnet or current CLI option support.
+No observation identity is created, selected or approved here. Anonymous public
+observation remains the default. Optional `--collect-viewer APPROVAL_JSON` uses
+**one separately approved DFX 0.31.0 provider** in a restricted existing host context
+that exposes only its dedicated identity. It rejects executor/personal/participant/
+protocol principals and never chooses a default, wallet, fallback or mutation.
+The owner must approve identity/custody and exact target list before that mode runs.
 
-For that later viewer, prepare `update_settings` with the exact viewer in both
-allowed-viewer lists, `snapshot_visibility=controllers`, controllers unchanged.
-Validate with the pinned local Candid subset and a supported provider; do not copy
-keys between DFX/ICP stores or assume their aliases are interchangeable. Existing
-DFX command-scoped 0.31.0 is a maintenance capability, not the observer route.
-The current Rust management dependency omits newer status settings, so the test
-uses a narrow Candid projection, not a production DTO change. Default bounded
-4096-byte management logs remain; no measured case justifies enlarging them yet. Ledger also has a separate existing public HTTP log ring, used locally for the archive diagnostic; it is not yet collected by the observer. Missing or
-rolled-over logs cannot establish no activity. Immutable children are observed
-through available public evidence, never a controller/viewer backdoor.
+`maintenance.py viewer-settings --principal PUBLIC_VIEWER --output OUTPUT` prepares
+12 typed settings payloads offline: both allowed-viewer lists contain only that
+viewer; `snapshot_visibility=controllers`; controllers and 4096-byte buffers unchanged.
+`PUBLIC_VIEWER` is intentionally unresolved; no example principal is a live choice.
+A target lacking an executable settings/controller route stays unavailable. Immutable
+children receive no additional authority or settings workaround.
+
+The approved-provider file must contain `principal`, `dfx_identity_alias`,
+`dfx_version:"0.31.0"`, `network:"ic"`, the exact 12 profile IDs in `targets`,
+`approved:true` and `restricted_host_confirmed:true`. These are owner-supplied gates,
+not a credential or proof that OS isolation was configured. DFX derives and compares
+the public principal locally **before** network calls. Never bridge identity stores.
+Per invocation: **24 logical calls**, one status and one log query per target,
+30sec each,750sec dispatch deadline, no wrapper retries,512KiB reply ceiling.
+Pinned local Candid prevents remote interface discovery. Status is a replicated
+management read; logs are replica-signed queries, not certified financial evidence.
+Official DFX 0.31 `environment.rs` enables query verification by default; this wrapper
+removes its diagnostic disable override. DFX verification/support HTTP traffic is
+**not individually metered**, unlike the anonymous adapter; approve it explicitly,
+not under the old exact-wire inventory. Native provider/subnet access remains unproved
+until a separately authorised invocation. No signed call was made here.
+
+The real local fixture decodes actual status/log replies with the observer's SDK
+projection, proves allowed access, outsider log denial and viewer settings/upgrade/
+private-snapshot denials. An outsider-status ingress-denial experiment hit PocketIC's
+client response-decoding limitation; it is retained as a failed attempt, not credited.
+Missing/rolled-over/reset log indices produce explicit gaps and preserve the previous
+checkpoint. Logs remain bounded diagnostic evidence. Ledger's separate HTTP `/logs`
+ring supplies archive diagnostics locally; that endpoint is not collected live here.
 
 ## One-shot observation and limits
 
@@ -130,23 +155,71 @@ changes block advancement pending explicit epoch review. Backward time is reject
 missed intervals are DELAYED. No payout cursor or financial cohort is advanced by
 this limited collector. A failed or absent read never becomes a zero payout.
 
-The pure receipt-arithmetic helper has negative fixtures for wrong destination,
-amount, fee, memo, duplicate/missing records, stale owner selection, unknown dispatch
-and late cached-stake refresh. **It is not connected to live entitlement or complete
-archive-history reconstruction.** `AssumedPaidUnverified` stays unverified and must
-never be replayed. Public balance samples alone cannot prove historic reward rules,
-fee sponsorship or one allowed dispatch. Consequently direct/2x/Relay/treasury/
-maturity/participation reconciliation reports UNAVAILABLE_EVIDENCE, not success.
-IO quotes are not payments; actual IO settlement remains NOT_ENABLED/untested.
-Fee burns make constant nominal jUP supply an invalid long-running invariant.
+## Finite known-campaign verification — offline and read-only
 
-This is the simplicity gate: do not add broad production journal/enumeration APIs,
-a second accounting engine or a history database. For a specific bounded exercise,
-collect its canonical source/receipt blocks, exact frozen programme/owner selection,
-actual fees, cached-stake refresh and complete bounded history separately. Mark
-unknown archive coverage, frozen selections, maturity splits or refreshes unavailable.
-Future maturity reconciliation must separate base from age bonus, native rounding/
-fees and 95/5 age routing; the observer does not infer them from a net balance.
+```sh
+python3 tools/acceptance/maintenance.py verify-campaign --evidence /absolute/path/to/campaign.json
+```
+
+This connects the receipt checker to the existing five named exercise recipes.
+It never queries the network, signs, dispatches, retries or compensates. Input is
+one explicit saved evidence manifest, not a database: schema 1, `campaign_id`, up to 32
+`sources`, up to 5 unique `exercises`, and one finite `window` per ICP/jUP Ledger
+(up to 256 blocks each). File ceiling 4MiB. Output is deterministic JSON with input/
+source hashes, per-assertion HEALTHY/DELAYED/UNAVAILABLE_EVIDENCE/INVARIANT_FAILURE,
+and PASS(0), INCOMPLETE(2), FAIL(3). PASS means the supplied imported assertions pass,
+**not independently authenticated live state or globally complete payment history**.
+
+Each source records `id,target,method,verification,value`; canonical sources use
+`query_blocks/get_blocks/get_transactions` or the named native neuron/proposal and
+programme/patron queries. Sources are normalized exports of retained original query
+responses; the importer must separately verify transport signatures/certificates,
+raw-response hashes and normalization fidelity. The verifier hashes normalized
+imports; it does **not** verify raw signatures, decode arbitrary Candid, or certify
+the exporter. `replica-signed-query`, `certified`, `local-PocketIC` are distinct labels;
+a source cannot gain certification merely by being signed. No standalone authenticity
+claim is made from a manifest label. The fixture builder in `test_campaign.py` is an
+executable schema example, explicitly local evidence.
+
+A Ledger page contains `log_length`, `transactions`, optional `archived_ranges`.
+Every transaction retains canonical `block,kind,from,to,amount,fee,memo_hex,timestamp_ns`;
+Accounts retain owner/subaccount. Ranges use `start,end_exclusive`; an archive target
+must be introduced by a canonical Ledger callback span. Missing callback pages,
+short ranges, duplicate indices or incomplete coverage never prove zero payout.
+A complete finite window can detect duplicate reward memos **within that window**;
+no global no-repeat claim is made. Supply is not assumed constant after fee burns.
+
+An exercise pins source block/time/Account, approved ICP/jUP fees, source IDs for
+patron/programme/frozen-neuron selection and optional refresh/proposal evidence.
+A/B/Relay source Accounts, staking destination and routing memos come from the
+existing catalog, not caller-selected reward destinations. Patron expectations use
+the same 110-digit Decimal oracle already checked against production Q96 in
+`patron_math.rs`: exact whole halvings; fractional-day result must be within the
+proven one-base-unit downward envelope. Multiplier precedes flooring; actual transfer
+fee is sponsor-paid, not subtracted from the award. The programme epoch/launch clock,
+canonical deposit time and journal selection must agree. No active timestamp is filled.
+
+Frozen native neuron evidence must be captured at the recorded selection checkpoint;
+a later lookup cannot prove historical economic control. Imported complete permissions
+must show unique economic ownership; B must be the exact memo 21, one-year,
+non-dissolving, auto-stake neuron. A's ordinary test leaves auto-stake disabled.
+Without the frozen selection/time evidence, eligibility stays unavailable even if
+settlement is independently visible. Compounded Ledger receipt and subsequent cached
+stake refresh are separate; a lagging supplied refresh is DELAYED, never replayed.
+`AssumedPaidUnverified`, unknown/merely-dispatched results remain incomplete.
+
+Relay aggregate pot receipt is distinct from an optional actual individual Ledger
+receipt. A receipt does not establish immutable Relay entitlement/cutoff reconstruction;
+that frozen context remains unavailable. Treasury checks canonical Governance-default
+to exact NNS stake credit, null routing memo and an executed matching native proposal;
+interleaved NNS refresh attribution and global absence of patron classification remain
+unavailable. Native ballots prove a neuron's vote, not the historic signing principal.
+
+**Disburser limit:** its production DID exposes no payout-journal/stage/age-pinning
+query. Current public NNS maturity/age plus net ICP balances cannot reconstruct the
+staged gross/base/age-bonus split, rounding, three fees or pending effects. The report
+names those missing sources and returns UNAVAILABLE_EVIDENCE rather than asserting 95/5
+from current balances. No new API is added. IO settlement stays NOT_ENABLED/untested.
 
 ## Inactive host schedule and campaign proposal
 
@@ -165,17 +238,17 @@ configured. No new host user, container service or custody system is created her
 
 ```cron
 # PROPOSAL ONLY — install only after standing read approval and alert hookup.
-# */15 * * * * cd /home/codexdev/src/Jupiter_Faucet_Suite && python3 tools/acceptance/observe.py --profile deploy/acceptance/profile.json --output /home/codexdev/acceptance-observations --collect
+# 0 */6 * * * cd /home/codexdev/src/Jupiter_Faucet_Suite && python3 tools/acceptance/observe.py --profile deploy/acceptance/profile.json --output /home/codexdev/acceptance-observations --collect
 ```
 
-Proposed standing scope: 30 days, every 15 minutes, exactly the 35 reads/bounds above,
+Proposed standing scope: 30 days, every six hours, exactly the 35 reads/bounds above,
 anonymous, fixed acceptance/ICP targets, SDK verification support separately counted;
 no mutations, participant signing, new targets or archive scans. Broader daily
 reconciliation and NNS watching need an expanded **separate** exact read approval.
 No blanket replacement of the existing 25-read installation preflight is implied.
 There is no configured notification service: `alerts.json` must be connected to an
 existing owner-approved channel before calling this monitored. No subscription or
-message is sent here. Keep raw observations 90 days subject to disk review; retain
+message is sent here. The CLI prunes only complete, unpinned raw JSON older than 90 days (configurable 1..365); partial/unresolved evidence, checkpoints and compact reports stay. List campaign-referenced filenames in `pins.json` before rotation; epoch-blocked anonymous evidence is pinned automatically. Review unresolved growth/disk usage manually; there is no deletion of financial cohorts. Keep raw observations 90 days subject to disk review; retain
 small weekly conclusions permanently; rotate only completed raw files, preserve
 checkpoint/current report and all unresolved financial evidence, back up encrypted
 off-host through the owner's existing backup system. Rotation/backup are policy,
@@ -203,7 +276,7 @@ the monitor cannot submit anything.
 
 Fresh approved Ledger fees/balances and frozen selection are mandatory. These are
 unapproved exercise maxima; authorised spend is zero. Preserve primary 6.0007 ICP,
-optional child 3.0001 ICP, separate cycles and 1T archive contingency unchanged.
+optional child 3.0001 ICP remain unchanged. Ledger-only archive readiness uses the separate unapproved 17.5T liquid target above.
 Never use the personal signer or fund a dashboard for its own sake.
 
 ## Offline pre-blessing candidate mechanism
@@ -289,9 +362,9 @@ observation epoch, never a silent cursor restart. No extra environment is create
 Local validation passed with didc 0.6.2, ic-wasm 0.11.0, Node 24.15.0,
 SDK 5.0.0 and the workspace-pinned PocketIC 15.0.0:
 
-- `PYTHONDONTWRITEBYTECODE=1 JUPITER_SNS_ARTIFACT_DIR=/home/codexdev/.cache/verified-sns/4d5e00cd65581c64 python3 -m unittest discover -s tools/acceptance -p 'test_*.py'`: 51 tests, including exact official/app Candid → SDK projections and fail-closed active null clocks.
+- `PYTHONDONTWRITEBYTECODE=1 JUPITER_SNS_ARTIFACT_DIR=/home/codexdev/.cache/verified-sns/4d5e00cd65581c64 python3 -m unittest discover -s tools/acceptance -p 'test_*.py'`: 64 tests, including exact official/app Candid → SDK projections and fail-closed active null clocks.
 - `node --test tools/acceptance/observe.test.mjs`: two transport-isolation tests; no HTTP request is dispatched.
-- `POCKET_IC_MUTE_SERVER=1 RUST_TEST_THREADS=1 JUPITER_POCKETIC_IDLE_TTL_SECS=3600 cargo test --locked -p jupiter-relay --test jupiter_relay_integration acceptance_sns::operational::exact_genesis_governance_handover_and_production_reserve -- --exact --ignored --nocapture`: one complete populated official-SNS scenario passed. Controller/viewer/snapshot boundaries, the 1T rejection, old/new real archives, full decoded transaction preservation, 191 real transfers/191,000,000 e8s of fee burn, candidate Root/Ledger upgrades, native governed app upgrade, stored-version drift and official SNS-W absence/next-version rejection were exercised.
+- `POCKET_IC_MUTE_SERVER=1 RUST_TEST_THREADS=1 JUPITER_POCKETIC_IDLE_TTL_SECS=3600 cargo test --locked -p jupiter-relay --test jupiter_relay_integration acceptance_sns::operational::exact_genesis_governance_handover_and_production_reserve -- --exact --ignored --nocapture`: one complete populated official-SNS scenario passed. Controller/viewer/snapshot boundaries, the 3T headroom rejection, initial/new real archives, full decoded transaction preservation, 2161 real transfers/2,161,000,000 e8s of fee burn, candidate Root/Ledger upgrades, native governed app upgrade, stored-version drift and official SNS-W absence/next-version rejection were exercised.
 - The existing `acceptance_sns::real_jup_sns_ownership_rewards_factory_and_governed_upgrade` case also passed after explicitly dropping acceptance maintenance metadata from its synthetic local-operator profile. This fixture remains independent of the acceptance exception; strict validation is retained.
 - `python3 tools/scripts/validate-mainnet-install-args`: passed; production/debug DID and artifact bindings retained.
 - `cargo fmt --all -- --check` and `git diff --check`: passed.

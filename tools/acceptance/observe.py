@@ -131,7 +131,74 @@ def atomic(path, value):
             os.unlink(name)
 
 
-def run(profile_path, output, fixture=None, collect=False, interval=900):
+def rotate(out, now, days=90):
+    """Prune only old, complete unpinned public/diagnostic raw observations.
+
+    Partial files, checkpoints, compact conclusions and pins are never removed.
+    Operators pin any raw evidence referenced by an unresolved campaign.
+    """
+    if not 1 <= days <= 365:
+        raise ValueError('raw retention must be1..365 days')
+    pins_path=out/'pins.json'
+    pins=set(json.loads(pins_path.read_text())) if pins_path.exists() else set()
+    removed=[]
+    for pattern in ('raw-*.json','viewer-raw-*.json'):
+        for path in out.glob(pattern):
+            if path.name in pins or path.stat().st_mtime >= now-days*86400:
+                continue
+            value=json.loads(path.read_text())
+            if value.get('complete') is True and not value.get('alerts'):
+                path.unlink(); removed.append(path.name)
+    return sorted(removed)
+
+
+def run_viewer(profile_path, output, fixture=None, approval=None, retention_days=90, interval=21600):
+    import viewer
+    p=json.loads(Path(profile_path).read_text()); acceptance.validate(p)
+    if p['roles'] != json.loads(acceptance.PROFILE.read_text())['roles']:
+        raise ValueError('fixed acceptance targets only')
+    out=Path(output).resolve()
+    if out.is_relative_to(acceptance.REPO) and not out.is_relative_to(acceptance.REPO/'target'):
+        raise ValueError('observations outside tracked source required')
+    out.mkdir(parents=True,exist_ok=True,mode=0o700)
+    with (out/'.lock').open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        raw=out/('viewer-raw-'+str(time.time_ns())+'.json')
+        if fixture:
+            evidence=json.loads(Path(fixture).read_text())
+        else:
+            evidence=viewer.collect(json.loads(Path(approval).read_text()),
+                                    persist=lambda partial:atomic(Path(str(raw)+'.partial'),partial))
+        if evidence.get('network') != 'ic':
+            raise ValueError('explicit IC evidence required')
+        viewer.validate(evidence['caller'])
+        checkpoint=out/('viewer-fixture-checkpoint.json' if fixture else 'viewer-checkpoint.json')
+        previous=json.loads(checkpoint.read_text()) if checkpoint.exists() else None
+        result=viewer.summarize(evidence['observations'],previous)
+        result.update(fixture=bool(fixture),caller=evidence['caller'],at=int(time.time()),profile_sha256=sha(p),
+                      evidence_sha256=sha(evidence))
+        if previous and result['at'] < previous['at']:
+            raise ValueError('non-monotonic viewer checkpoint')
+        if previous and result['at']-previous['at'] > 2*interval:
+            result['alerts'].append(dict(category='DELAYED',reason='missed viewer intervals; no inferred continuity'))
+        if previous and previous.get('profile_sha256')!=sha(p):
+            result['alerts'].append(dict(category='BLOCKED',reason='viewer profile epoch changed'))
+            result['checkpoint_eligible']=False
+        if previous and previous.get('caller')!=evidence['caller']:
+            result['alerts'].append(dict(category='BLOCKED',reason='viewer principal epoch changed'))
+            result['checkpoint_eligible']=False
+        atomic(raw,dict(evidence,complete=result['checkpoint_eligible'],alerts=result['alerts']))
+        atomic(out/'viewer-report.json',result)
+        atomic(out/'viewer-alerts.json',result['alerts'])
+        (out/'viewer-report.md').write_text('# Restricted viewer observation\n\n'+
+            'Complete: '+str(result['complete'])+'; gaps: '+str(len(result['alerts']))+'\n'+
+            'Logs are diagnostics; balances require canonical Ledger receipts.\n')
+        if result['checkpoint_eligible']: atomic(checkpoint,result)
+        rotate(out,int(time.time()),retention_days)
+        return 0 if result['checkpoint_eligible'] else 2
+
+
+def run(profile_path, output, fixture=None, collect=False, interval=21600, retention_days=90):
     profile = json.loads(Path(profile_path).read_text())
     acceptance.validate(profile)
     if collect and profile['roles'] != json.loads(acceptance.PROFILE.read_text())['roles']:
@@ -176,6 +243,12 @@ def run(profile_path, output, fixture=None, collect=False, interval=900):
         (out / 'report.md').write_text('\n'.join(text)+'\n')
         if result['checkpoint_eligible']:
             atomic(checkpoint, result)
+        elif collect and raw.exists():
+            # Preserve epoch-change evidence even if transport reads completed.
+            pins_path=out/'pins.json'
+            pins=set(json.loads(pins_path.read_text())) if pins_path.exists() else set()
+            pins.add(raw.name); atomic(pins_path,sorted(pins))
+        rotate(out,int(time.time()),retention_days)
         return 0 if result['checkpoint_eligible'] else 2
 
 
@@ -186,9 +259,14 @@ if __name__ == '__main__':
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--fixture')
     source.add_argument('--collect', action='store_true', help='Requires separate standing-read approval; anonymous public reads only')
-    parser.add_argument('--interval-seconds', type=int, default=900)
+    source.add_argument('--viewer-fixture')
+    source.add_argument('--collect-viewer', metavar='APPROVAL_JSON', help='Dedicated approved DFX provider only; never maintenance/participant identity')
+    parser.add_argument('--interval-seconds', type=int, default=21600)
+    parser.add_argument('--retention-days', type=int, default=90)
     args = parser.parse_args()
     try:
-        raise SystemExit(run(args.profile, args.output, args.fixture, args.collect, args.interval_seconds))
+        raise SystemExit(run_viewer(args.profile,args.output,args.viewer_fixture,args.collect_viewer,args.retention_days,args.interval_seconds)
+                         if args.viewer_fixture or args.collect_viewer else
+                         run(args.profile,args.output,args.fixture,args.collect,args.interval_seconds,args.retention_days))
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         parser.exit(2, f'BLOCKED: {error}\n')

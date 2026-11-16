@@ -52,7 +52,7 @@ def constructors(lock, interfaces, identities, genesis, timestamp, directory):
     required = {'purpose', 'token_name', 'token_symbol', 'decimals', 'fee',
                 'parameters', 'neurons', 'balances', 'total_supply',
                 'archive_cycles', 'minimum_neuron_stake', 'metadata'}
-    if set(genesis) != required:
+    if set(genesis) - {'archive_more_controllers'} != required:
         raise ValueError('missing/unexpected project genesis inputs')
     if genesis['purpose'] not in ('local-fixture-not-for-deployment', 'reviewed-acceptance'):
         raise ValueError('genesis purpose must be explicit')
@@ -135,9 +135,13 @@ def constructors(lock, interfaces, identities, genesis, timestamp, directory):
         index_canister_id='opt ' + cd.principal(index),
         dapp_canister_ids=cd.vector(cd.principal(p) for p in identities['dapps']),
         archive_canister_ids='vec {}', testflight='false')
+    more = genesis.get('archive_more_controllers', [])
+    if more and more != [identities['operator']]:
+        raise ValueError('only the explicit acceptance executor may maintain archives')
     archive = cd.record(trigger_threshold='2000', num_blocks_to_archive='1000',
         node_max_memory_size_bytes='opt 1073741824', max_message_size_bytes='opt 131072',
-        controller_id=cd.principal(root), cycles_for_archive_creation='opt ' + str(genesis['archive_cycles']))
+        controller_id=cd.principal(root), more_controller_ids='opt ' + cd.vector(cd.principal(p) for p in more),
+        cycles_for_archive_creation='opt ' + str(genesis['archive_cycles']))
     ledger_arg = 'variant { Init = ' + cd.record(minting_account=cd.account({'owner': gov}),
         transfer_fee=str(genesis['fee']) + ' : nat', decimals='opt ' + str(genesis['decimals']),
         token_symbol=cd.text(genesis['token_symbol']), token_name=cd.text(genesis['token_name']),

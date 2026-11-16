@@ -1763,5 +1763,5 @@
     "status": "Preserved historical tested evidence. Prior schedule withdrawn; archive and its manifest/hashes do not describe an executable future-schedule bundle."
   },
   "maintenance_policy": "Proposed acceptance-only framework override; unapproved, no active commands. See maintenance-plan.json. All app/recovery/controllerless-child policies unchanged.",
-  "maintenance_archive_validation_blocker": "STOP before an archive trigger: pinned Ledger requires >=max(4.5T,3*native creation cost) per archive and >=10T liquid Ledger remainder. Retained 1T archive setting/contingency is unmodified but insufficient; separate reviewed constructor/settings/headroom approval required. See maintenance.md."
+  "maintenance_archive_validation_blocker": "Schedule-blocked future constructors now use 4.5T/archive and Root+maintainer in InitArgs. Before archive trigger require cost_create_canister <=1.5T, >=17.5T Ledger liquid, and separate funding approval. Unexpected pre-existing archive fails installation preflight; inspect actual controllers, no migration assumption. See funding-sheet.json."
 }

@@ -146,7 +146,20 @@ fs.writeFileSync(output, JSON.stringify(clean(result), null, 2)+'\n', {flag:'wx'
 fs.unlinkSync(output+'.partial');
 
 }
-if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1]) {
+export function decodeManagement(method, hex) {
+  const types = {
+    canister_status: IDL.Record({cycles:IDL.Nat,reserved_cycles:IDL.Nat,memory_size:IDL.Nat,
+      status:IDL.Variant({running:IDL.Null,stopping:IDL.Null,stopped:IDL.Null}),
+      module_hash:IDL.Opt(IDL.Vec(IDL.Nat8)),settings:IDL.Record({controllers:IDL.Vec(IDL.Principal),freezing_threshold:IDL.Nat})}),
+    fetch_canister_logs: IDL.Record({canister_log_records:IDL.Vec(IDL.Record({idx:IDL.Nat64,timestamp_nanos:IDL.Nat64,content:IDL.Vec(IDL.Nat8)}))}),
+  };
+  if (!(method in types) || !/^[0-9a-f]+$/i.test(hex)) throw Error('management decoder allowlist');
+  return IDL.decode([types[method]],new Uint8Array(Buffer.from(hex,'hex')))[0];
+}
+if (process.argv[2] === '--decode-management') {
+  const input=fs.readFileSync(0,'utf8').trim();
+  console.log(JSON.stringify(decodeManagement(process.argv[3],input),(_,v)=>typeof v==='bigint'?v.toString():v?._isPrincipal?v.toText():v));
+} else if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1]) {
   const [profilePath, output] = process.argv.slice(2);
   await collect(profilePath, output);
 }

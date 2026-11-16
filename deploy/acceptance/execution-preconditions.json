@@ -349,5 +349,6 @@
     "notification subscription",
     "canister creation",
     "helper archaeology"
-  ]
+  ],
+  "archive_gate": "Existing exact25-read inventory is not expanded. Eleven initial installs require certified empty-code preconditions; any unexpected Ledger code stops installation. A separately approved archives() query is required wherever a Ledger already responds, and after genesis before financial activity: expect no pre-existing archives. Any unexpected archive stops readiness; separately inventory physical controllers/ranges, no Root-only migration or automatic settings changes."
 }
