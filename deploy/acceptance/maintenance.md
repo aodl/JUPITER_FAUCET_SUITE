@@ -208,7 +208,14 @@ must show unique economic ownership; B must be the exact memo 21, one-year,
 non-dissolving, auto-stake neuron. A's ordinary test leaves auto-stake disabled.
 Without the frozen selection/time evidence, eligibility stays unavailable even if
 settlement is independently visible. Compounded Ledger receipt and subsequent cached
-stake refresh are separate; a lagging supplied refresh is DELAYED, never replayed.
+stake refresh are separate. To establish refresh, supply `refresh_before_source`,
+`refresh_source`, `stake_balance_before_source`, `stake_balance_after_source`: native
+get_neuron plus icrc1_balance_of for the exact neuron Account (`args.account`),
+with recorded capture times before the ICP deposit and after the jUP receipt.
+Pre-cache must equal pre-Ledger balance; post-Ledger balance must increase by the
+canonical reward; only a matching post-cache is healthy. Missing/stale/interleaved
+cohorts stay unavailable; a proven lag is DELAYED. A caller-supplied expected cache
+never proves refresh. No transfer/refresh is replayed.
 `AssumedPaidUnverified`, unknown/merely-dispatched results remain incomplete.
 
 Relay aggregate pot receipt is distinct from an optional actual individual Ledger

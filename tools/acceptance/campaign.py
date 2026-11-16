@@ -58,7 +58,7 @@ def verify(manifest):
     accounts = json.loads((acceptance.PROFILE.parent / 'derived-accounts.json').read_text())
     allowed_targets = set(p['roles'].values()) | {acceptance.SYSTEM['ledger'], acceptance.SYSTEM['index'], acceptance.SYSTEM['governance']}
     allowed_methods = {'query_blocks', 'get_blocks', 'get_transactions', 'get_account_transactions',
-                       'get_neuron', 'get_proposal', 'get_programme_status', 'get_patron_record', 'list_neurons'}
+                       'icrc1_balance_of', 'get_neuron', 'get_proposal', 'get_programme_status', 'get_patron_record', 'list_neurons'}
     sources = manifest['sources']
     if not 1 <= len(sources) <= 32 or not 1 <= len(manifest['exercises']) <= 5:
         raise ValueError('maximum 32 saved sources and six named exercises')
@@ -239,7 +239,23 @@ def verify(manifest):
                             elif refresh['id'] != neuron_id:
                                 check('subsequent_cached_stake_refresh', False)
                             else:
-                                checks['subsequent_cached_stake_refresh']='HEALTHY' if refresh['cached_neuron_stake_e8s']==exercise['expected_cached_stake_e8s'] else 'DELAYED'
+                                before=source(exercise.get('refresh_before_source'),p['roles']['sns_governance'],'get_neuron')
+                                b0=source_map.get(exercise.get('stake_balance_before_source'))
+                                b1=source_map.get(exercise.get('stake_balance_after_source'))
+                                refs=[source_map.get(exercise.get(k)) for k in ('refresh_before_source','stake_balance_before_source','refresh_source','stake_balance_after_source')]
+                                balances=all(b and b['target']==p['roles']['sns_ledger'] and b['method']=='icrc1_balance_of'
+                                    and addr(b.get('args',{}).get('account',{'owner':p['operator']}))==addr(to) for b in (b0,b1))
+                                times=[r.get('captured_at_ns') if r else None for r in refs]
+                                coherent=all(type(t) is int for t in times) and len(receipts)==1 and type(receipts[0].get('timestamp_ns')) is int
+                                if before is None or not balances or not coherent or state!='HEALTHY':
+                                    check('subsequent_cached_stake_refresh',None)
+                                elif not (max(times[:2])<deposit['timestamp_ns'] and min(times[2:])>receipts[0]['timestamp_ns']):
+                                    check('subsequent_cached_stake_refresh',None)
+                                elif (before['id']!=neuron_id or before['cached_neuron_stake_e8s']!=b0['value']
+                                      or b1['value']!=b0['value']+record['amount_e8s']):
+                                    check('subsequent_cached_stake_refresh',None)  # interleaved/stale cohort, not an invented repair
+                                else:
+                                    checks['subsequent_cached_stake_refresh']='HEALTHY' if refresh['cached_neuron_stake_e8s']==b1['value'] else 'DELAYED'
                         if name=='Relay pot':
                             distribution = exercise.get('individual_receipt')
                             if distribution is None or not complete:

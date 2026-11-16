@@ -28,7 +28,7 @@ def fixture(name='direct liquid'):
     amount=20_000_000 if name=='direct 2x' else 10_000_000
     deposit=dict(block=40,kind='transfer',amount=100_000_000,fee=10000,from_={'owner':participant},to=stake,memo_hex=operation.get('memo_hex'),timestamp_ns=2_000_000_000_000)
     deposit['from']=deposit.pop('from_')
-    receipt=dict(block=60,kind='transfer',amount=amount,fee=1_000_000,to=to,memo_hex=memo,
+    receipt=dict(block=60,timestamp_ns=3_500_000_000_000,kind='transfer',amount=amount,fee=1_000_000,to=to,memo_hex=memo,
                  **{'from':{'owner':p['roles']['jupiter_sns_rewards']}})
     record=dict(contribution_block=40,qualifying_icp_e8s=100_000_000,commitment_timestamp_seconds=2000,
                 commitment_memo_hex=operation.get('memo_hex'),launch_timestamp_seconds=1000,amount_e8s=amount,
@@ -106,7 +106,22 @@ class Campaign(unittest.TestCase):
         self.assertEqual(report['status'],'INCOMPLETE')
         self.assertEqual(report['exercises'][0]['checks']['jup_settlement'],'HEALTHY')
         f['exercises'][0]['refresh_source']='selection';f['exercises'][0]['expected_cached_stake_e8s']=5000*10**8+20_000_000
+        self.assertEqual(campaign.verify(f)['exercises'][0]['checks']['subsequent_cached_stake_refresh'],'UNAVAILABLE_EVIDENCE')
+        p=json.loads(acceptance.PROFILE.read_text())
+        baseline=copy.deepcopy(f['sources'][3]['value']);after=copy.deepcopy(baseline)
+        after['cached_neuron_stake_e8s']+=20_000_000
+        for label,value,method,at,args in [
+            ('before',baseline,'get_neuron',1_000_000_000_000,{}),
+            ('after',after,'get_neuron',4_000_000_000_000,{}),
+            ('bal0',baseline['cached_neuron_stake_e8s'],'icrc1_balance_of',1_000_000_000_000,dict(account=f['sources'][1]['value']['transactions'][0]['to'])),
+            ('bal1',after['cached_neuron_stake_e8s'],'icrc1_balance_of',4_000_000_000_000,dict(account=f['sources'][1]['value']['transactions'][0]['to']))]:
+            f['sources'].append(dict(id=label,target=p['roles']['sns_governance'] if method=='get_neuron' else p['roles']['sns_ledger'],method=method,verification='local-fixture',value=value,captured_at_ns=at,args=args))
+        f['exercises'][0].update(refresh_before_source='before',refresh_source='after',stake_balance_before_source='bal0',stake_balance_after_source='bal1')
+        self.assertEqual(campaign.verify(f)['exercises'][0]['checks']['subsequent_cached_stake_refresh'],'HEALTHY')
+        after['cached_neuron_stake_e8s']-=20_000_000
         self.assertEqual(campaign.verify(f)['exercises'][0]['checks']['subsequent_cached_stake_refresh'],'DELAYED')
+        f['sources'][-1]['value']+=1
+        self.assertEqual(campaign.verify(f)['exercises'][0]['checks']['subsequent_cached_stake_refresh'],'UNAVAILABLE_EVIDENCE')
         f['sources'][3]['captured_at_ns']+=1
         self.assertEqual(campaign.verify(f)['exercises'][0]['checks']['frozen_owner_eligibility'],'UNAVAILABLE_EVIDENCE')
         f=fixture('direct 2x');f['sources'][3]['value']['auto_stake_maturity']=False
