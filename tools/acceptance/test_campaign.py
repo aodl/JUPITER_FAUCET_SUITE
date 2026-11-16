@@ -69,6 +69,8 @@ class Campaign(unittest.TestCase):
                           ('memo_hex','ff'),('from',{'owner':acceptance.SYSTEM['ledger']})]:
             f=fixture(); f['sources'][1]['value']['transactions'][0][key]=value
             self.assertEqual(campaign.verify(f)['status'],'FAIL',key)
+        missing=fixture();missing['sources'][1]['value']['transactions'][0]['memo_hex']='ff'
+        self.assertEqual(campaign.verify(missing)['exercises'][0]['checks']['reserve_source_and_fee'],'UNAVAILABLE_EVIDENCE')
         f=fixture();f['sources'][0]['value']['transactions'][0]['amount']=1
         self.assertEqual(campaign.verify(f)['status'],'FAIL')
 

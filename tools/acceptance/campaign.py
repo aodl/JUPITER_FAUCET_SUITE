@@ -122,7 +122,8 @@ def verify(manifest):
             proposal = source(exercise.get('proposal_source'), p['roles']['sns_governance'], 'get_proposal')
             check('native_proposal_execution', None if proposal is None else
                   proposal['id'] == exercise['proposal_id'] and proposal['executed_timestamp_seconds'] > 0
-                  and proposal['failed_timestamp_seconds'] == 0)
+                  and proposal['failed_timestamp_seconds'] == 0
+                  and proposal.get('action',{}).get('kind')=='ManageSnsMetadata')
             check('decisive_native_ballot', None if proposal is None else
                   proposal.get('ballots',{}).get(staking_subaccount(p['operator'],1),{}).get('vote') == 1)
             check('historical_vote_signer', None)  # native ballots name neurons, not signing principals
@@ -153,12 +154,14 @@ def verify(manifest):
                 if name == 'bounded treasury stake':
                     proposal = source(exercise.get('proposal_source'), p['roles']['sns_governance'], 'get_proposal')
                     check('executed_treasury_proposal', None if proposal is None else
-                          proposal['executed_timestamp_seconds'] > 0 and proposal['failed_timestamp_seconds'] == 0
+                          proposal['id']==exercise['proposal_id']
+                          and proposal['executed_timestamp_seconds'] > 0 and proposal['failed_timestamp_seconds'] == 0
                           and proposal.get('action',{}).get('kind')=='TransferSnsTreasuryFunds'
                           and proposal['action'].get('from_treasury')=='ICP'
                           and addr(proposal['action']['to'])==addr(destination)
                           and proposal['action'].get('amount_e8s')==deposit['amount']
                           and proposal['action'].get('memo') is None)
+                    check('proposal_to_transfer_attribution', None)  # no canonical block ID in native proposal reply
                     check('nns_refresh', None)  # cached stake alone cannot attribute interleaved top-ups
                     check('no_patron_classification', None)  # finite jUP window cannot prove global absence
                 else:
@@ -193,7 +196,7 @@ def verify(manifest):
                                        fee=r['fee'],memo=r['memo_hex']) for r in receipts if r['kind']=='transfer']
                         state = observe.reconcile(expected, dict(complete=complete,canonical=True,transactions=actual))
                         checks['relay_aggregate_pot' if name=='Relay pot' else 'jup_settlement'] = state
-                        check('reserve_source_and_fee', None if not complete else all(
+                        check('reserve_source_and_fee', None if not complete or not receipts else all(
                             addr(r['from'])==addr({'owner':p['roles']['jupiter_sns_rewards']})
                             and r['fee']==record['fee_e8s'] for r in receipts))
                         # Historic eligibility is not established by a later get_neuron.
