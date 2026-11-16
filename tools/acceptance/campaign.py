@@ -7,6 +7,7 @@ this verifier hashes imports and never upgrades a signed query to certified stat
 from decimal import Decimal, localcontext
 import hashlib
 import json
+import zlib
 
 import economics
 from ic import account, staking_subaccount
@@ -37,6 +38,13 @@ def reward_range(amount, timestamp, launch, compounded):
 
 
 def addr(value):
+    # ICP query_blocks carries a32-byte legacy AccountIdentifier, not an
+    # invertible owner/subaccount tuple. Compare its checked raw hash directly.
+    if isinstance(value,str):
+        raw=bytes.fromhex(value)
+        if len(raw)!=32 or raw[:4]!=zlib.crc32(raw[4:]).to_bytes(4,'big'):
+            raise ValueError('invalid canonical ICP AccountIdentifier')
+        return raw.hex()
     return account(value['owner'], value.get('subaccountHex'))['explorerAccountHex']
 
 

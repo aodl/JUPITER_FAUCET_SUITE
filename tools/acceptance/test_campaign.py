@@ -56,6 +56,10 @@ class Campaign(unittest.TestCase):
         f=fixture();report=campaign.verify(f)
         self.assertEqual(report,campaign.verify(copy.deepcopy(f)))
         self.assertEqual(report['status'],'PASS')
+        # Native ICP blocks expose legacy AccountIdentifiers directly.
+        tx=f['sources'][0]['value']['transactions'][0]
+        tx['from']=campaign.addr(tx['from']);tx['to']=campaign.addr(tx['to'])
+        self.assertEqual(campaign.verify(f)['status'],'PASS')
         # A's ordinary recognition may use either approved zero/year neuron;
         # zero delay does not itself qualify for voting/2x compounding.
         f['sources'][3]['value']['id']=staking_subaccount(f['exercises'][0]['source_account']['owner'],10)

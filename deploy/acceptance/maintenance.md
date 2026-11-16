@@ -183,7 +183,7 @@ executable schema example, explicitly local evidence.
 
 A Ledger page contains `log_length`, `transactions`, optional `archived_ranges`.
 Every transaction retains canonical `block,kind,from,to,amount,fee,memo_hex,timestamp_ns`;
-Accounts retain owner/subaccount. Ranges use `start,end_exclusive`; an archive target
+ICRC Accounts retain owner/subaccount; ICP Accounts may be their native32-byte legacy AccountIdentifier hex (CRC checked), compared directly with the derived reviewed Account hash. No principal is invented by reversing a hash. Ranges use `start,end_exclusive`; an archive target
 must be introduced by a canonical Ledger callback span. Missing callback pages,
 short ranges, duplicate indices or incomplete coverage never prove zero payout.
 A complete finite window can detect duplicate reward memos **within that window**;
