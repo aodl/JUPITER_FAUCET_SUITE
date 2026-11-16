@@ -115,6 +115,35 @@ class Campaign(unittest.TestCase):
         self.assertEqual(checks['relay_aggregate_pot'],'HEALTHY')
         self.assertEqual(checks['individual_relay_entitlement'],'UNAVAILABLE_EVIDENCE')
 
+    def test_native_proposal_and_treasury_evidence_match_known_operations(self):
+        p=json.loads(acceptance.PROFILE.read_text())
+        f=fixture();e=f['exercises'][0]
+        e.update(name='harmless native proposal/vote',proposal_source='proposal',proposal_id=1)
+        proposal=dict(id=1,executed_timestamp_seconds=2001,failed_timestamp_seconds=0,
+            action=dict(kind='ManageSnsMetadata'),ballots={staking_subaccount(p['operator'],1):dict(vote=1)})
+        f['sources'].append(dict(id='proposal',target=p['roles']['sns_governance'],method='get_proposal',
+                                verification='local-fixture',value=proposal))
+        report=campaign.verify(f)
+        self.assertEqual(report['exercises'][0]['checks']['native_proposal_execution'],'HEALTHY')
+        self.assertEqual(report['status'],'INCOMPLETE')  # ballot cannot prove signing principal
+        proposal['action']['kind']='TransferSnsTreasuryFunds'
+        self.assertEqual(campaign.verify(f)['status'],'FAIL')
+        e['name']='bounded treasury stake'
+        accounts=json.loads((acceptance.PROFILE.parent/'derived-accounts.json').read_text())
+        gov=accounts['sns_governance']['account']
+        e['source_account']=gov
+        tx=f['sources'][0]['value']['transactions'][0]
+        tx['from']=gov;tx['memo_hex']=None
+        proposal['action'].update(from_treasury='ICP',to=tx['to'],amount_e8s=100_000_000,memo=None)
+        report=campaign.verify(f)
+        self.assertEqual(report['exercises'][0]['checks']['source_transaction'],'HEALTHY')
+        self.assertEqual(report['exercises'][0]['checks']['executed_treasury_proposal'],'HEALTHY')
+        self.assertEqual(report['exercises'][0]['checks']['proposal_to_transfer_attribution'],'UNAVAILABLE_EVIDENCE')
+        proposal['id']=2
+        self.assertEqual(campaign.verify(f)['status'],'FAIL')
+        proposal['id']=1;tx['memo_hex']='not-a-null-memo'
+        self.assertEqual(campaign.verify(f)['status'],'FAIL')
+
     def test_decimal_oracle_whole_halves_and_fractional_day(self):
         self.assertEqual(campaign.reward_range(1_000_000_000,1461*86400,0,True),(100_000_000,100_000_000))
         low,high=campaign.reward_range(1_000_000_000,86400,0,False)
