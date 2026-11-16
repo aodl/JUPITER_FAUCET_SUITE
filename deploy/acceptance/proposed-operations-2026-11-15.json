@@ -1,5 +1,5 @@
 {
-  "status": "COMPLETE CONFIGURATION-ONLY CANDIDATE; installation window confirmation, fresh execution preconditions and every spend/mutation approval remain required",
+  "status": "SCHEDULE-BLOCKED; no installation day or activation timestamps approved; complete live constructor bundle is not executable",
   "source_commit": "a7c6cabdb58c3f2b1f26b3654905df24bb131826",
   "observation_report": "inventory-2026-11-15.json",
   "unresolved": [
@@ -29,11 +29,13 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "gate": "Owner must select and approve a deployment day and both exact timestamps; regenerate and review the complete constructor/operation bundle and obtain separate live-operation approval. Do not execute the historical dated bundle.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_lifeline.bin",
-      "proposed_cli_argv": [
+      "constructor_evidence_path": null,
+      "historical_constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_lifeline.bin",
+      "proposed_cli_argv": null,
+      "historical_cli_argv": [
         "dfx",
         "--identity",
         "codex_local",
@@ -51,7 +53,7 @@
         "--argument-file",
         "constructors/applications/jupiter_lifeline.hex"
       ],
-      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "argv_status": "Historical reference only; active command is null and the complete live bundle is schedule-blocked. Regenerate/review after future schedule approval.",
       "proposed_cli_environment": {
         "DFX_VERSION": "0.31.0",
         "DFX_WARNING": "-mainnet_plaintext_identity"
@@ -70,7 +72,8 @@
         "required_methods": [
           "install_code"
         ]
-      }
+      },
+      "execution_status": "SCHEDULE-BLOCKED; historical command/payload references are not executable approval"
     },
     {
       "order": 2,
@@ -84,7 +87,8 @@
         "raw_sha256": "e2fd07bffa7d71241c3b47e2c8398ef78bfc26b95427a3711a9e579ad5f9f190"
       },
       "constructor_path_after_guarded_generation": "constructors/sns/governance.bin",
-      "constructor_sha256": "123f9348365ece40b9c1d212055c68914ce9cd825366eef9d0c5f07870d89e35",
+      "constructor_sha256": null,
+      "historical_constructor_sha256": "123f9348365ece40b9c1d212055c68914ce9cd825366eef9d0c5f07870d89e35",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
@@ -93,10 +97,11 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "gate": "Owner must select and approve a deployment day and both exact timestamps; regenerate and review the complete constructor/operation bundle and obtain separate live-operation approval. Do not execute the historical dated bundle.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "proposed_cli_argv": [
+      "proposed_cli_argv": null,
+      "historical_cli_argv": [
         "dfx",
         "--identity",
         "codex_local",
@@ -114,8 +119,10 @@
         "--argument-file",
         "constructors/sns/governance.hex"
       ],
-      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/governance.bin",
-      "constructor_hex_sha256": "dba6c3aee4b8cad7836cc606b4b056b5ccd649799935a7d976c8f589b9a13f82",
+      "constructor_evidence_path": null,
+      "historical_constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/governance.bin",
+      "constructor_hex_sha256": null,
+      "historical_constructor_hex_sha256": "dba6c3aee4b8cad7836cc606b4b056b5ccd649799935a7d976c8f589b9a13f82",
       "constructor_hex_file": "constructors/sns/governance.hex",
       "constructor_candid_definition": "constructors/sns/governance.interface.did",
       "constructor_candid_sha256": "0d3a00e821c8959991cfb90f4366d101fce340e78f3fb76b0de4ed28c1c08c38",
@@ -123,7 +130,7 @@
         "DFX_VERSION": "0.31.0",
         "DFX_WARNING": "-mainnet_plaintext_identity"
       },
-      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "argv_status": "Historical reference only; active command is null and the complete live bundle is schedule-blocked. Regenerate/review after future schedule approval.",
       "native_install_transport": {
         "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
         "wasm_plus_constructor_bytes": 2044269,
@@ -150,7 +157,8 @@
         ],
         "native_calls_with_empty_store": 5,
         "precondition": "Separately authorized pre-check confirms empty chunk store before command; stop for owner review if unrelated staged chunks exist. Native SDK reads stored_chunks, uploads missing package chunks and clears its store after installation; all these methods require explicit installation approval."
-      }
+      },
+      "execution_status": "SCHEDULE-BLOCKED; historical command/payload references are not executable approval"
     },
     {
       "order": 3,
@@ -164,7 +172,8 @@
         "raw_sha256": "a273d741019b4324b22e2e64cfb0239de148ae9693e8801102a04118dfd383c0"
       },
       "constructor_path_after_guarded_generation": "constructors/sns/ledger.bin",
-      "constructor_sha256": "cb32950dd69d09206735847fb7d5a4e623ca27a0ceef2718fbe7d02563e3edfe",
+      "constructor_sha256": null,
+      "historical_constructor_sha256": "cb32950dd69d09206735847fb7d5a4e623ca27a0ceef2718fbe7d02563e3edfe",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
@@ -173,10 +182,11 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "gate": "Owner must select and approve a deployment day and both exact timestamps; regenerate and review the complete constructor/operation bundle and obtain separate live-operation approval. Do not execute the historical dated bundle.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "proposed_cli_argv": [
+      "proposed_cli_argv": null,
+      "historical_cli_argv": [
         "dfx",
         "--identity",
         "codex_local",
@@ -194,8 +204,10 @@
         "--argument-file",
         "constructors/sns/ledger.hex"
       ],
-      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/ledger.bin",
-      "constructor_hex_sha256": "f814df0ca2e90ca07fbd9f6d8ab562756becd2d59ac9cb58eae3d7745c03458b",
+      "constructor_evidence_path": null,
+      "historical_constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/ledger.bin",
+      "constructor_hex_sha256": null,
+      "historical_constructor_hex_sha256": "f814df0ca2e90ca07fbd9f6d8ab562756becd2d59ac9cb58eae3d7745c03458b",
       "constructor_hex_file": "constructors/sns/ledger.hex",
       "constructor_candid_definition": "constructors/sns/ledger.interface.did",
       "constructor_candid_sha256": "02a42599e3d2036a19dcfa53db04ad5a5271b0bd78ac1a5986b3dd361f33a99c",
@@ -203,7 +215,7 @@
         "DFX_VERSION": "0.31.0",
         "DFX_WARNING": "-mainnet_plaintext_identity"
       },
-      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "argv_status": "Historical reference only; active command is null and the complete live bundle is schedule-blocked. Regenerate/review after future schedule approval.",
       "native_install_transport": {
         "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
         "wasm_plus_constructor_bytes": 683804,
@@ -214,7 +226,8 @@
         "required_methods": [
           "install_code"
         ]
-      }
+      },
+      "execution_status": "SCHEDULE-BLOCKED; historical command/payload references are not executable approval"
     },
     {
       "order": 4,
@@ -228,7 +241,8 @@
         "raw_sha256": "0768d43e0ca776c80515eb917839cbee0adca38ef69fb28280407c28fe4ea979"
       },
       "constructor_path_after_guarded_generation": "constructors/sns/index.bin",
-      "constructor_sha256": "c8ad314678a03900d37042030cdbddc57c5b78fe1264d9e90e65e678b63d5b85",
+      "constructor_sha256": null,
+      "historical_constructor_sha256": "c8ad314678a03900d37042030cdbddc57c5b78fe1264d9e90e65e678b63d5b85",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
@@ -237,10 +251,11 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "gate": "Owner must select and approve a deployment day and both exact timestamps; regenerate and review the complete constructor/operation bundle and obtain separate live-operation approval. Do not execute the historical dated bundle.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "proposed_cli_argv": [
+      "proposed_cli_argv": null,
+      "historical_cli_argv": [
         "dfx",
         "--identity",
         "codex_local",
@@ -258,8 +273,10 @@
         "--argument-file",
         "constructors/sns/index.hex"
       ],
-      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/index.bin",
-      "constructor_hex_sha256": "5de0a888311fa79cae51dbdf4b9f05bc7a3158de6d14c2f1eac75dae75b0ccb3",
+      "constructor_evidence_path": null,
+      "historical_constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/index.bin",
+      "constructor_hex_sha256": null,
+      "historical_constructor_hex_sha256": "5de0a888311fa79cae51dbdf4b9f05bc7a3158de6d14c2f1eac75dae75b0ccb3",
       "constructor_hex_file": "constructors/sns/index.hex",
       "constructor_candid_definition": "constructors/sns/index.interface.did",
       "constructor_candid_sha256": "701a43426ae7ba89cb3f348b9925f946e710fb4b2d3c338a2413c18d7112d95d",
@@ -267,7 +284,7 @@
         "DFX_VERSION": "0.31.0",
         "DFX_WARNING": "-mainnet_plaintext_identity"
       },
-      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "argv_status": "Historical reference only; active command is null and the complete live bundle is schedule-blocked. Regenerate/review after future schedule approval.",
       "native_install_transport": {
         "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
         "wasm_plus_constructor_bytes": 350164,
@@ -278,7 +295,8 @@
         "required_methods": [
           "install_code"
         ]
-      }
+      },
+      "execution_status": "SCHEDULE-BLOCKED; historical command/payload references are not executable approval"
     },
     {
       "order": 5,
@@ -292,7 +310,8 @@
         "raw_sha256": "3d17f42df29a764fa3d813923646f85aac9f61320d97b2b07c1045ffb342d638"
       },
       "constructor_path_after_guarded_generation": "constructors/sns/swap.bin",
-      "constructor_sha256": "ac3e3001699440f1207b0b83dda9c2ff6a8dbc32249fe8c8b73b7211facba528",
+      "constructor_sha256": null,
+      "historical_constructor_sha256": "ac3e3001699440f1207b0b83dda9c2ff6a8dbc32249fe8c8b73b7211facba528",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
@@ -301,10 +320,11 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "gate": "Owner must select and approve a deployment day and both exact timestamps; regenerate and review the complete constructor/operation bundle and obtain separate live-operation approval. Do not execute the historical dated bundle.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "proposed_cli_argv": [
+      "proposed_cli_argv": null,
+      "historical_cli_argv": [
         "dfx",
         "--identity",
         "codex_local",
@@ -322,8 +342,10 @@
         "--argument-file",
         "constructors/sns/swap.hex"
       ],
-      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/swap.bin",
-      "constructor_hex_sha256": "65932714452c5bc8881d0ca4fe9616d11958570ca0601a37a6d86e9ab681d569",
+      "constructor_evidence_path": null,
+      "historical_constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/swap.bin",
+      "constructor_hex_sha256": null,
+      "historical_constructor_hex_sha256": "65932714452c5bc8881d0ca4fe9616d11958570ca0601a37a6d86e9ab681d569",
       "constructor_hex_file": "constructors/sns/swap.hex",
       "constructor_candid_definition": "constructors/sns/swap.interface.did",
       "constructor_candid_sha256": "2f0c524b3f4dd84a63ef0cbe8df37042ad662f7befc9612afe9b9e15ce900f56",
@@ -331,7 +353,7 @@
         "DFX_VERSION": "0.31.0",
         "DFX_WARNING": "-mainnet_plaintext_identity"
       },
-      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "argv_status": "Historical reference only; active command is null and the complete live bundle is schedule-blocked. Regenerate/review after future schedule approval.",
       "native_install_transport": {
         "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
         "wasm_plus_constructor_bytes": 803543,
@@ -342,7 +364,8 @@
         "required_methods": [
           "install_code"
         ]
-      }
+      },
+      "execution_status": "SCHEDULE-BLOCKED; historical command/payload references are not executable approval"
     },
     {
       "order": 6,
@@ -356,7 +379,8 @@
         "raw_sha256": "356960e58691a7438cb07c73806cf8d0948247508f0efc281cb2ccb7a382f836"
       },
       "constructor_path_after_guarded_generation": "constructors/sns/root.bin",
-      "constructor_sha256": "44e81e88d9e312e20df0401167e86fce2e8996e67a4771660f6dbf5a0cb8c65e",
+      "constructor_sha256": null,
+      "historical_constructor_sha256": "44e81e88d9e312e20df0401167e86fce2e8996e67a4771660f6dbf5a0cb8c65e",
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "expected_pre_module_hash": null,
       "expected_pre_module_path_evidence": "Absent",
@@ -365,10 +389,11 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "gate": "Owner must select and approve a deployment day and both exact timestamps; regenerate and review the complete constructor/operation bundle and obtain separate live-operation approval. Do not execute the historical dated bundle.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "proposed_cli_argv": [
+      "proposed_cli_argv": null,
+      "historical_cli_argv": [
         "dfx",
         "--identity",
         "codex_local",
@@ -386,8 +411,10 @@
         "--argument-file",
         "constructors/sns/root.hex"
       ],
-      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/root.bin",
-      "constructor_hex_sha256": "e2027c5eaf94631dd5aaea226769b3fbc7692819e381a50a21fe080078aabbc2",
+      "constructor_evidence_path": null,
+      "historical_constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/root.bin",
+      "constructor_hex_sha256": null,
+      "historical_constructor_hex_sha256": "e2027c5eaf94631dd5aaea226769b3fbc7692819e381a50a21fe080078aabbc2",
       "constructor_hex_file": "constructors/sns/root.hex",
       "constructor_candid_definition": "constructors/sns/root.interface.did",
       "constructor_candid_sha256": "9867bfe913aa17d42d891c22187273e643eedb3ec8e4b3af4b894e74945d5806",
@@ -395,7 +422,7 @@
         "DFX_VERSION": "0.31.0",
         "DFX_WARNING": "-mainnet_plaintext_identity"
       },
-      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "argv_status": "Historical reference only; active command is null and the complete live bundle is schedule-blocked. Regenerate/review after future schedule approval.",
       "native_install_transport": {
         "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
         "wasm_plus_constructor_bytes": 474971,
@@ -406,7 +433,8 @@
         "required_methods": [
           "install_code"
         ]
-      }
+      },
+      "execution_status": "SCHEDULE-BLOCKED; historical command/payload references are not executable approval"
     },
     {
       "order": 7,
@@ -429,11 +457,13 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Owner scans; new programme absent initially",
-      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "gate": "Owner must select and approve a deployment day and both exact timestamps; regenerate and review the complete constructor/operation bundle and obtain separate live-operation approval. Do not execute the historical dated bundle.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_sns_rewards.bin",
-      "proposed_cli_argv": [
+      "constructor_evidence_path": null,
+      "historical_constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_sns_rewards.bin",
+      "proposed_cli_argv": null,
+      "historical_cli_argv": [
         "dfx",
         "--identity",
         "codex_local",
@@ -451,7 +481,7 @@
         "--argument-file",
         "constructors/applications/jupiter_sns_rewards.hex"
       ],
-      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "argv_status": "Historical reference only; active command is null and the complete live bundle is schedule-blocked. Regenerate/review after future schedule approval.",
       "proposed_cli_environment": {
         "DFX_VERSION": "0.31.0",
         "DFX_WARNING": "-mainnet_plaintext_identity"
@@ -470,7 +500,8 @@
         "required_methods": [
           "install_code"
         ]
-      }
+      },
+      "execution_status": "SCHEDULE-BLOCKED; historical command/payload references are not executable approval"
     },
     {
       "order": 8,
@@ -493,11 +524,13 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Indexing, owner-facing read model and permissionless paid factory entrypoints",
-      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "gate": "Owner must select and approve a deployment day and both exact timestamps; regenerate and review the complete constructor/operation bundle and obtain separate live-operation approval. Do not execute the historical dated bundle.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_historian.bin",
-      "proposed_cli_argv": [
+      "constructor_evidence_path": null,
+      "historical_constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_historian.bin",
+      "proposed_cli_argv": null,
+      "historical_cli_argv": [
         "dfx",
         "--identity",
         "codex_local",
@@ -515,7 +548,7 @@
         "--argument-file",
         "constructors/applications/jupiter_historian.hex"
       ],
-      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "argv_status": "Historical reference only; active command is null and the complete live bundle is schedule-blocked. Regenerate/review after future schedule approval.",
       "proposed_cli_environment": {
         "DFX_VERSION": "0.31.0",
         "DFX_WARNING": "-mainnet_plaintext_identity"
@@ -534,7 +567,8 @@
         "required_methods": [
           "install_code"
         ]
-      }
+      },
+      "execution_status": "SCHEDULE-BLOCKED; historical command/payload references are not executable approval"
     },
     {
       "order": 9,
@@ -557,11 +591,13 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Managed-canister top-ups and aggregate forwarding; initially empty surplus recipients",
-      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "gate": "Owner must select and approve a deployment day and both exact timestamps; regenerate and review the complete constructor/operation bundle and obtain separate live-operation approval. Do not execute the historical dated bundle.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_relay.bin",
-      "proposed_cli_argv": [
+      "constructor_evidence_path": null,
+      "historical_constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_relay.bin",
+      "proposed_cli_argv": null,
+      "historical_cli_argv": [
         "dfx",
         "--identity",
         "codex_local",
@@ -579,7 +615,7 @@
         "--argument-file",
         "constructors/applications/jupiter_relay.hex"
       ],
-      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "argv_status": "Historical reference only; active command is null and the complete live bundle is schedule-blocked. Regenerate/review after future schedule approval.",
       "proposed_cli_environment": {
         "DFX_VERSION": "0.31.0",
         "DFX_WARNING": "-mainnet_plaintext_identity"
@@ -598,7 +634,8 @@
         "required_methods": [
           "install_code"
         ]
-      }
+      },
+      "execution_status": "SCHEDULE-BLOCKED; historical command/payload references are not executable approval"
     },
     {
       "order": 10,
@@ -621,11 +658,13 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Ledger/Index scans, settlement transfers and CMC notifications",
-      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "gate": "Owner must select and approve a deployment day and both exact timestamps; regenerate and review the complete constructor/operation bundle and obtain separate live-operation approval. Do not execute the historical dated bundle.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_faucet.bin",
-      "proposed_cli_argv": [
+      "constructor_evidence_path": null,
+      "historical_constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_faucet.bin",
+      "proposed_cli_argv": null,
+      "historical_cli_argv": [
         "dfx",
         "--identity",
         "codex_local",
@@ -643,7 +682,7 @@
         "--argument-file",
         "constructors/applications/jupiter_faucet.hex"
       ],
-      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "argv_status": "Historical reference only; active command is null and the complete live bundle is schedule-blocked. Regenerate/review after future schedule approval.",
       "proposed_cli_environment": {
         "DFX_VERSION": "0.31.0",
         "DFX_WARNING": "-mainnet_plaintext_identity"
@@ -662,7 +701,8 @@
         "required_methods": [
           "install_code"
         ]
-      }
+      },
+      "execution_status": "SCHEDULE-BLOCKED; historical command/payload references are not executable approval"
     },
     {
       "order": 11,
@@ -685,7 +725,7 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "NNS reads/maturity disbursement and payout scheduling; unarmed rescue is not financial inactivity",
-      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "gate": "Owner must select and approve a deployment day and both exact timestamps; regenerate and review the complete constructor/operation bundle and obtain separate live-operation approval. Do not execute the historical dated bundle.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
       "preservation_decision": {
@@ -693,8 +733,10 @@
         "state_and_pending_effects": "Operator explicitly accepts discarding all helper-local heap/stable state: neuron-creation lifecycle complete, no migration required. This is a preservation waiver, not proof of empty state or absence of prior pending effects. Preserve external NNS neuron settings, stake, maturity and staking Account; review financial timer startup before approved reinstall.",
         "source_record": "Operator final November 2026 confirmation in Jupiter Acceptance \u2014 Complete Operator Authority, Test Identity, Disburser Transition and Deployment Preparation Instructions, section 5."
       },
-      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_disburser.bin",
-      "proposed_cli_argv": [
+      "constructor_evidence_path": null,
+      "historical_constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_disburser.bin",
+      "proposed_cli_argv": null,
+      "historical_cli_argv": [
         "dfx",
         "--identity",
         "codex_local",
@@ -712,7 +754,7 @@
         "--argument-file",
         "constructors/applications/jupiter_disburser.hex"
       ],
-      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "argv_status": "Historical reference only; active command is null and the complete live bundle is schedule-blocked. Regenerate/review after future schedule approval.",
       "proposed_cli_environment": {
         "DFX_VERSION": "0.31.0",
         "DFX_WARNING": "-mainnet_plaintext_identity"
@@ -731,7 +773,8 @@
         "required_methods": [
           "install_code"
         ]
-      }
+      },
+      "execution_status": "SCHEDULE-BLOCKED; historical command/payload references are not executable approval"
     },
     {
       "order": 12,
@@ -754,11 +797,13 @@
         "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
       ],
       "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
-      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "gate": "Owner must select and approve a deployment day and both exact timestamps; regenerate and review the complete constructor/operation bundle and obtain separate live-operation approval. Do not execute the historical dated bundle.",
       "identity_alias": "codex_local",
       "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
-      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_faucet_frontend.bin",
-      "proposed_cli_argv": [
+      "constructor_evidence_path": null,
+      "historical_constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_faucet_frontend.bin",
+      "proposed_cli_argv": null,
+      "historical_cli_argv": [
         "dfx",
         "--identity",
         "codex_local",
@@ -776,7 +821,7 @@
         "--argument-file",
         "constructors/applications/jupiter_faucet_frontend.hex"
       ],
-      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "argv_status": "Historical reference only; active command is null and the complete live bundle is schedule-blocked. Regenerate/review after future schedule approval.",
       "proposed_cli_environment": {
         "DFX_VERSION": "0.31.0",
         "DFX_WARNING": "-mainnet_plaintext_identity"
@@ -815,7 +860,8 @@
         ],
         "native_calls_with_empty_store": 6,
         "precondition": "Separately authorized pre-check confirms empty chunk store before command; stop for owner review if unrelated staged chunks exist. Native SDK reads stored_chunks, uploads missing package chunks and clears its store after installation; all these methods require explicit installation approval."
-      }
+      },
+      "execution_status": "SCHEDULE-BLOCKED; historical command/payload references are not executable approval"
     }
   ],
   "funding": [
@@ -1478,7 +1524,7 @@
     }
   ],
   "bootstrap_policy": "Retain both observed controllers through installation and initial runtime/recovery rehearsals. Codex executor is amzih; personal zkkkd is historical/bootstrap only and is never a Codex signer. Any later full controller-set replacement explicitly removes personal/bootstrap rights under separate approval. Explicit intermediate additions retain both bootstrap controllers while granting Root/Governance (or Faucet/Disburser self) the authority needed for rehearsal. Only later full-set removals narrow control after real execution/recovery checks.",
-  "genesis_policy": "Reviewed candidate copy contains exact candidate clocks 1794924000 / 1795104000; 100M jUP, four approved 5000-jUP allocations, governance-only [3,4,10], reserve/proposer Accounts unchanged. Complete five-framework/seven-application constructors exist; candidate time selection is not installation/activation approval. Base operator-inputs.json remains unresolved historical input; never silently substitute it for candidate-inputs.json.",
+  "genesis_policy": "Both active clocks are null. Existing fail-closed constructor generation must reject live bundle generation until the owner selects and approves a deployment day and exact genesis/patron timestamps. Principals, 100M supply, permissions, reserve/proposer identities and economics are unchanged. The earlier complete dated bundle is historical tested evidence only; regenerate and review schedule-dependent constructors/proposals/hashes for any future schedule.",
   "activation": "Native Governance upgrades in recognition, patron, treasury, bounded continuation order from work-package-a.md; IO settlement disabled; initial Relay surplus empty; no direct operator configuration call.",
   "neuron_mutation": "No live mutation authorized now. Later A/B SNS auto-stake operations use their own DFX aliases and exact derived IDs; B enabling must be verified before 2x test. This is not the Disburser-controlled NNS neuron. No NNS visibility/follow/dissolve/auto-stake setting change proposed.",
   "post_install_reads": "18 separate read checks remain unexecuted and need explicit later approval; future precondition refreshes also need separate authorization; no permission to reuse the completed inventory approval.",
@@ -1594,18 +1640,15 @@
   },
   "proposed_schedule": {
     "approved": false,
-    "genesis_checkpoint_utc": "2026-11-17T14:00:00Z",
-    "installation_window_utc": [
-      "2026-11-17T14:00:00Z",
-      "2026-11-17T16:00:00Z"
-    ],
-    "patron_activation_checkpoint_utc": "2026-11-19T16:00:00Z",
+    "genesis_checkpoint_utc": null,
+    "installation_window_utc": null,
+    "patron_activation_checkpoint_utc": null,
     "order_constraint": "genesis_timestamp_seconds <= acceptance_start_timestamp_seconds",
-    "genesis_timestamp_seconds": 1794924000,
-    "acceptance_start_timestamp_seconds": 1795104000,
-    "missed_checkpoint": "Pause and obtain revised owner-approved timestamps before constructor/proposal regeneration. Do not backdate or use preparation/fixture time.",
-    "smoke_window": "48 hours after installation window ends, before the separate 19 November 16:00 UTC patron checkpoint; new bounded read authorization required. Stop if a checkpoint is missed; owner must approve revised clocks and regenerated hashes.",
-    "configuration_candidate_selected": true,
+    "genesis_timestamp_seconds": null,
+    "acceptance_start_timestamp_seconds": null,
+    "missed_checkpoint": "No deployment day is approved. Select and approve both exact timestamps later; never reuse the withdrawn schedule or substitute preparation/fixture time.",
+    "smoke_window": "To be selected with a future approved schedule; independent smoke testing must precede patron activation.",
+    "configuration_candidate_selected": false,
     "installation_window_finally_confirmed": false
   },
   "funding_methods_without_personal_provider": [
@@ -1622,10 +1665,11 @@
   "correction_report": "governance-correction.md",
   "candidate_inputs": {
     "path": "configuration/candidate-inputs.json",
-    "sha256": "e80844ac087156647185a0864dd583c9ba2b575163c5e2e06dd836eac83e0121",
+    "sha256": "efc42350208dbb56243d0c31e3d3c7521db688b69c9bddbd7fe466739c874a4c",
     "configuration_only": true,
     "installation_window_finally_confirmed": false,
-    "installation_authorized": false
+    "installation_authorized": false,
+    "status": "SCHEDULE-BLOCKED; both active clocks null"
   },
   "selected_funding_method": {
     "kind": "independent-external-wallet",
@@ -1635,7 +1679,7 @@
     "cycles_provider": null,
     "freshness": "New separately approved balances, ICP fee and CMC quote (if conversion is used), NNS public full-neuron/staking reconciliation and installation preconditions; no standing inventory authorization."
   },
-  "unsigned_governance_stages": [
+  "historical_unsigned_governance_stages": [
     {
       "stage": "recognition",
       "payload": "governance-proposals/recognition/proposal.bin",
@@ -1647,7 +1691,8 @@
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "native_neuron": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
       "signed_or_submitted": false,
-      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation."
+      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation.",
+      "status": "Historical dated payload only; not applicable to a future live schedule"
     },
     {
       "stage": "patron",
@@ -1660,7 +1705,8 @@
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "native_neuron": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
       "signed_or_submitted": false,
-      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation."
+      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation.",
+      "status": "Historical dated payload only; not applicable to a future live schedule"
     },
     {
       "stage": "treasury",
@@ -1673,7 +1719,8 @@
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "native_neuron": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
       "signed_or_submitted": false,
-      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation."
+      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation.",
+      "status": "Historical dated payload only; not applicable to a future live schedule"
     },
     {
       "stage": "treasury-continuation",
@@ -1686,17 +1733,28 @@
       "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
       "native_neuron": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
       "signed_or_submitted": false,
-      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation."
+      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation.",
+      "status": "Historical dated payload only; not applicable to a future live schedule"
     }
   ],
-  "source_binding": "Final package STATUS.json and manifest.json bind final Git commit/tree, all source/configuration/input/interface/constructor/Wasm hashes. This tracked record cannot contain its own final Git commit.",
+  "unsigned_governance_stages": null,
+  "source_binding": "No active complete live bundle. historical_dated_bundle binds the preserved tested source/package only. A future approved schedule requires regenerated source-bound constructors, proposals and manifest hashes.",
   "native_install_transport_source": {
     "sdk_source_sha256": "59a1edef5d57b25a766ba33b046f6b152dfb778a1cbcebed87496e2e05437909",
     "locked_ic_utils_crate_sha256": "30c22aaa2924df0321705dc01d408c8b75d1e1deb40b65defd2ff04008a720be",
     "discovery": "Pinned public CLI source only, no mainnet observation",
-    "initial_code_install_calls_with_empty_stores": 21
+    "initial_code_install_calls_with_empty_stores": 21,
+    "status": "Historical payload transport reference only; recalculate after future constructor regeneration; no live installation command is executable."
   },
   "retained_preparation_archive_sha256": "c18f86b639c10bf6c3fbc56df4b09e5fdf9f3653575373e358ae0758f2abacba",
-  "completed_candidate_archive_hash": "Final review-package.tar.gz.sha256 beside the archive; full commit/tree and hashes are in package STATUS.json / manifest.json, not the retained earlier archive.",
-  "fresh_preconditions_proposal": "execution-preconditions.json: 25 logical requests, zero executed/authorized; eighteen post-install checks remain separate."
+  "completed_candidate_archive_hash": "No active complete live constructor bundle. Historical archive identity is in historical_dated_bundle; future schedule requires regenerated and reviewed constructors/proposals/hashes.",
+  "fresh_preconditions_proposal": "execution-preconditions.json: 25 logical requests, zero executed/authorized; eighteen post-install checks remain separate.",
+  "historical_dated_bundle": {
+    "source_commit": "f72038f2da8c88c0d46fdf105f14fd78327702a9",
+    "inputs": "historical/2026-11-15-candidate-inputs.json",
+    "inputs_sha256": "e80844ac087156647185a0864dd583c9ba2b575163c5e2e06dd836eac83e0121",
+    "archive": "target/acceptance-final-candidate/review-package.tar.gz",
+    "archive_sha256": "c25ec8fff3e43f6b106b9d8bf422c79847c7152a231352c04f227c7eb6ae4eb2",
+    "status": "Preserved historical tested evidence. Prior schedule withdrawn; archive and its manifest/hashes do not describe an executable future-schedule bundle."
+  }
 }

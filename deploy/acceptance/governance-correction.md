@@ -1,10 +1,9 @@
 # Final governance permission correction and approval sheet
 
-The permission correction below is retained. Its earlier schedule/partial-bundle
-proposal is superseded by the complete configuration-only candidate in
-[installation-approval.md](installation-approval.md): genesis 17 November 2026
-14:00 UTC, patron candidate 19 November 16:00 UTC; final installation-window
-confirmation and every live-operation approval remain separate.
+The permission correction below is retained. All former schedule proposals are
+withdrawn. Active preparation is [schedule-blocked](installation-approval.md),
+with both deployment timestamp fields null. The dated constructor package and
+rehearsal remain historical tested evidence, not a future executable bundle.
 
 Preparation base: `0981156dcc30735600d712eed38b74440c43d8cf`, draft PR #18.
 This correction authorizes no mainnet call or mutation. Prior status and funding
@@ -66,7 +65,7 @@ Commands/results and public source evidence are in
 with didc 0.6.2 and the existing PocketIC environment; 1 passed, 61 filtered.
 No unaffected production application or canonical release build is needed.
 
-## Proposed schedule — not approved
+## Historical schedule proposal — withdrawn
 
 | Checkpoint | Proposed UTC | Gate |
 |---|---|---|

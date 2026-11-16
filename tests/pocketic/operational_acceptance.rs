@@ -241,8 +241,9 @@ fn exact_genesis_governance_handover_and_production_reserve() -> Result<()> {
         .join("target")
         .join(format!("operational-acceptance-{}", std::process::id()));
     fs::create_dir(&evidence)?;
+    // Preserve the dated rehearsal independently of the unresolved live schedule.
     let candidate_inputs: serde_json::Value = serde_json::from_slice(&fs::read(
-        repo.join("deploy/acceptance/candidate-inputs.json"),
+        repo.join("deploy/acceptance/historical/2026-11-15-candidate-inputs.json"),
     )?)?;
     let genesis = candidate_inputs["genesis_timestamp_seconds"]
         .as_u64()
@@ -334,7 +335,7 @@ sys.path.insert(0, 'tools/acceptance')
 import profile, operational as op
 c=json.loads(Path(sys.argv[1]).read_text()); out=Path(sys.argv[2])
 p=json.loads(profile.PROFILE.read_text())
-d=json.loads((profile.PROFILE.parent/'candidate-inputs.json').read_text())
+d=json.loads((profile.PROFILE.parent/'historical/2026-11-15-candidate-inputs.json').read_text())
 assert p['roles']==c['roles'] and d['operator']==c['operator']
 assert d['genesis_timestamp_seconds']==c['timestamp']
 assert d['test_allocations'][0]['owner']==c['participant_a']

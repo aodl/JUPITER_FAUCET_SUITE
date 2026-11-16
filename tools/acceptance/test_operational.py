@@ -146,10 +146,33 @@ class Operational(unittest.TestCase):
         self.assertEqual(p['genesis']['neurons'][0]['permissions'][0]['permissions'], [3, 4, 10])
         self.assertEqual(set(ids.values()), set(policy['excluded_jup_neurons']))
 
+    def test_active_schedule_is_null_and_cannot_emit_a_live_bundle(self):
+        base = acceptance.PROFILE.parent
+        d = json.loads((base / 'candidate-inputs.json').read_text())
+        self.assertIsNone(d['genesis_timestamp_seconds'])
+        self.assertIsNone(d['acceptance_start_timestamp_seconds'])
+        historical = json.loads((base / 'historical/2026-11-15-candidate-inputs.json').read_text())
+        historical.update(genesis_timestamp_seconds=None, acceptance_start_timestamp_seconds=None)
+        self.assertEqual(d, historical)  # no other operator/economic inputs changed
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / 'candidate'
+            with self.assertRaisesRegex(ValueError, 'genesis_timestamp_seconds'):
+                op.candidate(json.loads(acceptance.PROFILE.read_text()), d, '/unused', out)
+            self.assertFalse(out.exists())
+        operations = json.loads((base / 'proposed-operations-2026-11-15.json').read_text())
+        self.assertIn('SCHEDULE-BLOCKED', operations['status'])
+        for field in ('genesis_timestamp_seconds', 'acceptance_start_timestamp_seconds'):
+            self.assertIsNone(operations['proposed_schedule'][field])
+        self.assertIsNone(operations['unsigned_governance_stages'])
+        for row in operations['installation']:
+            self.assertIsNone(row['proposed_cli_argv'])
+            if row['role'].startswith('sns_'):
+                self.assertIsNone(row['constructor_sha256'])
+
     @unittest.skipUnless(os.environ.get('JUPITER_SNS_ARTIFACT_DIR'), 'exact official tuple required')
-    def test_reviewed_candidate_copy_has_exact_clocks_and_native_genesis(self):
+    def test_historical_candidate_has_exact_tested_clocks_and_native_genesis(self):
         import datetime
-        d = json.loads((acceptance.PROFILE.parent / 'candidate-inputs.json').read_text())
+        d = json.loads((acceptance.PROFILE.parent / 'historical/2026-11-15-candidate-inputs.json').read_text())
         as_seconds = lambda text: int(datetime.datetime.fromisoformat(text).timestamp())
         self.assertEqual(d['genesis_timestamp_seconds'], as_seconds('2026-11-17T14:00:00+00:00'))
         self.assertEqual(d['acceptance_start_timestamp_seconds'], as_seconds('2026-11-19T16:00:00+00:00'))
