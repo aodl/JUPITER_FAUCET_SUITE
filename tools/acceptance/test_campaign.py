@@ -155,6 +155,10 @@ class Campaign(unittest.TestCase):
         self.assertLess(high,100_000_000)
 
     def test_current_lookups_do_not_prove_historic_owner_or_stale_snapshot(self):
+        live=fixture();live['sources'][2]['verification']='replica-signed-query';live['sources'][3]['verification']='replica-signed-query'
+        self.assertEqual(campaign.verify(live)['exercises'][0]['checks']['frozen_owner_eligibility'],'UNAVAILABLE_EVIDENCE')
+        del live['sources'][2]['value']['selection_at_ns']
+        self.assertEqual(campaign.verify(live)['status'],'INCOMPLETE')
         f=fixture();f['sources'][3]['captured_at_ns']=4000*10**9
         self.assertEqual(campaign.verify(f)['status'],'INCOMPLETE')
         f=fixture();f['sources'][3]['value']['permissions'][0]['permissions'].append(11)

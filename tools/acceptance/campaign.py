@@ -213,7 +213,10 @@ def verify(manifest):
                         selection = source(exercise.get('selection_source'),p['roles']['sns_governance'],'get_neuron')
                         if name == 'Relay pot':
                             check('relay_membership_at_selection', None)
-                        elif selection is None or source_map[exercise['selection_source']].get('captured_at_ns') != record.get('selection_at_ns'):
+                        elif (selection is None or not isinstance(record.get('selection_at_ns'),int)
+                              or not source_map[exercise['selection_source']]['verification'].startswith('local-')
+                              or not source_map[exercise['patron_source']]['verification'].startswith('local-')
+                              or source_map[exercise['selection_source']].get('captured_at_ns') != record.get('selection_at_ns')):
                             check('frozen_owner_eligibility', None)
                         else:
                             permissions = selection['permissions']

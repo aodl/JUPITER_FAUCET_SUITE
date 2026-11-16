@@ -199,8 +199,11 @@ proven one-base-unit downward envelope. Multiplier precedes flooring; actual tra
 fee is sponsor-paid, not subtracted from the award. The programme epoch/launch clock,
 canonical deposit time and journal selection must agree. No active timestamp is filled.
 
-Frozen native neuron evidence must be captured at the recorded selection checkpoint;
-a later lookup cannot prove historical economic control. Imported complete permissions
+The public PatronRecord has no independent atomic `selection_at_ns` checkpoint.
+That field is a **synthetic local-model annotation only**, never invented for live
+exports. Live frozen-owner eligibility therefore stays UNAVAILABLE_EVIDENCE with
+these APIs, even if a later get_neuron looks eligible; only labelled local fixtures
+exercise the conditional selection arithmetic. A later lookup cannot prove historical economic control. Imported complete permissions
 must show unique economic ownership; B must be the exact memo 21, one-year,
 non-dissolving, auto-stake neuron. A's ordinary test leaves auto-stake disabled.
 Without the frozen selection/time evidence, eligibility stays unavailable even if
