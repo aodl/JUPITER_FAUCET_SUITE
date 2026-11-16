@@ -1,5 +1,12 @@
 # Acceptance identity handoff, 7 November 2026
 
+Work-package A configuration update, 14 November 2026: the operator explicitly
+approved all eleven non-Disburser assignments and an initial empty canonical
+Relay surplus list. Historical observations below remain historical. See
+`owner-decisions.json` for the approved temporary voter policy and unresolved
+signing provider, participant principals, schedule and helper-preservation facts.
+This update authorizes no mainnet observations or mutations.
+
 The operator supplied Disburser `spoge-kaaaa-aaaas-amyoa-cai` and existing NNS
 neuron `2234355977000034918`, reporting that exact canister as its controller.
 The confirmed fields are recorded in `profile.json`; the operator remains unresolved. The operator subsequently delegated arbitrary

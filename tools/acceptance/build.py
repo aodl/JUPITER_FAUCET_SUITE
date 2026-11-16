@@ -14,7 +14,7 @@ import profile as acceptance
 
 def build(role, source, directory, debug=False):
     profile = json.loads(Path(source).read_text())
-    acceptance.validate(profile)
+    acceptance.validate(profile, require_operator=False)
     if debug and (profile['genesis'] is None or profile['genesis']['purpose'] != 'local-fixture-not-for-deployment'):
         raise ValueError('debug APIs are only built for an explicit local fixture')
     if role not in acceptance.APPLICATIONS:
@@ -81,6 +81,9 @@ def build(role, source, directory, debug=False):
         'raw_sha256': hashlib.sha256(raw.read_bytes()).hexdigest(),
         'gzip_sha256': hashlib.sha256((out / (stem + '.wasm.gz')).read_bytes()).hexdigest(),
         'canonical_release': False,
+        'constructor_inputs_resolved': all(profile[key] is not None for key in
+            ('operator', 'genesis', 'relay_surplus_neuron_recipients', 'age_bonus_recipient_2')),
+        'mainnet_operations_authorized': False,
     }
     (out / (stem + '.build.json')).write_text(json.dumps(record, sort_keys=True, indent=2) + '\n')
     return raw

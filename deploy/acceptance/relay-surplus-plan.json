@@ -1,0 +1,29 @@
+{
+  "status": "initial empty list approved as temporary acceptance policy; eventual route below remains proposed and unapplied",
+  "io_source_revision": "8b2e1cba06b43bc587898343a0391a6fac7eca23",
+  "io_manifest_sha256": "13f2184d4efa422c61aaed5206a69ca18ca62e97fe2bff5dd3029e49aa962d19",
+  "recipients": [
+    {
+      "role": "acceptance IO permanent neuron",
+      "neuron_id": "4021054791166218",
+      "account": null,
+      "account_status": "IO draft explicitly lacks observed permanent staking bytes; require authorized observation or operator-supplied verified Account",
+      "memo_text": "",
+      "memo_hex": ""
+    },
+    {
+      "role": "acceptance Jupiter NNS neuron",
+      "neuron_id": "2234355977000034918",
+      "account": {
+        "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+        "subaccountHex": "52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+        "address": "rrkah-fqaaa-aaaaa-aaaaq-cai-v6gacby.52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+        "explorerAccountHex": "e458b5ed224bd0b9e884599dd0e986e78d02266674b093b617105528311fa602"
+      },
+      "account_status": "nonce-zero expectation, not observed",
+      "memo_text": "4021054791166218",
+      "memo_hex": "34303231303534373931313636323138"
+    }
+  ],
+  "switch_rule": "Do not change canonical Relay during active work; reconcile and quiesce before separately approved replacement. First exercise final immutable recipients with a separately funded child. No production surplus destination or global alias is repointed."
+}

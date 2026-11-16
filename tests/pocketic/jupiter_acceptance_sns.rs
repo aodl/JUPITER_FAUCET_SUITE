@@ -220,6 +220,9 @@ struct ProposalReply {
 #[path = "acceptance_reward_pots.rs"]
 mod reward_pots;
 
+#[path = "operational_acceptance.rs"]
+mod operational;
+
 #[test]
 #[ignore = "owned PocketIC topology and exact official SNS artifacts required"]
 fn real_jup_sns_ownership_rewards_factory_and_governed_upgrade() -> Result<()> {

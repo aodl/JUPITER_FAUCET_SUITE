@@ -36,7 +36,7 @@ def encode_checked(did, types, value):
     command = ['didc', 'encode', '--defs', str(did), '--types', types]
     encoded = bytes.fromhex(subprocess.check_output(command, input=value, text=True).strip())
     decoded = subprocess.check_output(
-        ['didc', 'decode', '--defs', str(did), '--types', types, encoded.hex()], text=True)
+        ['didc', 'decode', '--defs', str(did), '--types', types], input=encoded.hex(), text=True)
     again = bytes.fromhex(subprocess.check_output(command, input=decoded, text=True).strip())
     if encoded != again:
         raise ValueError('typed constructor did not round trip exactly')
@@ -47,4 +47,7 @@ def write_constructor(directory, role, did, types, value):
     encoded = encode_checked(did, types, '(' + value + ')')
     Path(directory, role + '.did').write_text('(' + value + ')\n')
     Path(directory, role + '.bin').write_bytes(encoded)
+    # DFX --argument-type raw consumes hex text, not the binary file. Preserve
+    # the already typed bytes rather than relying on CLI value inference.
+    Path(directory, role + '.hex').write_text(encoded.hex())
     return encoded

@@ -1,0 +1,69 @@
+{
+  "source": "Operator final 15 November 2026 identity/participant/helper decisions plus narrowly authorized read stage; no mainnet mutation authorization",
+  "role_assignments_approved": true,
+  "signing_provider": {
+    "tool": "dfx 0.31.0",
+    "identity_alias": "codex_local",
+    "principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+    "route": "DFX existing provider -> offline signed request -> standard IC management ingress and SDK certificate validation; future actual operations use explicit DFX alias",
+    "evidence": "authority-2026-11-15.json",
+    "custody": "Existing plaintext DFX local file provider; no private material read/exported/copied. Independent offline ECDSA verification and all twelve authenticated status reads passed. Plaintext storage is disclosed; this is acceptance-only authority, not a production custody recommendation.",
+    "icp_cli_alias_verified": false,
+    "depends_on_personal_identity": false,
+    "version_evidence": "Repository context said 0.27.0; final supported tool check reports 0.31.0, and all three providers signed verified offline read envelopes with DFX_VERSION=0.31.0. Read-time executable version was not captured separately; no toolchain upgrade or live repeat was performed. Original read metadata labels were assumptions, not observed versions.",
+    "future_command_scoped_version": "0.31.0"
+  },
+  "operator_verified_principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+  "local_public_identity_checks": {
+    "icp_default": "anonymous",
+    "icp_listed_principals": [
+      "2vxsx-fae",
+      "6ykjr-j55xd-s2kry-ki6wm-x5hka-lba2p-ddm3x-34fdi-zgbl5-rnhho-kae"
+    ],
+    "dfx_default": "codex_local",
+    "dfx_default_principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+    "conclusion": "Historical 14 November public-only checks retained. Superseded authority decision: explicit Codex executor codex_local now verified by signed status reads; personal principal is protected and not the execution signer.",
+    "historical_conclusion_14_November": "Expected operator not established by these normal public CLI outputs. No identity was switched. These are local observations, not mainnet controller or signing-authority evidence."
+  },
+  "temporary_acceptance_voter_approved": true,
+  "temporary_voter_binding": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+  "temporary_voter_native_permissions": [
+    3,
+    4,
+    10
+  ],
+  "mainnet_permission_revocation_authorized": false,
+  "acceptance_time_policy": "Fix the acceptance-specific reward timestamp at the explicitly approved patron activation checkpoint; confirm with the installation schedule. Production launch time remains separate.",
+  "participant_principals": {
+    "A": "dpb4d-s3blg-twxrv-w4ucr-2w76w-rctgx-zycty-at3p4-5paoc-x4764-eae",
+    "B": "lsgoi-jv53o-vvez4-teecu-5t66a-7bnlq-mjvi3-iails-23k3p-qykdc-lae"
+  },
+  "test_allocation_policy": "Each participant receives 5000 jUP in a zero-delay neuron and 5000 jUP in a one-year neuron, entirely within the existing 20000-jUP bucket. Not sale purchases.",
+  "relay_surplus_neuron_recipients": [],
+  "relay_surplus_policy": "Approved temporary acceptance simplification only; eventual acceptance-only destinations remain separately reviewed.",
+  "helper_operator_understanding": "Confirmed completed temporary helper for creating the existing NNS neuron. Helper-local state preservation explicitly waived; no additional source archaeology or migration.",
+  "helper_disposable_established": true,
+  "mainnet_reads_authorized": false,
+  "mainnet_mutations_authorized": false,
+  "historical_14_November_operator_expected_principal": "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+  "protected_personal_principal": "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+  "personal_signing_access_authorized": false,
+  "participant_aliases": {
+    "A": "jupiter_acceptance_participant_a",
+    "B": "jupiter_acceptance_participant_b"
+  },
+  "participant_custody": "Standard DFX-generated identities created with umask 077. DFX file backend writes owner-read-only 0400 key files; encrypted keyring creation was unavailable in this session. Plaintext-at-rest private local DFX custody; no credential contents/exports, seed phrases or custody files included in repository or evidence.",
+  "future_nnx_executor": {
+    "principal": null,
+    "route": null,
+    "policy": "Grant [3,4,10], prove real vote, then revoke temporary rights and verify denial; preserve original neuron ID/Account. Future approval required."
+  },
+  "helper_transition": "disposable-helper-replacement",
+  "bootstrap_controller_history": [
+    "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+    "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+  ],
+  "retain_both_bootstrap_controllers_until_separate_approval": true,
+  "completed_read_authorization": "One bounded 12-status + 1-info + 2-participant stage only; completed, not standing authority; documented CLI discovery deviation",
+  "permission_correction": "Owner final governance correction: ManageVotingPermission replaces ManagePrincipals for this neuron only; global claimant/grantable permissions unchanged. Voting can influence financial proposals."
+}

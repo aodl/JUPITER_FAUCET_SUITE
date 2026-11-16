@@ -1,0 +1,604 @@
+{
+  "source_commit": "a7c6cabdb58c3f2b1f26b3654905df24bb131826",
+  "approved_plan_sha256": "d75e716e51fa01cd084f08903b1dd6b6edab55cc0d1eb59390a43bc6483e8a42",
+  "inventory": {
+    "started": "2026-11-15T00:38:51.308Z",
+    "finished": "2026-11-15T00:39:03.026Z",
+    "logical_attempts": 38,
+    "physical_http_attempts": 40,
+    "successful": 38,
+    "failed": 0,
+    "not_attempted": 27,
+    "postinstallation_attempts": 0,
+    "mutation_attempts": 0,
+    "automatic_retries": 0,
+    "provider": "Explicit anonymous SDK agent, pinned mainnet root key; no identity store accessed"
+  },
+  "evidence_directory": "target/acceptance-inventory-20261115",
+  "public_caller": "2vxsx-fae",
+  "signing_provider": null,
+  "expected_operator_controller_present": true,
+  "controller_membership_does_not_prove_signing_capability": true,
+  "canisters": [
+    {
+      "role": "sns_root",
+      "principal": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "module_hash": null,
+      "module_path_evidence": "Absent",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+      "cycles": null,
+      "reserved_cycles": null,
+      "cycles_deficit_to_3T": null,
+      "candidate": {
+        "path": "framework-templates/root.wasm.gz",
+        "sha256": "3762dd6f1348830a1d6b19252ca21f518c9f9d3a2b79b1dd99d75c0de6d46ef4",
+        "raw_sha256": "356960e58691a7438cb07c73806cf8d0948247508f0efc281cb2ccb7a382f836"
+      },
+      "candidate_module_match": false,
+      "proposed_install_mode": "install",
+      "blocker": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "role": "sns_governance",
+      "principal": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "module_hash": null,
+      "module_path_evidence": "Absent",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+      "cycles": null,
+      "reserved_cycles": null,
+      "cycles_deficit_to_3T": null,
+      "candidate": {
+        "path": "framework-templates/governance.wasm.gz",
+        "sha256": "24ef2004240d2a34bcdaa616134d27bc18d11c1e96b378a46d564feedcc1a8c3",
+        "raw_sha256": "e2fd07bffa7d71241c3b47e2c8398ef78bfc26b95427a3711a9e579ad5f9f190"
+      },
+      "candidate_module_match": false,
+      "proposed_install_mode": "install",
+      "blocker": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "role": "sns_ledger",
+      "principal": "sgnny-4iaaa-aaaas-amypq-cai",
+      "module_hash": null,
+      "module_path_evidence": "Absent",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+      "cycles": null,
+      "reserved_cycles": null,
+      "cycles_deficit_to_3T": null,
+      "candidate": {
+        "path": "framework-templates/ledger.wasm.gz",
+        "sha256": "354dd6ecfdc72b5409805b31dea22c9db11df6e14095a5a68924eb63535e6d8a",
+        "raw_sha256": "a273d741019b4324b22e2e64cfb0239de148ae9693e8801102a04118dfd383c0"
+      },
+      "candidate_module_match": false,
+      "proposed_install_mode": "install",
+      "blocker": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "role": "sns_index",
+      "principal": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "module_hash": null,
+      "module_path_evidence": "Absent",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+      "cycles": null,
+      "reserved_cycles": null,
+      "cycles_deficit_to_3T": null,
+      "candidate": {
+        "path": "framework-templates/index.wasm.gz",
+        "sha256": "dab6808d0dfc06e5e88336d0c3d3e45e5448c6e36c2a781f3e9e09bd450f528c",
+        "raw_sha256": "0768d43e0ca776c80515eb917839cbee0adca38ef69fb28280407c28fe4ea979"
+      },
+      "candidate_module_match": false,
+      "proposed_install_mode": "install",
+      "blocker": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "role": "sns_swap",
+      "principal": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "module_hash": null,
+      "module_path_evidence": "Absent",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+      "cycles": null,
+      "reserved_cycles": null,
+      "cycles_deficit_to_3T": null,
+      "candidate": {
+        "path": "framework-templates/swap.wasm.gz",
+        "sha256": "f3c9cd2a503f3136c91f1d44c5b4bac2d5f15a7d347731aaff03e5fa80df8c48",
+        "raw_sha256": "3d17f42df29a764fa3d813923646f85aac9f61320d97b2b07c1045ffb342d638"
+      },
+      "candidate_module_match": false,
+      "proposed_install_mode": "install",
+      "blocker": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "role": "jupiter_disburser",
+      "principal": "spoge-kaaaa-aaaas-amyoa-cai",
+      "module_hash": "03e8ba94621d28bf166595a9a9dd0d9943c60caad48c7a2740285a7fee283bbe",
+      "module_path_evidence": "Found",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+      "cycles": null,
+      "reserved_cycles": null,
+      "cycles_deficit_to_3T": null,
+      "candidate": {
+        "path": "applications/jupiter_disburser.wasm.gz",
+        "sha256": "473a1bed784cf4734b2173c8d724d1c093ccbd85f427a391b7914284c16cd070",
+        "raw_sha256": "2c2efab9c45d79193c9ada8a0079f54e4aca162884682ea22d5f5169fbb0a8b4"
+      },
+      "candidate_module_match": false,
+      "proposed_install_mode": null,
+      "blocker": "helper source/state/pending-effect preservation and approved transition; signer and cycles unresolved"
+    },
+    {
+      "role": "jupiter_faucet",
+      "principal": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "module_hash": null,
+      "module_path_evidence": "Absent",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+      "cycles": null,
+      "reserved_cycles": null,
+      "cycles_deficit_to_3T": null,
+      "candidate": {
+        "path": "applications/jupiter_faucet.wasm.gz",
+        "sha256": "ed661e744e616306dbe00a580e9fe5eb72fb34b19bfa0566f91ed76f1b8449e2",
+        "raw_sha256": "ad77738d9ceb98ca7969b6cd6275fcfb0e73e07ef1d735b0e88b64479d3bdd4b"
+      },
+      "candidate_module_match": false,
+      "proposed_install_mode": "install",
+      "blocker": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "role": "jupiter_lifeline",
+      "principal": "xiqae-3qaaa-aaaas-amyta-cai",
+      "module_hash": null,
+      "module_path_evidence": "Absent",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+      "cycles": null,
+      "reserved_cycles": null,
+      "cycles_deficit_to_3T": null,
+      "candidate": {
+        "path": "applications/jupiter_lifeline.wasm.gz",
+        "sha256": "0688ab5567bd9cdd4c11447380f2e63c7f91629e598086183047fc06dd5f6d70",
+        "raw_sha256": "74e71dff02f1721b00d1c33db6cb14b76bd6e58748618b1b3c1fadb4f9783f3c"
+      },
+      "candidate_module_match": false,
+      "proposed_install_mode": "install",
+      "blocker": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "role": "jupiter_sns_rewards",
+      "principal": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "module_hash": null,
+      "module_path_evidence": "Absent",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+      "cycles": null,
+      "reserved_cycles": null,
+      "cycles_deficit_to_3T": null,
+      "candidate": {
+        "path": "applications/jupiter_sns_rewards.wasm.gz",
+        "sha256": "56babefd47b5c2a95fd5e1b926e77c447a71b571167e4d0b6c537f3d765264a1",
+        "raw_sha256": "8819a0cc51aead3fb307f691eefb8075e446413960e7000d332ef70767966c4b"
+      },
+      "candidate_module_match": false,
+      "proposed_install_mode": "install",
+      "blocker": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "role": "jupiter_historian",
+      "principal": "xbtly-nyaaa-aaaas-amysq-cai",
+      "module_hash": null,
+      "module_path_evidence": "Absent",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+      "cycles": null,
+      "reserved_cycles": null,
+      "cycles_deficit_to_3T": null,
+      "candidate": {
+        "path": "applications/jupiter_historian.wasm.gz",
+        "sha256": "2bc0797000c52c289dca92252369cc3129f3746bc8c81ccf4acf890ffb7faf9b",
+        "raw_sha256": "8e5108e400d11d8d6745d4696b1a0e67ed6a137c65791d84712ceb38a776f20f"
+      },
+      "candidate_module_match": false,
+      "proposed_install_mode": "install",
+      "blocker": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "role": "jupiter_relay",
+      "principal": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "module_hash": null,
+      "module_path_evidence": "Absent",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+      "cycles": null,
+      "reserved_cycles": null,
+      "cycles_deficit_to_3T": null,
+      "candidate": {
+        "path": "applications/jupiter_relay.wasm.gz",
+        "sha256": "d6fc978715d55fea3c417e6b247524808a8ad283354fb6a28c606c416972a9e7",
+        "raw_sha256": "b1e79e4dabf7919eb764217c299ff110168cdfff0c97156e9581520b8fa39e80"
+      },
+      "candidate_module_match": false,
+      "proposed_install_mode": "install",
+      "blocker": "verified signing provider, complete constructor inputs and cycles/headroom"
+    },
+    {
+      "role": "jupiter_faucet_frontend",
+      "principal": "xprgq-wiaaa-aaaas-amytq-cai",
+      "module_hash": null,
+      "module_path_evidence": "Absent",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+      "cycles": null,
+      "reserved_cycles": null,
+      "cycles_deficit_to_3T": null,
+      "candidate": {
+        "path": "applications/jupiter_faucet_frontend.wasm.gz",
+        "sha256": "6df4b325c73792ca8ee71ae8ce9e3f8b6fe2c354c8b5885347936064ef83bfbc",
+        "raw_sha256": "4f9d31a2bca0d6da8ecd04c8480084e77b7dac2a6ce6198f55521edc8077d4f8"
+      },
+      "candidate_module_match": false,
+      "proposed_install_mode": "install",
+      "blocker": "verified signing provider, complete constructor inputs and cycles/headroom"
+    }
+  ],
+  "neuron": {
+    "id": [
+      {
+        "id": "2234355977000034918"
+      }
+    ],
+    "staked_maturity_e8s_equivalent": [],
+    "controller": "spoge-kaaaa-aaaas-amyoa-cai",
+    "maturity_e8s_equivalent": "54459",
+    "cached_neuron_stake_e8s": "100000000",
+    "created_timestamp_seconds": "1794065742",
+    "auto_stake_maturity": [],
+    "aging_since_timestamp_seconds": "1794065742",
+    "hot_keys": [],
+    "maturity_disbursements_in_progress": [
+      []
+    ],
+    "dissolve_state": [
+      {
+        "DissolveDelaySeconds": "63115200"
+      }
+    ],
+    "followees": [
+      [
+        0,
+        {
+          "followees": [
+            {
+              "id": "2947465672511369"
+            }
+          ]
+        }
+      ],
+      [
+        4,
+        {
+          "followees": [
+            {
+              "id": "2947465672511369"
+            }
+          ]
+        }
+      ],
+      [
+        14,
+        {
+          "followees": [
+            {
+              "id": "2947465672511369"
+            }
+          ]
+        }
+      ]
+    ],
+    "neuron_fees_e8s": "0",
+    "visibility": [
+      2
+    ],
+    "spawn_at_timestamp_seconds": [],
+    "account_hex": "52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+    "verification": "Replica-signed list_neurons query, SDK signature verification; offline full-field decode of the same saved reply, no extra live read",
+    "effective_auto_stake_maturity": false,
+    "visibility_label": "Public (native enum 2)",
+    "expected_id_matches": true,
+    "expected_controller_matches": true,
+    "expected_staking_bytes_match": true
+  },
+  "ledger_balances_e8s": {
+    "nns_staking_expectation": 100000000,
+    "jupiter_relay": 0,
+    "sns_governance": 0,
+    "jupiter_disburser": 0,
+    "jupiter_faucet": 0,
+    "jupiter_sns_rewards": 0
+  },
+  "ledger_fee_e8s": 10000,
+  "query_evidence": "All NNS/Ledger/CMC replies verified with normal SDK replica signatures; NNS/Ledger application values are not certified state",
+  "staking_ledger_equals_cached": true,
+  "CMC": {
+    "data": {
+      "xdr_permyriad_per_icp": "15943",
+      "timestamp_seconds": "1794702840"
+    },
+    "certification": {
+      "check_time": "2026-11-15T00:39:50.534Z",
+      "network_requests": 0,
+      "rate": {
+        "xdr_permyriad_per_icp": "15943",
+        "timestamp_seconds": "1794702840"
+      },
+      "status": "certificate BLS/ranges/freshness, hash-tree root and rate leaf verified"
+    },
+    "cycles_per_icp_at_observation_13_node_basis": "1594300000000",
+    "quote_is_not_future_spend_authorization": true
+  },
+  "topology": {
+    "subnet": "bkfrj-6k62g-dycql-7h53p-atvkj-zg4to-gaogh-netha-ptybj-ntsgw-rqe",
+    "certified_node_count": 13,
+    "creation_cost_live_observation": null,
+    "creation_cost_limitation": "Node count is certified; no cost_create_canister execution/registry pricing call was added. Creation cost remains a source-policy expectation until an approved actual factory quote."
+  },
+  "helper": {
+    "module_hash": "03e8ba94621d28bf166595a9a9dd0d9943c60caad48c7a2740285a7fee283bbe",
+    "candid_service": "service : { }\n",
+    "git_commit_id": null,
+    "metadata_evidence": "certified service Found; git_commit_id Absent",
+    "stable_state": "unknown",
+    "heap_state": "unknown",
+    "pending_helper_effects": "unknown",
+    "source_and_purpose": "not established",
+    "default_icp_balance_e8s": 0,
+    "zero_balance_does_not_prove_no_obligations": true
+  },
+  "not_attempted": [
+    {
+      "id": "sns_root-status",
+      "target": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "method": "canister_status",
+      "status": "not-attempted",
+      "reason": "No operator signing provider or genuinely authorized existing route supplied; anonymous restricted probing is not authorized."
+    },
+    {
+      "id": "sns_root-info",
+      "target": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "method": "canister_info",
+      "status": "not-attempted",
+      "reason": "No existing supported canister-caller/provider route established; no ingress update or proxy is attempted."
+    },
+    {
+      "id": "sns_governance-status",
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "method": "canister_status",
+      "status": "not-attempted",
+      "reason": "No operator signing provider or genuinely authorized existing route supplied; anonymous restricted probing is not authorized."
+    },
+    {
+      "id": "sns_governance-info",
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "method": "canister_info",
+      "status": "not-attempted",
+      "reason": "No existing supported canister-caller/provider route established; no ingress update or proxy is attempted."
+    },
+    {
+      "id": "sns_ledger-status",
+      "target": "sgnny-4iaaa-aaaas-amypq-cai",
+      "method": "canister_status",
+      "status": "not-attempted",
+      "reason": "No operator signing provider or genuinely authorized existing route supplied; anonymous restricted probing is not authorized."
+    },
+    {
+      "id": "sns_ledger-info",
+      "target": "sgnny-4iaaa-aaaas-amypq-cai",
+      "method": "canister_info",
+      "status": "not-attempted",
+      "reason": "No existing supported canister-caller/provider route established; no ingress update or proxy is attempted."
+    },
+    {
+      "id": "sns_index-status",
+      "target": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "method": "canister_status",
+      "status": "not-attempted",
+      "reason": "No operator signing provider or genuinely authorized existing route supplied; anonymous restricted probing is not authorized."
+    },
+    {
+      "id": "sns_index-info",
+      "target": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "method": "canister_info",
+      "status": "not-attempted",
+      "reason": "No existing supported canister-caller/provider route established; no ingress update or proxy is attempted."
+    },
+    {
+      "id": "sns_swap-status",
+      "target": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "method": "canister_status",
+      "status": "not-attempted",
+      "reason": "No operator signing provider or genuinely authorized existing route supplied; anonymous restricted probing is not authorized."
+    },
+    {
+      "id": "sns_swap-info",
+      "target": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "method": "canister_info",
+      "status": "not-attempted",
+      "reason": "No existing supported canister-caller/provider route established; no ingress update or proxy is attempted."
+    },
+    {
+      "id": "jupiter_disburser-status",
+      "target": "spoge-kaaaa-aaaas-amyoa-cai",
+      "method": "canister_status",
+      "status": "not-attempted",
+      "reason": "No operator signing provider or genuinely authorized existing route supplied; anonymous restricted probing is not authorized."
+    },
+    {
+      "id": "jupiter_disburser-info",
+      "target": "spoge-kaaaa-aaaas-amyoa-cai",
+      "method": "canister_info",
+      "status": "not-attempted",
+      "reason": "No existing supported canister-caller/provider route established; no ingress update or proxy is attempted."
+    },
+    {
+      "id": "jupiter_faucet-status",
+      "target": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "method": "canister_status",
+      "status": "not-attempted",
+      "reason": "No operator signing provider or genuinely authorized existing route supplied; anonymous restricted probing is not authorized."
+    },
+    {
+      "id": "jupiter_faucet-info",
+      "target": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "method": "canister_info",
+      "status": "not-attempted",
+      "reason": "No existing supported canister-caller/provider route established; no ingress update or proxy is attempted."
+    },
+    {
+      "id": "jupiter_lifeline-status",
+      "target": "xiqae-3qaaa-aaaas-amyta-cai",
+      "method": "canister_status",
+      "status": "not-attempted",
+      "reason": "No operator signing provider or genuinely authorized existing route supplied; anonymous restricted probing is not authorized."
+    },
+    {
+      "id": "jupiter_lifeline-info",
+      "target": "xiqae-3qaaa-aaaas-amyta-cai",
+      "method": "canister_info",
+      "status": "not-attempted",
+      "reason": "No existing supported canister-caller/provider route established; no ingress update or proxy is attempted."
+    },
+    {
+      "id": "jupiter_sns_rewards-status",
+      "target": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "method": "canister_status",
+      "status": "not-attempted",
+      "reason": "No operator signing provider or genuinely authorized existing route supplied; anonymous restricted probing is not authorized."
+    },
+    {
+      "id": "jupiter_sns_rewards-info",
+      "target": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "method": "canister_info",
+      "status": "not-attempted",
+      "reason": "No existing supported canister-caller/provider route established; no ingress update or proxy is attempted."
+    },
+    {
+      "id": "jupiter_historian-status",
+      "target": "xbtly-nyaaa-aaaas-amysq-cai",
+      "method": "canister_status",
+      "status": "not-attempted",
+      "reason": "No operator signing provider or genuinely authorized existing route supplied; anonymous restricted probing is not authorized."
+    },
+    {
+      "id": "jupiter_historian-info",
+      "target": "xbtly-nyaaa-aaaas-amysq-cai",
+      "method": "canister_info",
+      "status": "not-attempted",
+      "reason": "No existing supported canister-caller/provider route established; no ingress update or proxy is attempted."
+    },
+    {
+      "id": "jupiter_relay-status",
+      "target": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "method": "canister_status",
+      "status": "not-attempted",
+      "reason": "No operator signing provider or genuinely authorized existing route supplied; anonymous restricted probing is not authorized."
+    },
+    {
+      "id": "jupiter_relay-info",
+      "target": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "method": "canister_info",
+      "status": "not-attempted",
+      "reason": "No existing supported canister-caller/provider route established; no ingress update or proxy is attempted."
+    },
+    {
+      "id": "jupiter_faucet_frontend-status",
+      "target": "xprgq-wiaaa-aaaas-amytq-cai",
+      "method": "canister_status",
+      "status": "not-attempted",
+      "reason": "No operator signing provider or genuinely authorized existing route supplied; anonymous restricted probing is not authorized."
+    },
+    {
+      "id": "jupiter_faucet_frontend-info",
+      "target": "xprgq-wiaaa-aaaas-amytq-cai",
+      "method": "canister_info",
+      "status": "not-attempted",
+      "reason": "No existing supported canister-caller/provider route established; no ingress update or proxy is attempted."
+    },
+    {
+      "id": "NNS-controller-full",
+      "target": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+      "method": "get_full_neuron",
+      "status": "not-attempted",
+      "reason": "No confirmed existing controller/hot-key observation provider; operator identity and authority unresolved."
+    },
+    {
+      "id": "participant-A",
+      "target": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "method": "icrc1_balance_of",
+      "status": "not-attempted",
+      "reason": "Approved participant public principal not supplied."
+    },
+    {
+      "id": "participant-B",
+      "target": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "method": "icrc1_balance_of",
+      "status": "not-attempted",
+      "reason": "Approved participant public principal not supplied."
+    }
+  ],
+  "mismatches_and_limits": [
+    "Eleven absent modules: configured roles have not been installed.",
+    "Disburser installed module differs from the acceptance candidate; helper transition is blocked, not an automatic upgrade/reinstall.",
+    "All twelve retain two bootstrap controllers; none has reached its proposed final framework/application controller topology.",
+    "Neuron Public visibility and full public record are fresh observations; the earlier anonymous full-neuron denial does not establish current privacy. No visibility mutation is needed on this observation.",
+    "All twelve main/reserved cycle balances and deficits remain unknown.",
+    "No git_commit_id metadata; no helper source/stable-state/pending-effect proof.",
+    "Expected operator is a certified controller, but provider and actual signing capability remain unresolved.",
+    "Only listed maturity-disbursement queue was observed empty; no claim of globally absent pending effects."
+  ],
+  "mainnet_mutations_performed": false,
+  "postinstallation_reads_performed": false
+}

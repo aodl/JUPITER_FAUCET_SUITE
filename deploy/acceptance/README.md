@@ -1,5 +1,11 @@
 # Jupiter acceptance SNS
 
+The executable preparation follow-up is [work package A](work-package-a.md):
+owner decisions, exact-allocation genesis generation, native governance recipes,
+installation staging, a [funding sheet](funding-sheet.json) and a bounded
+[live-read approval plan](live-read-plan.json). Unanswered owner inputs remain
+unanswered; preparation does not authorize mainnet reads or writes.
+
 This is offline preparation for a separate, directly installed Jupiter SNS on the
 real IC. It authorizes no installation, funding, neuron operation or controller
 change. Production `ic`, its mappings and installation arguments retain their
@@ -16,15 +22,17 @@ contract; no build, test or script needs its checkout.
 `spoge-kaaaa-aaaas-amyoa-cai` and exact NNS neuron `2234355977000034918`.
 The checked-in handoff reports delegated selection of the other eleven roles;
 all twelve assignments are recorded in the profile and the
-[identity handoff](identity-handoff.md). The original authenticated operator
-session is not available as independent evidence in this checkout. Treat the
-eleven mappings as proposed assignments requiring final operator confirmation,
-not observations of installed mainnet roles. No read-only or mutating mainnet
-calls were authorized for this integration task.
+[identity handoff](identity-handoff.md). The work-package A operator reply
+explicitly approves all eleven assignments. These are approved configuration,
+not observations of installed mainnet roles. That role approval itself authorizes no mainnet calls; completed separately
+authorized read stages are linked below. No mutating mainnet call is authorized.
 `provisioning.json` retains the original inventory and delegation provenance.
 No existing mapping was inferred from ID ordering. Role isolation is independently
-validated with `profile.py check-roles`. Operator, production NNX authority, launch
-timestamp and reviewed genesis/Relay surplus inputs remain unresolved, so full
+validated with `profile.py check-roles`. The verified Codex deployment executor is DFX `codex_local`
+(`amzih-…-3ae`); A/B participant identities are created and recorded. The
+personal `zkkkd-…-wqe` principal is protected from Codex signing. The distinct
+genesis and patron activation timestamps remain schedule inputs. Temporary operator
+voting authority and empty canonical Relay surplus are approved policies. Full
 constructor preparation still fails closed. The
 `acceptance` CLI environment uses network `ic` and all twelve roles, separately
 from production. A Ledger archive is a later-created component, not an initial
@@ -44,7 +52,7 @@ This is the reviewed production Disburser's 5% age-bonus recipient, not IO's
 protected permanent neuron. No other Governance Account is allowed in that role,
 including protected Jupiter/IO staking Accounts. Protected application principals
 and neuron IDs remain rejected. The exact D-QUORUM recipient is encoded in the checked profile. The canonical
-Relay surplus policy remains unresolved; constructor preparation authorizes no
+Relay surplus policy is an approved temporary empty list; constructor preparation authorizes no
 real ICP donation.
 Any real funding requires separate explicit authorization.
 
@@ -162,7 +170,9 @@ ordered chunk hashes must match the reviewed artifact. See the [management
 contract](https://docs.internetcomputer.org/references/management-canister/).
 No install/chunk upload has been performed by this preparation task.
 
-The generated controller plan is an expectation, not evidence of deployment:
+The generated controller plan is a role expectation, not an instruction to
+remove either observed bootstrap controller during installation. Both remain
+until an explicitly reviewed handoff. It is not evidence of deployment:
 
 - Bootstrap under the verified operator; do not arm autonomous rescue yet.
 - Governance is controlled by Root; Root by Governance; Ledger/Index/Swap by Root.
@@ -231,8 +241,10 @@ production launch support.
 
 Long-lived acceptance retains the direct-installed Normal SNS and parked Swap.
 Its real Ledger/governance/controller behavior is useful operational evidence,
-but it has no sale history or authentic SNS-token sale valuation. Its small contested ownership
-fixture is not the production participant distribution. Native SNS-token treasury/mint valuation belongs in the sale rehearsal.
+but it has no sale history or authentic SNS-token sale valuation. The separate
+compatibility scenario's small contested ownership fixture is not the
+operational acceptance genesis: `operational.py` renders the exact 100-million
+allocation and approved four-neuron test bucket. Native SNS-token treasury/mint valuation belongs in the sale rehearsal.
 ICP-treasury valuation uses the real ICP Ledger and CMC, independently of Swap,
 as the [pinned valuation source](https://github.com/dfinity/ic/blob/98c898f8de068a1fc0e97ebc805f9fa7f315d862/rs/sns/governance/token_valuation/src/lib.rs)
 shows. The sale test reinvests actual sale proceeds; a funded operational ICP
@@ -338,3 +350,20 @@ sponsored jUP fee does not authorize unlimited IO fee subsidies.
 There is no mainnet installation, transfer, controller change or neuron action
 in these tests. Hosted CI provisions the pinned official artifacts for the SNS
 Rewards PocketIC lane; ignored real-SNS tests are explicitly discovered by xtask.
+
+## Approved read inventory
+
+The [15 November actual-state report](inventory-2026-11-15.md) records the bounded
+public inventory and [proposed operations](proposed-operations-2026-11-15.json).
+No mutation or post-installation read was authorized or executed. The original
+preparation artifacts and validation evidence remain distinct from these observations.
+
+The [authority and status supplement](authority-2026-11-15.md) records the verified
+Codex executor, created participants, completed helper-local preservation waiver,
+actual cycle deficits, partial constructors and the information-query discovery
+deviation. Historical inventory records are retained without rewriting them.
+
+The complete selected-clock configuration-only installation candidate is in
+[installation-approval.md](installation-approval.md), with [candidate-inputs.json](candidate-inputs.json)
+and the unexecuted [fresh preflight proposal](execution-preconditions.json).
+No timestamp, artifact or constructor preparation authorizes a mainnet operation.

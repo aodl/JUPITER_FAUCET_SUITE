@@ -1,0 +1,1702 @@
+{
+  "status": "COMPLETE CONFIGURATION-ONLY CANDIDATE; installation window confirmation, fresh execution preconditions and every spend/mutation approval remain required",
+  "source_commit": "a7c6cabdb58c3f2b1f26b3654905df24bb131826",
+  "observation_report": "inventory-2026-11-15.json",
+  "unresolved": [
+    "separate genesis installation and patron activation timestamps",
+    "funding source and exact spend approvals, including fresh rate/fee/preconditions when separately authorized",
+    "explicit final installation and staged irreversible controller/activation approvals"
+  ],
+  "installation": [
+    {
+      "order": 1,
+      "target": "xiqae-3qaaa-aaaas-amyta-cai",
+      "role": "jupiter_lifeline",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "applications/jupiter_lifeline.wasm.gz",
+        "sha256": "0688ab5567bd9cdd4c11447380f2e63c7f91629e598086183047fc06dd5f6d70",
+        "raw_sha256": "74e71dff02f1721b00d1c33db6cb14b76bd6e58748618b1b3c1fadb4f9783f3c"
+      },
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_lifeline.bin",
+      "constructor_sha256": "0fee102bd16b053022b69f2c65fd5e2f41d150ce9c214ac8731cfaf496ebda4e",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_lifeline.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "xiqae-3qaaa-aaaas-amyta-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "applications/jupiter_lifeline.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/applications/jupiter_lifeline.hex"
+      ],
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "constructor_hex_sha256": "fe7582321d95af083628016a682d14fc487485bc0f6731b1708a61e39e041188",
+      "constructor_hex_file": "constructors/applications/jupiter_lifeline.hex",
+      "constructor_candid_definition": "interfaces/jupiter_lifeline.did",
+      "constructor_candid_sha256": "ef8337e9bfa311dd11cd811d5490a5c27716fd7c8a91cc553a69080cb847bae7",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 62691,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
+    },
+    {
+      "order": 2,
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "role": "sns_governance",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "framework-templates/governance.wasm.gz",
+        "sha256": "24ef2004240d2a34bcdaa616134d27bc18d11c1e96b378a46d564feedcc1a8c3",
+        "raw_sha256": "e2fd07bffa7d71241c3b47e2c8398ef78bfc26b95427a3711a9e579ad5f9f190"
+      },
+      "constructor_path_after_guarded_generation": "constructors/sns/governance.bin",
+      "constructor_sha256": "123f9348365ece40b9c1d212055c68914ce9cd825366eef9d0c5f07870d89e35",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "sipaq-hyaaa-aaaas-amyoq-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "framework-templates/governance.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/sns/governance.hex"
+      ],
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/governance.bin",
+      "constructor_hex_sha256": "dba6c3aee4b8cad7836cc606b4b056b5ccd649799935a7d976c8f589b9a13f82",
+      "constructor_hex_file": "constructors/sns/governance.hex",
+      "constructor_candid_definition": "constructors/sns/governance.interface.did",
+      "constructor_candid_sha256": "0d3a00e821c8959991cfb90f4366d101fce340e78f3fb76b0de4ed28c1c08c38",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 2044269,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "chunked",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "stored_chunks",
+          "upload_chunk",
+          "install_chunked_code",
+          "clear_chunk_store"
+        ],
+        "fresh_chunk_count": 2,
+        "chunks": [
+          {
+            "bytes": 1048576,
+            "sha256": "b6415b30baf22d2dac55bb545a16b38e2b259dc238a5fab11ffa7a37042436ae"
+          },
+          {
+            "bytes": 889661,
+            "sha256": "98eeab14e98697c9e23be42721ff94a75ca51ec14e9a4d638209a3e5fbb37cd4"
+          }
+        ],
+        "native_calls_with_empty_store": 5,
+        "precondition": "Separately authorized pre-check confirms empty chunk store before command; stop for owner review if unrelated staged chunks exist. Native SDK reads stored_chunks, uploads missing package chunks and clears its store after installation; all these methods require explicit installation approval."
+      }
+    },
+    {
+      "order": 3,
+      "target": "sgnny-4iaaa-aaaas-amypq-cai",
+      "role": "sns_ledger",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "framework-templates/ledger.wasm.gz",
+        "sha256": "354dd6ecfdc72b5409805b31dea22c9db11df6e14095a5a68924eb63535e6d8a",
+        "raw_sha256": "a273d741019b4324b22e2e64cfb0239de148ae9693e8801102a04118dfd383c0"
+      },
+      "constructor_path_after_guarded_generation": "constructors/sns/ledger.bin",
+      "constructor_sha256": "cb32950dd69d09206735847fb7d5a4e623ca27a0ceef2718fbe7d02563e3edfe",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "sgnny-4iaaa-aaaas-amypq-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "framework-templates/ledger.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/sns/ledger.hex"
+      ],
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/ledger.bin",
+      "constructor_hex_sha256": "f814df0ca2e90ca07fbd9f6d8ab562756becd2d59ac9cb58eae3d7745c03458b",
+      "constructor_hex_file": "constructors/sns/ledger.hex",
+      "constructor_candid_definition": "constructors/sns/ledger.interface.did",
+      "constructor_candid_sha256": "02a42599e3d2036a19dcfa53db04ad5a5271b0bd78ac1a5986b3dd361f33a99c",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 683804,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
+    },
+    {
+      "order": 4,
+      "target": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "role": "sns_index",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "framework-templates/index.wasm.gz",
+        "sha256": "dab6808d0dfc06e5e88336d0c3d3e45e5448c6e36c2a781f3e9e09bd450f528c",
+        "raw_sha256": "0768d43e0ca776c80515eb917839cbee0adca38ef69fb28280407c28fe4ea979"
+      },
+      "constructor_path_after_guarded_generation": "constructors/sns/index.bin",
+      "constructor_sha256": "c8ad314678a03900d37042030cdbddc57c5b78fe1264d9e90e65e678b63d5b85",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "x2wx5-xaaaa-aaaas-amyqa-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "framework-templates/index.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/sns/index.hex"
+      ],
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/index.bin",
+      "constructor_hex_sha256": "5de0a888311fa79cae51dbdf4b9f05bc7a3158de6d14c2f1eac75dae75b0ccb3",
+      "constructor_hex_file": "constructors/sns/index.hex",
+      "constructor_candid_definition": "constructors/sns/index.interface.did",
+      "constructor_candid_sha256": "701a43426ae7ba89cb3f348b9925f946e710fb4b2d3c338a2413c18d7112d95d",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 350164,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
+    },
+    {
+      "order": 5,
+      "target": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "role": "sns_swap",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "framework-templates/swap.wasm.gz",
+        "sha256": "f3c9cd2a503f3136c91f1d44c5b4bac2d5f15a7d347731aaff03e5fa80df8c48",
+        "raw_sha256": "3d17f42df29a764fa3d813923646f85aac9f61320d97b2b07c1045ffb342d638"
+      },
+      "constructor_path_after_guarded_generation": "constructors/sns/swap.bin",
+      "constructor_sha256": "ac3e3001699440f1207b0b83dda9c2ff6a8dbc32249fe8c8b73b7211facba528",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "x5xrj-2yaaa-aaaas-amyqq-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "framework-templates/swap.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/sns/swap.hex"
+      ],
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/swap.bin",
+      "constructor_hex_sha256": "65932714452c5bc8881d0ca4fe9616d11958570ca0601a37a6d86e9ab681d569",
+      "constructor_hex_file": "constructors/sns/swap.hex",
+      "constructor_candid_definition": "constructors/sns/swap.interface.did",
+      "constructor_candid_sha256": "2f0c524b3f4dd84a63ef0cbe8df37042ad662f7befc9612afe9b9e15ce900f56",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 803543,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
+    },
+    {
+      "order": 6,
+      "target": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "role": "sns_root",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "framework-templates/root.wasm.gz",
+        "sha256": "3762dd6f1348830a1d6b19252ca21f518c9f9d3a2b79b1dd99d75c0de6d46ef4",
+        "raw_sha256": "356960e58691a7438cb07c73806cf8d0948247508f0efc281cb2ccb7a382f836"
+      },
+      "constructor_path_after_guarded_generation": "constructors/sns/root.bin",
+      "constructor_sha256": "44e81e88d9e312e20df0401167e86fce2e8996e67a4771660f6dbf5a0cb8c65e",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "sbmlm-rqaaa-aaaas-amypa-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "framework-templates/root.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/sns/root.hex"
+      ],
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/sns/root.bin",
+      "constructor_hex_sha256": "e2027c5eaf94631dd5aaea226769b3fbc7692819e381a50a21fe080078aabbc2",
+      "constructor_hex_file": "constructors/sns/root.hex",
+      "constructor_candid_definition": "constructors/sns/root.interface.did",
+      "constructor_candid_sha256": "9867bfe913aa17d42d891c22187273e643eedb3ec8e4b3af4b894e74945d5806",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 474971,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
+    },
+    {
+      "order": 7,
+      "target": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "role": "jupiter_sns_rewards",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "applications/jupiter_sns_rewards.wasm.gz",
+        "sha256": "56babefd47b5c2a95fd5e1b926e77c447a71b571167e4d0b6c537f3d765264a1",
+        "raw_sha256": "8819a0cc51aead3fb307f691eefb8075e446413960e7000d332ef70767966c4b"
+      },
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_sns_rewards.bin",
+      "constructor_sha256": "136ddb75378b67ca6c34cc41efd7e41899a07a970b2618b4520b5ff866f5d3fe",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Owner scans; new programme absent initially",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_sns_rewards.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "xgsnm-aaaaa-aaaas-amysa-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "applications/jupiter_sns_rewards.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/applications/jupiter_sns_rewards.hex"
+      ],
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "constructor_hex_sha256": "8709d5ff68307c010e5f4f6d5ed3e51a2353a19f220c6fe884770de44345f625",
+      "constructor_hex_file": "constructors/applications/jupiter_sns_rewards.hex",
+      "constructor_candid_definition": "interfaces/jupiter_sns_rewards.did",
+      "constructor_candid_sha256": "9fd3878c56bab8a1403e662b71e25b3a0ad1946dd4641c308af256fe3ade7985",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 809346,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
+    },
+    {
+      "order": 8,
+      "target": "xbtly-nyaaa-aaaas-amysq-cai",
+      "role": "jupiter_historian",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "applications/jupiter_historian.wasm.gz",
+        "sha256": "2bc0797000c52c289dca92252369cc3129f3746bc8c81ccf4acf890ffb7faf9b",
+        "raw_sha256": "8e5108e400d11d8d6745d4696b1a0e67ed6a137c65791d84712ceb38a776f20f"
+      },
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_historian.bin",
+      "constructor_sha256": "a6d8ccb6b103e8c8820e4b65f4e45d0e4749c8e138596286955cbe5b503056f0",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Indexing, owner-facing read model and permissionless paid factory entrypoints",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_historian.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "xbtly-nyaaa-aaaas-amysq-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "applications/jupiter_historian.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/applications/jupiter_historian.hex"
+      ],
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "constructor_hex_sha256": "11a3797d56bd58b0e98a7ba7c0b5948c547ee08f7cb761692423cdd8e5bb1858",
+      "constructor_hex_file": "constructors/applications/jupiter_historian.hex",
+      "constructor_candid_definition": "interfaces/jupiter_historian.did",
+      "constructor_candid_sha256": "cec362c1210805d73c2acfeca60ef095b51f8d50808206e7b6036633bed33516",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 1623645,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
+    },
+    {
+      "order": 9,
+      "target": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "role": "jupiter_relay",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "applications/jupiter_relay.wasm.gz",
+        "sha256": "d6fc978715d55fea3c417e6b247524808a8ad283354fb6a28c606c416972a9e7",
+        "raw_sha256": "b1e79e4dabf7919eb764217c299ff110168cdfff0c97156e9581520b8fa39e80"
+      },
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_relay.bin",
+      "constructor_sha256": "fd43a5dd713a863de08d8f95c1425fd964736d52617e07981c8ebd7138ff2d97",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Managed-canister top-ups and aggregate forwarding; initially empty surplus recipients",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_relay.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "xtv4b-biaaa-aaaas-amyrq-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "applications/jupiter_relay.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/applications/jupiter_relay.hex"
+      ],
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "constructor_hex_sha256": "207807179bebd6fc9ca9c19f0c303742e62971c7973b15443e527c1a79bdef5c",
+      "constructor_hex_file": "constructors/applications/jupiter_relay.hex",
+      "constructor_candid_definition": "interfaces/jupiter_relay.did",
+      "constructor_candid_sha256": "e3202ebe14c158858d39d0da43467284b90391e843c44e61a3d2fc81e6a5ee46",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 670210,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
+    },
+    {
+      "order": 10,
+      "target": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "role": "jupiter_faucet",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "applications/jupiter_faucet.wasm.gz",
+        "sha256": "ed661e744e616306dbe00a580e9fe5eb72fb34b19bfa0566f91ed76f1b8449e2",
+        "raw_sha256": "ad77738d9ceb98ca7969b6cd6275fcfb0e73e07ef1d735b0e88b64479d3bdd4b"
+      },
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_faucet.bin",
+      "constructor_sha256": "bb22dd75d82391bb0a611c3174dddaee27846510da441ab6dc01b17df9257db0",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Ledger/Index scans, settlement transfers and CMC notifications",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_faucet.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "xuu2v-mqaaa-aaaas-amyra-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "applications/jupiter_faucet.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/applications/jupiter_faucet.hex"
+      ],
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "constructor_hex_sha256": "c57daa548b5a38346bff98ebb155d1545db495fc32623acb8bc97de1c2136757",
+      "constructor_hex_file": "constructors/applications/jupiter_faucet.hex",
+      "constructor_candid_definition": "interfaces/jupiter_faucet.did",
+      "constructor_candid_sha256": "2ef40cbd47c1d2a55df8ad06643cc64b226494cc531634480d8293ef49b07271",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 491526,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
+    },
+    {
+      "order": 11,
+      "target": "spoge-kaaaa-aaaas-amyoa-cai",
+      "role": "jupiter_disburser",
+      "operation": "install_code",
+      "mode": "reinstall",
+      "wasm": {
+        "path": "applications/jupiter_disburser.wasm.gz",
+        "sha256": "473a1bed784cf4734b2173c8d724d1c093ccbd85f427a391b7914284c16cd070",
+        "raw_sha256": "2c2efab9c45d79193c9ada8a0079f54e4aca162884682ea22d5f5169fbb0a8b4"
+      },
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_disburser.bin",
+      "constructor_sha256": "519a1877c82858bc45aa8c1a5caeb58ad6f35d0dfad613c5ceea21d3363abb4a",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "expected_pre_module_hash": "03e8ba94621d28bf166595a9a9dd0d9943c60caad48c7a2740285a7fee283bbe",
+      "expected_pre_module_path_evidence": "Found",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "NNS reads/maturity disbursement and payout scheduling; unarmed rescue is not financial inactivity",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
+      "preservation_decision": {
+        "transition": "disposable-helper-replacement",
+        "state_and_pending_effects": "Operator explicitly accepts discarding all helper-local heap/stable state: neuron-creation lifecycle complete, no migration required. This is a preservation waiver, not proof of empty state or absence of prior pending effects. Preserve external NNS neuron settings, stake, maturity and staking Account; review financial timer startup before approved reinstall.",
+        "source_record": "Operator final November 2026 confirmation in Jupiter Acceptance \u2014 Complete Operator Authority, Test Identity, Disburser Transition and Deployment Preparation Instructions, section 5."
+      },
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_disburser.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "spoge-kaaaa-aaaas-amyoa-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "reinstall",
+        "--wasm",
+        "applications/jupiter_disburser.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/applications/jupiter_disburser.hex"
+      ],
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "constructor_hex_sha256": "5378c0ab9b6f4f72a9c99d9e200a56dd3777e92be89f7868f6435c0fe698e998",
+      "constructor_hex_file": "constructors/applications/jupiter_disburser.hex",
+      "constructor_candid_definition": "interfaces/jupiter_disburser.did",
+      "constructor_candid_sha256": "e63be4544d03cceeb2c7b7250641c779164d7a719091b8fe65ff9c767b850f00",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 392997,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "one-shot",
+        "mode": "reinstall",
+        "logical_command_count": 1,
+        "required_methods": [
+          "install_code"
+        ]
+      }
+    },
+    {
+      "order": 12,
+      "target": "xprgq-wiaaa-aaaas-amytq-cai",
+      "role": "jupiter_faucet_frontend",
+      "operation": "install_code",
+      "mode": "install",
+      "wasm": {
+        "path": "applications/jupiter_faucet_frontend.wasm.gz",
+        "sha256": "6df4b325c73792ca8ee71ae8ce9e3f8b6fe2c354c8b5885347936064ef83bfbc",
+        "raw_sha256": "4f9d31a2bca0d6da8ecd04c8480084e77b7dac2a6ce6198f55521edc8077d4f8"
+      },
+      "constructor_path_after_guarded_generation": "constructors/applications/jupiter_faucet_frontend.bin",
+      "constructor_sha256": "0fee102bd16b053022b69f2c65fd5e2f41d150ce9c214ac8731cfaf496ebda4e",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "expected_pre_module_hash": null,
+      "expected_pre_module_path_evidence": "Absent",
+      "expected_pre_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "timers_and_effects": "Framework/asset lifecycle and any installed timers must be reviewed",
+      "gate": "Candidate clocks selected for configuration only; owner confirms exact window, all twelve expected modules/controllers and startup effects; separate install/reinstall authorization. Abort/reschedule missed genesis checkpoint.",
+      "identity_alias": "codex_local",
+      "execution_tool": "dfx 0.31.0; not ICP CLI identity-store substitution",
+      "constructor_evidence_path": "target/acceptance-final-candidate/constructors/applications/jupiter_faucet_frontend.bin",
+      "proposed_cli_argv": [
+        "dfx",
+        "--identity",
+        "codex_local",
+        "canister",
+        "install",
+        "xprgq-wiaaa-aaaas-amytq-cai",
+        "--network",
+        "ic",
+        "--mode",
+        "install",
+        "--wasm",
+        "applications/jupiter_faucet_frontend.wasm.gz",
+        "--argument-type",
+        "raw",
+        "--argument-file",
+        "constructors/applications/jupiter_faucet_frontend.hex"
+      ],
+      "argv_status": "Review only; run from extracted package root only after exact approval. No auto/bulk mode. Raw constructor bytes were generated with pinned local Candid; dfx install has no --candid flag.",
+      "proposed_cli_environment": {
+        "DFX_VERSION": "0.31.0",
+        "DFX_WARNING": "-mainnet_plaintext_identity"
+      },
+      "constructor_hex_sha256": "fe7582321d95af083628016a682d14fc487485bc0f6731b1708a61e39e041188",
+      "constructor_hex_file": "constructors/applications/jupiter_faucet_frontend.hex",
+      "constructor_candid_definition": "interfaces/jupiter_faucet_frontend.did",
+      "constructor_candid_sha256": "ce3422eb4d658d1f58b7716bfcfc286629e411c493a29badd1a63d98c0d995cb",
+      "native_install_transport": {
+        "sdk": "DFX 0.31.0 / locked ic-utils 0.45.0",
+        "wasm_plus_constructor_bytes": 2455032,
+        "chunk_cutoff_bytes": 1939865,
+        "kind": "chunked",
+        "mode": "install",
+        "logical_command_count": 1,
+        "required_methods": [
+          "stored_chunks",
+          "upload_chunk",
+          "install_chunked_code",
+          "clear_chunk_store"
+        ],
+        "fresh_chunk_count": 3,
+        "chunks": [
+          {
+            "bytes": 1048576,
+            "sha256": "8efc46b9ad4ea12e956a4d05e58cfb40b1b41326c852812d6bd26d55a87866a7"
+          },
+          {
+            "bytes": 1048576,
+            "sha256": "ee532c3be3ab55ccb74675372fab576d4365fc34d94a52825e2b17900664bf4c"
+          },
+          {
+            "bytes": 357874,
+            "sha256": "c94437d727b0824718bf34e6c28f05b3d2d214719a1d1ab97172e7694f2907ee"
+          }
+        ],
+        "native_calls_with_empty_store": 6,
+        "precondition": "Separately authorized pre-check confirms empty chunk store before command; stop for owner review if unrelated staged chunks exist. Native SDK reads stored_chunks, uploads missing package chunks and clears its store after installation; all these methods require explicit installation approval."
+      }
+    }
+  ],
+  "funding": [
+    {
+      "operation": "top_up_canister",
+      "target": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "cycles": 1506579800049,
+      "target_balance": 3000000000000,
+      "actual_balance": 1493420199951,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "cycles": 1506580040139,
+      "target_balance": 3000000000000,
+      "actual_balance": 1493419959861,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "sgnny-4iaaa-aaaas-amypq-cai",
+      "cycles": 1506579419909,
+      "target_balance": 3000000000000,
+      "actual_balance": 1493420580091,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "cycles": 1506579199828,
+      "target_balance": 3000000000000,
+      "actual_balance": 1493420800172,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "cycles": 1506578979746,
+      "target_balance": 3000000000000,
+      "actual_balance": 1493421020254,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "spoge-kaaaa-aaaas-amyoa-cai",
+      "cycles": 1516005520157,
+      "target_balance": 3000000000000,
+      "actual_balance": 1483994479843,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "cycles": 1506578939733,
+      "target_balance": 3000000000000,
+      "actual_balance": 1493421060267,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "xiqae-3qaaa-aaaas-amyta-cai",
+      "cycles": 1506575538480,
+      "target_balance": 3000000000000,
+      "actual_balance": 1493424461520,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "cycles": 1506578149441,
+      "target_balance": 3000000000000,
+      "actual_balance": 1493421850559,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "xbtly-nyaaa-aaaas-amysq-cai",
+      "cycles": 1506576628881,
+      "target_balance": 3000000000000,
+      "actual_balance": 1493423371119,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "cycles": 1506578399534,
+      "target_balance": 3000000000000,
+      "actual_balance": 1493421600466,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "xprgq-wiaaa-aaaas-amytq-cai",
+      "cycles": 1506574988277,
+      "target_balance": 3000000000000,
+      "actual_balance": 1493425011723,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance."
+    },
+    {
+      "operation": "top_up_canister",
+      "target": "sgnny-4iaaa-aaaas-amypq-cai",
+      "cycles": 1000000000000,
+      "target_balance": 4000000000000,
+      "actual_balance": 1493420580091,
+      "maximum_authorized_spend": 0,
+      "gate": "Separately approved cycles provider/funding source and fresh conversion/fees; conditional archive allocation only before trigger. No cycles ledger account mistaken for canister main balance.",
+      "purpose": "incremental archive headroom before actual trigger",
+      "incremental_cap_cycles": 1000000000000,
+      "incremental_rule": "max(0, 4T - observed Ledger main balance) - max(0, 3T - observed Ledger main balance); do not double-count main-target top-up"
+    },
+    {
+      "purpose": "direct liquid",
+      "operation": "ICP Ledger icrc1_transfer",
+      "ledger": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "sender": "dpb4d-s3blg-twxrv-w4ucr-2w76w-rctgx-zycty-at3p4-5paoc-x4764-eae",
+      "to": {
+        "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+        "subaccountHex": "52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+        "address": "rrkah-fqaaa-aaaaa-aaaaq-cai-v6gacby.52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+        "explorerAccountHex": "e458b5ed224bd0b9e884599dd0e986e78d02266674b093b617105528311fa602"
+      },
+      "amount_e8s": 100000000,
+      "fee_e8s": 10000,
+      "memo_hex": "78707267712d77696161612d61616161732d616d7974712d636169",
+      "created_at_time": null,
+      "maximum_authorized_spend": 0,
+      "gate": "Participant wallet provisioning separately approved; secure owner snapshot, A disabled/B exact-year auto-stake true, approved patron checkpoint and real test transfer approval.",
+      "source_identity_alias": "jupiter_acceptance_participant_a"
+    },
+    {
+      "purpose": "direct 2x",
+      "operation": "ICP Ledger icrc1_transfer",
+      "ledger": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "sender": "lsgoi-jv53o-vvez4-teecu-5t66a-7bnlq-mjvi3-iails-23k3p-qykdc-lae",
+      "to": {
+        "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+        "subaccountHex": "52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+        "address": "rrkah-fqaaa-aaaaa-aaaaq-cai-v6gacby.52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+        "explorerAccountHex": "e458b5ed224bd0b9e884599dd0e986e78d02266674b093b617105528311fa602"
+      },
+      "amount_e8s": 100000000,
+      "fee_e8s": 10000,
+      "memo_hex": "78707267712d77696161612d61616161732d616d7974712d636169",
+      "created_at_time": null,
+      "maximum_authorized_spend": 0,
+      "gate": "Participant wallet provisioning separately approved; secure owner snapshot, A disabled/B exact-year auto-stake true, approved patron checkpoint and real test transfer approval.",
+      "source_identity_alias": "jupiter_acceptance_participant_b"
+    },
+    {
+      "purpose": "canonical Relay operational funding",
+      "operation": "ICP Ledger icrc1_transfer",
+      "ledger": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "sender": null,
+      "to": {
+        "owner": "xtv4b-biaaa-aaaas-amyrq-cai",
+        "subaccountHex": null,
+        "address": "xtv4b-biaaa-aaaas-amyrq-cai",
+        "explorerAccountHex": "620e88ec50f6c35b1a58ea9f7fc3f3c7f23355d1582fc9912ecfca405bc8c069"
+      },
+      "amount_e8s": 200000000,
+      "fee_e8s": 10000,
+      "memo_hex": null,
+      "created_at_time": null,
+      "maximum_authorized_spend": 0,
+      "gate": "approved funding budget and exact source signer; wait for installed runtime/configuration readiness",
+      "funding_source_identity": null
+    },
+    {
+      "purpose": "treasury test inventory",
+      "operation": "ICP Ledger icrc1_transfer",
+      "ledger": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      "sender": null,
+      "to": {
+        "owner": "sipaq-hyaaa-aaaas-amyoq-cai",
+        "subaccountHex": null,
+        "address": "sipaq-hyaaa-aaaas-amyoq-cai",
+        "explorerAccountHex": "ae61bdb02899de73a2a650399a5d25af0df69942067ed1051525e9d848e6b1d9"
+      },
+      "amount_e8s": 200010000,
+      "fee_e8s": 10000,
+      "memo_hex": null,
+      "created_at_time": null,
+      "maximum_authorized_spend": 0,
+      "gate": "approved funding budget and exact source signer; wait for installed runtime/configuration readiness",
+      "funding_source_identity": null
+    },
+    {
+      "operation": "optional paid factory setup and funding",
+      "target": null,
+      "amount_e8s": 300000000,
+      "fee_e8s": 10000,
+      "maximum_authorized_spend": 0,
+      "gate": "separate paid creation approval, exact immutable setup Account and returned requirement <=3 ICP; not approved by inventory",
+      "funding_source_identity": null
+    }
+  ],
+  "controller_transitions": [
+    {
+      "role": "sns_root",
+      "target": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sipaq-hyaaa-aaaas-amyoq-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sipaq-hyaaa-aaaas-amyoq-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "sns_governance",
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "sns_ledger",
+      "target": "sgnny-4iaaa-aaaas-amypq-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "sns_index",
+      "target": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "sns_swap",
+      "target": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_disburser",
+      "target": "spoge-kaaaa-aaaas-amyoa-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "spoge-kaaaa-aaaas-amyoa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
+          "stage": "after runtime/rescue rehearsal, before arming",
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "spoge-kaaaa-aaaas-amyoa-cai"
+          ],
+          "permission": "separate explicit transition approval"
+        },
+        {
+          "stage": "separately approved same-code upgrade",
+          "upgrade_arguments_candid": "(opt record { autonomous_rescue_armed = opt true })",
+          "controllers_unchanged_by_this_request": true,
+          "gate": "Typed UpgradeArgs round trip, exact candidate hash, direct controller execution and ordinary runtime evidence"
+        },
+        {
+          "stage": "healthy autonomous reconciliation",
+          "controllers": [
+            "spoge-kaaaa-aaaas-amyoa-cai"
+          ],
+          "actor": "spoge-kaaaa-aaaas-amyoa-cai"
+        },
+        {
+          "stage": "fault recovery only",
+          "controllers": [
+            "spoge-kaaaa-aaaas-amyoa-cai",
+            "xiqae-3qaaa-aaaas-amyta-cai"
+          ],
+          "actor": "spoge-kaaaa-aaaas-amyoa-cai",
+          "gate": "existing conservative rescue policy; no generic Lifeline repair API"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_faucet",
+      "target": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "xuu2v-mqaaa-aaaas-amyra-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
+          "stage": "after runtime/rescue rehearsal, before arming",
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "xuu2v-mqaaa-aaaas-amyra-cai"
+          ],
+          "permission": "separate explicit transition approval"
+        },
+        {
+          "stage": "separately approved same-code upgrade",
+          "upgrade_arguments_candid": "(opt record { autonomous_rescue_armed = opt true })",
+          "controllers_unchanged_by_this_request": true,
+          "gate": "Typed UpgradeArgs round trip, exact candidate hash, direct controller execution and ordinary runtime evidence"
+        },
+        {
+          "stage": "healthy autonomous reconciliation",
+          "controllers": [
+            "xuu2v-mqaaa-aaaas-amyra-cai"
+          ],
+          "actor": "xuu2v-mqaaa-aaaas-amyra-cai"
+        },
+        {
+          "stage": "fault recovery only",
+          "controllers": [
+            "xuu2v-mqaaa-aaaas-amyra-cai",
+            "xiqae-3qaaa-aaaas-amyta-cai"
+          ],
+          "actor": "xuu2v-mqaaa-aaaas-amyra-cai",
+          "gate": "existing conservative rescue policy; no generic Lifeline repair API"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_lifeline",
+      "target": "xiqae-3qaaa-aaaas-amyta-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_sns_rewards",
+      "target": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_historian",
+      "target": "xbtly-nyaaa-aaaas-amysq-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_relay",
+      "target": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    },
+    {
+      "role": "jupiter_faucet_frontend",
+      "target": "xprgq-wiaaa-aaaas-amytq-cai",
+      "observed_controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "proposed_stages": [
+        {
+          "stage": "after initial install, before governed/runtime rehearsal; add authority while retaining both bootstrap controllers",
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "expected_controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+          ],
+          "controllers": [
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+            "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "gate": "Separate explicit controller-addition approval. Root/Governance must be an actual controller before executing native upgrade rehearsal; Faucet/Disburser self authority is staged with rescue unarmed."
+        },
+        {
+          "stage": "after physical module/configuration/upgrade checkpoints",
+          "controllers": [
+            "sbmlm-rqaaa-aaaas-amypa-cai"
+          ],
+          "operation": "update_settings, controllers field only",
+          "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+        }
+      ]
+    }
+  ],
+  "bootstrap_policy": "Retain both observed controllers through installation and initial runtime/recovery rehearsals. Codex executor is amzih; personal zkkkd is historical/bootstrap only and is never a Codex signer. Any later full controller-set replacement explicitly removes personal/bootstrap rights under separate approval. Explicit intermediate additions retain both bootstrap controllers while granting Root/Governance (or Faucet/Disburser self) the authority needed for rehearsal. Only later full-set removals narrow control after real execution/recovery checks.",
+  "genesis_policy": "Reviewed candidate copy contains exact candidate clocks 1794924000 / 1795104000; 100M jUP, four approved 5000-jUP allocations, governance-only [3,4,10], reserve/proposer Accounts unchanged. Complete five-framework/seven-application constructors exist; candidate time selection is not installation/activation approval. Base operator-inputs.json remains unresolved historical input; never silently substitute it for candidate-inputs.json.",
+  "activation": "Native Governance upgrades in recognition, patron, treasury, bounded continuation order from work-package-a.md; IO settlement disabled; initial Relay surplus empty; no direct operator configuration call.",
+  "neuron_mutation": "No live mutation authorized now. Later A/B SNS auto-stake operations use their own DFX aliases and exact derived IDs; B enabling must be verified before 2x test. This is not the Disburser-controlled NNS neuron. No NNS visibility/follow/dissolve/auto-stake setting change proposed.",
+  "post_install_reads": "18 separate read checks remain unexecuted and need explicit later approval; future precondition refreshes also need separate authorization; no permission to reuse the completed inventory approval.",
+  "immutable_children": "No initial creation; any later paid factory child ends controllerless. No thirteenth initial archive.",
+  "native_treasury_transfer": {
+    "operation": "native SNS TransferSnsTreasuryFunds proposal via reviewed treasury worker",
+    "source": "SNS Governance ICP treasury",
+    "source_account": {
+      "owner": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "subaccount": null
+    },
+    "destination": {
+      "owner": "rrkah-fqaaa-aaaaa-aaaaq-cai",
+      "subaccountHex": "52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+      "address": "rrkah-fqaaa-aaaaa-aaaaq-cai-v6gacby.52eb1b31eb9cf6357e2b2e49e32d2238d2b6db2b2f321cbe7b879ea261ac7390",
+      "explorerAccountHex": "e458b5ed224bd0b9e884599dd0e986e78d02266674b093b617105528311fa602"
+    },
+    "amount_e8s": 100000000,
+    "ledger_fee_e8s": 10000,
+    "routing_memo": null,
+    "treasury_retain_e8s": 100000000,
+    "permanently_staked_e8s": 100000000,
+    "patron_jup_generated": false,
+    "relay_pot_generated": false,
+    "maximum_authorized_spend": 0,
+    "gate": "separate treasury activation and decisive native Governance vote; confirmed funded treasury, fresh conversion/native seven-day limit and exact proposal reply; no direct operator transfer or replay",
+    "initial_inventory_funding_source_identity": null
+  },
+  "authority_report": "authority-2026-11-15.json",
+  "execution_provider": {
+    "tool": "dfx",
+    "version": "0.31.0",
+    "alias": "codex_local",
+    "principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+    "icp_cli_alias": null,
+    "read_time_version_recorded": false
+  },
+  "helper_policy": "Direct same-principal reinstall with validated fresh arguments; no preliminary uninstall, no helper-local migration, no canister/neuron recreation. External NNS settings untouched by preparation; later worker maturity effects require startup approval.",
+  "participant_neuron_operations": [
+    {
+      "participant": "A",
+      "principal": "dpb4d-s3blg-twxrv-w4ucr-2w76w-rctgx-zycty-at3p4-5paoc-x4764-eae",
+      "identity_alias": "jupiter_acceptance_participant_a",
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "method": "manage_neuron",
+      "neuron_id_hex": "35af483157352ecead781b2d7262280ac5c512e3198ad31f67818e5a22dd234f",
+      "requested_auto_stake_maturity": false,
+      "payload_sha256": "5cdc37aef604cbb4cecace3418ede52a43787f17c9878d15d6e66f2b04fd8618",
+      "payload_file": "target/acceptance-authority-20261115/participant-recipes/participant-a-auto-stake.bin",
+      "candid_file": "target/acceptance-authority-20261115/participant-recipes/participant-a-auto-stake.did",
+      "signed_or_submitted": false,
+      "gate": "Later explicit SNS-neuron operation and setting/ownership read approval after actual SNS installation; this is not the permanent NNS neuron.",
+      "hex_file": "target/acceptance-authority-20261115/participant-recipes/participant-a-auto-stake.hex"
+    },
+    {
+      "participant": "B",
+      "principal": "lsgoi-jv53o-vvez4-teecu-5t66a-7bnlq-mjvi3-iails-23k3p-qykdc-lae",
+      "identity_alias": "jupiter_acceptance_participant_b",
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "method": "manage_neuron",
+      "neuron_id_hex": "760876f353abdd6324ecf727532f98f7f17bd154b90e847c0e81b7c946825008",
+      "requested_auto_stake_maturity": true,
+      "payload_sha256": "38d1b025fceeb52a5871889ff0689de5b6b172345bdb728f294e411ba533173d",
+      "payload_file": "target/acceptance-authority-20261115/participant-recipes/participant-b-auto-stake.bin",
+      "candid_file": "target/acceptance-authority-20261115/participant-recipes/participant-b-auto-stake.did",
+      "signed_or_submitted": false,
+      "gate": "Later explicit SNS-neuron operation and setting/ownership read approval after actual SNS installation; this is not the permanent NNS neuron.",
+      "hex_file": "target/acceptance-authority-20261115/participant-recipes/participant-b-auto-stake.hex"
+    }
+  ],
+  "execution_warning_scope": "DFX reports plaintext local custody. The warning acknowledgement is command-scoped and only for an exact separately approved acceptance operation; never global, never personal/production signing. No install command was run.",
+  "tool_version_correction": "Repository context said 0.27.0; final supported tool check reports 0.31.0, and all three providers signed verified offline read envelopes with DFX_VERSION=0.31.0. Read-time executable version was not captured separately; no toolchain upgrade or live repeat was performed. Original read metadata labels were assumptions, not observed versions.",
+  "constructor_handoff": "Twelve .bin constructors and matching .hex sidecars typed/round-trip checked against exact local Candid. DFX install consumes --argument-type raw --argument-file .hex and has no --candid option. Every future dfx canister call must use --candid with the pinned local service DID; never permit automatic metadata/interface discovery.",
+  "governance_voting_permissions": {
+    "codes": [
+      3,
+      4,
+      10
+    ],
+    "names": [
+      "SubmitProposal",
+      "Vote",
+      "ManageVotingPermission"
+    ],
+    "excluded_codes": [
+      1,
+      2,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "global_claimant_and_grantable_permissions": "unchanged 1 through 10",
+    "warning": "Voting can decide financial Governance proposals; this removes direct neuron-permission escalation only.",
+    "neuron_id_hex": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+    "future_executor": null,
+    "handover_order": [
+      "grant final executor [3,4,10]",
+      "prove final executor native proposal and explicit vote",
+      "temporary voter removes its own [3,4,10]",
+      "prove former submit/vote/add/remove rejected and successor remains authorized"
+    ],
+    "native_recipe": "tools/acceptance/operational.py permissions; final grant remains blocked until real NNX principal and signing route are approved; no fake authority payload",
+    "live_operations_authorized": false,
+    "unsigned_future_self_revocation": {
+      "payload_sha256": "4e687e9779057f66ee1168a2ca0aefbd1f54ba7697b53943a57686b7ee68f686",
+      "payload_file": "target/acceptance-governance-correction/future-temp-revoke/proposal.bin",
+      "raw_hex_file": "target/acceptance-governance-correction/future-temp-revoke/proposal.hex",
+      "signed_or_submitted": false,
+      "gate": "Later separate authorization only after real final NNX route proves native submission/vote and retains 3/4/10. No live operation authorized."
+    }
+  },
+  "proposed_schedule": {
+    "approved": false,
+    "genesis_checkpoint_utc": "2026-11-17T14:00:00Z",
+    "installation_window_utc": [
+      "2026-11-17T14:00:00Z",
+      "2026-11-17T16:00:00Z"
+    ],
+    "patron_activation_checkpoint_utc": "2026-11-19T16:00:00Z",
+    "order_constraint": "genesis_timestamp_seconds <= acceptance_start_timestamp_seconds",
+    "genesis_timestamp_seconds": 1794924000,
+    "acceptance_start_timestamp_seconds": 1795104000,
+    "missed_checkpoint": "Pause and obtain revised owner-approved timestamps before constructor/proposal regeneration. Do not backdate or use preparation/fixture time.",
+    "smoke_window": "48 hours after installation window ends, before the separate 19 November 16:00 UTC patron checkpoint; new bounded read authorization required. Stop if a checkpoint is missed; owner must approve revised clocks and regenerated hashes.",
+    "configuration_candidate_selected": true,
+    "installation_window_finally_confirmed": false
+  },
+  "funding_methods_without_personal_provider": [
+    {
+      "method": "External funding wallet",
+      "procedure": "Operator or nominated independent funder sends exact approved ICP to the listed participant/Relay/Governance Accounts through their own wallet/provider; Codex never accesses that provider. Source selection and transaction approval still required."
+    },
+    {
+      "method": "External cycles provider",
+      "procedure": "Nominated funded cycles wallet/provider sends separately approved deposit_cycles to the twelve explicit canister principals; do not send ICP to a canister principal expecting its main cycles to increase. Exact dated deficits are in funding-sheet.json; source, conversion quote/fees and spend cap remain unresolved."
+    }
+  ],
+  "current_preparation_base_commit": "1e67fd37e1218cf24a78514bbed4cc7292dfab77",
+  "correction_report": "governance-correction.md",
+  "candidate_inputs": {
+    "path": "configuration/candidate-inputs.json",
+    "sha256": "e80844ac087156647185a0864dd583c9ba2b575163c5e2e06dd836eac83e0121",
+    "configuration_only": true,
+    "installation_window_finally_confirmed": false,
+    "installation_authorized": false
+  },
+  "selected_funding_method": {
+    "kind": "independent-external-wallet",
+    "personal_provider_access_required": false,
+    "source_wallet": null,
+    "transfers_authorized": false,
+    "cycles_provider": null,
+    "freshness": "New separately approved balances, ICP fee and CMC quote (if conversion is used), NNS public full-neuron/staking reconciliation and installation preconditions; no standing inventory authorization."
+  },
+  "unsigned_governance_stages": [
+    {
+      "stage": "recognition",
+      "payload": "governance-proposals/recognition/proposal.bin",
+      "payload_sha256": "48c4bae9bbb434ea5200c58980de213d4cc4bc18b901dc1a14388c9f994a54d2",
+      "raw_hex_sha256": "693ebc70d47eb6059a426c0ebed2e6bdb59803805eb72a65a657f24020ade137",
+      "policy_sha256": "50c328730d5fdd5de4399af792d40cc6844a1d328185d41746028cad08a858f1",
+      "wasm_sha256": "56babefd47b5c2a95fd5e1b926e77c447a71b571167e4d0b6c537f3d765264a1",
+      "upgrade_args_sha256": "b79e473189a3ef6d864267e37b2b053f0e5c74b7295a02ce5ff60a94816a13ac",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "native_neuron": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+      "signed_or_submitted": false,
+      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation."
+    },
+    {
+      "stage": "patron",
+      "payload": "governance-proposals/patron/proposal.bin",
+      "payload_sha256": "4e38a7dc4b24960d1fac07b4e2bf72a833b0181292a0ad5b5e390712392e4f30",
+      "raw_hex_sha256": "3dcdaff80e1b114c412c5b4d196edc1cd88f673b1ec041da49922931ed7221f4",
+      "policy_sha256": "ddba17089a06f0f99e0e33829fc74729d5286c62a8d8a7f94832bb6734f73e6f",
+      "wasm_sha256": "56babefd47b5c2a95fd5e1b926e77c447a71b571167e4d0b6c537f3d765264a1",
+      "upgrade_args_sha256": "39686a7db080e8b49ff079d06f7369ac89c63bf768eba60e69dc257be6152bd5",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "native_neuron": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+      "signed_or_submitted": false,
+      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation."
+    },
+    {
+      "stage": "treasury",
+      "payload": "governance-proposals/treasury/proposal.bin",
+      "payload_sha256": "9d73bfed1426d7dba877ecfceadd78644051ff831e2f2146e91acab522779410",
+      "raw_hex_sha256": "f8405a93f494dafa3e5cc8f3cdd4e9bc934cc9eb73376122611a8a649a1b4509",
+      "policy_sha256": "f9f3a21790da33dae255aefa5856ed5dcfc41b34270ce08bb61268ac967c2a95",
+      "wasm_sha256": "56babefd47b5c2a95fd5e1b926e77c447a71b571167e4d0b6c537f3d765264a1",
+      "upgrade_args_sha256": "d389810f89a05f73f6c974495f4354d0a900d249bca0c14153e24f585c9e3a7b",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "native_neuron": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+      "signed_or_submitted": false,
+      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation."
+    },
+    {
+      "stage": "treasury-continuation",
+      "payload": "governance-proposals/treasury-continuation/proposal.bin",
+      "payload_sha256": "a5d6ffed0eee62b8a74ee82b3455fb7b14c8ea976b97cf09dda0db311d11e85d",
+      "raw_hex_sha256": "2570e7e2168fab3cf0a63f8e76f516034082bc1b07e2a202d0298fa4e049351b",
+      "policy_sha256": "764361f4ae43514dcd40e309e182522b65292cc88fba744a55c424d3594c2410",
+      "wasm_sha256": "56babefd47b5c2a95fd5e1b926e77c447a71b571167e4d0b6c537f3d765264a1",
+      "upgrade_args_sha256": "427fcf6f9d6320178d3166947f5f1ff509dead1ab0dabd715fab6210e6eeeb0d",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "native_neuron": "ae56e389e2c2a16b9f331ccb9a9ef21e9d02511ecc0ba79644c9ea004dda71e5",
+      "signed_or_submitted": false,
+      "approval": "Separate stage-specific financial/configuration approval; successor voting permission handover is a separate future operation."
+    }
+  ],
+  "source_binding": "Final package STATUS.json and manifest.json bind final Git commit/tree, all source/configuration/input/interface/constructor/Wasm hashes. This tracked record cannot contain its own final Git commit.",
+  "native_install_transport_source": {
+    "sdk_source_sha256": "59a1edef5d57b25a766ba33b046f6b152dfb778a1cbcebed87496e2e05437909",
+    "locked_ic_utils_crate_sha256": "30c22aaa2924df0321705dc01d408c8b75d1e1deb40b65defd2ff04008a720be",
+    "discovery": "Pinned public CLI source only, no mainnet observation",
+    "initial_code_install_calls_with_empty_stores": 21
+  },
+  "retained_preparation_archive_sha256": "c18f86b639c10bf6c3fbc56df4b09e5fdf9f3653575373e358ae0758f2abacba",
+  "completed_candidate_archive_hash": "Final review-package.tar.gz.sha256 beside the archive; full commit/tree and hashes are in package STATUS.json / manifest.json, not the retained earlier archive.",
+  "fresh_preconditions_proposal": "execution-preconditions.json: 25 logical requests, zero executed/authorized; eighteen post-install checks remain separate."
+}

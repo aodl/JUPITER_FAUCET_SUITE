@@ -1,0 +1,807 @@
+{
+  "source_commit": "14a69e0a79d7fe38d82fa8634ee5d12cd276fcaf",
+  "source_tree": "c88a534d45cc21ff435a6b9d9e33933a4c0319ae",
+  "executor": {
+    "principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+    "alias": "codex_local",
+    "provider": "Existing DFX 0.31.0 secp256k1 provider",
+    "public_principal_verified": true,
+    "independent_offline_signature_verification": "Node crypto verifies DFX IC-domain ECDSA signatures and self-authenticating sender against exact principal",
+    "authenticated_route_verified": "All twelve replicated canister_status responses verified with standard SDK BLS certificates/ranges/freshness after DFX offline signing",
+    "icp_cli_identity_alias_equivalence_claimed": false,
+    "custody": "DFX reports plaintext local storage; private key was not inspected/exported/copied. Use is confined to explicit acceptance authorization; no production or personal identity dependency was introduced.",
+    "tool_version_correction": "Repository context said 0.27.0; final supported tool check reports 0.31.0, and all three providers signed verified offline read envelopes with DFX_VERSION=0.31.0. Read-time executable version was not captured separately; no toolchain upgrade or live repeat was performed. Original read metadata labels were assumptions, not observed versions.",
+    "future_command_scoped_version": "0.31.0"
+  },
+  "protected_personal_identity": {
+    "principal": "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+    "credentials_accessed": false,
+    "used_for_signing": false,
+    "authority": "Historical/bootstrap-controller evidence only. No Codex execution route."
+  },
+  "temporary_governance_voter": {
+    "principal": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+    "native_permissions": [
+      3,
+      4,
+      10
+    ],
+    "permissions_names": [
+      "SubmitProposal",
+      "Vote",
+      "ManageVotingPermission"
+    ],
+    "disburse_or_split": false,
+    "handover": "Grant final executor [3,4,10], prove its genuine vote, revoke temporary rights, prove denial; preserve original neuron ID/Account; no live permission operation authorized.",
+    "superseded_proposed_permissions": [
+      2,
+      3,
+      4
+    ],
+    "correction": "governance-correction.md; original read observations unchanged; no live governance mutation"
+  },
+  "future_nnx_executor": {
+    "principal": null,
+    "route": null,
+    "not_an_initial_acceptance_blocker": true
+  },
+  "participants": [
+    {
+      "alias": "jupiter_acceptance_participant_a",
+      "principal": "dpb4d-s3blg-twxrv-w4ucr-2w76w-rctgx-zycty-at3p4-5paoc-x4764-eae",
+      "caller": "2vxsx-fae",
+      "method": "icrc1_balance_of",
+      "started": "2026-11-15T09:30:53.376Z",
+      "status": "observed",
+      "balance_e8s": "0",
+      "verification": "normal SDK replica-signature and freshness verification, not certified application state",
+      "finished": "2026-11-15T09:30:56.754Z",
+      "role": "A",
+      "offline_signature_verified": true,
+      "custody": "DFX-created persistent local file identity; creation umask 077, backend owner-read-only 0400. Plaintext at rest; keyring unavailable. No credential contents/exports in repo/evidence.",
+      "default_account": {
+        "owner": "dpb4d-s3blg-twxrv-w4ucr-2w76w-rctgx-zycty-at3p4-5paoc-x4764-eae",
+        "subaccountHex": null,
+        "address": "dpb4d-s3blg-twxrv-w4ucr-2w76w-rctgx-zycty-at3p4-5paoc-x4764-eae",
+        "explorerAccountHex": "db724cfae597fff199cacfdcdbd6c339319ce2eb913407bf99ae8474925d5765"
+      }
+    },
+    {
+      "alias": "jupiter_acceptance_participant_b",
+      "principal": "lsgoi-jv53o-vvez4-teecu-5t66a-7bnlq-mjvi3-iails-23k3p-qykdc-lae",
+      "caller": "2vxsx-fae",
+      "method": "icrc1_balance_of",
+      "started": "2026-11-15T09:30:56.759Z",
+      "status": "observed",
+      "balance_e8s": "0",
+      "verification": "normal SDK replica-signature and freshness verification, not certified application state",
+      "finished": "2026-11-15T09:30:57.115Z",
+      "role": "B",
+      "offline_signature_verified": true,
+      "custody": "DFX-created persistent local file identity; creation umask 077, backend owner-read-only 0400. Plaintext at rest; keyring unavailable. No credential contents/exports in repo/evidence.",
+      "default_account": {
+        "owner": "lsgoi-jv53o-vvez4-teecu-5t66a-7bnlq-mjvi3-iails-23k3p-qykdc-lae",
+        "subaccountHex": null,
+        "address": "lsgoi-jv53o-vvez4-teecu-5t66a-7bnlq-mjvi3-iails-23k3p-qykdc-lae",
+        "explorerAccountHex": "3654af7811166ecf9b95f17792bfffd66317169a25c59ef1f1f366c797cc9c2e"
+      }
+    }
+  ],
+  "helper_transition": {
+    "transition": "disposable-helper-replacement",
+    "state_and_pending_effects": "Operator explicitly accepts discarding all helper-local heap/stable state: neuron-creation lifecycle complete, no migration required. This is a preservation waiver, not proof of empty state or absence of prior pending effects. Preserve external NNS neuron settings, stake, maturity and staking Account; review financial timer startup before approved reinstall.",
+    "source_record": "Operator final November 2026 confirmation in Jupiter Acceptance \u2014 Complete Operator Authority, Test Identity, Disburser Transition and Deployment Preparation Instructions, section 5."
+  },
+  "helper_information": {
+    "query_completed": true,
+    "verification": "DFX/ic-agent normal replica-signed query verification; application/change-history values are not certified state",
+    "total_num_changes": 3,
+    "observed_changes": [
+      "CMC creation with personal controller at version 0",
+      "personal user added Codex controller at version 2",
+      "personal user installed current helper module at version 3"
+    ],
+    "preservation_decision": "Operator waiver, not inference from these history records or empty metadata. No migration or original-helper-source hunt."
+  },
+  "read_stage": {
+    "compliant_with_exact_method_allowlist": false,
+    "listed_logical_operations_completed": 15,
+    "listed_operations_skipped": 0,
+    "additional_unapproved_cli_discovery_attempts": 2,
+    "additional_attempts": [
+      "management facade candid:service read_state metadata",
+      "management facade __get_candid_interface_tmp_hack query"
+    ],
+    "evidence_basis": "Source-inferred from inspected DFX 0.27 and 0.31 fetch_remote_did_file paths plus the actual missing-interface warning; raw CLI traffic/read-time executable version were not captured. Final tool check observed 0.31.0. Do not describe as a clean 15-only run.",
+    "root_cause": "canister_info DFX call omitted a local --candid file; normal CLI discovery precedes the requested method.",
+    "retries": "Guarded status and participant transports recorded none. Pinned DFX ic-agent defaults to zero TCP retries, but CLI transport-level count is not independently captured.",
+    "physical_http_directly_logged": 15,
+    "directly_logged_verification_support_requests": 1,
+    "dfx_info_actual_http_count": null,
+    "dfx_info_source_expected_http_requests": 5,
+    "dfx_info_source_expected_verification_support_requests": 2,
+    "support_count_limit": "The DFX counts are source-path expectations, not observed wire counts. No repeat was made to instrument or repair the evidence.",
+    "correction": "Future bounded DFX calls require a local pinned Candid file and a transport-countable route; no discovery, retry, additional read or proxy was authorized by this stage.",
+    "financial_or_controller_mutations": 0
+  },
+  "canisters": [
+    {
+      "role": "sns_root",
+      "principal": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "client_started": "2026-11-15T09:29:44.787Z",
+      "client_finished": "2026-11-15T09:29:51.513Z",
+      "main_cycles": 1493420199951,
+      "reserved_cycles": 0,
+      "minimum_top_up_to_3T": 1506579800049,
+      "target_post_top_up_main_cycles": 3000000000000,
+      "runtime_status": "running",
+      "module_hash": null,
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "module_matches_earlier_inventory": true,
+      "controllers_match_earlier_inventory": true,
+      "memory_size_bytes": 12762,
+      "idle_cycles_burned_per_day": 864326044,
+      "freezing_threshold_seconds": 2592000,
+      "estimated_current_idle_freezing_reserve_cycles": 25929781320,
+      "main_cycles_above_that_estimate": 1467490418631,
+      "settings": {
+        "freezing_threshold": "2592000",
+        "wasm_memory_threshold": [
+          "0"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "reserved_cycles_limit": [
+          "5000000000000"
+        ],
+        "log_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "log_memory_limit": [
+          "4096"
+        ],
+        "wasm_memory_limit": [
+          "3221225472"
+        ],
+        "status_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "memory_allocation": "0",
+        "compute_allocation": "0"
+      },
+      "headroom_limit": "Idle-burn estimate at the observed code/settings only; installation, load, growing memory and active workers change it. 3T is a starting target, not an uptime guarantee."
+    },
+    {
+      "role": "sns_governance",
+      "principal": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "client_started": "2026-11-15T09:29:51.529Z",
+      "client_finished": "2026-11-15T09:29:53.843Z",
+      "main_cycles": 1493419959861,
+      "reserved_cycles": 0,
+      "minimum_top_up_to_3T": 1506580040139,
+      "target_post_top_up_main_cycles": 3000000000000,
+      "runtime_status": "running",
+      "module_hash": null,
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "module_matches_earlier_inventory": true,
+      "controllers_match_earlier_inventory": true,
+      "memory_size_bytes": 12762,
+      "idle_cycles_burned_per_day": 864326044,
+      "freezing_threshold_seconds": 2592000,
+      "estimated_current_idle_freezing_reserve_cycles": 25929781320,
+      "main_cycles_above_that_estimate": 1467490178541,
+      "settings": {
+        "freezing_threshold": "2592000",
+        "wasm_memory_threshold": [
+          "0"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "reserved_cycles_limit": [
+          "5000000000000"
+        ],
+        "log_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "log_memory_limit": [
+          "4096"
+        ],
+        "wasm_memory_limit": [
+          "3221225472"
+        ],
+        "status_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "memory_allocation": "0",
+        "compute_allocation": "0"
+      },
+      "headroom_limit": "Idle-burn estimate at the observed code/settings only; installation, load, growing memory and active workers change it. 3T is a starting target, not an uptime guarantee."
+    },
+    {
+      "role": "sns_ledger",
+      "principal": "sgnny-4iaaa-aaaas-amypq-cai",
+      "client_started": "2026-11-15T09:29:53.844Z",
+      "client_finished": "2026-11-15T09:29:56.122Z",
+      "main_cycles": 1493420580091,
+      "reserved_cycles": 0,
+      "minimum_top_up_to_3T": 1506579419909,
+      "target_post_top_up_main_cycles": 3000000000000,
+      "runtime_status": "running",
+      "module_hash": null,
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "module_matches_earlier_inventory": true,
+      "controllers_match_earlier_inventory": true,
+      "memory_size_bytes": 12762,
+      "idle_cycles_burned_per_day": 864326044,
+      "freezing_threshold_seconds": 2592000,
+      "estimated_current_idle_freezing_reserve_cycles": 25929781320,
+      "main_cycles_above_that_estimate": 1467490798771,
+      "settings": {
+        "freezing_threshold": "2592000",
+        "wasm_memory_threshold": [
+          "0"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "reserved_cycles_limit": [
+          "5000000000000"
+        ],
+        "log_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "log_memory_limit": [
+          "4096"
+        ],
+        "wasm_memory_limit": [
+          "3221225472"
+        ],
+        "status_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "memory_allocation": "0",
+        "compute_allocation": "0"
+      },
+      "headroom_limit": "Idle-burn estimate at the observed code/settings only; installation, load, growing memory and active workers change it. 3T is a starting target, not an uptime guarantee."
+    },
+    {
+      "role": "sns_index",
+      "principal": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "client_started": "2026-11-15T09:29:56.136Z",
+      "client_finished": "2026-11-15T09:29:58.227Z",
+      "main_cycles": 1493420800172,
+      "reserved_cycles": 0,
+      "minimum_top_up_to_3T": 1506579199828,
+      "target_post_top_up_main_cycles": 3000000000000,
+      "runtime_status": "running",
+      "module_hash": null,
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "module_matches_earlier_inventory": true,
+      "controllers_match_earlier_inventory": true,
+      "memory_size_bytes": 12762,
+      "idle_cycles_burned_per_day": 864326044,
+      "freezing_threshold_seconds": 2592000,
+      "estimated_current_idle_freezing_reserve_cycles": 25929781320,
+      "main_cycles_above_that_estimate": 1467491018852,
+      "settings": {
+        "freezing_threshold": "2592000",
+        "wasm_memory_threshold": [
+          "0"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "reserved_cycles_limit": [
+          "5000000000000"
+        ],
+        "log_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "log_memory_limit": [
+          "4096"
+        ],
+        "wasm_memory_limit": [
+          "3221225472"
+        ],
+        "status_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "memory_allocation": "0",
+        "compute_allocation": "0"
+      },
+      "headroom_limit": "Idle-burn estimate at the observed code/settings only; installation, load, growing memory and active workers change it. 3T is a starting target, not an uptime guarantee."
+    },
+    {
+      "role": "sns_swap",
+      "principal": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "client_started": "2026-11-15T09:29:58.231Z",
+      "client_finished": "2026-11-15T09:29:59.917Z",
+      "main_cycles": 1493421020254,
+      "reserved_cycles": 0,
+      "minimum_top_up_to_3T": 1506578979746,
+      "target_post_top_up_main_cycles": 3000000000000,
+      "runtime_status": "running",
+      "module_hash": null,
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "module_matches_earlier_inventory": true,
+      "controllers_match_earlier_inventory": true,
+      "memory_size_bytes": 12762,
+      "idle_cycles_burned_per_day": 864326044,
+      "freezing_threshold_seconds": 2592000,
+      "estimated_current_idle_freezing_reserve_cycles": 25929781320,
+      "main_cycles_above_that_estimate": 1467491238934,
+      "settings": {
+        "freezing_threshold": "2592000",
+        "wasm_memory_threshold": [
+          "0"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "reserved_cycles_limit": [
+          "5000000000000"
+        ],
+        "log_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "log_memory_limit": [
+          "4096"
+        ],
+        "wasm_memory_limit": [
+          "3221225472"
+        ],
+        "status_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "memory_allocation": "0",
+        "compute_allocation": "0"
+      },
+      "headroom_limit": "Idle-burn estimate at the observed code/settings only; installation, load, growing memory and active workers change it. 3T is a starting target, not an uptime guarantee."
+    },
+    {
+      "role": "jupiter_disburser",
+      "principal": "spoge-kaaaa-aaaas-amyoa-cai",
+      "client_started": "2026-11-15T09:29:59.924Z",
+      "client_finished": "2026-11-15T09:30:01.825Z",
+      "main_cycles": 1483994479843,
+      "reserved_cycles": 0,
+      "minimum_top_up_to_3T": 1516005520157,
+      "target_post_top_up_main_cycles": 3000000000000,
+      "runtime_status": "running",
+      "module_hash": "03e8ba94621d28bf166595a9a9dd0d9943c60caad48c7a2740285a7fee283bbe",
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "module_matches_earlier_inventory": true,
+      "controllers_match_earlier_inventory": true,
+      "memory_size_bytes": 11264523,
+      "idle_cycles_burned_per_day": 1151786493,
+      "freezing_threshold_seconds": 2592000,
+      "estimated_current_idle_freezing_reserve_cycles": 34553594790,
+      "main_cycles_above_that_estimate": 1449440885053,
+      "settings": {
+        "freezing_threshold": "2592000",
+        "wasm_memory_threshold": [
+          "0"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "reserved_cycles_limit": [
+          "5000000000000"
+        ],
+        "log_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "log_memory_limit": [
+          "4096"
+        ],
+        "wasm_memory_limit": [
+          "3221225472"
+        ],
+        "status_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "memory_allocation": "0",
+        "compute_allocation": "0"
+      },
+      "headroom_limit": "Idle-burn estimate at the observed code/settings only; installation, load, growing memory and active workers change it. 3T is a starting target, not an uptime guarantee."
+    },
+    {
+      "role": "jupiter_faucet",
+      "principal": "xuu2v-mqaaa-aaaas-amyra-cai",
+      "client_started": "2026-11-15T09:30:01.832Z",
+      "client_finished": "2026-11-15T09:30:03.849Z",
+      "main_cycles": 1493421060267,
+      "reserved_cycles": 0,
+      "minimum_top_up_to_3T": 1506578939733,
+      "target_post_top_up_main_cycles": 3000000000000,
+      "runtime_status": "running",
+      "module_hash": null,
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "module_matches_earlier_inventory": true,
+      "controllers_match_earlier_inventory": true,
+      "memory_size_bytes": 12762,
+      "idle_cycles_burned_per_day": 864326044,
+      "freezing_threshold_seconds": 2592000,
+      "estimated_current_idle_freezing_reserve_cycles": 25929781320,
+      "main_cycles_above_that_estimate": 1467491278947,
+      "settings": {
+        "freezing_threshold": "2592000",
+        "wasm_memory_threshold": [
+          "0"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "reserved_cycles_limit": [
+          "5000000000000"
+        ],
+        "log_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "log_memory_limit": [
+          "4096"
+        ],
+        "wasm_memory_limit": [
+          "3221225472"
+        ],
+        "status_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "memory_allocation": "0",
+        "compute_allocation": "0"
+      },
+      "headroom_limit": "Idle-burn estimate at the observed code/settings only; installation, load, growing memory and active workers change it. 3T is a starting target, not an uptime guarantee."
+    },
+    {
+      "role": "jupiter_lifeline",
+      "principal": "xiqae-3qaaa-aaaas-amyta-cai",
+      "client_started": "2026-11-15T09:30:03.867Z",
+      "client_finished": "2026-11-15T09:30:05.769Z",
+      "main_cycles": 1493424461520,
+      "reserved_cycles": 0,
+      "minimum_top_up_to_3T": 1506575538480,
+      "target_post_top_up_main_cycles": 3000000000000,
+      "runtime_status": "running",
+      "module_hash": null,
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "module_matches_earlier_inventory": true,
+      "controllers_match_earlier_inventory": true,
+      "memory_size_bytes": 12762,
+      "idle_cycles_burned_per_day": 864326044,
+      "freezing_threshold_seconds": 2592000,
+      "estimated_current_idle_freezing_reserve_cycles": 25929781320,
+      "main_cycles_above_that_estimate": 1467494680200,
+      "settings": {
+        "freezing_threshold": "2592000",
+        "wasm_memory_threshold": [
+          "0"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "reserved_cycles_limit": [
+          "5000000000000"
+        ],
+        "log_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "log_memory_limit": [
+          "4096"
+        ],
+        "wasm_memory_limit": [
+          "3221225472"
+        ],
+        "status_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "memory_allocation": "0",
+        "compute_allocation": "0"
+      },
+      "headroom_limit": "Idle-burn estimate at the observed code/settings only; installation, load, growing memory and active workers change it. 3T is a starting target, not an uptime guarantee."
+    },
+    {
+      "role": "jupiter_sns_rewards",
+      "principal": "xgsnm-aaaaa-aaaas-amysa-cai",
+      "client_started": "2026-11-15T09:30:05.775Z",
+      "client_finished": "2026-11-15T09:30:07.534Z",
+      "main_cycles": 1493421850559,
+      "reserved_cycles": 0,
+      "minimum_top_up_to_3T": 1506578149441,
+      "target_post_top_up_main_cycles": 3000000000000,
+      "runtime_status": "running",
+      "module_hash": null,
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "module_matches_earlier_inventory": true,
+      "controllers_match_earlier_inventory": true,
+      "memory_size_bytes": 12762,
+      "idle_cycles_burned_per_day": 864326044,
+      "freezing_threshold_seconds": 2592000,
+      "estimated_current_idle_freezing_reserve_cycles": 25929781320,
+      "main_cycles_above_that_estimate": 1467492069239,
+      "settings": {
+        "freezing_threshold": "2592000",
+        "wasm_memory_threshold": [
+          "0"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "reserved_cycles_limit": [
+          "5000000000000"
+        ],
+        "log_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "log_memory_limit": [
+          "4096"
+        ],
+        "wasm_memory_limit": [
+          "3221225472"
+        ],
+        "status_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "memory_allocation": "0",
+        "compute_allocation": "0"
+      },
+      "headroom_limit": "Idle-burn estimate at the observed code/settings only; installation, load, growing memory and active workers change it. 3T is a starting target, not an uptime guarantee."
+    },
+    {
+      "role": "jupiter_historian",
+      "principal": "xbtly-nyaaa-aaaas-amysq-cai",
+      "client_started": "2026-11-15T09:30:07.543Z",
+      "client_finished": "2026-11-15T09:30:09.995Z",
+      "main_cycles": 1493423371119,
+      "reserved_cycles": 0,
+      "minimum_top_up_to_3T": 1506576628881,
+      "target_post_top_up_main_cycles": 3000000000000,
+      "runtime_status": "running",
+      "module_hash": null,
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "module_matches_earlier_inventory": true,
+      "controllers_match_earlier_inventory": true,
+      "memory_size_bytes": 12762,
+      "idle_cycles_burned_per_day": 864326044,
+      "freezing_threshold_seconds": 2592000,
+      "estimated_current_idle_freezing_reserve_cycles": 25929781320,
+      "main_cycles_above_that_estimate": 1467493589799,
+      "settings": {
+        "freezing_threshold": "2592000",
+        "wasm_memory_threshold": [
+          "0"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "reserved_cycles_limit": [
+          "5000000000000"
+        ],
+        "log_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "log_memory_limit": [
+          "4096"
+        ],
+        "wasm_memory_limit": [
+          "3221225472"
+        ],
+        "status_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "memory_allocation": "0",
+        "compute_allocation": "0"
+      },
+      "headroom_limit": "Idle-burn estimate at the observed code/settings only; installation, load, growing memory and active workers change it. 3T is a starting target, not an uptime guarantee."
+    },
+    {
+      "role": "jupiter_relay",
+      "principal": "xtv4b-biaaa-aaaas-amyrq-cai",
+      "client_started": "2026-11-15T09:30:09.999Z",
+      "client_finished": "2026-11-15T09:30:11.609Z",
+      "main_cycles": 1493421600466,
+      "reserved_cycles": 0,
+      "minimum_top_up_to_3T": 1506578399534,
+      "target_post_top_up_main_cycles": 3000000000000,
+      "runtime_status": "running",
+      "module_hash": null,
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "module_matches_earlier_inventory": true,
+      "controllers_match_earlier_inventory": true,
+      "memory_size_bytes": 12762,
+      "idle_cycles_burned_per_day": 864326044,
+      "freezing_threshold_seconds": 2592000,
+      "estimated_current_idle_freezing_reserve_cycles": 25929781320,
+      "main_cycles_above_that_estimate": 1467491819146,
+      "settings": {
+        "freezing_threshold": "2592000",
+        "wasm_memory_threshold": [
+          "0"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "reserved_cycles_limit": [
+          "5000000000000"
+        ],
+        "log_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "log_memory_limit": [
+          "4096"
+        ],
+        "wasm_memory_limit": [
+          "3221225472"
+        ],
+        "status_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "memory_allocation": "0",
+        "compute_allocation": "0"
+      },
+      "headroom_limit": "Idle-burn estimate at the observed code/settings only; installation, load, growing memory and active workers change it. 3T is a starting target, not an uptime guarantee."
+    },
+    {
+      "role": "jupiter_faucet_frontend",
+      "principal": "xprgq-wiaaa-aaaas-amytq-cai",
+      "client_started": "2026-11-15T09:30:11.610Z",
+      "client_finished": "2026-11-15T09:30:13.423Z",
+      "main_cycles": 1493425011723,
+      "reserved_cycles": 0,
+      "minimum_top_up_to_3T": 1506574988277,
+      "target_post_top_up_main_cycles": 3000000000000,
+      "runtime_status": "running",
+      "module_hash": null,
+      "controllers": [
+        "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+        "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+      ],
+      "module_matches_earlier_inventory": true,
+      "controllers_match_earlier_inventory": true,
+      "memory_size_bytes": 12762,
+      "idle_cycles_burned_per_day": 864326044,
+      "freezing_threshold_seconds": 2592000,
+      "estimated_current_idle_freezing_reserve_cycles": 25929781320,
+      "main_cycles_above_that_estimate": 1467495230403,
+      "settings": {
+        "freezing_threshold": "2592000",
+        "wasm_memory_threshold": [
+          "0"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "reserved_cycles_limit": [
+          "5000000000000"
+        ],
+        "log_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "log_memory_limit": [
+          "4096"
+        ],
+        "wasm_memory_limit": [
+          "3221225472"
+        ],
+        "status_visibility": [
+          {
+            "public": null
+          }
+        ],
+        "memory_allocation": "0",
+        "compute_allocation": "0"
+      },
+      "headroom_limit": "Idle-burn estimate at the observed code/settings only; installation, load, growing memory and active workers change it. 3T is a starting target, not an uptime guarantee."
+    }
+  ],
+  "total_minimum_main_cycle_top_up": 18088365604174,
+  "conditional_archive_incremental_cycles": 1000000000000,
+  "cycles_purchase_icp_budget": null,
+  "rate_policy": "No CMC/fee/NNS/general inventory query repeated. Prior rate and Ledger fee remain explicitly dated observations, not guaranteed future spend quotes.",
+  "mainnet_installation_or_financial_mutations_performed": false,
+  "postinstallation_checks_performed": false,
+  "remaining_inputs": [
+    "separate genesis installation and patron activation timestamps",
+    "funding source and exact spend approvals, including fresh rate/fee/preconditions when separately authorized",
+    "explicit final installation and staged irreversible controller/activation approvals"
+  ],
+  "controller_staging_rehearsal": {
+    "scope": "Owned local framework/Rewards canisters, no live mutation",
+    "intermediate_additions": "Add Root/Governance alongside both bootstrap controllers before actual governed app upgrade",
+    "removals": "Only after native handover, governed upgrades and durable receipt checks",
+    "removed_bootstrap_upgrade_result": "CanisterInvalidController",
+    "result": "1 passed, 61 filtered, 133.20s"
+  }
+}
