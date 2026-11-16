@@ -26,5 +26,11 @@
   },
   "relay_surplus_neuron_recipients": [],
   "initial_main_cycles_target": 3000000000000,
-  "genesis": null
+  "genesis": null,
+  "maintenance": {
+    "policy": "proposed-acceptance-only",
+    "executor": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+    "viewer": null,
+    "approved": false
+  }
 }

@@ -372,3 +372,9 @@ Both active deployment clocks are null; the former dates are withdrawn. The
 complete dated PR #18 package remains historical tested evidence only, with its
 original manifest/hashes. Future schedule approval requires regenerated and
 reviewed constructors and payload hashes.
+
+The inactive [maintenance proposal](maintenance.md) covers the explicit acceptance
+framework-controller exception, anonymous one-shot observer, finite exercises and
+source-pinned official-SNS migration mechanism. It records incomplete financial
+coverage and unsafe/unproved recovery routes explicitly. It authorizes no live
+read, schedule activation, controller setting, spending or candidate upgrade.

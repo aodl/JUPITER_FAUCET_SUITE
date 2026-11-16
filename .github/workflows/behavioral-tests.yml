@@ -74,6 +74,7 @@ jobs:
           cargo fmt --all -- --check
           npm run check:npm-lock-hermetic
           npm run lint:frontend-exports
+          node --test tools/acceptance/observe.test.mjs
 
       - name: Install pinned local-call tools
         shell: bash

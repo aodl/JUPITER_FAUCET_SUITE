@@ -1,6 +1,9 @@
 //! Exact acceptance economics with owned local authorities, never live NNX proof.
 use super::*;
 
+#[path = "maintenance_rehearsal.rs"]
+mod maintenance;
+
 #[derive(CandidType, Deserialize)]
 struct Parameters {
     automatically_advance_target_version: Option<bool>,
@@ -254,6 +257,7 @@ fn exact_genesis_governance_handover_and_production_reserve() -> Result<()> {
     assert!(genesis < activation);
     let pic = support::pocketic::builder()
         .with_sns_subnet()
+        .with_nns_subnet()
         .with_application_subnet()
         .with_initial_time(pocket_ic::Time::from_nanos_since_unix_epoch(
             genesis * 1_000_000_000,
@@ -775,14 +779,19 @@ op.candidate(p,d,sys.argv[3],out/'candidate')
         (role("sns_swap"), root),
         (rewards, root),
     ] {
-        pic.set_controllers(id, Some(operator), vec![controller])
+        let final_controllers = if id == rewards {
+            vec![controller]
+        } else {
+            vec![controller, operator]
+        };
+        pic.set_controllers(id, Some(operator), final_controllers.clone())
             .map_err(|e| anyhow::anyhow!("post-rehearsal handoff: {e:?}"))?;
         assert_eq!(
             pic.canister_status(id, Some(controller))
                 .expect("final controller checkpoint")
                 .settings
                 .controllers,
-            vec![controller]
+            final_controllers
         );
     }
     let denied = pic
@@ -797,6 +806,18 @@ op.candidate(p,d,sys.argv[3],out/'candidate')
         denied.error_code,
         pocket_ic::ErrorCode::CanisterInvalidController
     );
+    maintenance::rehearse(
+        &pic,
+        &repo,
+        &evidence,
+        &artifacts,
+        &roles,
+        operator,
+        executor,
+        &dominant,
+        &did,
+        &second.stdout,
+    )?;
     println!(
         "exact allocation / local voter handover / governed production reserve passed: {}",
         evidence.display()

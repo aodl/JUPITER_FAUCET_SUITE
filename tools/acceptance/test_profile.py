@@ -10,6 +10,7 @@ from ic import account, principal_text, staking_subaccount
 def fixture():
     profile = json.loads(acceptance.PROFILE.read_text())
     profile['operator'] = principal_text(bytes([51]) * 28 + b'\x02')
+    profile.pop('maintenance', None)  # Independent legacy constructor fixture.
     profile['roles'] = {role: principal_text(bytes([n, 0, 1]))
                         for n, role in enumerate(acceptance.APPLICATIONS + acceptance.SNS, 10)}
     profile['nns_neuron']['id'] = 42

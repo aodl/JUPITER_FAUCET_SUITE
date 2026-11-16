@@ -86,6 +86,18 @@ Faucet/Disburser self/Lifeline lifecycle, irreversible removals and arming requi
 separate explicit approval after real operation/recovery has been demonstrated.
 No generic Lifeline repair API or permanent hidden controller is introduced.
 
+The [acceptance maintenance proposal](maintenance.md) explicitly supersedes only
+the five framework **proposed final** controller sets with native authority plus
+the existing acceptance executor. This is unapproved full arbitrary-code authority,
+not a limited upgrade role. Historical archive/controller evidence and application
+recovery/immutable-child policies are unchanged. Do not apply this exception or
+remove bootstrap controllers without its separate review and approval.
+The same proposal records a genuine pinned-Ledger archive prerequisite failure:
+the retained 1T allocation is below its application-subnet floor and does not
+provide the required 10T liquid Ledger remainder. Archive-trigger readiness is
+blocked pending a separately reviewed setting/headroom revision; existing amounts
+are not silently changed.
+
 ## Supply, authority and timer boundaries
 
 The constructor equation is unchanged: 10,000,000 governance + 89,979,900 reserve

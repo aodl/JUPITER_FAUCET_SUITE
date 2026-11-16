@@ -1,0 +1,10 @@
+// Offline typing subset only; NOT a transport registry or signing interface.
+type Visibility = variant { controllers; public; allowed_viewers : vec principal };
+type Settings = record {
+  controllers : opt vec principal;
+  status_visibility : opt Visibility;
+  log_visibility : opt Visibility;
+  snapshot_visibility : opt Visibility;
+};
+type UpdateSettings = record { canister_id : principal; settings : Settings };
+service : { update_settings : (UpdateSettings) -> () };

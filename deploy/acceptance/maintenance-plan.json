@@ -1,0 +1,175 @@
+{
+  "status": "PROPOSED / NOT EXECUTABLE / separate owner approval",
+  "environment": "acceptance",
+  "source_profile_sha256": "346cd650ed1b76c8b0f2c867b2954e72800f64442d05c80c56980263a5d41496",
+  "executor": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+  "controller_risk": "Full arbitrary-code/state/asset authority; plaintext-at-rest key. Not upgrade-only or production custody.",
+  "framework": [
+    {
+      "role": "sns_root",
+      "target": "sbmlm-rqaaa-aaaas-amypa-cai",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "add_before_remove": {
+        "expected": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+          "sipaq-hyaaa-aaaas-amyoq-cai"
+        ]
+      },
+      "after_rehearsal": {
+        "expected": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+          "sipaq-hyaaa-aaaas-amyoq-cai"
+        ],
+        "controllers": [
+          "sipaq-hyaaa-aaaas-amyoq-cai",
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae"
+        ]
+      },
+      "method": "update_settings",
+      "approved": false
+    },
+    {
+      "role": "sns_governance",
+      "target": "sipaq-hyaaa-aaaas-amyoq-cai",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "add_before_remove": {
+        "expected": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+          "sbmlm-rqaaa-aaaas-amypa-cai"
+        ]
+      },
+      "after_rehearsal": {
+        "expected": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+          "sbmlm-rqaaa-aaaas-amypa-cai"
+        ],
+        "controllers": [
+          "sbmlm-rqaaa-aaaas-amypa-cai",
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae"
+        ]
+      },
+      "method": "update_settings",
+      "approved": false
+    },
+    {
+      "role": "sns_ledger",
+      "target": "sgnny-4iaaa-aaaas-amypq-cai",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "add_before_remove": {
+        "expected": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+          "sbmlm-rqaaa-aaaas-amypa-cai"
+        ]
+      },
+      "after_rehearsal": {
+        "expected": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+          "sbmlm-rqaaa-aaaas-amypa-cai"
+        ],
+        "controllers": [
+          "sbmlm-rqaaa-aaaas-amypa-cai",
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae"
+        ]
+      },
+      "method": "update_settings",
+      "approved": false
+    },
+    {
+      "role": "sns_index",
+      "target": "x2wx5-xaaaa-aaaas-amyqa-cai",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "add_before_remove": {
+        "expected": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+          "sbmlm-rqaaa-aaaas-amypa-cai"
+        ]
+      },
+      "after_rehearsal": {
+        "expected": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+          "sbmlm-rqaaa-aaaas-amypa-cai"
+        ],
+        "controllers": [
+          "sbmlm-rqaaa-aaaas-amypa-cai",
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae"
+        ]
+      },
+      "method": "update_settings",
+      "approved": false
+    },
+    {
+      "role": "sns_swap",
+      "target": "x5xrj-2yaaa-aaaas-amyqq-cai",
+      "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+      "add_before_remove": {
+        "expected": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe"
+        ],
+        "controllers": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+          "sbmlm-rqaaa-aaaas-amypa-cai"
+        ]
+      },
+      "after_rehearsal": {
+        "expected": [
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
+          "zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe",
+          "sbmlm-rqaaa-aaaas-amypa-cai"
+        ],
+        "controllers": [
+          "sbmlm-rqaaa-aaaas-amypa-cai",
+          "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae"
+        ]
+      },
+      "method": "update_settings",
+      "approved": false
+    }
+  ],
+  "archive": {
+    "discovery": "Ledger archives(), then physical controller/status verification; no arbitrary IDs",
+    "existing": "Add executor only through an actual current controller, before removing any bootstrap principal.",
+    "creation_blocker": "Pinned Ledger rejects the retained 1T archive setting on application subnets: at least max(4.5T, 3 * native creation cost) per archive and 10T Ledger liquid cycles remaining afterward. Separate constructor/settings and funding revision approval required; existing funding sheet unchanged.",
+    "future_upgrade_argument": "(variant { Upgrade = opt record { change_archive_options = opt record { more_controller_ids = opt vec { principal \"amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae\" } } } })",
+    "preserve": "Keep controller_id=Root and all source-defined archive options; verify each created archive. Root discovery does not confer control."
+  },
+  "viewer": {
+    "principal": null,
+    "route": "Anonymous public queries initially; private settings blocked until one separate low-privilege provider is approved.",
+    "proposed_settings": "status_visibility=allowed_viewers [viewer]; log_visibility=allowed_viewers [viewer]; snapshot_visibility=controllers; no controller grant",
+    "default_log_memory_limit": 4096,
+    "increase": null
+  },
+  "applications": "UNCHANGED: normal governed dapps; Faucet/Disburser self/Lifeline; immutable Relay children controllerless",
+  "gates": [
+    "Both active clocks remain null.",
+    "Fresh exact controller/module/settings/version/pending/chunk-store preconditions.",
+    "No controller removal before governed application and framework rehearsals.",
+    "Viewer provider and supported management interface must be verified separately."
+  ]
+}

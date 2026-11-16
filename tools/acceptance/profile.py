@@ -70,7 +70,7 @@ def validate_roles(roles):
 
 
 def validate(profile, require_operator=True):
-    if set(profile) != {'environment', 'network', 'operator', 'roles', 'nns_neuron',
+    if set(profile) - {'maintenance'} != {'environment', 'network', 'operator', 'roles', 'nns_neuron',
                         'age_bonus_recipient_2', 'relay_surplus_neuron_recipients',
                         'initial_main_cycles_target', 'genesis'}:
         raise ValueError('unexpected/missing profile fields')
@@ -84,6 +84,13 @@ def validate(profile, require_operator=True):
     roles = validate_roles(profile['roles'])
     if operator in roles.values():
         raise ValueError('application/SNS role cannot be the operator')
+    if 'maintenance' in profile:
+        maintenance = profile['maintenance']
+        executor = 'amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae'
+        if maintenance != {'policy': 'proposed-acceptance-only',
+                           'executor': executor, 'viewer': None,
+                           'approved': False} or (operator is not None and operator != executor):
+            raise ValueError('maintenance requires explicit acceptance-only proposal; no implicit approval/viewer')
     neuron = profile['nns_neuron']
     if set(neuron) != {'id', 'memo'}:
         raise ValueError('neuron requires id and staking memo')
