@@ -183,8 +183,13 @@ def verify(manifest):
                             raise ValueError('explicit approved campaign launch clock required; no fixture/preparation clock substitution')
                         low, high = reward_range(deposit['amount'], deposit['timestamp_ns']//10**9, launch, compounded)
                         programme=source(exercise.get('programme_source'),p['roles']['jupiter_sns_rewards'],'get_programme_status')
-                        check('frozen_programme_epoch', None if programme is None else programme['config']['version']==record['config_version']
-                              and programme['config']['launch_timestamp_seconds']==launch and programme['config']['patron_enabled'] is True)
+                        config=programme.get('config') if programme is not None else None
+                        # Status describes the current config, not configuration history.
+                        # A different epoch cannot contradict (or prove) the frozen one.
+                        same_epoch=config is not None and config.get('version')==record['config_version']
+                        check('frozen_programme_epoch', None if not same_epoch or not {
+                            'launch_timestamp_seconds','patron_enabled'} <= config.keys() else
+                              config['launch_timestamp_seconds']==launch and config['patron_enabled'] is True)
                         details['expected_reward_e8s_range'] = [low, high]
                         check('reward_oracle', low <= record['amount_e8s'] <= high)
                         neuron_id = staking_subaccount(inputs['test_allocations'][2]['owner'],21) if compounded else None

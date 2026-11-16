@@ -68,6 +68,48 @@ class Campaign(unittest.TestCase):
         self.assertTrue(report['no_network'] and report['no_signing'] and report['no_replay'])
         self.assertEqual(report['exercises'][0]['checks']['jup_settlement'],'HEALTHY')
 
+    def test_historical_version_two_payout_reviewed_under_version_three(self):
+        f=fixture();f['sources'][4]['value']['config']['version']=3
+        report=campaign.verify(f)
+        checks=report['exercises'][0]['checks']
+        self.assertEqual(report['status'],'INCOMPLETE')
+        self.assertEqual(checks['frozen_programme_epoch'],'UNAVAILABLE_EVIDENCE')
+        for key in ('reward_oracle','frozen_patron_selection','jup_settlement','reserve_source_and_fee'):
+            self.assertEqual(checks[key],'HEALTHY',key)
+        # Version drift must not hide a contradiction in the frozen reward or receipt.
+        bad=copy.deepcopy(f);bad['sources'][2]['value']['amount_e8s']+=1
+        self.assertEqual(campaign.verify(bad)['status'],'FAIL')
+        bad=copy.deepcopy(f);bad['sources'][1]['value']['transactions'][0]['amount']+=1
+        self.assertEqual(campaign.verify(bad)['status'],'FAIL')
+
+    def test_subsequently_disabled_or_absent_programme_preserves_settlement_checks(self):
+        for config in (dict(version=3,launch_timestamp_seconds=1000,patron_enabled=False),None):
+            with self.subTest(config=config):
+                f=fixture();f['sources'][4]['value']['config']=config
+                report=campaign.verify(f)
+                self.assertEqual(report['status'],'INCOMPLETE')
+                self.assertEqual(report['exercises'][0]['checks']['frozen_programme_epoch'],'UNAVAILABLE_EVIDENCE')
+                self.assertEqual(report['exercises'][0]['checks']['jup_settlement'],'HEALTHY')
+
+    def test_same_version_programme_contradictions_fail(self):
+        for field,value in (('launch_timestamp_seconds',1001),('patron_enabled',False)):
+            with self.subTest(field=field):
+                f=fixture();f['sources'][4]['value']['config'][field]=value
+                report=campaign.verify(f)
+                self.assertEqual(report['status'],'FAIL')
+                self.assertEqual(report['exercises'][0]['checks']['frozen_programme_epoch'],'INVARIANT_FAILURE')
+                self.assertEqual(report['exercises'][0]['checks']['jup_settlement'],'HEALTHY')
+
+    def test_unchanged_version_and_missing_programme_fields(self):
+        f=fixture();report=campaign.verify(f)
+        self.assertEqual(report['exercises'][0]['checks']['frozen_programme_epoch'],'HEALTHY')
+        self.assertTrue(report['fixture'])  # conditional synthetic evidence, not a live proof
+        for field in ('version','launch_timestamp_seconds','patron_enabled'):
+            missing=copy.deepcopy(f);del missing['sources'][4]['value']['config'][field]
+            self.assertEqual(campaign.verify(missing)['exercises'][0]['checks']['frozen_programme_epoch'],'UNAVAILABLE_EVIDENCE')
+        f['sources'][2]['verification']='replica-signed-query'
+        self.assertEqual(campaign.verify(f)['exercises'][0]['checks']['frozen_owner_eligibility'],'UNAVAILABLE_EVIDENCE')
+
     def test_wrong_transaction_amount_fee_destination_memo_and_source_fail(self):
         for key,value in [('amount',10_000_001),('fee',1_000_001),('to',{'owner':acceptance.SYSTEM['ledger']}),
                           ('memo_hex','ff'),('from',{'owner':acceptance.SYSTEM['ledger']})]:
