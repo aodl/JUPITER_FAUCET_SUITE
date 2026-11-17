@@ -363,7 +363,12 @@ Codex executor, created participants, completed helper-local preservation waiver
 actual cycle deficits, partial constructors and the information-query discovery
 deviation. Historical inventory records are retained without rewriting them.
 
-The complete selected-clock configuration-only installation candidate is in
+The active installation preparation is **schedule-blocked and not executable** in
 [installation-approval.md](installation-approval.md), with [candidate-inputs.json](candidate-inputs.json)
 and the unexecuted [fresh preflight proposal](execution-preconditions.json).
 No timestamp, artifact or constructor preparation authorizes a mainnet operation.
+
+Both active deployment clocks are null; the former dates are withdrawn. The
+complete dated PR #18 package remains historical tested evidence only, with its
+original manifest/hashes. Future schedule approval requires regenerated and
+reviewed constructors and payload hashes.

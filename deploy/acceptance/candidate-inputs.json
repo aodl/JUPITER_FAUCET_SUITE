@@ -6,8 +6,8 @@
     "kind": "temporary-acceptance",
     "executable_route": "Existing DFX identity codex_local. Final command-scoped 0.31.0 provider verified by independent offline signatures; read-time executable version was not separately captured. Twelve authenticated replicated canister_status replies establish the same amzih public principal/controller route. DFX is not an ICP CLI alias; no personal signer access."
   },
-  "acceptance_start_timestamp_seconds": 1795104000,
-  "genesis_timestamp_seconds": 1794924000,
+  "acceptance_start_timestamp_seconds": null,
+  "genesis_timestamp_seconds": null,
   "test_allocations": [
     {
       "owner": "dpb4d-s3blg-twxrv-w4ucr-2w76w-rctgx-zycty-at3p4-5paoc-x4764-eae",

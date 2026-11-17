@@ -213,7 +213,7 @@ not readable-text numeric inference. An offline, network-blocked DFX 0.31.0
 read-signing check preserved the exact typed bytes and verified the executor
 signature. No install was run. Framework
 vectors/hashes remain null until the schedule is supplied. The proposed-operation
-record SHA-256 is `f4bb76ba777b1a02431882c58927413b80f75ce50b2ddcdabcbc5b49d249db2f`. Retained Wasms have
+historical record SHA-256 at reviewed source `f72038f` is `f4bb76ba777b1a02431882c58927413b80f75ce50b2ddcdabcbc5b49d249db2f`. Retained Wasms have
 unchanged executable bindings; their original sidecars/source identity are not
 relabelled as a fresh build. Both bootstrap controllers remain through install
 and rehearsal. Explicit intermediate additions grant Root/Governance (or self
@@ -267,7 +267,7 @@ The prior PR #18 head's five behavioral lanes and dependency security scan
 passed; canonical release validation was skipped. Updated CI binds to the new
 pushed commit and is reported separately. **NO FRONTEND CHANGE**; no deployment.
 
-The completed configuration-only constructor bundle and selected 19 November
-patron checkpoint are documented in [installation-approval.md](installation-approval.md).
-Earlier schedule-blocked statements above describe the prior preparation stage;
-all observed mainnet values and scope limitations remain historical evidence.
+The complete dated PR #18 constructor bundle is historical tested evidence.
+Its former dates are withdrawn; active preparation is now
+[schedule-blocked](installation-approval.md) with both deployment clocks null.
+The observed mainnet values and scope limitations above remain historical evidence.

@@ -1,37 +1,32 @@
-# Complete constructor candidate and external funding approval
+# Schedule-blocked installation and funding preparation
 
-Preparation base: `1e67fd37e1218cf24a78514bbed4cc7292dfab77`. Final Git commit/tree
-and every file hash are bound by the packaged STATUS.json / manifest.json.
-This is a complete **configuration-only candidate**, not installation authority.
-No mainnet observation, signature, transfer, installation or mutation occurred.
+**SCHEDULE-BLOCKED — NOT EXECUTABLE.** The owner has not approved an
+installation day and has withdrawn the earlier genesis and patron dates.
+Both active fields in `candidate-inputs.json` are `null`:
+`genesis_timestamp_seconds` and `acceptance_start_timestamp_seconds`.
+No replacement dates are selected. Existing fail-closed generation rejects a
+complete live bundle until the owner selects and approves both exact timestamps.
 
-## Candidate clocks and practical window
+The complete dated PR #18 package remains historical tested evidence only:
+source `f72038f2da8c88c0d46fdf105f14fd78327702a9`, archive SHA-256
+`c25ec8fff3e43f6b106b9d8bf422c79847c7152a231352c04f227c7eb6ae4eb2`.
+Its manifest, constructor bytes and hashes are preserved unchanged; they do not
+apply to a future schedule. The exact dated input is retained in
+[historical/2026-11-15-candidate-inputs.json](historical/2026-11-15-candidate-inputs.json)
+solely for that historical rehearsal, not live deployment.
 
-| Input | UTC candidate | Unix seconds |
-|---|---|---:|
-| Genesis checkpoint | 2026-11-17 14:00:00 | 1794924000 |
-| Installation end | 2026-11-17 16:00:00 | 1794931200 |
-| Patron checkpoint | 2026-11-19 16:00:00 | 1795104000 |
+The timestamp fields and window in the active operation record are unresolved.
+Historical CLI vectors and unsigned payloads are explicitly labelled; active
+install command vectors and schedule-dependent framework hashes are null.
+After schedule approval, regenerate and review the complete constructors,
+activation payloads and hashes before any separate execution approval.
+Principals, permissions, economics, Wasms, funding requirements, controller
+preconditions and startup effects below remain unchanged. No mainnet operation
+is authorized by this administrative withdrawal.
 
-The installation window is 17 November, 14:00–16:00 UTC. The patron clock is
-50 hours after genesis and 48 hours after the installation window ends. These
-are the supplied candidate values, not preparation or fixture timestamps.
-`candidate-inputs.json` is a reviewed copy consumed by the completed constructor
-command. Its legacy `approved: true` means configuration/role approval only;
-`proposed-operations-2026-11-15.json` explicitly keeps final window confirmation,
-spending and all live mutation approvals false. The original unresolved
-`operator-inputs.json` is retained as history, not the selected bundle input.
+## Historical constructor evidence and retained installation modes
 
-As of preparation on 15 November the window remains in the future and is
-conditionally practical. It depends on owner confirmation, an approved fresh
-preflight, funded cycles and installation/startup approval. If the genesis or
-activation checkpoint cannot be met, stop, obtain replacement times and
-regenerate/review all affected hashes. Never silently use stale/backdated inputs.
-The eventual production launch clock is independent.
-
-## Exact constructors and installation modes
-
-The bundle contains five official SNS constructors, seven application
+The historical dated bundle contains five official SNS constructors, seven application
 constructors and the six pinned official SNS Wasm templates (archive is a
 contingency template, not a thirteenth initial installation). All constructor
 bytes were encoded/decoded/re-encoded with didc 0.6.2 and have matching raw-hex
@@ -39,7 +34,7 @@ sidecars. Seven application constructor binaries and all retained acceptance
 application Wasms are unchanged. Acceptance Wasms are not canonical production
 artifacts and this is not a new independent reproducibility claim.
 
-| Ordered role | Principal | Mode | Constructor SHA-256 |
+| Ordered role | Principal | Mode | Historical constructor SHA-256 |
 |---|---|---|---|
 | jupiter_lifeline | `xiqae-3qaaa-aaaas-amyta-cai` | install | `0fee102bd16b053022b69f2c65fd5e2f41d150ce9c214ac8731cfaf496ebda4e` |
 | sns_governance | `sipaq-hyaaa-aaaas-amyoq-cai` | install | `123f9348365ece40b9c1d212055c68914ce9cd825366eef9d0c5f07870d89e35` |
@@ -57,7 +52,7 @@ artifacts and this is not a new independent reproducibility claim.
 Full raw/gzip Wasm hashes, constructor/hex/interface hashes, explicit DFX argv,
 controller preconditions and native transport are in
 [proposed-operations-2026-11-15.json](proposed-operations-2026-11-15.json).
-Run a later approved command only from the extracted package root. It pins
+The historical command reference pins
 `DFX_VERSION=0.31.0`, `--identity codex_local`, `--network ic`, explicit mode,
 exact `--wasm`, and `--argument-type raw --argument-file` for the hashed hex file.
 No auto mode, bulk deploy, implicit identity or ICP-CLI identity-store bridge.
@@ -203,7 +198,7 @@ the corrected result; no application or economics change was made to satisfy the
 
 | Separate owner approval | Exact scope |
 |---|---|
-| Confirm final installation window | Candidate genesis 17 November 14:00, installation 14:00–16:00, patron 19 November 16:00 UTC; reschedule/regenerate if missed |
+| Select and approve a deployment schedule | Deployment day and both exact timestamps remain unresolved; regenerate/review complete constructors and payload hashes before execution approval |
 | Fresh bounded preflight | Listed status/chunk-store/balance/fee/quote/public-neuron reads only; no standing read permission |
 | External funding | Named source wallet/provider, fresh exact deltas/fees and explicit cycles/ICP purchase/spend caps; no credentials provided to Codex |
 | Initial installation/startup | Twelve ordered explicit commands, including listed native chunk methods and Disburser reinstall/timer effects; retain both bootstrap controllers |
