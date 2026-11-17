@@ -142,7 +142,8 @@ def render(profile, decisions, local=False):
         token_name=e['token_name'], token_symbol=e['token_symbol'], decimals=e['decimals'],
         fee=e['transfer_fee_e8s'], minimum_neuron_stake=e['minimum_neuron_stake_e8s'],
         parameters=parameters(), neurons=neurons, balances=balances,
-        total_supply=e['initial_supply_e8s'], archive_cycles=1_000_000_000_000,
+        total_supply=e['initial_supply_e8s'], archive_cycles=4_500_000_000_000,
+        archive_more_controllers=[p['operator']] if p.get('maintenance') else [],
         metadata=dict(name='Jupiter acceptance', description='Direct-installed operational acceptance; no sale history.',
             url='https://' + p['roles']['jupiter_faucet_frontend'] + '.icp0.io/', logo=logo))
     checked = acceptance.validate(p)

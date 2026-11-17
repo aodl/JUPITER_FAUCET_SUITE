@@ -86,6 +86,18 @@ Faucet/Disburser self/Lifeline lifecycle, irreversible removals and arming requi
 separate explicit approval after real operation/recovery has been demonstrated.
 No generic Lifeline repair API or permanent hidden controller is introduced.
 
+The [acceptance maintenance proposal](maintenance.md) explicitly supersedes only
+the five framework **proposed final** controller sets with native authority plus
+the existing acceptance executor. This is unapproved full arbitrary-code authority,
+not a limited upgrade role. Historical archive/controller evidence and application
+recovery/immutable-child policies are unchanged. Do not apply this exception or
+remove bootstrap controllers without its separate review and approval.
+Future schedule-bound Ledger constructors correct the invalid historical 1T archive
+allocation to 4.5T and include Root+maintainer in InitArgs. Before archive trigger,
+require native creation cost <= 1.5T and 17.5T Ledger liquid (4.5T allocation + 10T retained
+native floor + existing 3T operating margin). Funding is unapproved; unexpected archives
+at installation preflight STOP for controller review. See maintenance.md and funding-sheet.json.
+
 ## Supply, authority and timer boundaries
 
 The constructor equation is unchanged: 10,000,000 governance + 89,979,900 reserve
@@ -169,8 +181,8 @@ Deliver only the fresh summed deficits, not the unused margin. Stop/reapprove if
 the fresh requirement exceeds that ceiling. **36T is the desired aggregate
 balance, not the amount to purchase.** Any ICP conversion/purchase cap remains
 unpriced until a fresh authorized quote and provider/fee calculation exists.
-The old CMC observation is not a current price. Ledger's conditional **1T archive
-allocation** remains separate, only before its actual trigger; factory creation
+The old CMC observation is not a current price. Ledger's conditional **14.5T incremental archive-readiness funding** beyond its 3T
+main row remains separate (17.5T pre-trigger liquid target), only before its actual trigger; factory creation
 is also separate. No uptime guarantee follows from a 3T starting target.
 
 ## Freshness, smoke and approvals

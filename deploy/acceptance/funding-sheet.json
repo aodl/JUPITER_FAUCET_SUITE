@@ -211,14 +211,19 @@
       "destination": "sgnny-4iaaa-aaaas-amypq-cai",
       "asset": "cycles",
       "current_observed": 1493420580091,
-      "desired": 1000000000000,
-      "delta": 1000000000000,
-      "delta_rule": "max(0, 4T - observed Ledger main balance) - max(0, 3T - observed Ledger main balance); this is the incremental archive allocation beyond the main-target row",
+      "desired": 17500000000000,
+      "delta": 14500000000000,
+      "delta_rule": "UNAPPROVED conditional incremental delivery: max(0,17.5T-fresh Ledger liquid cycles)-max(0,3T-fresh Ledger main cycles); avoid double counting the main-target row; reserved/freezing cycles are not liquid.",
       "fee": null,
-      "proposed_cap": 1000000000000,
+      "proposed_cap": 14500000000000,
       "maximum_authorized_spend": 0,
       "permanently_staked": false,
-      "trigger": "constructor: 2000 blocks, archive 1000; retain operating/freezing headroom separately"
+      "trigger": "Unchanged: 2000 blocks, archive 1000. Before trigger verify no unexpected archives and fresh native creation cost <=1.5T; otherwise STOP and review allocation/constructors.",
+      "archive_allocation_cycles": 4500000000000,
+      "native_retained_liquid_floor": 10000000000000,
+      "existing_operational_margin_cycles": 3000000000000,
+      "replenishment": "Before each subsequent archive replenish 4.5T plus measured operating burn to restore 17.5T liquid; verify current cost/freezing reserve and actual archives first. No recurring spend approval.",
+      "source": "Pinned Ledger cf41372e3d4dc1accfe2c09a7969f8bddc729dc1 rs/ledger_suite/common/ledger_canister_core/src/archive.rs: max(4.5T,3*cost_create_canister), then >=10T liquid remaining; 3T margin reuses the reviewed operational target."
     },
     {
       "purpose": "direct liquid",
@@ -375,12 +380,14 @@
   "funding_source_identity": null,
   "protected_personal_funding_source_for_codex": false,
   "total_observed_minimum_main_cycles_top_up": 18088365604174,
-  "conditional_archive_incremental_cycles": 1000000000000,
+  "conditional_archive_incremental_cycles": 14500000000000,
   "selected_funding_method": "Independent external wallet/provider; no Codex access to personal funding credentials",
   "source_wallet": null,
   "cycles_provider": null,
   "cycles_requested_delivery_cap": null,
   "cycles_requested_delivery_cap_rule": "UNAPPROVED ceiling 18.2T cycles; deliver only sum of fresh max(0,3T-main) deficits, never the unused margin. Stop/reapprove if fresh total or provider fees require more. Separate archive/child funding not included.",
   "fresh_execution_preconditions_authorized": false,
-  "proposed_cycles_delivery_ceiling": 18200000000000
+  "proposed_cycles_delivery_ceiling": 18200000000000,
+  "conditional_archive_total_planning_delivery_cycles": 32588365604174,
+  "conditional_archive_total_status": "Dated planning delivery 32,588,365,604,174 cycles including first-archive readiness. Not a purchase/spend approval or fresh quote; initial twelve 3T targets and 18.2T initial ceiling unchanged."
 }

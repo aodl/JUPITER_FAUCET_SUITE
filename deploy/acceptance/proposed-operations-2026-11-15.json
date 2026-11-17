@@ -1098,11 +1098,12 @@
         {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
-            "sipaq-hyaaa-aaaas-amyoq-cai"
+            "sipaq-hyaaa-aaaas-amyoq-cai",
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae"
           ],
           "operation": "update_settings, controllers field only",
           "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
-          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+          "gate": "PROPOSED acceptance-only full controller exception; separate approval after framework/archive/viewer and ordinary governed-upgrade rehearsals. Preserve both bootstrap controllers until then. See maintenance.md."
         }
       ]
     },
@@ -1132,11 +1133,12 @@
         {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
-            "sbmlm-rqaaa-aaaas-amypa-cai"
+            "sbmlm-rqaaa-aaaas-amypa-cai",
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae"
           ],
           "operation": "update_settings, controllers field only",
           "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
-          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+          "gate": "PROPOSED acceptance-only full controller exception; separate approval after framework/archive/viewer and ordinary governed-upgrade rehearsals. Preserve both bootstrap controllers until then. See maintenance.md."
         }
       ]
     },
@@ -1166,11 +1168,12 @@
         {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
-            "sbmlm-rqaaa-aaaas-amypa-cai"
+            "sbmlm-rqaaa-aaaas-amypa-cai",
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae"
           ],
           "operation": "update_settings, controllers field only",
           "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
-          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+          "gate": "PROPOSED acceptance-only full controller exception; separate approval after framework/archive/viewer and ordinary governed-upgrade rehearsals. Preserve both bootstrap controllers until then. See maintenance.md."
         }
       ]
     },
@@ -1200,11 +1203,12 @@
         {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
-            "sbmlm-rqaaa-aaaas-amypa-cai"
+            "sbmlm-rqaaa-aaaas-amypa-cai",
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae"
           ],
           "operation": "update_settings, controllers field only",
           "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
-          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+          "gate": "PROPOSED acceptance-only full controller exception; separate approval after framework/archive/viewer and ordinary governed-upgrade rehearsals. Preserve both bootstrap controllers until then. See maintenance.md."
         }
       ]
     },
@@ -1234,11 +1238,12 @@
         {
           "stage": "after physical module/configuration/upgrade checkpoints",
           "controllers": [
-            "sbmlm-rqaaa-aaaas-amypa-cai"
+            "sbmlm-rqaaa-aaaas-amypa-cai",
+            "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae"
           ],
           "operation": "update_settings, controllers field only",
           "sender": "amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae",
-          "gate": "fresh expected controller set, verified existing signer and separate handoff approval; no early removal to satisfy topology"
+          "gate": "PROPOSED acceptance-only full controller exception; separate approval after framework/archive/viewer and ordinary governed-upgrade rehearsals. Preserve both bootstrap controllers until then. See maintenance.md."
         }
       ]
     },
@@ -1756,5 +1761,7 @@
     "archive": "target/acceptance-final-candidate/review-package.tar.gz",
     "archive_sha256": "c25ec8fff3e43f6b106b9d8bf422c79847c7152a231352c04f227c7eb6ae4eb2",
     "status": "Preserved historical tested evidence. Prior schedule withdrawn; archive and its manifest/hashes do not describe an executable future-schedule bundle."
-  }
+  },
+  "maintenance_policy": "Proposed acceptance-only framework override; unapproved, no active commands. See maintenance-plan.json. All app/recovery/controllerless-child policies unchanged.",
+  "maintenance_archive_validation_blocker": "Schedule-blocked future constructors now use 4.5T/archive and Root+maintainer in InitArgs. Before archive trigger require cost_create_canister <=1.5T, >=17.5T Ledger liquid, and separate funding approval. Unexpected pre-existing archive fails installation preflight; inspect actual controllers, no migration assumption. See funding-sheet.json."
 }
